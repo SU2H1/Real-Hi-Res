@@ -1,5 +1,6 @@
 """Fixtures that synthesise real and fake hi-res files with ffmpeg."""
 
+import functools
 import subprocess
 
 import numpy as np
@@ -39,6 +40,27 @@ def ffmpeg_convert(src, dst, out_args):
     return str(dst)
 
 
+@functools.lru_cache(maxsize=None)
+def _ffmpeg_text(*args) -> str:
+    return subprocess.run(["ffmpeg", "-hide_banner", *args], capture_output=True, text=True).stdout
+
+
+def mp3_encoder():
+    """Name of an available MP3 encoder, or None (some FFmpeg builds have none)."""
+    encoders = _ffmpeg_text("-encoders")
+    for name in ("libmp3lame", "libshine"):
+        if f" {name} " in encoders:
+            return name
+    return None
+
+
+def hq_resample(rate: int) -> list:
+    """High-quality resampling: soxr when FFmpeg has it, else a long swr filter."""
+    if "--enable-libsoxr" in _ffmpeg_text("-buildconf"):
+        return ["-af", f"aresample={rate}:resampler=soxr"]
+    return ["-af", f"aresample={rate}:filter_size=128:cutoff=0.95:phase_shift=10"]
+
+
 @pytest.fixture(scope="session")
 def library(tmp_path_factory):
     """A small fake music library: name -> file path."""
@@ -60,19 +82,18 @@ def library(tmp_path_factory):
 
     # Fake: CD master upsampled to 24/96 (soxr, high quality).
     files["fake_up_44_to_96"] = ffmpeg_convert(cd, d / "fake_up_44_to_96.flac",
-                                               ["-af", "aresample=96000:resampler=soxr",
-                                                "-c:a", "flac", "-sample_fmt", "s32"])
+                                               [*hq_resample(96000), "-c:a", "flac", "-sample_fmt", "s32"])
     # Fake: CD master upsampled to 24/192 with ffmpeg's default resampler.
     files["fake_up_44_to_192"] = ffmpeg_convert(cd, d / "fake_up_44_to_192.wav",
                                                 ["-ar", "192000", "-c:a", "pcm_s24le"])
     # Fake: 48 kHz master upsampled to 96 kHz.
     m48 = ffmpeg_write(d / "m48.wav", music_like(48000, seed=3), 48000, ["-c:a", "pcm_s16le"])
     files["fake_up_48_to_96"] = ffmpeg_convert(m48, d / "fake_up_48_to_96.wav",
-                                               ["-af", "aresample=96000:resampler=soxr", "-c:a", "pcm_s24le"])
+                                               [*hq_resample(96000), "-c:a", "pcm_s24le"])
     # Fake: 96 kHz master upsampled to 192 kHz.
     m96 = ffmpeg_write(d / "m96.wav", music_like(96000, 4, seed=4), 96000, ["-c:a", "pcm_s24le"])
     files["fake_up_96_to_192"] = ffmpeg_convert(m96, d / "fake_up_96_to_192.wav",
-                                                ["-af", "aresample=192000:resampler=soxr", "-c:a", "pcm_s24le"])
+                                                [*hq_resample(192000), "-c:a", "pcm_s24le"])
 
     # Fake: 16-bit audio zero-padded into a 24/96 container (full bandwidth!).
     s16 = ffmpeg_write(d / "s16_96.wav", music_like(96000, top_hz=40000, seed=5), 96000, ["-c:a", "pcm_s16le"])
@@ -83,12 +104,14 @@ def library(tmp_path_factory):
                                                       ["-c:a", "pcm_f32le"])
 
     # Fake: MP3 decoded and upsampled to 24/96.
-    mp3 = ffmpeg_convert(cd, d / "src.mp3", ["-c:a", "libmp3lame", "-b:a", "128k"])
-    files["fake_from_mp3"] = ffmpeg_convert(mp3, d / "fake_from_mp3.flac",
-                                            ["-af", "aresample=96000:resampler=soxr",
-                                             "-c:a", "flac", "-sample_fmt", "s32"])
-    # A lossy file is reported as such.
-    files["lossy_mp3"] = mp3
+    # (Skipped by the tests when this FFmpeg build has no MP3 encoder.)
+    enc = mp3_encoder()
+    if enc:
+        mp3 = ffmpeg_convert(cd, d / "src.mp3", ["-c:a", enc, "-b:a", "128k"])
+        files["fake_from_mp3"] = ffmpeg_convert(mp3, d / "fake_from_mp3.flac",
+                                                [*hq_resample(96000), "-c:a", "flac", "-sample_fmt", "s32"])
+        # A lossy file is reported as such.
+        files["lossy_mp3"] = mp3
 
     # Ambiguous: a 96 kHz file whose content gently fades out well below 22 kHz.
     files["dull_96"] = ffmpeg_write(d / "dull_96.wav", music_like(96000, top_hz=4000, seed=7, order=8), 96000,

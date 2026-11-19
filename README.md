@@ -1,16 +1,34 @@
 # Real-Hi-Res
 
-Real-Hi-Res is a command-line tool that scans your music library and tells you which files are genuine high-resolution audio and which ones are fakes. A "fake" hi-res file is one whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside actually came from a CD-quality master, a 48 kHz master, a lossy MP3/AAC file, or a 16-bit master padded with zeros. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed resolution should contain.
+Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine high-resolution audio and which ones are fakes. A "fake" hi-res file is one whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside actually came from a CD-quality master, a 48 kHz master, a lossy MP3/AAC file, or a 16-bit master padded with zeros. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed resolution should contain.
 
-## Requirements
+![Real-Hi-Res desktop app listing fake and suspicious files, with the reasons and spectrum of the selected file](docs/gui-screenshot.png)
 
-You need Python 3.9 or newer, NumPy, and FFmpeg (both `ffmpeg` and `ffprobe` must be on your `PATH`). FFmpeg does the decoding, so every format it understands works: FLAC, WAV, AIFF, ALAC/M4A, APE, WavPack, DSF/DFF (DSD), TTA, MKA, and lossy formats such as MP3, AAC, Opus and Vorbis.
+## Download and run (no installation needed)
+
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unzip and start it.
+
+| System | File | Start the app | Command line |
+| --- | --- | --- | --- |
+| Windows 10/11 (64-bit) | `RealHiRes-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
+| macOS 11+ (Apple Silicon) | `RealHiRes-macos-arm64.zip` | `RealHiRes.app` | `RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
+| Linux x86-64 (glibc 2.35+, e.g. Ubuntu 22.04+) | `RealHiRes-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+
+The packages are not code-signed, so your system may warn you the first time. On Windows, SmartScreen may show "Windows protected your PC", and you can continue with **More info → Run anyway**. On macOS, the system may say the app "is damaged" or "cannot be opened"; right-click `RealHiRes.app` and choose **Open**, or run `xattr -dr com.apple.quarantine RealHiRes.app` once in Terminal. Intel Macs and other platforms can run Real-Hi-Res from source as described below.
+
+## Desktop app (GUI)
+
+Click **Add Folder…** (or **Add Files…**) and then **Scan**. Files are analysed in parallel, and results appear while the scan is running. The list shows only files judged **Fake hi-res** and **Suspicious** by default, so you can scroll straight through the problem files. Tick the other boxes (Real hi-res, Not hi-res, Lossy format, Error) to see everything, and use the search box to filter by file or folder name. Each checkbox shows how many files have that verdict.
+
+Click a column header to sort by it. Click a row to see why that file got its verdict, its measurements, and its averaged spectrum, where the cliff of an upsampled file is easy to see. Double-click a row (or use **Show in Folder**) to open its folder, right-click it to copy its path, and use **Export CSV…** or **Export JSON…** to save the files currently listed. **Quick scan** analyses only the first 90 seconds of each file, which is faster on large libraries.
+
+## Running from source
+
+You need Python 3.9 or newer, NumPy, and FFmpeg (both `ffmpeg` and `ffprobe` must be on your `PATH`). FFmpeg does the decoding, so every format it understands works: FLAC, WAV, AIFF, ALAC/M4A, APE, WavPack, DSF/DFF (DSD), TTA, MKA, and lossy formats such as MP3, AAC, Opus and Vorbis. The GUI also needs Tkinter, which is included with the python.org installers for Windows and macOS. On Linux, install it with `sudo apt install python3-tk` (Debian/Ubuntu) or `sudo dnf install python3-tkinter` (Fedora).
 
 On macOS you can install FFmpeg with `brew install ffmpeg`. On Ubuntu or Debian use `sudo apt install ffmpeg`, and on Windows use `winget install ffmpeg`.
 
-## Installation
-
-Clone the repository and install it with pip, which also gives you the `realhires` command:
+Clone the repository and install it with pip, which gives you the `realhires` command and the `realhires-gui` desktop app:
 
 ```bash
 git clone https://github.com/SU2H1/Real-Hi-Res.git
@@ -20,11 +38,11 @@ git clone https://github.com/SU2H1/Real-Hi-Res.git
 cd Real-Hi-Res && pip install .
 ```
 
-You can also run it without installing by calling `python -m realhires` from inside the repository folder.
+You can also run it without installing by calling `python -m realhires` (command line) or `python -m realhires.gui` (desktop app) from inside the repository folder.
 
-## Usage
+## Command-line usage
 
-Point the tool at one or more files or folders. Folders are scanned recursively.
+Point the tool at one or more files or folders. Folders are scanned recursively. (In a release package the command is called `realhires-cli` instead of `realhires`.)
 
 ```bash
 realhires ~/Music/HiRes
@@ -93,7 +111,7 @@ Every digital master has a hard upper frequency limit at half its sample rate, c
 
 The tool averages the power spectrum of the whole track with an FFT of roughly 6 Hz resolution, using a Blackman-Harris window that has enough dynamic range to see a 24-bit noise floor. It then performs three measurements on that spectrum.
 
-The first is the **cliff test**. For every common lower source rate (44.1, 48, 88.2, 96, 176.4 and 192 kHz) that is clearly below the file's rate, the tool compares the level just below that rate's Nyquist frequency (88–96 %) with the level just above it (102–112 %). A drop of 25 dB or more marks the file as upsampled from that rate. A drop of 40 dB or more gives high confidence. Real music changes by only a few dB across that boundary. Because this test looks at a narrow window around each candidate edge, it still works when noise-shaped dither (for example in a fake DSD file) fills the top of the spectrum.
+The first is the **cliff test**. For every common lower source rate (44.1, 48, 88.2, 96, 176.4 and 192 kHz) that is clearly below the file's rate, the tool compares the level just below that rate's Nyquist frequency (88–96 %) with the level just above it (102–112 %). A drop of 25 dB or more marks the file as upsampled from that rate. A drop of 40 dB or more gives high confidence. Real music changes by only a few dB across that boundary. When neighbouring rates such as 44.1 and 48 kHz both show a large drop, which happens when a resampler's transition band straddles both, the tool finds the frequency where the level has actually fallen by 20 dB. It then picks the rate whose Nyquist frequency fits that point best, since resamplers place it at about 0.97–1.02 times the source Nyquist. Because this test looks at a narrow window around each candidate edge, it still works when noise-shaped dither (for example in a fake DSD file) fills the top of the spectrum.
 
 The second is the **lossy cliff scan**. MP3, AAC and Vorbis encoders throw away everything above about 16–20 kHz with an extremely steep low-pass. The tool searches the range from 11 to 20.3 kHz for a drop of 25 dB or more within about one kilohertz that never recovers at higher frequencies, which is the signature of a file that was decoded from a lossy source.
 
@@ -107,7 +125,7 @@ FFmpeg decodes every integer format into left-justified 32-bit samples, so a 24-
 
 No automatic tool can be certain, so please read the reasons and look at the plots for files that matter to you. The following cases are known to be hard.
 
-A source sample rate guess can be off by one family member. A resampler with a soft transition (such as FFmpeg's default `swr`) smears the 22.05 kHz edge upward, so a 44.1 kHz source can be reported as 48 kHz. The verdict is still FAKE, but the source rate is approximate.
+A source sample rate guess can be off by one family member. A resampler with a very soft transition (such as FFmpeg's default `swr` settings) smears the 22.05 kHz edge up past 23 kHz, so a 44.1 kHz source can be reported as 48 kHz. The verdict is still FAKE, but the source rate is approximate.
 
 A 16-bit master that was converted to 24-bit with a gain change, dither or resampling fills the low bits with values, so the bit-depth test passes. If the sample rate was also raised, the spectral test still catches it. Plain "16/44.1 to 24/44.1 with a volume change" is not detected.
 
@@ -123,6 +141,32 @@ Run the test suite with pytest. The tests generate synthetic real and fake files
 
 ```bash
 python3 -m pytest -q
+```
+
+### Building the packages and publishing a release
+
+The release packages are built by GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) on Windows, macOS and Linux. Every push builds them and attaches them to the workflow run as artifacts. Pushing a version tag also publishes them as a GitHub Release:
+
+```bash
+git tag v1.1.0
+```
+
+```bash
+git push origin v1.1.0
+```
+
+To build a package on your own machine, install the build tools, download FFmpeg into `build/ffmpeg`, and run PyInstaller. The result appears in `dist/RealHiRes` (on macOS, in `dist/RealHiRes.app`).
+
+```bash
+pip install numpy pyinstaller
+```
+
+```bash
+python packaging/fetch_ffmpeg.py
+```
+
+```bash
+pyinstaller --noconfirm packaging/realhires.spec
 ```
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).

@@ -1,0 +1,108 @@
+name: Test, build and release
+
+# * Every push / pull request: run the test suite and build the Windows, macOS
+#   and Linux packages (downloadable from the run's "Artifacts" section).
+# * Pushing a tag such as v1.1.0: additionally publish a GitHub Release with
+#   the packages attached.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed by the release job to create the release
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: RealHiRes-windows-x64
+          - os: macos-latest
+            asset: RealHiRes-macos-arm64
+          - os: ubuntu-22.04   # oldest supported glibc => runs on more distros
+            asset: RealHiRes-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip numpy pyinstaller pytest
+
+      - name: Download FFmpeg to bundle
+        run: python packaging/fetch_ffmpeg.py
+
+      - name: Run tests (using the FFmpeg that will be bundled)
+        shell: bash
+        run: |
+          export PATH="$PWD/build/ffmpeg:$PATH"
+          ffmpeg -hide_banner -version | head -n 1
+          python -m pytest -q
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm packaging/realhires.spec
+
+      - name: Smoke-test the frozen CLI (no FFmpeg on PATH)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) CLI=dist/RealHiRes/realhires-cli.exe ;;
+            macOS)   CLI=dist/RealHiRes.app/Contents/MacOS/realhires-cli ;;
+            *)       CLI=dist/RealHiRes/realhires-cli ;;
+          esac
+          python packaging/smoke_test.py "$CLI"
+
+      - name: Package
+        shell: bash
+        run: |
+          ASSET=${{ matrix.asset }}
+          case "$RUNNER_OS" in
+            Windows)
+              cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
+              (cd dist && 7z a -tzip "../$ASSET.zip" RealHiRes > /dev/null)
+              echo "FILE=$ASSET.zip" >> "$GITHUB_ENV" ;;
+            macOS)
+              mkdir -p pkg/RealHiRes
+              ditto dist/RealHiRes.app pkg/RealHiRes/RealHiRes.app
+              cp packaging/README-RELEASE.txt pkg/RealHiRes/README.txt
+              ditto -c -k --keepParent pkg/RealHiRes "$ASSET.zip"
+              echo "FILE=$ASSET.zip" >> "$GITHUB_ENV" ;;
+            *)
+              cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
+              tar -C dist -czf "$ASSET.tar.gz" RealHiRes
+              echo "FILE=$ASSET.tar.gz" >> "$GITHUB_ENV" ;;
+          esac
+          ls -la "$ASSET".*
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ env.FILE }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Real-Hi-Res ${{ github.ref_name }}
+          body_path: packaging/RELEASE_NOTES.md
+          generate_release_notes: true
+          files: assets/*

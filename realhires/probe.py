@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
@@ -28,12 +30,54 @@ class ToolMissingError(RuntimeError):
     """Raised when ffmpeg/ffprobe cannot be found on PATH."""
 
 
+def _bundle_dirs():
+    """Folders that may contain an FFmpeg shipped with a packaged release."""
+    env = os.environ.get("REALHIRES_FFMPEG_DIR")
+    if env:
+        yield env
+    meipass = getattr(sys, "_MEIPASS", None)  # PyInstaller bundle root
+    if meipass:
+        yield os.path.join(meipass, "ffmpeg")
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False)
+                                              else __file__))
+    yield os.path.join(exe_dir, "ffmpeg")
+    yield exe_dir
+
+
+def find_tool(name: str) -> Optional[str]:
+    """Locate ffmpeg/ffprobe: bundled copy first, then the system PATH."""
+    exe = name + (".exe" if os.name == "nt" else "")
+    for d in _bundle_dirs():
+        cand = os.path.join(d, exe)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return shutil.which(name)
+
+
+_TOOLS: dict = {}
+
+
+def tool(name: str) -> str:
+    if name not in _TOOLS:
+        _TOOLS[name] = find_tool(name) or name
+    return _TOOLS[name]
+
+
+def _no_window() -> dict:
+    """Stop Windows from flashing a console window for every ffmpeg call
+    when running from the windowed GUI build."""
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 def require_tools() -> None:
-    missing = [t for t in ("ffmpeg", "ffprobe") if shutil.which(t) is None]
+    missing = [t for t in ("ffmpeg", "ffprobe") if find_tool(t) is None]
     if missing:
         raise ToolMissingError(
-            "Required tool(s) not found on PATH: " + ", ".join(missing)
-            + ". Install FFmpeg (https://ffmpeg.org/download.html)."
+            "Required tool(s) not found: " + ", ".join(missing)
+            + ". Install FFmpeg (https://ffmpeg.org/download.html) or use a release "
+            "package, which bundles it."
         )
 
 
@@ -78,13 +122,14 @@ def _float_or_none(value) -> Optional[float]:
 
 def probe(path: str) -> AudioInfo:
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "a:0",
+        tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
         "-show_entries",
         "stream=codec_name,sample_rate,channels,sample_fmt,bits_per_sample,"
         "bits_per_raw_sample,bit_rate,duration:format=format_name,duration,bit_rate",
         "-of", "json", path,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", **_no_window())
     if proc.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {proc.stderr.strip() or 'unknown error'}")
     data = json.loads(proc.stdout or "{}")
@@ -143,7 +188,7 @@ def iter_pcm(
     the bit-depth test can count them.  Float sources are scaled to the int32
     range without dithering.
     """
-    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0", "-vn"]
+    cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-i", path, "-map", "0:a:0", "-vn"]
     if max_seconds:
         cmd += ["-t", f"{max_seconds:.3f}"]
     cmd += ["-f", "s32le", "-acodec", "pcm_s32le", "-"]
@@ -151,7 +196,8 @@ def iter_pcm(
     frame_bytes = 4 * channels
     chunk_bytes = frame_bytes * chunk_frames
     with tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, stdin=subprocess.DEVNULL,
+                                **_no_window())
         assert proc.stdout is not None
         pending = b""
         try:

@@ -154,6 +154,7 @@ CONTENT_MARGIN_DB = 10.0   # content must sit this far above the top-band floor
 STEEP_DROP_DB = 20.0       # drop across the bandwidth edge that counts as a brick wall
 CLIFF_DB = 25.0            # drop across a candidate source Nyquist that proves upsampling
 CLIFF_STRONG_DB = 40.0
+EDGE_RATIO = 0.98          # typical (-20 dB point / source Nyquist) of a resampler
 LOSSY_MAX_HZ = 20300.0     # MP3/AAC encoders low-pass below this
 LOSSY_CLIFF_DB = 25.0      # drop within ~1 kHz that marks an encoder low-pass
 RELEVANT_RANGE_DB = 110.0  # content more than this below the spectral peak is ignored
@@ -236,18 +237,28 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
     upsampled_from = None
     confidence = None
     edge = float("nan")
-    if cliffs:
-        best = max(cliffs, key=cliffs.get)
-        if cliffs[best] >= CLIFF_DB:
-            upsampled_from = best
-            confidence = "high" if cliffs[best] >= CLIFF_STRONG_DB else "medium"
+    strong = sorted(r for r, d in cliffs.items() if d >= CLIFF_DB)
+    if strong:
+        best = max(strong, key=cliffs.get)
+        upsampled_from = best
+        confidence = "high" if cliffs[best] >= CLIFF_STRONG_DB else "medium"
+        # Neighbouring rates (44.1 vs 48 kHz) can both show a big cliff when the
+        # resampler's transition band straddles them.  Decide by where the level
+        # actually falls 20 dB: resamplers put that point at ~0.97-1.02 x the
+        # source Nyquist, so pick the candidate whose Nyquist fits it best.
+        lo_n, hi_n = strong[0] / 2.0, strong[-1] / 2.0
+        edge = _edge_frequency(freqs, db, 0.80 * lo_n, 1.2 * hi_n, 0.70 * lo_n, 0.80 * lo_n)
+        if len(strong) > 1 and np.isfinite(edge):
+            upsampled_from = min(strong, key=lambda r: abs(edge / (r / 2.0) - EDGE_RATIO))
+            if cliffs[upsampled_from] < CLIFF_STRONG_DB:
+                confidence = "medium"
     if upsampled_from is None and steep and bandwidth >= LOSSY_MAX_HZ:
         # Fallback: a brick wall right at (or just under) a lower Nyquist.
         for rate in sorted(cliffs):
             if bandwidth <= rate / 2.0 * 1.04:
                 upsampled_from, confidence = rate, "medium"
                 break
-    if upsampled_from:
+    if upsampled_from and not np.isfinite(edge):
         n = upsampled_from / 2.0
         edge = _edge_frequency(freqs, db, 0.80 * n, 1.2 * n, 0.70 * n, 0.80 * n)
 
@@ -291,3 +302,30 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
         freqs=freqs,
         level_db=db,
     )
+
+
+def compact_spectrum(spec: SpectrumStats, points: int = 900) -> dict:
+    """Down-sample a spectrum to `points` max-hold bins for plotting.
+
+    Max-hold (rather than averaging) keeps a brick-wall edge sharp.  The result
+    is small, picklable and JSON-friendly, so worker processes can send it back
+    to the GUI cheaply.
+    """
+    f, db = spec.freqs, spec.level_db
+    keep = f > 0
+    f, db = f[keep], db[keep]
+    edges = np.linspace(0.0, spec.nyquist, points + 1)
+    idx = np.clip(np.digitize(f, edges) - 1, 0, points - 1)
+    ys = np.full(points, -300.0)
+    np.maximum.at(ys, idx, db)
+    xs = (edges[:-1] + edges[1:]) / 2.0
+    ok = ys > -299.0
+    return {
+        "freqs": xs[ok].round(1).tolist(),
+        "db": ys[ok].round(2).tolist(),
+        "nyquist": spec.nyquist,
+        "floor_db": spec.noise_floor_db,
+        "threshold_db": spec.threshold_db,
+        "peak_db": spec.peak_db,
+        "bandwidth_hz": spec.bandwidth_hz,
+    }

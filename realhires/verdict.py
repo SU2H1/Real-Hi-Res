@@ -15,6 +15,7 @@ from .analysis import (
     SpectrumAccumulator,
     SpectrumStats,
     analyze_spectrum,
+    compact_spectrum,
 )
 from .probe import AudioInfo, iter_pcm, probe
 
@@ -64,7 +65,8 @@ class FileResult:
     bit_usage: dict = field(default_factory=dict)
     analysed_seconds: float = 0.0
     elapsed: float = 0.0
-    spectrum: Optional[SpectrumStats] = None  # not serialised
+    spectrum: Optional[SpectrumStats] = None  # full arrays, for SVG plots; not serialised
+    plot: Optional[dict] = None               # compact spectrum for the GUI; not serialised
 
     @property
     def claimed(self) -> str:
@@ -86,7 +88,7 @@ class FileResult:
         return fmt_res(bits, self.true_rate or self.sample_rate)
 
     def to_dict(self) -> dict:
-        d = {k: v for k, v in self.__dict__.items() if k != "spectrum"}
+        d = {k: v for k, v in self.__dict__.items() if k not in ("spectrum", "plot")}
         d["claimed"] = self.claimed
         d["estimated_real"] = self.estimated
         for k, v in list(d.items()):
@@ -181,7 +183,8 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
         res.reasons = ["Passed spectral and bit-depth checks."]
 
 
-def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: bool = False) -> FileResult:
+def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: bool = False,
+                 keep_plot: bool = False) -> FileResult:
     t0 = time.time()
     res = FileResult(path=path, verdict=ERROR)
     try:
@@ -212,6 +215,8 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
                                 bit_acc.effective_bits())
         if keep_spectrum:
             res.spectrum = spec
+        if keep_plot:
+            res.plot = compact_spectrum(spec)
 
         if info.is_lossy:
             res.verdict = LOSSY
