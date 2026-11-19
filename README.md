@@ -184,7 +184,7 @@ The release packages are built by GitHub Actions ([`.github/workflows/build.yml`
 5. It smoke-tests the frozen command-line tool with an empty `PATH`.
 6. It packages the result.
 
-Every push uploads the packages as workflow artifacts, and pushing a version tag also publishes them as a GitHub Release:
+Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
 
 ```bash
 git tag v1.1.0

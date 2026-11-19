@@ -2,8 +2,9 @@ name: Test, build and release
 
 # * Every push / pull request: run the test suite and build all packages
 #   (downloadable from the run's "Artifacts" section).
-# * Pushing a tag such as v1.2.0: additionally publish a GitHub Release with
-#   the packages attached.
+# * Pushing a tag such as v1.2.0, or pushing to main with a __version__ that
+#   has not been released yet: additionally publish a GitHub Release with the
+#   packages attached (see the release job).
 #
 # Every job runs packaging/ci_build.sh, which fetches FFmpeg, runs pytest with
 # it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
@@ -109,21 +110,55 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # Publishes a GitHub Release when either
+  #  * a tag vX.Y.Z is pushed (it must match realhires/__init__.py), or
+  #  * main receives a commit whose __version__ has no release yet
+  #    (so merging a version bump into main releases it automatically).
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Decide the release tag
+        id: tag
+        shell: bash
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('realhires/__init__.py').read()).group(1))")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="$GITHUB_REF_NAME"
+            if [ "$TAG" != "v$VERSION" ]; then
+              echo "::error::Tag $TAG does not match __version__ $VERSION"; exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            TAG="v$VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+              echo "$TAG already exists - nothing to release."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
       - uses: actions/download-artifact@v6
+        if: steps.tag.outputs.publish == 'true'
         with:
           path: assets
           merge-multiple: true
-      - run: ls -la assets
+      - if: steps.tag.outputs.publish == 'true'
+        run: ls -la assets
       - name: Publish GitHub Release
+        if: steps.tag.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: Real-Hi-Res ${{ github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Real-Hi-Res ${{ steps.tag.outputs.tag }}
           body_path: packaging/RELEASE_NOTES.md
           generate_release_notes: true
+          make_latest: "true"
           files: assets/*
