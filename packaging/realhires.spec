@@ -23,20 +23,38 @@ for name in ("ffmpeg", "ffprobe"):
     else:
         print(f"WARNING: {path} not found - the package will need FFmpeg installed on the system")
 ffmpeg_docs = [(p, "ffmpeg") for p in glob.glob(os.path.join(FFMPEG_DIR, "*.txt"))]
+ICON_PNG = os.path.join(ROOT, "realhires", "assets", "icon.png")
+assets = [(ICON_PNG, os.path.join("realhires", "assets"))]
+# PyInstaller converts the PNG to .ico/.icns itself when Pillow is installed.
+try:
+    import PIL  # noqa: F401
+    exe_icon = ICON_PNG
+except ImportError:
+    exe_icon = None
+    print("WARNING: Pillow not installed - building without an application icon")
+# Oldest macOS the app declares support for; CI verifies every bundled binary
+# against it with packaging/check_compat.py.
+MACOS_MIN = os.environ.get("REALHIRES_MACOS_MIN", "11.0")
 
 EXCLUDES = ["matplotlib", "scipy", "pandas", "PIL", "IPython", "pytest", "setuptools", "pip"]
 
 gui_a = Analysis([os.path.join(SPECPATH, "entry_gui.py")], pathex=[ROOT],
-                 binaries=ffmpeg_bins, datas=ffmpeg_docs, excludes=EXCLUDES)
+                 binaries=ffmpeg_bins, datas=ffmpeg_docs + assets, excludes=EXCLUDES)
 cli_a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT],
                  excludes=EXCLUDES + ["tkinter", "_tkinter"])
 
+if sys.platform.startswith("linux"):
+    # Use the desktop's own fontconfig/freetype: they are on every Linux desktop,
+    # and an old bundled fontconfig cannot read newer distributions' config files.
+    SYSTEM_LIBS = ("libfontconfig.so", "libfreetype.so")
+    gui_a.binaries = [b for b in gui_a.binaries if not os.path.basename(b[0]).startswith(SYSTEM_LIBS)]
+
 gui_exe = EXE(PYZ(gui_a.pure), gui_a.scripts, [], exclude_binaries=True, name="RealHiRes",
-              console=False, upx=False)
+              console=False, upx=False, icon=exe_icon)
 # Different name from the GUI on purpose: Windows and macOS file systems are
 # case-insensitive, so "realhires" would clash with "RealHiRes".
 cli_exe = EXE(PYZ(cli_a.pure), cli_a.scripts, [], exclude_binaries=True, name="realhires-cli",
-              console=True, upx=False)
+              console=True, upx=False, icon=exe_icon)
 
 # The GUI must come first: on macOS the first executable becomes the app's main program.
 coll = COLLECT(gui_exe, gui_a.binaries, gui_a.datas, cli_exe, cli_a.binaries, cli_a.datas,
@@ -44,6 +62,7 @@ coll = COLLECT(gui_exe, gui_a.binaries, gui_a.datas, cli_exe, cli_a.binaries, cl
 
 if sys.platform == "darwin":
     app = BUNDLE(coll, name="RealHiRes.app", bundle_identifier="io.github.su2h1.realhires",
-                 version=VERSION,
+                 version=VERSION, icon=exe_icon,
                  info_plist={"NSHighResolutionCapable": True, "CFBundleShortVersionString": VERSION,
-                             "CFBundleVersion": VERSION, "LSMinimumSystemVersion": "11.0"})
+                             "CFBundleVersion": VERSION, "LSMinimumSystemVersion": MACOS_MIN,
+                             "CFBundleDisplayName": "Real-Hi-Res"})

@@ -1,9 +1,13 @@
 name: Test, build and release
 
-# * Every push / pull request: run the test suite and build the Windows, macOS
-#   and Linux packages (downloadable from the run's "Artifacts" section).
-# * Pushing a tag such as v1.1.0: additionally publish a GitHub Release with
+# * Every push / pull request: run the test suite and build all packages
+#   (downloadable from the run's "Artifacts" section).
+# * Pushing a tag such as v1.2.0: additionally publish a GitHub Release with
 #   the packages attached.
+#
+# Every job runs packaging/ci_build.sh, which fetches FFmpeg, runs pytest with
+# it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
+# binary (packaging/check_compat.py), smoke-tests the frozen CLI and packages.
 on:
   push:
     branches: ["**"]
@@ -15,83 +19,99 @@ permissions:
   contents: write   # needed by the release job to create the release
 
 jobs:
-  build:
-    name: ${{ matrix.asset }}
+  windows:
+    name: RealHiRes-windows-x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip numpy pyinstaller pillow pytest
+      - name: Build, test and package
+        shell: bash
+        env:
+          ASSET: RealHiRes-windows-x64
+        run: bash packaging/ci_build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RealHiRes-windows-x64
+          path: out/*
+          if-no-files-found: error
+
+  macos:
+    name: RealHiRes-macos-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            asset: RealHiRes-windows-x64
-          - os: macos-latest
-            asset: RealHiRes-macos-arm64
-          - os: ubuntu-22.04   # oldest supported glibc => runs on more distros
-            asset: RealHiRes-linux-x64
-    runs-on: ${{ matrix.os }}
+          - arch: arm64          # Apple Silicon (M1 and later)
+            runner: macos-latest
+            macos_min: "11.0"
+            numpy_platform: macosx_11_0_arm64
+          - arch: x86_64         # Intel Macs
+            runner: macos-15-intel
+            macos_min: "10.15"
+            numpy_platform: macosx_10_15_x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
       - name: Install build dependencies
-        run: python -m pip install --upgrade pip numpy pyinstaller pytest
-
-      - name: Download FFmpeg to bundle
-        run: python packaging/fetch_ffmpeg.py
-
-      - name: Run tests (using the FFmpeg that will be bundled)
-        shell: bash
         run: |
-          export PATH="$PWD/build/ffmpeg:$PATH"
-          ffmpeg -hide_banner -version | head -n 1
-          python -m pytest -q
-
-      - name: Build with PyInstaller
-        run: pyinstaller --noconfirm packaging/realhires.spec
-
-      - name: Smoke-test the frozen CLI (no FFmpeg on PATH)
-        shell: bash
-        run: |
-          case "$RUNNER_OS" in
-            Windows) CLI=dist/RealHiRes/realhires-cli.exe ;;
-            macOS)   CLI=dist/RealHiRes.app/Contents/MacOS/realhires-cli ;;
-            *)       CLI=dist/RealHiRes/realhires-cli ;;
-          esac
-          python packaging/smoke_test.py "$CLI"
-
-      - name: Package
-        shell: bash
-        run: |
-          ASSET=${{ matrix.asset }}
-          case "$RUNNER_OS" in
-            Windows)
-              cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
-              (cd dist && 7z a -tzip "../$ASSET.zip" RealHiRes > /dev/null)
-              echo "FILE=$ASSET.zip" >> "$GITHUB_ENV" ;;
-            macOS)
-              mkdir -p pkg/RealHiRes
-              ditto dist/RealHiRes.app pkg/RealHiRes/RealHiRes.app
-              cp packaging/README-RELEASE.txt pkg/RealHiRes/README.txt
-              ditto -c -k --keepParent pkg/RealHiRes "$ASSET.zip"
-              echo "FILE=$ASSET.zip" >> "$GITHUB_ENV" ;;
-            *)
-              cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
-              tar -C dist -czf "$ASSET.tar.gz" RealHiRes
-              echo "FILE=$ASSET.tar.gz" >> "$GITHUB_ENV" ;;
-          esac
-          ls -la "$ASSET".*
-
+          python -m pip install --upgrade pip pyinstaller pillow pytest
+          # pip would pick the NumPy wheel built for the runner's own (new) macOS;
+          # take the one built for the oldest macOS we support instead.
+          python -m pip download numpy --only-binary=:all: --no-deps -d wheels \
+            --platform "${{ matrix.numpy_platform }}" --python-version 3.12 \
+            --implementation cp --abi cp312
+          python -m pip install wheels/numpy-*.whl
+      - name: Build, test and package
+        env:
+          ASSET: RealHiRes-macos-${{ matrix.arch }}
+          MACOS_MIN: ${{ matrix.macos_min }}
+        run: bash packaging/ci_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ env.FILE }}
+          name: RealHiRes-macos-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    name: RealHiRes-linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Build on glibc 2.28 so the package runs on (almost) every distribution
+    # released since 2018; check_compat.py enforces it.
+    container: almalinux:8
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: bash packaging/linux/setup_almalinux8.sh
+      - name: Build, test and package
+        env:
+          ASSET: RealHiRes-linux-${{ matrix.arch }}
+          PYTHON: /opt/venv/bin/python
+          MAX_GLIBC: "2.28"
+        run: bash packaging/ci_build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RealHiRes-linux-${{ matrix.arch }}
+          path: out/*
           if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -99,6 +119,7 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - run: ls -la assets
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:

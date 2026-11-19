@@ -4,9 +4,9 @@ This is run by the release workflow on GitHub's build machines so that the
 release packages work without a separate FFmpeg installation.
 
 Sources (both publish ffmpeg *and* ffprobe as stand-alone executables):
-  * Windows x64 / Linux x64: BtbN/FFmpeg-Builds, LGPL variant
+  * Windows x64, Linux x64 / arm64: BtbN/FFmpeg-Builds, LGPL variant
     https://github.com/BtbN/FFmpeg-Builds
-  * macOS arm64:             Martin Riedl's static builds
+  * macOS arm64 / x86_64:    Martin Riedl's static builds
     https://ffmpeg.martin-riedl.de
 
 Usage: python packaging/fetch_ffmpeg.py [--dest DIR]
@@ -69,8 +69,8 @@ def fetch_btbn_windows(dest: str) -> None:
                     _save(src, dest, "FFMPEG-LICENSE.txt", executable=False)
 
 
-def fetch_btbn_linux(dest: str) -> None:
-    data = download(BTBN + "ffmpeg-master-latest-linux64-lgpl.tar.xz")
+def fetch_btbn_linux(dest: str, arch: str) -> None:
+    data = download(BTBN + f"ffmpeg-master-latest-{arch}-lgpl.tar.xz")
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:xz") as t:
         for m in t.getmembers():
             base = os.path.basename(m.name)
@@ -106,7 +106,9 @@ def main() -> int:
     elif sys.platform == "darwin":
         fetch_riedl_macos(dest, "arm64" if machine in ("arm64", "aarch64") else "amd64")
     elif sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
-        fetch_btbn_linux(dest)
+        fetch_btbn_linux(dest, "linux64")
+    elif sys.platform.startswith("linux") and machine in ("aarch64", "arm64"):
+        fetch_btbn_linux(dest, "linuxarm64")
     else:
         print(f"No prebuilt FFmpeg configured for {sys.platform}/{machine}", file=sys.stderr)
         return 1

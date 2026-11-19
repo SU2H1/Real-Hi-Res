@@ -22,5 +22,8 @@ realhires-gui = "realhires.gui:main"
 [tool.setuptools]
 packages = ["realhires"]
 
+[tool.setuptools.package-data]
+realhires = ["assets/*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

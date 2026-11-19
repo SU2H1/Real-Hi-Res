@@ -28,12 +28,13 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
         "The Real-Hi-Res GUI needs Tkinter, which this Python does not have.\n"
         "Install it (Debian/Ubuntu: sudo apt install python3-tk; Fedora: sudo dnf install "
         "python3-tkinter; Homebrew: brew install python-tk), use a release package, or use "
-        "the command-line tool `realhires` instead."
+        "the command-line tool `realhires` instead.\n"
+        f"(Details: {exc})"
     ) from exc
 
 from . import __version__
 from .cli import AUDIO_EXTENSIONS, collect
-from .probe import ToolMissingError, require_tools
+from .probe import ToolMissingError, external_env, require_tools
 from .report import write_csv, write_json
 from .verdict import ERROR, FAKE, LOSSY, NOT_HIRES, REAL, SUSPECT, VERDICT_ORDER, FileResult, analyze_file
 
@@ -55,12 +56,13 @@ def _work(path: str, max_seconds: Optional[float]) -> FileResult:
 
 
 def reveal_in_file_manager(path: str) -> None:
+    env = external_env()  # do not leak the frozen app's library path
     if sys.platform.startswith("win"):
-        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)], env=env)
     elif sys.platform == "darwin":
-        subprocess.Popen(["open", "-R", path])
+        subprocess.Popen(["open", "-R", path], env=env)
     else:
-        subprocess.Popen(["xdg-open", os.path.dirname(path) or "."])
+        subprocess.Popen(["xdg-open", os.path.dirname(path) or "."], env=env)
 
 
 class Scanner(threading.Thread):
@@ -546,10 +548,22 @@ class App(ttk.Frame):
 def main(argv=None) -> int:
     multiprocessing.freeze_support()
     args = list(sys.argv[1:] if argv is None else argv)
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:  # e.g. started over SSH or on a server without a desktop
+        print(f"Real-Hi-Res cannot open its window: {exc}\n"
+              "The GUI needs a graphical desktop (X11, or Wayland with XWayland). "
+              "On a server or over SSH use the command-line tool instead "
+              "(realhires / realhires-cli).", file=sys.stderr)
+        return 1
     root.title(f"Real-Hi-Res {__version__} — fake hi-res audio detector")
     root.geometry("1180x760")
     root.minsize(820, 520)
+    icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+    try:
+        root.iconphoto(True, tk.PhotoImage(file=icon))
+    except (tk.TclError, OSError):
+        pass  # icon is cosmetic only
     style = ttk.Style(root)
     if sys.platform.startswith("linux") and "clam" in style.theme_names():
         style.theme_use("clam")

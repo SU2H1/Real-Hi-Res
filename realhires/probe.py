@@ -63,12 +63,32 @@ def tool(name: str) -> str:
     return _TOOLS[name]
 
 
+def external_env() -> dict:
+    """Environment for launching *other* programs (ffmpeg, the file manager).
+
+    A frozen (PyInstaller) Linux build points LD_LIBRARY_PATH at its bundled
+    libraries; a system ffmpeg or file manager inheriting that would load the
+    bundle's older libstdc++/libX11 and crash.  Restore the user's original
+    value instead.  (macOS: same for DYLD_LIBRARY_PATH.)
+    """
+    env = dict(os.environ)
+    if getattr(sys, "frozen", False):
+        for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+            orig = env.pop(var + "_ORIG", None)
+            if orig is not None:
+                env[var] = orig
+            else:
+                env.pop(var, None)
+    return env
+
+
 def _no_window() -> dict:
-    """Stop Windows from flashing a console window for every ffmpeg call
-    when running from the windowed GUI build."""
+    """Keyword arguments for every external process: a clean environment and,
+    on Windows, no console window flashing up from the windowed GUI build."""
+    kw = {"env": external_env()}
     if os.name == "nt":
-        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
-    return {}
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return kw
 
 
 def require_tools() -> None:
