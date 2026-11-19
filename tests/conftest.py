@@ -1,0 +1,98 @@
+"""Fixtures that synthesise real and fake hi-res files with ffmpeg."""
+
+import subprocess
+
+import numpy as np
+import pytest
+
+
+def music_like(fs: int, seconds: float = 6.0, top_hz: float = None, seed: int = 0,
+               order: int = 2) -> np.ndarray:
+    """Stereo pink-ish noise with a smooth roll-off, standing in for music.
+
+    Spectrum falls ~3 dB/octave (like real music) and, if `top_hz` is given,
+    fades out gently above it (``order`` x 6 dB/octave) instead of stopping at a
+    brick wall.
+    """
+    rng = np.random.default_rng(seed)
+    n = int(fs * seconds)
+    spec = rng.normal(size=(2, n // 2 + 1)) + 1j * rng.normal(size=(2, n // 2 + 1))
+    f = np.fft.rfftfreq(n, 1 / fs)
+    shape = 1 / np.sqrt(np.maximum(f, 20.0))
+    if top_hz:
+        shape *= 1 / (1 + (f / top_hz) ** order)
+    x = np.fft.irfft(spec * shape, n=n, axis=1).T
+    x *= 10 ** (-12 / 20) / np.max(np.abs(x))  # peak -12 dBFS
+    return x
+
+
+def ffmpeg_write(path, x: np.ndarray, fs: int, out_args):
+    """Pipe float64 stereo samples into ffmpeg and encode with `out_args`."""
+    cmd = ["ffmpeg", "-v", "error", "-y", "-f", "f64le", "-ar", str(fs), "-ac", str(x.shape[1]),
+           "-i", "-", *out_args, str(path)]
+    subprocess.run(cmd, input=np.ascontiguousarray(x, dtype="<f8").tobytes(), check=True)
+    return str(path)
+
+
+def ffmpeg_convert(src, dst, out_args):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), *out_args, str(dst)], check=True)
+    return str(dst)
+
+
+@pytest.fixture(scope="session")
+def library(tmp_path_factory):
+    """A small fake music library: name -> file path."""
+    d = tmp_path_factory.mktemp("library")
+    files = {}
+
+    # Genuine 24/96 with ultrasonic content up to ~40 kHz.
+    files["real_24_96"] = ffmpeg_write(d / "real_24_96.flac", music_like(96000, top_hz=40000), 96000,
+                                       ["-c:a", "flac", "-sample_fmt", "s32"])
+    # Genuine 24/192.
+    files["real_24_192"] = ffmpeg_write(d / "real_24_192.wav", music_like(192000, 4, top_hz=70000),
+                                        192000, ["-c:a", "pcm_s24le"])
+    # Genuine 24/48 (hi-res by bit depth only).
+    files["real_24_48"] = ffmpeg_write(d / "real_24_48.wav", music_like(48000), 48000, ["-c:a", "pcm_s24le"])
+
+    # CD master (16/44.1) – standard resolution.
+    cd = ffmpeg_write(d / "cd_16_44.wav", music_like(44100), 44100, ["-c:a", "pcm_s16le"])
+    files["cd_16_44"] = cd
+
+    # Fake: CD master upsampled to 24/96 (soxr, high quality).
+    files["fake_up_44_to_96"] = ffmpeg_convert(cd, d / "fake_up_44_to_96.flac",
+                                               ["-af", "aresample=96000:resampler=soxr",
+                                                "-c:a", "flac", "-sample_fmt", "s32"])
+    # Fake: CD master upsampled to 24/192 with ffmpeg's default resampler.
+    files["fake_up_44_to_192"] = ffmpeg_convert(cd, d / "fake_up_44_to_192.wav",
+                                                ["-ar", "192000", "-c:a", "pcm_s24le"])
+    # Fake: 48 kHz master upsampled to 96 kHz.
+    m48 = ffmpeg_write(d / "m48.wav", music_like(48000, seed=3), 48000, ["-c:a", "pcm_s16le"])
+    files["fake_up_48_to_96"] = ffmpeg_convert(m48, d / "fake_up_48_to_96.wav",
+                                               ["-af", "aresample=96000:resampler=soxr", "-c:a", "pcm_s24le"])
+    # Fake: 96 kHz master upsampled to 192 kHz.
+    m96 = ffmpeg_write(d / "m96.wav", music_like(96000, 4, seed=4), 96000, ["-c:a", "pcm_s24le"])
+    files["fake_up_96_to_192"] = ffmpeg_convert(m96, d / "fake_up_96_to_192.wav",
+                                                ["-af", "aresample=192000:resampler=soxr", "-c:a", "pcm_s24le"])
+
+    # Fake: 16-bit audio zero-padded into a 24/96 container (full bandwidth!).
+    s16 = ffmpeg_write(d / "s16_96.wav", music_like(96000, top_hz=40000, seed=5), 96000, ["-c:a", "pcm_s16le"])
+    files["fake_padded_16_in_24"] = ffmpeg_convert(s16, d / "fake_padded_16_in_24.flac",
+                                                   ["-c:a", "flac", "-sample_fmt", "s32"])
+    # Fake: 16-bit audio in a 32-bit float container.
+    files["fake_padded_16_in_float"] = ffmpeg_convert(s16, d / "fake_padded_16_in_float.wav",
+                                                      ["-c:a", "pcm_f32le"])
+
+    # Fake: MP3 decoded and upsampled to 24/96.
+    mp3 = ffmpeg_convert(cd, d / "src.mp3", ["-c:a", "libmp3lame", "-b:a", "128k"])
+    files["fake_from_mp3"] = ffmpeg_convert(mp3, d / "fake_from_mp3.flac",
+                                            ["-af", "aresample=96000:resampler=soxr",
+                                             "-c:a", "flac", "-sample_fmt", "s32"])
+    # A lossy file is reported as such.
+    files["lossy_mp3"] = mp3
+
+    # Ambiguous: a 96 kHz file whose content gently fades out well below 22 kHz.
+    files["dull_96"] = ffmpeg_write(d / "dull_96.wav", music_like(96000, top_hz=4000, seed=7, order=8), 96000,
+                                    ["-c:a", "pcm_s24le"])
+    # Silence.
+    files["silence"] = ffmpeg_write(d / "silence.wav", np.zeros((96000, 2)), 96000, ["-c:a", "pcm_s24le"])
+    return files

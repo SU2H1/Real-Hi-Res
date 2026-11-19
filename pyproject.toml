@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "realhires"
+version = "1.0.0"
+description = "Scan audio files and detect fake high-resolution audio (upsampled or bit-padded)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+realhires = "realhires.cli:main"
+
+[tool.setuptools]
+packages = ["realhires"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
