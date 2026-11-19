@@ -811,6 +811,200 @@ class FixDialog(tk.Toplevel):
             return
         self.destroy()
 
+
+class CardGrid(ttk.Frame):
+    """Music-player style grid of album or artist cards: cover art, a ring
+    showing how many of the songs are fake/suspicious, and the names."""
+
+    CW, CH, COVER, PAD = 184, 246, 150, 12
+    RING_FAKE, RING_SUS, RING_OK, RING_BG = "#d32f2f", "#f39c12", "#43a047", "#e6e6e6"
+
+    def __init__(self, master, app: "App"):
+        super().__init__(master)
+        import tkinter.font as tkfont
+
+        self.app = app
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0)
+        self.vs = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vs.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vs.grid(row=0, column=1, sticky="ns")
+        self.groups: list = []
+        self.mode = "album"
+        self.images: Dict[str, tk.PhotoImage] = {}
+        self.image_items: Dict[str, int] = {}
+        self.positions: Dict[str, tuple] = {}
+        self.found: set = set()
+        self.current: Optional[str] = None
+        self.f_title = tkfont.Font(family="TkDefaultFont", size=10, weight="bold")
+        self.f_sub = tkfont.Font(family="TkDefaultFont", size=9)
+        self.f_ring = tkfont.Font(family="TkDefaultFont", size=9, weight="bold")
+        self._cols = 0
+        self.canvas.bind("<Configure>", lambda e: self._maybe_relayout())
+        for w in (self.canvas,):
+            w.bind("<MouseWheel>", self._wheel)
+            w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
+            w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+
+    @staticmethod
+    def _ph_tag(key: str) -> str:
+        """Canvas tag for a card's placeholder.  Album names can contain spaces,
+        braces and other characters Tcl rejects in tags, so use a hash."""
+        import hashlib
+
+        return "ph" + hashlib.md5(key.encode("utf-8", "replace")).hexdigest()[:12]
+
+    def _wheel(self, e) -> None:
+        step = -1 * (e.delta // 120 if abs(e.delta) >= 120 else (1 if e.delta > 0 else -1))
+        self.canvas.yview_scroll(step * 3, "units")
+
+    def set_groups(self, groups, mode: str) -> None:
+        self.groups, self.mode = groups, mode
+        self.relayout()
+
+    def _maybe_relayout(self) -> None:
+        cols = max(1, (self.canvas.winfo_width() - self.PAD) // self.CW)
+        if cols != self._cols:
+            self.relayout()
+
+    def _fit(self, text: str, font, width: int) -> str:
+        if font.measure(text) <= width:
+            return text
+        while text and font.measure(text + "…") > width:
+            text = text[:-1]
+        return text + "…"
+
+    def relayout(self) -> None:
+        c = self.canvas
+        c.delete("all")
+        self.image_items.clear()
+        self.positions.clear()
+        w = max(c.winfo_width(), self.CW + self.PAD)
+        self._cols = cols = max(1, (w - self.PAD) // self.CW)
+        if not self.groups:
+            msg = ("Scan some files first: albums and artists are read from the files' tags "
+                   "(untagged files are grouped by folder)." if not self.app.results else
+                   "No album or artist matches the search.")
+            c.create_text(w / 2, 60, text=msg, fill="#888", width=w - 40)
+            c.configure(scrollregion=(0, 0, w, 120))
+            return
+        for i, g in enumerate(self.groups):
+            x = self.PAD + (i % cols) * self.CW
+            y = self.PAD + (i // cols) * self.CH
+            self.positions[g.key] = (x, y)
+            self._draw_card(g, x, y)
+        rows = (len(self.groups) + cols - 1) // cols
+        c.configure(scrollregion=(0, 0, w, self.PAD + rows * self.CH))
+        self.app.request_covers(self.groups, self.mode)
+
+    def _draw_card(self, g, x: int, y: int) -> None:
+        c, S = self.canvas, self.COVER
+        tag = f"card{id(g)}"
+        hl = self.current == g.key
+        found = g.key in self.found
+        c.create_rectangle(x - 6, y - 6, x + self.CW - 18, y + self.CH - 14,
+                           fill="#fff3c4" if found else "#ffffff",
+                           outline="#f39c12" if hl else ("#e0c060" if found else "#ffffff"),
+                           width=3 if hl else 1, tags=(tag, "cardbg"))
+        img = self.images.get(f"{self.mode}:{g.key}")
+        if img is not None:
+            self.image_items[g.key] = c.create_image(x, y, image=img, anchor="nw", tags=(tag,))
+        else:  # placeholder until (or unless) a cover is found
+            hue = sum(map(ord, g.title)) % 360
+            import colorsys
+
+            r, gg, b = colorsys.hls_to_rgb(hue / 360, 0.42, 0.35)
+            col = f"#{int(r * 255):02x}{int(gg * 255):02x}{int(b * 255):02x}"
+            c.create_rectangle(x, y, x + S, y + S, fill=col, outline="", tags=(tag, self._ph_tag(g.key)))
+            initials = "".join(wd[0] for wd in g.title.split()[:2]).upper() or "?"
+            c.create_text(x + S / 2, y + S / 2, text=initials, fill="white",
+                          font=("TkDefaultFont", 28, "bold"), tags=(tag, self._ph_tag(g.key)))
+        # ring badge (bottom-right corner of the cover)
+        cx, cy, R, r = x + S - 8, y + S - 8, 27, 18
+        c.create_oval(cx - R - 3, cy - R - 3, cx + R + 3, cy + R + 3, fill="white", outline="", tags=(tag,))
+        total = max(g.total, 1)
+        start = 90.0
+        for count, color in ((g.fake, self.RING_FAKE), (g.suspicious, self.RING_SUS),
+                             (g.total - g.problems, self.RING_OK)):
+            if count <= 0:
+                continue
+            ext = 360.0 * count / total
+            if ext >= 359.99:
+                c.create_oval(cx - R, cy - R, cx + R, cy + R, fill=color, outline="", tags=(tag,))
+            else:
+                c.create_arc(cx - R, cy - R, cx + R, cy + R, start=start, extent=-ext, fill=color,
+                             outline="", style="pieslice", tags=(tag,))
+            start -= ext
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill="white", outline="", tags=(tag,))
+        if self.app.cfg.card_label.startswith("Songs"):
+            label = f"{g.problems}/{g.total}"
+        else:
+            label = f"{g.problem_pct:.0f}%"
+        c.create_text(cx, cy, text=label, font=self.f_ring,
+                      fill=self.RING_FAKE if g.fake else (self.RING_SUS if g.suspicious else self.RING_OK),
+                      tags=(tag,))
+        tw = self.CW - 28
+        c.create_text(x, y + S + 10, anchor="nw", text=self._fit(g.title, self.f_title, tw),
+                      font=self.f_title, fill="#1f2328", tags=(tag,))
+        c.create_text(x, y + S + 29, anchor="nw", text=self._fit(g.subtitle, self.f_sub, tw),
+                      font=self.f_sub, fill="#666", tags=(tag,))
+        if g.problems:
+            parts = []
+            if g.fake:
+                parts.append(f"{g.fake} fake")
+            if g.suspicious:
+                parts.append(f"{g.suspicious} suspicious")
+            line = f"{' + '.join(parts)} of {g.total} song{'s' if g.total != 1 else ''}"
+            col = self.RING_FAKE if g.fake else self.RING_SUS
+        else:
+            line, col = f"All {g.total} song{'s' if g.total != 1 else ''} fine", self.RING_OK
+        c.create_text(x, y + S + 46, anchor="nw", text=self._fit(line, self.f_sub, tw), font=self.f_sub,
+                      fill=col, tags=(tag,))
+        c.tag_bind(tag, "<Button-1>", lambda e, g=g: self.app.open_group(g, self.mode))
+        c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+        c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+
+    def set_cover(self, key: str, png: Optional[bytes]) -> None:
+        """A cover arrived from the loader thread: show it on its card."""
+        import base64
+
+        mode, _, gkey = key.partition(":")
+        if not png:
+            return
+        try:
+            img = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"), format="png")
+        except tk.TclError:
+            return
+        self.images[key] = img
+        if mode == self.mode and gkey in self.positions:
+            x, y = self.positions[gkey]
+            self.canvas.delete(self._ph_tag(gkey))
+            item = self.canvas.create_image(x, y, image=img, anchor="nw")
+            self.canvas.tag_lower(item)
+            self.canvas.tag_lower("cardbg")
+            for g in self.groups:
+                if g.key == gkey:
+                    self.canvas.addtag_withtag(f"card{id(g)}", item)
+                    break
+
+    def highlight(self, found: set, current: Optional[str]) -> None:
+        self.found, self.current = found, current
+        top = self.canvas.yview()[0]
+        self.relayout()
+        if current in self.positions:
+            y = self.positions[current][1]
+            total = float(self.canvas.cget("scrollregion").split()[3] or 1)
+            view_h = self.canvas.winfo_height()
+            vis_top, vis_bot = top * total, top * total + view_h
+            if not (vis_top <= y and y + self.CH <= vis_bot):
+                self.canvas.yview_moveto(max(0.0, (y - 10) / total))
+            else:
+                self.canvas.yview_moveto(top)
+        else:
+            self.canvas.yview_moveto(top)
+
 # -------------------------------------------------------------------- app ---
 class App(ttk.Frame):
     COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "name", "folder")
@@ -837,6 +1031,15 @@ class App(ttk.Frame):
         self.scan_started = 0.0
         self.last_elapsed: Optional[float] = None
         self.sort_col, self.sort_rev = "verdict", False
+        self.view_var = tk.StringVar(value=self.cfg.view_mode)
+        self.group_filter: Optional[dict] = None   # {"mode","key","label","paths","back","filters"}
+        self.cover_requests: queue.Queue = queue.Queue()
+        self.cover_seen: set = set()
+        self.find_var = tk.StringVar()
+        self.find_matches: List[str] = []
+        self.find_index = -1
+        self.find_open = False
+        self._regroup_pending = False
         self.show_vars = {v: tk.BooleanVar(value=v in self.cfg.shown_verdicts) for v in VERDICT_ORDER}
         self.search_var = tk.StringVar()
         self.quick_var = tk.BooleanVar(value=False)
@@ -847,6 +1050,8 @@ class App(ttk.Frame):
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
         root.protocol("WM_DELETE_WINDOW", self.quit_app)
+        if self.view_var.get() != "Files":
+            self.after(50, self.switch_view)
         if initial:
             for p in initial:
                 self._add_source(p)
@@ -872,13 +1077,19 @@ class App(ttk.Frame):
         e.add_command(label="Open file", accelerator=f"{acc}+Enter", command=self.open_file)
         e.add_command(label="Copy path", accelerator=f"{acc}+C", command=self.copy_path)
         e.add_separator()
-        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+F",
+        e.add_command(label="Find…", accelerator=f"{acc}+F", command=self.open_find)
+        e.add_separator()
+        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+Shift+F",
                       command=self.fix_selected)
         e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
         e.add_separator()
         e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
         m.add_cascade(label="Edit", menu=e)
         v = tk.Menu(m, tearoff=False)
+        v.add_command(label="Files", command=lambda: self.set_view("Files"))
+        v.add_command(label="By album", command=lambda: self.set_view("By album"))
+        v.add_command(label="By artist", command=lambda: self.set_view("By artist"))
+        v.add_separator()
         v.add_command(label="Scan summary…", command=self.show_summary)
         v.add_command(label="Show problem files only", command=lambda: self.set_filters(PROBLEM_VERDICTS))
         v.add_command(label="Show all files", command=lambda: self.set_filters(VERDICT_ORDER))
@@ -890,7 +1101,10 @@ class App(ttk.Frame):
         self.root.bind_all(f"<{mod}-o>", lambda e: self.add_folder())
         self.root.bind_all(f"<{mod}-q>", lambda e: self.quit_app())
         self.root.bind_all(f"<{mod}-comma>", lambda e: self.open_settings())
-        self.root.bind_all(f"<{mod}-f>", lambda e: self.fix_selected())
+        self.root.bind_all(f"<{mod}-f>", lambda e: self.open_find())
+        self.root.bind_all(f"<{mod}-F>", lambda e: self.fix_selected())  # Shift+F
+        self.root.bind_all("<F3>", lambda e: self.find_step(1))
+        self.root.bind_all("<Shift-F3>", lambda e: self.find_step(-1))
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -938,8 +1152,31 @@ class App(ttk.Frame):
         self.src_tree.bind("<Delete>", lambda e: self.remove_sources())
         self.src_tree.bind("<BackSpace>", lambda e: self.remove_sources())
 
+        vbar = ttk.Frame(self)
+        vbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(vbar, text="View:").pack(side="left")
+        for label in ("Files", "By album", "By artist"):
+            ttk.Radiobutton(vbar, text=label, value=label, variable=self.view_var, style="Toolbutton",
+                            command=self.switch_view).pack(side="left", padx=(4, 0))
+        self.grid_opts = ttk.Frame(vbar)
+        ttk.Label(self.grid_opts, text="Rings show:").pack(side="left", padx=(16, 4))
+        self.card_label_var = tk.StringVar(value=self.cfg.card_label)
+        ttk.Combobox(self.grid_opts, textvariable=self.card_label_var, values=["Percentage", "Songs (x of n)"],
+                     state="readonly", width=14).pack(side="left")
+        ttk.Label(self.grid_opts, text="Sort:").pack(side="left", padx=(12, 4))
+        self.group_sort_var = tk.StringVar(value=self.cfg.group_sort)
+        ttk.Combobox(self.grid_opts, textvariable=self.group_sort_var, values=["Most fake first", "Name"],
+                     state="readonly", width=14).pack(side="left")
+        self.card_label_var.trace_add("write", lambda *a: self._grid_option_changed())
+        self.group_sort_var.trace_add("write", lambda *a: self._grid_option_changed())
+        self.chip = ttk.Frame(vbar)
+        self.chip_label = ttk.Label(self.chip, foreground="#0b62c4", font=("TkDefaultFont", 9, "bold"))
+        self.chip_label.pack(side="left", padx=(16, 6))
+        self.chip_back = ttk.Button(self.chip, command=self.close_group)
+        self.chip_back.pack(side="left")
+
         filt = ttk.Frame(self)
-        filt.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        filt.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         ttk.Label(filt, text="Show:").pack(side="left")
         self.filter_checks: Dict[str, ttk.Checkbutton] = {}
         for v in VERDICT_ORDER:
@@ -952,9 +1189,29 @@ class App(ttk.Frame):
         ttk.Label(filt, text="Search:").pack(side="right", padx=(0, 4))
         self.search_var.trace_add("write", lambda *a: self.refresh())
 
+        # browser-style find bar (Ctrl/Cmd+F)
+        self.find_frame = ttk.Frame(self, padding=(4, 3))
+        self.find_frame.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(self.find_frame, text="Find:").pack(side="left")
+        self.find_entry = ttk.Entry(self.find_frame, textvariable=self.find_var, width=34)
+        self.find_entry.pack(side="left", padx=(4, 4))
+        ttk.Button(self.find_frame, text="▲", width=3, command=lambda: self.find_step(-1)).pack(side="left")
+        ttk.Button(self.find_frame, text="▼", width=3, command=lambda: self.find_step(1)).pack(side="left", padx=(2, 0))
+        self.find_count = ttk.Label(self.find_frame, text="", foreground="#555")
+        self.find_count.pack(side="left", padx=(8, 0))
+        ttk.Button(self.find_frame, text="✕", width=3, command=self.close_find).pack(side="right")
+        ttk.Label(self.find_frame, text="Enter = next, Shift+Enter = previous, Esc = close",
+                  foreground="#888", font=("TkDefaultFont", 8)).pack(side="right", padx=8)
+        self.find_entry.bind("<Return>", lambda e: self.find_step(1))
+        self.find_entry.bind("<KP_Enter>", lambda e: self.find_step(1))
+        self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
+        self.find_entry.bind("<Escape>", lambda e: self.close_find())
+        self.find_var.trace_add("write", lambda *a: self.update_find(reset=True))
+        self.find_frame.grid_remove()
+
         panes = ttk.PanedWindow(self, orient="vertical")
-        panes.grid(row=3, column=0, sticky="nsew")
-        self.rowconfigure(3, weight=1)
+        panes.grid(row=5, column=0, sticky="nsew")
+        self.rowconfigure(5, weight=1)
 
         # result list
         table = ttk.Frame(panes)
@@ -972,6 +1229,8 @@ class App(ttk.Frame):
             self.tree.tag_configure(v, foreground=color)
         self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
         self.tree.tag_configure(RUNNING, foreground=RUNNING_STYLE[1])
+        self.tree.tag_configure("found", background="#fff59d")
+        self.tree.tag_configure("found_cur", background="#ffb74d")
         ys = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -986,6 +1245,10 @@ class App(ttk.Frame):
         self.tree.bind(f"<{mod}-c>", lambda e: self.copy_path())
         self.tree.bind("<Button-3>", self._context_menu)
         self.tree.bind("<Button-2>", self._context_menu)  # macOS right click
+        self.cards = CardGrid(table, self)
+        self.cards.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
+        self.cards.grid_remove()
+        self._table_widgets = (self.tree, ys, xs)
         panes.add(table, weight=3)
 
         # dashboard
@@ -1047,8 +1310,8 @@ class App(ttk.Frame):
         panes.add(dash, weight=2)
 
         status = ttk.Frame(self)
-        status.grid(row=4, column=0, sticky="ews", pady=(6, 0))
-        self.rowconfigure(4, weight=0, minsize=24)
+        status.grid(row=6, column=0, sticky="ews", pady=(6, 0))
+        self.rowconfigure(6, weight=0, minsize=24)
         status.columnconfigure(1, weight=1)
         self.progress = ttk.Progressbar(status, length=220, mode="determinate")
         self.progress.grid(row=0, column=0, padx=(0, 8))
@@ -1310,6 +1573,8 @@ class App(ttk.Frame):
                     self.progress.configure(mode="determinate", maximum=max(payload, 1), value=0)
                     if payload == 0:
                         self.status_var.set("No audio files found in the selected sources.")
+                elif kind == "cover":
+                    self.cards.set_cover(payload, rest[0])
                 elif kind == "listing":
                     self._on_listing(payload, rest[0])
                 elif kind == "listed":
@@ -1330,6 +1595,8 @@ class App(ttk.Frame):
                     messagebox.showerror("Scan failed", payload)
         except queue.Empty:
             pass
+        if dirty:
+            self._schedule_regroup()
         if dirty and self.scanning:
             self.progress["value"] = self.done
             self._update_status()
@@ -1379,13 +1646,212 @@ class App(ttk.Frame):
         else:
             self.status_var.set(f"Scanning ({self.scan_workers} at a time): {self.done}/{self.total} files  ·  {tail}")
 
+    # ---------- views: files / by album / by artist ----------------------
+    def set_view(self, mode: str) -> None:
+        self.view_var.set(mode)
+        self.switch_view()
+
+    def switch_view(self) -> None:
+        mode = self.view_var.get()
+        if mode != "Files" and self.group_filter:
+            self.close_group(switch=False)
+        grid_mode = mode != "Files"
+        for w in self._table_widgets:
+            (w.grid_remove if grid_mode else w.grid)()
+        if grid_mode:
+            self.cards.grid()
+            self.grid_opts.pack(side="left")
+            self.regroup()
+        else:
+            self.cards.grid_remove()
+            self.grid_opts.pack_forget()
+        if self.cfg.view_mode != mode:
+            self.cfg.view_mode = mode
+            self.save_settings()
+        if self.find_open:
+            self.update_find(reset=True)
+
+    def _grid_option_changed(self) -> None:
+        changed = False
+        for name, var in (("card_label", self.card_label_var), ("group_sort", self.group_sort_var)):
+            if getattr(self.cfg, name) != var.get():
+                setattr(self.cfg, name, var.get())
+                changed = True
+        if changed:
+            self.save_settings()
+            self.regroup()
+
+    def current_groups(self):
+        from .library import group_results, sort_groups
+
+        mode = "album" if self.view_var.get() == "By album" else "artist"
+        groups = group_results(list(self.results.values()), mode)
+        q = self.search_var.get().strip().lower()
+        if q:
+            groups = [g for g in groups if q in g.title.lower() or q in g.subtitle.lower()]
+        return mode, sort_groups(groups, self.cfg.group_sort)
+
+    def regroup(self) -> None:
+        self._regroup_pending = False
+        if self.view_var.get() == "Files":
+            return
+        mode, groups = self.current_groups()
+        self.cards.set_groups(groups, mode)
+        if self.find_open:
+            self.update_find(reset=False)
+
+    def _schedule_regroup(self) -> None:
+        if not self._regroup_pending and self.view_var.get() != "Files":
+            self._regroup_pending = True
+            self.after(800, self.regroup)
+
+    def request_covers(self, groups, mode: str) -> None:
+        """Queue cover look-ups (in display order) for a background thread."""
+        for g in groups:
+            key = f"{mode}:{g.key}"
+            if key not in self.cover_seen:
+                self.cover_seen.add(key)
+                self.cover_requests.put((key, list(g.cover_candidates)))
+        if not getattr(self, "_cover_thread", None):
+            self._cover_thread = threading.Thread(target=self._cover_worker, daemon=True)
+            self._cover_thread.start()
+
+    def _cover_worker(self) -> None:
+        from .covers import cover_png
+
+        while True:
+            key, paths = self.cover_requests.get()
+            try:
+                png = cover_png(paths, CardGrid.COVER)
+            except Exception:  # noqa: BLE001 - a broken cover must not stop the others
+                png = None
+            self.queue.put(("cover", key, png))
+
+    def open_group(self, g, mode: str) -> None:
+        """Clicking a card: list that album's/artist's songs (all verdicts)."""
+        back = self.view_var.get()
+        filters = {v: var.get() for v, var in self.show_vars.items()}
+        label = f"Album: {g.title} — {g.subtitle}" if mode == "album" else f"Artist: {g.title}"
+        label += f"  ({g.problems} of {g.total} fake/suspicious)"
+        self.group_filter = {"mode": mode, "key": g.key, "paths": set(g.paths), "back": back,
+                             "filters": filters, "order": list(g.paths)}
+        for var in self.show_vars.values():
+            var.set(True)
+        self.view_var.set("Files")
+        self.switch_view()
+        self.chip_label.configure(text=label)
+        self.chip_back.configure(text=f"◀ Back to {'albums' if mode == 'album' else 'artists'}")
+        self.chip.pack(side="left")
+        self.sort_col, self.sort_rev = "track", False
+        self.refresh()
+        kids = self.tree.get_children()
+        if kids:
+            first = next((k for k in kids if self.results.get(k) and self.results[k].is_problem), kids[0])
+            self.tree.selection_set(first)
+            self.tree.focus(first)
+            self.tree.see(first)
+
+    def close_group(self, switch: bool = True) -> None:
+        gf = self.group_filter
+        if not gf:
+            return
+        self.group_filter = None
+        self.chip.pack_forget()
+        for v, on in gf["filters"].items():
+            self.show_vars[v].set(on)
+        if self.sort_col == "track":
+            self.sort_col, self.sort_rev = "verdict", False
+        if switch:
+            self.view_var.set(gf["back"])
+            self.switch_view()
+        self.refresh()
+
+    # ---------- find (Ctrl/Cmd+F) -----------------------------------------
+    def open_find(self) -> None:
+        self.find_open = True
+        self.find_frame.grid()
+        self.find_entry.focus_set()
+        self.find_entry.select_range(0, "end")
+        self.update_find(reset=True)
+
+    def close_find(self) -> None:
+        self.find_open = False
+        self.find_frame.grid_remove()
+        self.find_matches, self.find_index = [], -1
+        self._apply_find_highlight()
+        self.tree.focus_set()
+
+    def _find_candidates(self) -> List[tuple]:
+        """[(id, searchable text)] of what is currently shown."""
+        if self.view_var.get() == "Files":
+            out = []
+            for iid in self.tree.get_children():
+                vals = self.tree.item(iid, "values")
+                r = self.results.get(iid)
+                extra = " ".join((r.tags or {}).values()) if r else ""
+                out.append((iid, " ".join(str(v) for v in vals) + " " + extra))
+            return out
+        return [(g.key, f"{g.title} {g.subtitle}") for g in self.cards.groups]
+
+    def update_find(self, reset: bool = False) -> None:
+        if not self.find_open:
+            return
+        q = self.find_var.get().strip().lower()
+        prev = self.find_matches[self.find_index] if 0 <= self.find_index < len(self.find_matches) else None
+        self.find_matches = [i for i, text in self._find_candidates() if q and q in text.lower()]
+        if not self.find_matches:
+            self.find_index = -1
+        elif reset or prev not in self.find_matches:
+            self.find_index = 0
+        else:
+            self.find_index = self.find_matches.index(prev)
+        self._apply_find_highlight(jump=reset)
+
+    def find_step(self, delta: int) -> str:
+        if not self.find_open:
+            self.open_find()
+            return "break"
+        if self.find_matches:
+            self.find_index = (self.find_index + delta) % len(self.find_matches)
+            self._apply_find_highlight(jump=True)
+        return "break"
+
+    def _apply_find_highlight(self, jump: bool = False) -> None:
+        q = self.find_var.get().strip()
+        n = len(self.find_matches)
+        if self.find_open:
+            self.find_count.configure(
+                text=(f"{self.find_index + 1} of {n}" if n else ("No matches" if q else "")),
+                foreground="#555" if n or not q else "#c62828")
+        current = self.find_matches[self.find_index] if 0 <= self.find_index < n else None
+        if self.view_var.get() == "Files":
+            found = set(self.find_matches)
+            for iid in self.tree.get_children():
+                tags = tuple(t for t in self.tree.item(iid, "tags") if t not in ("found", "found_cur"))
+                if iid == current:
+                    tags += ("found_cur",)
+                elif iid in found:
+                    tags += ("found",)
+                self.tree.item(iid, tags=tags)
+            if current and jump:
+                self.tree.see(current)
+                self.tree.selection_set(current)
+                self.tree.focus(current)
+        else:
+            self.cards.highlight(set(self.find_matches), current if jump or current else None)
+
     # ---------- table ----------------------------------------------------
     def set_filters(self, verdicts) -> None:
         for v, var in self.show_vars.items():
             var.set(v in verdicts)
         self.refresh()
 
+    def _in_group(self, path: str) -> bool:
+        return self.group_filter is None or path in self.group_filter["paths"]
+
     def _matches(self, r: FileResult) -> bool:
+        if not self._in_group(r.path):
+            return False
         if not self.show_vars.get(r.verdict, tk.BooleanVar(value=True)).get():
             return False
         q = self.search_var.get().strip().lower()
@@ -1435,6 +1901,9 @@ class App(ttk.Frame):
             return os.path.basename(r.path).lower()
         if c == "why":
             return (r.summary.lower(), r.path.lower())
+        if c == "track" and self.group_filter:
+            order = self.group_filter["order"]
+            return order.index(r.path) if r.path in order else len(order)
         return r.path.lower()
 
     def sort_by(self, col: str) -> None:
@@ -1452,7 +1921,8 @@ class App(ttk.Frame):
         # Listed files that have not been scanned yet are always shown, so the
         # user can see what was added.
         for path in self.all_files():
-            if path not in self.results and self._search_ok(path) and not self.tree.exists(path):
+            if (path not in self.results and self._search_ok(path) and self._in_group(path)
+                    and not self.tree.exists(path)):
                 self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
         keep = [i for i in selected if self.tree.exists(i)]
         if keep:
@@ -1462,6 +1932,10 @@ class App(ttk.Frame):
             self.tree.heading(c, text=self.HEADINGS[c] + arrow)
         if self.results:
             self._update_status(final=not self.scanning)
+        if self.view_var.get() != "Files":
+            self._schedule_regroup()
+        elif self.find_open:
+            self.update_find(reset=False)
 
     # ---------- dashboard ------------------------------------------------
     def _current(self) -> Optional[FileResult]:

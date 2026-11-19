@@ -21,6 +21,7 @@ from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
 GROUPS = ("Detection", "Scanning", "Display", "Fixing")
+SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
                 "LOSSY FORMAT", "ERROR"]
@@ -113,6 +114,16 @@ class Settings:
     double_click: str = _f("Open folder", "Display", "Double-click / Enter opens",
                            "What double-clicking a row (or pressing Enter) does.",
                            choices=["Open folder", "Open file"], kind="choice")
+    view_mode: str = _f("Files", "Display", "Start in view",
+                        "Which view the result area shows when the app starts.",
+                        choices=["Files", "By album", "By artist"], kind="choice")
+    card_label: str = _f("Percentage", "Display", "Album/artist rings show",
+                         "What the ring on each album/artist card shows: the share of fake or "
+                         "suspicious songs, or how many songs out of the total.",
+                         choices=["Percentage", "Songs (x of n)"], kind="choice")
+    group_sort: str = _f("Most fake first", "Display", "Sort albums/artists by",
+                         "Order of the album and artist cards.",
+                         choices=["Most fake first", "Name"], kind="choice")
     colormap: str = _f("inferno", "Display", "Spectrogram colours",
                        "Colour map of the spectrogram.", choices=COLORMAPS, kind="choice")
     spectrogram_range_db: float = _f(
@@ -174,7 +185,9 @@ class Settings:
         return out
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["_version"] = SETTINGS_VERSION
+        return d
 
     @classmethod
     def from_dict(cls, data: Optional[dict]) -> "Settings":
@@ -182,13 +195,17 @@ class Settings:
         if not isinstance(data, dict):
             return s
         data = dict(data)
-        old = {"Next to the original": "Saving a copy next to it",          # 1.4.0 names
+        old = {"Next to the original": "Replace the file",                  # 1.4.0 default -> new default
                "Into a folder": "Saving a copy into a folder",
                "Replace the original (keep .bak)": "Replace the file"}
+        if data.get("fix_output") == "Replace the original (keep .bak)":
+            data.setdefault("fix_backup", "Keep it as <name>.bak next to the file")
         if data.get("fix_output") in old:
-            if data["fix_output"].startswith("Replace"):
-                data.setdefault("fix_backup", "Keep it as <name>.bak next to the file")
             data["fix_output"] = old[data["fix_output"]]
+        # Files saved before 1.6.0 stored every field, so "Saving a copy next to it" there is just
+        # the migrated old default, not a choice: switch them to the new default (replace the file).
+        if data.get("_version", 0) < SETTINGS_VERSION and data.get("fix_output") == "Saving a copy next to it":
+            data["fix_output"] = "Replace the file"
         for f in fields(cls):
             if f.name in data:
                 v = _coerce(f, data[f.name])

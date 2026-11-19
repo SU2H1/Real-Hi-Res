@@ -26,8 +26,11 @@ only those files).
 
 Click a row for the dashboard: verdict, reason, key facts, spectrogram and
 average spectrum.  "Open Folder" (or double-click / Enter) shows the file in
-your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Fix to real
-resolution..." (Ctrl/Cmd+F) corrects selected fake files in place so their
+your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "View: By album /
+By artist" shows your library as cover-art cards with a ring showing how many
+songs are fake; click a card to list its songs.  Ctrl/Cmd+F finds text like a
+web browser (Enter = next).  "Fix to real
+resolution..." (Ctrl/Cmd+Shift+F) corrects selected fake files in place so their
 properties show the real resolution (e.g. a fake 24/96 becomes 16/44.1), keeping
 name, tags and cover art; originals go to a "Real-Hi-Res backups" folder.
 "Settings..." lets you change detection thresholds, scanning options, display

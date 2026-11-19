@@ -158,6 +158,22 @@ def run():
         assert app.badge.cget("text"), "dashboard not filled"
         assert app.cache.get(listed[0])["spectrogram"], "no spectrogram"
         assert " of " in app.src_tree.set(folder, "problems"), "source problem count missing"
+        # album view, drill-down and back
+        app.set_view("By album"); root.update()
+        assert app.cards.groups, "no album cards"
+        g = app.cards.groups[0]
+        app.open_group(g, "album"); root.update()
+        assert app.view_var.get() == "Files" and len(app.tree.get_children()) == g.total
+        app.close_group(); root.update()
+        assert app.view_var.get() == "By album"
+        app.set_view("Files"); root.update()
+        # browser-style find
+        app.open_find(); app.find_var.set("upsampled"); root.update()
+        n = len(app.find_matches)
+        assert n >= 1 and app.find_count.cget("text") == f"1 of {{n}}"
+        app.find_step(1); root.update()
+        assert app.find_count.cget("text") == f"{{min(2, n) if n > 1 else 1}} of {{n}}"
+        app.close_find()
         new = settings.Settings(); new.colormap = "gray"
         app.apply_settings(new)
         assert settings.load().colormap == "gray"
@@ -337,3 +353,65 @@ def test_old_fix_settings_are_migrated():
     s = settings.Settings.from_dict({"fix_output": "Replace the original (keep .bak)"})
     assert s.fix_output == "Replace the file" and s.fix_backup.startswith("Keep")
     assert settings.Settings.from_dict({"fix_output": "Into a folder"}).fix_output == "Saving a copy into a folder"
+
+
+# ------------------------------------------------------- albums / artists ---
+def _fr(path, verdict, **tags):
+    return FileResult(path=path, verdict=verdict, tags=tags)
+
+
+def test_group_by_album_and_artist():
+    from realhires.library import group_results, sort_groups
+
+    rs = [
+        _fr("/m/A/X/1.flac", FAKE, artist="Aiko", album_artist="Aiko", album="Blue", track="2"),
+        _fr("/m/A/X/2.flac", REAL, artist="Aiko", album_artist="Aiko", album="Blue", track="1"),
+        _fr("/m/A/Y/1.flac", "SUSPICIOUS", artist="Aiko", album="Red"),
+        _fr("/m/B/Z/1.flac", REAL, artist="Bob feat. C", album_artist="Bob", album="Green"),
+        _fr("/music/Various/Live/1.wav", "FAKE LOSSLESS"),  # untagged: folder names are used
+    ]
+    albums = {g.title: g for g in group_results(rs, "album")}
+    assert set(albums) == {"Blue", "Red", "Green", "Live"}
+    blue = albums["Blue"]
+    assert (blue.subtitle, blue.total, blue.fake, blue.problems) == ("Aiko", 2, 1, 1)
+    assert blue.paths == ["/m/A/X/2.flac", "/m/A/X/1.flac"]  # sorted by track number
+    assert albums["Live"].subtitle == "Various" and albums["Live"].problem_pct == 100.0
+    artists = {g.title: g for g in group_results(rs, "artist")}
+    assert artists["Aiko"].total == 3 and artists["Aiko"].subtitle == "2 albums"
+    assert artists["Aiko"].fake == 1 and artists["Aiko"].suspicious == 1
+    assert "Bob" in artists  # album artist preferred over track artist
+    order = [g.title for g in sort_groups(list(albums.values()))]
+    assert order[0] == "Live" and order[-1] == "Green"  # most fake first
+    assert [g.title for g in sort_groups(list(albums.values()), "Name")] == ["Blue", "Green", "Live", "Red"]
+
+
+@needs_ffmpeg
+def test_tags_and_covers(library, tmp_path):
+    from realhires.covers import cover_png
+    from realhires.probe import probe
+
+    icon = str(Path(__file__).resolve().parents[1] / "realhires" / "assets" / "icon.png")
+    tagged = tmp_path / "t.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", library["real_24_96"], "-i", icon,
+                    "-map", "0:a", "-map", "1:v", "-c:a", "copy", "-c:v", "copy",
+                    "-disposition:v", "attached_pic", "-metadata", "ARTIST=宇多田", "-metadata",
+                    "ALBUM=First", "-metadata", "TRACKNUMBER=3", str(tagged)], check=True)
+    tags = probe(str(tagged)).tags
+    assert tags["artist"] == "宇多田" and tags["album"] == "First" and tags["track"] == "3"
+    png = cover_png([str(tagged)], 64)
+    assert png and png.startswith(b"\x89PNG")
+    folder = tmp_path / "album"
+    folder.mkdir()
+    plain = folder / "a.flac"
+    shutil.copy(library["real_24_96"], plain)
+    assert cover_png([str(plain)], 64) is None
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", icon, str(folder / "folder.jpg")], check=True)
+    assert cover_png([str(plain)], 64).startswith(b"\x89PNG")  # folder.jpg is used
+
+
+def test_fix_default_is_replace_even_for_old_saved_settings():
+    assert settings.Settings().fix_output == "Replace the file"
+    old = {"fix_output": "Saving a copy next to it"}  # saved by 1.5.0 (migrated 1.4.0 default)
+    assert settings.Settings.from_dict(old).fix_output == "Replace the file"
+    new = dict(old, _version=settings.SETTINGS_VERSION)  # a deliberate choice after 1.6.0 stays
+    assert settings.Settings.from_dict(new).fix_output == "Saving a copy next to it"

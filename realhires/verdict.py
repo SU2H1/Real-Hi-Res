@@ -58,6 +58,7 @@ class FileResult:
     reasons: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     flags: List[str] = field(default_factory=list)
+    tags: dict = field(default_factory=dict)  # artist, album, album_artist, title, track... (from the file)
     codec: str = ""
     sample_rate: int = 0
     channels: int = 0
@@ -238,6 +239,7 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
         info = probe(path)
         res.codec, res.sample_rate, res.channels = info.codec, info.sample_rate, info.channels
         res.claimed_bits, res.is_float, res.duration = info.claimed_bits, info.is_float, info.duration
+        res.tags = dict(info.tags)
         if info.sample_rate <= 0:
             raise RuntimeError("could not determine sample rate")
 
