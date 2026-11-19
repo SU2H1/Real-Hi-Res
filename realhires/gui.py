@@ -324,7 +324,11 @@ class SpectrumCanvas(_PlotBase):
 
 # ---------------------------------------------------------------- dialogs ---
 class SummaryDialog(tk.Toplevel):
-    """Pop-up shown after a scan: percentage of files per verdict."""
+    """Pop-up shown after a scan: a donut (pie) chart of the verdicts with a
+    legend of percentages.  Clicking a slice or a legend row lists only those
+    files."""
+
+    SIZE = 260
 
     def __init__(self, app: "App", results: List[FileResult], elapsed: Optional[float]):
         super().__init__(app.root)
@@ -336,33 +340,44 @@ class SummaryDialog(tk.Toplevel):
         frm.grid(sticky="nsew")
         n = len(results)
         problems = sum(1 for r in results if r.verdict in PROBLEM_VERDICTS)
-        head = f"Scanned {n} file{'s' if n != 1 else ''}"
-        if elapsed:
-            head += f" in {elapsed:.1f} s"
-        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, columnspan=4, sticky="w")
+        head = f"Scanned {n} file{'s' if n != 1 else ''}" + (f" in {elapsed:.1f} s" if elapsed else "")
+        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
         pct_problems = 100.0 * problems / n if n else 0.0
-        ttk.Label(frm, text=f"{problems} file{'s' if problems != 1 else ''} ({pct_problems:.1f} %) "
-                            "are fake or suspicious." if problems else "No fake or suspicious files found.",
-                  foreground="#a3122a" if problems else "#2e7d32").grid(row=1, column=0, columnspan=4,
+        ttk.Label(frm, text=f"{problems} file{'s' if problems != 1 else ''} ({pct_problems:.1f} %) are fake or "
+                            "suspicious." if problems else "No fake or suspicious files found.",
+                  foreground="#a3122a" if problems else "#2e7d32").grid(row=1, column=0, columnspan=2,
                                                                          sticky="w", pady=(2, 10))
-        bar_w = 260
-        for i, (v, count, pct) in enumerate(verdict_breakdown(results)):
+        breakdown = verdict_breakdown(results)
+        self.canvas = tk.Canvas(frm, width=self.SIZE, height=self.SIZE, highlightthickness=0,
+                                background=self._bg())
+        self.canvas.grid(row=2, column=0, sticky="n", padx=(0, 18))
+        self._draw_pie(breakdown, n, pct_problems)
+
+        legend = ttk.Frame(frm)
+        legend.grid(row=2, column=1, sticky="nw")
+        for i, (v, count, pct) in enumerate(breakdown):
             label, color, desc = VERDICT_STYLE[v]
-            ttk.Label(frm, text=label, foreground=color, font=("TkDefaultFont", 10, "bold")).grid(
-                row=2 + 2 * i, column=0, sticky="w", padx=(0, 10))
-            c = tk.Canvas(frm, width=bar_w, height=16, highlightthickness=0, background="#eeeeee")
-            c.create_rectangle(0, 0, max(2, bar_w * pct / 100), 16, fill=color, outline="")
-            c.grid(row=2 + 2 * i, column=1, sticky="w")
-            ttk.Label(frm, text=f"{pct:5.1f} %", width=8, anchor="e").grid(row=2 + 2 * i, column=2)
-            ttk.Label(frm, text=f"{count} file{'s' if count != 1 else ''}", foreground="#555").grid(
-                row=2 + 2 * i, column=3, sticky="w", padx=(8, 0))
-            ttk.Label(frm, text=desc, foreground="#777", font=("TkDefaultFont", 8)).grid(
-                row=3 + 2 * i, column=0, columnspan=4, sticky="w", pady=(0, 6))
+            sw = tk.Canvas(legend, width=14, height=14, highlightthickness=0, background=self._bg())
+            sw.create_rectangle(0, 0, 14, 14, fill=color, outline="")
+            sw.grid(row=2 * i, column=0, padx=(0, 6), pady=(4, 0), sticky="w")
+            name = ttk.Label(legend, text=label, foreground=color, font=("TkDefaultFont", 10, "bold"),
+                             cursor="hand2")
+            name.grid(row=2 * i, column=1, sticky="w", pady=(4, 0))
+            ttk.Label(legend, text=f"{pct:5.1f} %", width=7, anchor="e",
+                      font=("TkDefaultFont", 10, "bold")).grid(row=2 * i, column=2, sticky="e", pady=(4, 0))
+            ttk.Label(legend, text=f"{count} file{'s' if count != 1 else ''}", foreground="#555").grid(
+                row=2 * i, column=3, sticky="w", padx=(8, 0), pady=(4, 0))
+            ttk.Label(legend, text=desc, foreground="#777", font=("TkDefaultFont", 8)).grid(
+                row=2 * i + 1, column=1, columnspan=3, sticky="w")
+            for w in (sw, name):
+                w.bind("<Button-1>", lambda e, v=v: self._close(only=v))
+        ttk.Label(frm, text="Click a slice or a name to list only those files.", foreground="#777",
+                  font=("TkDefaultFont", 8)).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.again = tk.BooleanVar(value=app.cfg.show_summary_popup)
         ttk.Checkbutton(frm, text="Show this summary after every scan", variable=self.again).grid(
-            row=100, column=0, columnspan=4, sticky="w", pady=(8, 8))
+            row=4, column=0, columnspan=2, sticky="w", pady=(6, 8))
         btns = ttk.Frame(frm)
-        btns.grid(row=101, column=0, columnspan=4, sticky="e")
+        btns.grid(row=5, column=0, columnspan=2, sticky="e")
         ttk.Button(btns, text="Show problem files", command=lambda: self._close(problems_only=True)).pack(side="left")
         ttk.Button(btns, text="Show all files", command=lambda: self._close(show_all=True)).pack(side="left", padx=4)
         ttk.Button(btns, text="Export CSV…", command=lambda: app.export("csv", all_results=True)).pack(side="left")
@@ -376,11 +391,52 @@ class SummaryDialog(tk.Toplevel):
         y = app.root.winfo_rooty() + (app.root.winfo_height() - self.winfo_height()) // 3
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
-    def _close(self, problems_only: bool = False, show_all: bool = False) -> None:
+    def _bg(self) -> str:
+        try:
+            return ttk.Style(self).lookup("TFrame", "background") or "#f0f0f0"
+        except tk.TclError:
+            return "#f0f0f0"
+
+    def _draw_pie(self, breakdown, total: int, pct_problems: float) -> None:
+        c, size, pad = self.canvas, self.SIZE, 8
+        box = (pad, pad, size - pad, size - pad)
+        start = 90.0  # 12 o'clock, clockwise like most pie charts
+        for v, count, pct in breakdown:
+            color = VERDICT_STYLE[v][1]
+            extent = 360.0 * count / max(total, 1)
+            tag = f"slice-{v}"
+            if extent >= 359.99:
+                c.create_oval(*box, fill=color, outline="white", width=2, tags=(tag,))
+            else:
+                c.create_arc(*box, start=start, extent=-extent, fill=color, outline="white", width=2,
+                             style="pieslice", tags=(tag,))
+            c.tag_bind(tag, "<Button-1>", lambda e, v=v: self._close(only=v))
+            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+            if pct >= 7:  # label big slices with their percentage
+                import math
+
+                mid = math.radians(start - extent / 2)
+                r = (size / 2 - pad) * 0.78
+                c.create_text(size / 2 + r * math.cos(mid), size / 2 - r * math.sin(mid),
+                              text=f"{pct:.0f}%", fill="white", font=("TkDefaultFont", 9, "bold"))
+            start -= extent
+        hole = size * 0.27  # donut hole with the headline number
+        c.create_oval(size / 2 - hole, size / 2 - hole, size / 2 + hole, size / 2 + hole,
+                      fill=self._bg(), outline="")
+        c.create_text(size / 2, size / 2 - 12, text=f"{pct_problems:.0f}%",
+                      font=("TkDefaultFont", 20, "bold"),
+                      fill="#a3122a" if pct_problems else "#2e7d32")
+        c.create_text(size / 2, size / 2 + 16, text="fake or suspicious", fill="#555",
+                      font=("TkDefaultFont", 8))
+
+    def _close(self, problems_only: bool = False, show_all: bool = False, only: Optional[str] = None) -> None:
         if self.again.get() != self.app.cfg.show_summary_popup:
             self.app.cfg.show_summary_popup = self.again.get()
             self.app.save_settings()
-        if problems_only:
+        if only:
+            self.app.set_filters([only])
+        elif problems_only:
             self.app.set_filters(PROBLEM_VERDICTS)
         elif show_all:
             self.app.set_filters(VERDICT_ORDER)
@@ -513,10 +569,11 @@ class FixDialog(tk.Toplevel):
     def __init__(self, app: "App", results: List[FileResult]):
         super().__init__(app.root)
         self.app = app
-        self.title("Fix resolution")
+        self.title("Fix to real resolution")
         self.transient(app.root)
         self.results = results
         self.plans: list = []
+        self.done_paths: Dict[str, str] = {}
         self.running = False
         self.q: queue.Queue = queue.Queue()
         cfg = app.cfg
@@ -529,16 +586,18 @@ class FixDialog(tk.Toplevel):
         self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
         self.head.grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
-                  text="Each file is converted to the sample rate and bit depth it really contains "
-                       "(e.g. a fake 24/96 upsampled from a CD becomes 16/44.1). Nothing audible is lost, "
-                       "the file gets smaller, and tags and cover art are kept.").grid(
+                  text="Each file is rewritten at the sample rate and bit depth it really contains, so "
+                       "its properties show the actual values (e.g. a fake 24/96 upsampled from a CD "
+                       "becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing "
+                       "audible is lost and it gets smaller. (Only editing the numbers in the file "
+                       "would make it play at the wrong speed, so the audio itself is converted.)").grid(
             row=1, column=0, columnspan=3, sticky="w", pady=(2, 8))
         cols = ("change", "status", "output")
         self.tv = ttk.Treeview(frm, columns=cols, show="tree headings", height=min(max(len(results), 3), 10))
         self.tv.heading("#0", text="File", anchor="w")
         self.tv.heading("change", text="Claimed → real")
         self.tv.heading("status", text="Status")
-        self.tv.heading("output", text="Saved as", anchor="w")
+        self.tv.heading("output", text="Result", anchor="w")
         self.tv.column("#0", width=230)
         self.tv.column("change", width=140, anchor="center", stretch=False)
         self.tv.column("status", width=230)
@@ -556,29 +615,42 @@ class FixDialog(tk.Toplevel):
         opts.columnconfigure(1, weight=1)
         info = {i["name"]: i for i in settings_mod.Settings.field_info()}
         self.v_output = tk.StringVar(value=cfg.fix_output)
+        self.v_backup = tk.StringVar(value=cfg.fix_backup)
+        self.v_backup_dir = tk.StringVar(value=cfg.fix_backup_folder)
         self.v_folder = tk.StringVar(value=cfg.fix_folder)
         self.v_format = tk.StringVar(value=cfg.fix_format)
         self.v_bits = tk.StringVar(value=cfg.fix_bits)
         self.v_verify = tk.BooleanVar(value=cfg.fix_verify)
-        ttk.Label(opts, text="Save fixed files:").grid(row=0, column=0, sticky="w")
-        ttk.Combobox(opts, textvariable=self.v_output, values=info["fix_output"]["choices"],
-                     state="readonly", width=34).grid(row=0, column=1, sticky="w")
-        fr = ttk.Frame(opts)
-        fr.grid(row=1, column=1, sticky="ew", pady=2)
-        fr.columnconfigure(0, weight=1)
-        self.folder_entry = ttk.Entry(fr, textvariable=self.v_folder)
-        self.folder_entry.grid(row=0, column=0, sticky="ew")
-        self.browse_btn = ttk.Button(fr, text="Browse…", command=self._browse)
-        self.browse_btn.grid(row=0, column=1, padx=(4, 0))
-        ttk.Label(opts, text="Folder:").grid(row=1, column=0, sticky="w")
-        ttk.Label(opts, text="Output format:").grid(row=2, column=0, sticky="w")
-        ttk.Combobox(opts, textvariable=self.v_format, values=info["fix_format"]["choices"],
-                     state="readonly", width=34).grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Label(opts, text="Target bit depth:").grid(row=3, column=0, sticky="w")
-        ttk.Combobox(opts, textvariable=self.v_bits, values=info["fix_bits"]["choices"],
-                     state="readonly", width=34).grid(row=3, column=1, sticky="w", pady=2)
+
+        def combo(row, label, var, key):
+            ttk.Label(opts, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
+            ttk.Combobox(opts, textvariable=var, values=info[key]["choices"], state="readonly",
+                         width=40).grid(row=row, column=1, sticky="w", pady=2)
+
+        def folder_row(row, label, var, title):
+            ttk.Label(opts, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
+            fr = ttk.Frame(opts)
+            fr.grid(row=row, column=1, sticky="ew", pady=2)
+            fr.columnconfigure(0, weight=1)
+            e = ttk.Entry(fr, textvariable=var)
+            e.grid(row=0, column=0, sticky="ew")
+            b = ttk.Button(fr, text="Browse…", command=lambda: self._browse(var, title))
+            b.grid(row=0, column=1, padx=(4, 0))
+            return e, b
+
+        combo(0, "Fix files by:", self.v_output, "fix_output")
+        combo(1, "Original file:", self.v_backup, "fix_backup")
+        self.backup_widgets = folder_row(2, "Backup folder:", self.v_backup_dir, "Folder for backups of originals")
+        self.copy_widgets = folder_row(3, "Copies folder:", self.v_folder, "Folder for corrected copies")
+        combo(4, "Output format:", self.v_format, "fix_format")
+        combo(5, "Target bit depth:", self.v_bits, "fix_bits")
         ttk.Checkbutton(opts, text="Re-check each fixed file", variable=self.v_verify).grid(
-            row=4, column=1, sticky="w", pady=(2, 0))
+            row=6, column=1, sticky="w", pady=(2, 0))
+        ttk.Label(opts, foreground="#777", font=("TkDefaultFont", 8),
+                  text="Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never "
+                       "scanned).").grid(row=7, column=1, sticky="w")
+        for v in (self.v_backup, self.v_backup_dir):
+            v.trace_add("write", lambda *a: self._replan())
         for v in (self.v_output, self.v_folder, self.v_format, self.v_bits):
             v.trace_add("write", lambda *a: self._replan())
         self.note = ttk.Label(frm, foreground="#9a6700", wraplength=760, justify="left")
@@ -590,9 +662,9 @@ class FixDialog(tk.Toplevel):
         self.pb.grid(row=0, column=0, padx=(0, 8))
         self.status = ttk.Label(bottom, text="")
         self.status.grid(row=0, column=1, sticky="w")
-        self.open_btn = ttk.Button(bottom, text="Open output folder", command=self._open_folder, state="disabled")
+        self.open_btn = ttk.Button(bottom, text="Show in folder", command=self._open_folder, state="disabled")
         self.open_btn.grid(row=0, column=2, padx=4)
-        self.start_btn = ttk.Button(bottom, text="Convert", command=self._start)
+        self.start_btn = ttk.Button(bottom, text="Fix files", command=self._start)
         self.start_btn.grid(row=0, column=3)
         ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=4, padx=(4, 0))
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -603,6 +675,7 @@ class FixDialog(tk.Toplevel):
     def _cfg(self):
         c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
         c.fix_output, c.fix_folder = self.v_output.get(), self.v_folder.get()
+        c.fix_backup, c.fix_backup_folder = self.v_backup.get(), self.v_backup_dir.get()
         c.fix_format, c.fix_bits, c.fix_verify = self.v_format.get(), self.v_bits.get(), self.v_verify.get()
         return c
 
@@ -612,9 +685,13 @@ class FixDialog(tk.Toplevel):
         if self.running:
             return
         cfg = self._cfg()
-        into = cfg.fix_output == "Into a folder"
-        self.folder_entry.configure(state="normal" if into else "disabled")
-        self.browse_btn.configure(state="normal" if into else "disabled")
+        replace = cfg.fix_output.startswith("Replace")
+        into = cfg.fix_output.endswith("into a folder")
+        backup_folder = replace and cfg.fix_backup.startswith("Move")
+        for w in self.copy_widgets:
+            w.configure(state="normal" if into else "disabled")
+        for w in self.backup_widgets:
+            w.configure(state="normal" if backup_folder else "disabled")
         self.tv.delete(*self.tv.get_children())
         self.plans = []
         notes = set()
@@ -624,43 +701,50 @@ class FixDialog(tk.Toplevel):
             if plan:
                 self.plans.append(plan)
                 notes.update(plan.notes)
-                out = plan.output if cfg.fix_output == "Into a folder" else os.path.basename(plan.output)
                 if plan.replace_original:
-                    out += "  (original → .bak)"
+                    same = os.path.abspath(plan.output) == os.path.abspath(plan.source)
+                    out = "Same file" if same else f"Replaced by {os.path.basename(plan.output)}"
+                    out += {"folder": " (original → backup folder)", "bak": " (original → .bak)",
+                            "none": " (original deleted)"}[plan.backup]
+                else:
+                    out = plan.output if into else f"Copy: {os.path.basename(plan.output)}"
                 self.tv.insert("", "end", iid=r.path, text=name, values=(plan.description, "Ready", out))
             else:
                 self.tv.insert("", "end", iid=r.path, text=name, values=(r.claimed, why, ""), tags=("skip",))
         n = len(self.plans)
-        self.head.configure(text=f"Convert {n} file{'s' if n != 1 else ''} to their real resolution"
-                            if n else "Nothing to convert")
+        verb = "Fix" if replace else "Save corrected copies of"
+        self.head.configure(text=f"{verb} {n} file{'s' if n != 1 else ''}: real resolution"
+                            if n else "Nothing to fix")
         self.note.configure(text="\n".join(sorted(notes)))
         self.start_btn.configure(state="normal" if n else "disabled")
         self.pb.configure(maximum=max(n, 1), value=0)
         skipped = len(self.results) - n
         self.status.configure(text=f"{skipped} selected file(s) need no fixing." if skipped else "")
 
-    def _browse(self) -> None:
-        d = filedialog.askdirectory(title="Folder for fixed files", parent=self)
+    def _browse(self, var, title) -> None:
+        d = filedialog.askdirectory(title=title, parent=self)
         if d:
-            self.v_folder.set(d)
+            var.set(d)
 
     def _start(self) -> None:
         from .fix import run_fix
 
         if not self.plans or self.running:
             return
-        if self.v_output.get().startswith("Replace") and not messagebox.askyesno(
-                "Replace originals?", f"Replace {len(self.plans)} original file(s) with the fixed version?\n\n"
-                "Each original is renamed to <name>.bak first, so you can restore it.", parent=self):
-            return
         cfg = self._cfg()
+        if cfg.fix_output.startswith("Replace") and cfg.fix_backup.startswith("Delete") and not messagebox.askyesno(
+                "Delete originals?", f"Replace {len(self.plans)} file(s) and delete the originals?\n\n"
+                "There will be no backup. The converted files contain everything the originals really "
+                "had, but the originals cannot be restored.", parent=self, icon="warning"):
+            return
         # remember the chosen options
-        for k in ("fix_output", "fix_folder", "fix_format", "fix_bits", "fix_verify"):
+        for k in ("fix_output", "fix_folder", "fix_backup", "fix_backup_folder", "fix_format", "fix_bits",
+                  "fix_verify"):
             setattr(self.app.cfg, k, getattr(cfg, k))
         self.app.save_settings()
         self.running = True
         self.start_btn.configure(state="disabled")
-        self.status.configure(text="Converting…")
+        self.status.configure(text="Fixing…")
         for p in self.plans:
             self.tv.set(p.source, "status", "Waiting…")
         plans = list(self.plans)
@@ -682,18 +766,20 @@ class FixDialog(tk.Toplevel):
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "start":
-                    self.tv.set(payload, "status", "Converting…")
+                    self.tv.set(payload, "status", "Fixing…")
                 elif kind == "done":
                     o = payload
                     self.pb["value"] = self.pb["value"] + 1
                     src = o.plan.source
                     if o.ok:
-                        txt = "Done"
+                        txt = "Fixed" if o.plan.replace_original else "Copy saved"
                         if o.new_result is not None:
                             txt += f": now {o.new_result.claimed} ({VERDICT_STYLE[o.new_result.verdict][0]})"
                         txt += f", {o.bytes_after / max(o.bytes_before, 1):.0%} of the size"
                         self.tv.item(src, tags=("ok",))
-                        self.tv.set(src, "output", o.output)
+                        if not o.plan.replace_original:
+                            self.tv.set(src, "output", o.output)
+                        self.done_paths[src] = o.output
                         self.app.add_fixed_result(o)
                     else:
                         txt = o.message
@@ -703,7 +789,7 @@ class FixDialog(tk.Toplevel):
                     self.running = False
                     ok = sum(1 for i in self.tv.get_children() if "ok" in self.tv.item(i, "tags"))
                     bad = sum(1 for i in self.tv.get_children() if "fail" in self.tv.item(i, "tags"))
-                    self.status.configure(text=f"{ok} converted" + (f", {bad} failed" if bad else "") + ".")
+                    self.status.configure(text=f"{ok} fixed" + (f", {bad} failed" if bad else "") + ".")
                     self.open_btn.configure(state="normal" if ok else "disabled")
         except queue.Empty:
             pass
@@ -713,7 +799,7 @@ class FixDialog(tk.Toplevel):
     def _open_folder(self) -> None:
         for i in self.tv.get_children():
             if "ok" in self.tv.item(i, "tags"):
-                out = self.tv.set(i, "output")
+                out = self.done_paths.get(i)
                 if out:
                     reveal_in_file_manager(out)
                     return
@@ -786,9 +872,9 @@ class App(ttk.Frame):
         e.add_command(label="Open file", accelerator=f"{acc}+Enter", command=self.open_file)
         e.add_command(label="Copy path", accelerator=f"{acc}+C", command=self.copy_path)
         e.add_separator()
-        e.add_command(label="Fix resolution of selected files…", accelerator=f"{acc}+F",
+        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+F",
                       command=self.fix_selected)
-        e.add_command(label="Fix resolution of all fake files…", command=self.fix_all)
+        e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
         e.add_separator()
         e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
         m.add_cascade(label="Edit", menu=e)
@@ -936,7 +1022,7 @@ class App(ttk.Frame):
         self.open_file_btn.pack(side="left", padx=4)
         self.copy_btn = ttk.Button(btns, text="Copy Path", command=self.copy_path, state="disabled")
         self.copy_btn.pack(side="left")
-        self.fix_btn = ttk.Button(btns, text="Fix resolution…", command=self.fix_selected, state="disabled")
+        self.fix_btn = ttk.Button(btns, text="Fix to real resolution…", command=self.fix_selected, state="disabled")
         self.fix_btn.pack(side="left", padx=(12, 0))
         ttk.Label(info, text="Details", foreground="#666").grid(row=4, column=0, columnspan=2, sticky="w")
         txt_frame = ttk.Frame(info)
@@ -973,7 +1059,7 @@ class App(ttk.Frame):
         self.menu.add_command(label="Open file", command=self.open_file)
         self.menu.add_command(label="Copy path", command=self.copy_path)
         self.menu.add_separator()
-        self.menu.add_command(label="Fix resolution…", command=self.fix_selected)
+        self.menu.add_command(label="Fix to real resolution…", command=self.fix_selected)
 
     def _update_quick_label(self) -> None:
         self.quick_cb.configure(text=f"Quick scan (first {self.cfg.quick_scan_seconds:g} s)")
@@ -1466,7 +1552,7 @@ class App(ttk.Frame):
             return
         rs = [r for r in self.results.values() if r.verdict in FIXABLE_VERDICTS]
         if not rs:
-            messagebox.showinfo("Fix resolution", "No fake hi-res or fake lossless files to fix.")
+            messagebox.showinfo("Fix to real resolution", "No fake hi-res or fake lossless files to fix.")
             return
         FixDialog(self, rs)
 

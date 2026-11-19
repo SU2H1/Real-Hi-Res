@@ -20,6 +20,8 @@ from .report import (eprint, header, row, setup_console, summary, summary_bars, 
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
                       analyze_file)
 
+BACKUP_DIR_NAME = "Real-Hi-Res backups"  # same as fix.BACKUP_DIR_NAME (fix imports verdict, keep cli light)
+
 # Kept for backwards compatibility; the effective list comes from the settings.
 AUDIO_EXTENSIONS = settings_mod.Settings().extension_set()
 
@@ -42,14 +44,16 @@ def iter_audio_files(path: str, recursive: bool, extensions: Optional[set] = Non
     if os.path.isdir(path):
         if recursive:
             for root, dirs, files in os.walk(path):
-                dirs.sort()
+                # never rescan originals that "fix" moved away, nor its temp files
+                dirs[:] = sorted(d for d in dirs if d != BACKUP_DIR_NAME)
                 for name in sorted(files):
-                    if os.path.splitext(name)[1].lower() in exts:
+                    if os.path.splitext(name)[1].lower() in exts and not name.startswith(".realhires-"):
                         yield os.path.join(root, name)
         else:
             for name in sorted(os.listdir(path)):
                 fp = os.path.join(path, name)
-                if os.path.isfile(fp) and os.path.splitext(name)[1].lower() in exts:
+                if (os.path.isfile(fp) and os.path.splitext(name)[1].lower() in exts
+                        and not name.startswith(".realhires-")):
                     yield fp
     elif os.path.isfile(path):
         yield path
@@ -99,13 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--plot", metavar="DIR", help="write an SVG average-spectrum plot per file into DIR")
     p.add_argument("--spectrogram", metavar="DIR", help="write a PNG spectrogram per file into DIR")
     p.add_argument("--fix", action="store_true",
-                   help="after scanning, convert fake files to their real resolution (e.g. a fake "
-                        "24/96 to 16/44.1); tags and cover art are kept, originals stay untouched "
-                        "unless --fix-replace")
-    p.add_argument("--fix-dir", metavar="DIR", help="with --fix: write fixed files into DIR")
-    p.add_argument("--fix-replace", action="store_true",
-                   help="with --fix: replace the originals (each original is kept as <name>.bak)")
-    p.add_argument("--dry-run", action="store_true", help="with --fix: only show what would be converted")
+                   help="after scanning, fix every fake file in place so its properties show its real "
+                        "resolution (e.g. a fake 24/96 becomes a genuine 16/44.1 file with the same "
+                        "name, tags and cover art); originals are moved to a 'Real-Hi-Res backups' "
+                        "folder")
+    p.add_argument("--fix-backup", choices=["folder", "bak", "none"],
+                   help="with --fix: keep originals in the backup folder (default), as <name>.bak, "
+                        "or delete them")
+    p.add_argument("--fix-backup-dir", metavar="DIR", help="with --fix: put backups of originals into DIR")
+    p.add_argument("--fix-copy", action="store_true",
+                   help="with --fix: leave the files alone and save corrected copies next to them")
+    p.add_argument("--fix-dir", metavar="DIR", help="with --fix: leave the files alone and save corrected "
+                                                     "copies into DIR")
+    p.add_argument("--fix-replace", action="store_true", help=argparse.SUPPRESS)  # 1.4.0 name, now default
+    p.add_argument("--dry-run", action="store_true", help="with --fix: only show what would be changed")
     p.add_argument("--settings", metavar="FILE", help="use this settings file instead of the saved one")
     p.add_argument("--no-settings", action="store_true", help="ignore saved settings; use defaults")
     p.add_argument("--set", metavar="NAME=VALUE", action="append", default=[],
@@ -183,10 +194,18 @@ def main(argv=None) -> int:
     work = partial(analyze_file, max_seconds=max_seconds, keep_spectrum=bool(args.plot),
                    keep_plot=bool(args.spectrogram), settings=cfg)
 
-    if args.fix_dir:
-        cfg.fix_output, cfg.fix_folder = "Into a folder", os.path.abspath(args.fix_dir)
     if args.fix_replace:
-        cfg.fix_output = "Replace the original (keep .bak)"
+        cfg.fix_output = "Replace the file"
+    if args.fix_copy:
+        cfg.fix_output = "Saving a copy next to it"
+    if args.fix_dir:
+        cfg.fix_output, cfg.fix_folder = "Saving a copy into a folder", os.path.abspath(args.fix_dir)
+    if args.fix_backup:
+        cfg.fix_backup = {"folder": "Move the original to a backup folder",
+                          "bak": "Keep it as <name>.bak next to the file",
+                          "none": "Delete it (no backup)"}[args.fix_backup]
+    if args.fix_backup_dir:
+        cfg.fix_backup_folder = os.path.abspath(args.fix_backup_dir)
 
     results: List[FileResult] = []
     print(header())
@@ -249,10 +268,15 @@ def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) 
     if not plans:
         print("Fix: nothing to convert (no fake hi-res / fake lossless files that can be reduced).")
         return 0
-    print(f"Fix: {'would convert' if dry_run else 'converting'} {len(plans)} file(s) to their real resolution:")
+    action = "fix in place" if plans[0].replace_original else "save corrected copies of"
+    print(f"Fix: {'would ' if dry_run else 'going to '}{action} {len(plans)} file(s):")
     if dry_run:
         for p in plans:
-            print(f"  {p.description:<22} {p.source}\n  {'':<22} -> {p.output}")
+            dest = "(same file)" if p.replace_original and p.output == p.source else p.output
+            print(f"  {p.description:<22} {p.source}\n  {'':<22} -> {dest}")
+            if p.replace_original:
+                print(f"  {'':<22}    original: " + {"folder": f"moved to {p.backup_dir}",
+                                                      "bak": "kept as .bak", "none": "deleted"}[p.backup])
         return 0
     failed = 0
     with ThreadPoolExecutor(max_workers=max(1, min(jobs, 16))) as ex:
@@ -260,7 +284,7 @@ def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) 
             mark = "OK  " if out.ok else "FAIL"
             failed += not out.ok
             print(f"  {mark} {out.plan.source}\n       {out.message}")
-    print(f"Fix: {len(plans) - failed} converted, {failed} failed.")
+    print(f"Fix: {len(plans) - failed} fixed, {failed} failed.")
     return 1 if failed else 0
 
 

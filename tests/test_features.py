@@ -250,7 +250,7 @@ def test_fix_upsampled_and_padded(library, tmp_path):
     from realhires.fix import plan_fix, run_fix
 
     cfg = settings.Settings()
-    cfg.fix_output, cfg.fix_folder = "Into a folder", str(tmp_path / "out")
+    cfg.fix_output, cfg.fix_folder = "Saving a copy into a folder", str(tmp_path / "out")
     r = analyze_file(library["fake_up_44_to_96"])
     plan, why = plan_fix(r, cfg)
     assert plan and plan.description == "24/96 → 16/44.1", why
@@ -280,7 +280,8 @@ def test_fix_replace_keeps_backup_and_tags(library, tmp_path):
                     "-sample_fmt", "s32", "-metadata", "title=曲名", "-metadata", "artist=A", str(src)],
                    check=True)
     cfg = settings.Settings()
-    cfg.fix_output = "Replace the original (keep .bak)"
+    cfg.fix_output = "Replace the file"
+    cfg.fix_backup = "Keep it as <name>.bak next to the file"
     plan, _ = plan_fix(analyze_file(str(src)), cfg)
     assert plan.description == "24/192 → 24/96"
     out = run_fix(plan, cfg)
@@ -301,8 +302,38 @@ def test_cli_fix_dry_run_and_convert(library, tmp_path, capsys):
     shutil.copy(library["real_24_96"], folder / "b.flac")
     assert main([str(folder), "--no-color", "--no-settings", "--fix", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "would convert 1 file" in out and "24/96 → 16/44.1" in out
+    assert "would fix in place 1 file" in out and "24/96 → 16/44.1" in out and "(same file)" in out
     assert main([str(folder), "--no-color", "--no-settings", "--fix", "--fix-dir", str(tmp_path / "fixed"),
                  "-j", "0"]) == 0
-    assert "1 converted, 0 failed" in capsys.readouterr().out
+    assert "1 fixed, 0 failed" in capsys.readouterr().out
     assert [p.name for p in (tmp_path / "fixed").iterdir()] == ["a [16-44.1].flac"]
+
+
+@needs_ffmpeg
+def test_fix_in_place_default_moves_original_to_backup_folder(library, tmp_path):
+    """Default 'fix': the file itself now has its real properties; the
+    original goes to 'Real-Hi-Res backups', which later scans ignore."""
+    from realhires.cli import collect
+    from realhires.fix import BACKUP_DIR_NAME, plan_fix, run_fix
+    from realhires.probe import probe
+
+    f = tmp_path / "Album" / "01 Song.flac"
+    f.parent.mkdir()
+    shutil.copy(library["fake_up_44_to_96"], f)
+    cfg = settings.Settings()  # defaults: replace the file, backup folder
+    plan, _ = plan_fix(analyze_file(str(f)), cfg)
+    assert plan.replace_original and plan.output == str(f) and plan.backup == "folder"
+    out = run_fix(plan, cfg)
+    assert out.ok, out.message
+    info = probe(str(f))
+    assert (info.sample_rate, info.claimed_bits) == (44100, 16)  # the file's properties are fixed
+    backup = f.parent / BACKUP_DIR_NAME / "01 Song.flac"
+    assert backup.exists() and probe(str(backup)).sample_rate == 96000
+    assert collect([str(tmp_path)], recursive=True) == [str(f)]  # backups are never rescanned
+    assert analyze_file(str(f)).verdict == "NOT HI-RES"
+
+
+def test_old_fix_settings_are_migrated():
+    s = settings.Settings.from_dict({"fix_output": "Replace the original (keep .bak)"})
+    assert s.fix_output == "Replace the file" and s.fix_backup.startswith("Keep")
+    assert settings.Settings.from_dict({"fix_output": "Into a folder"}).fix_output == "Saving a copy into a folder"

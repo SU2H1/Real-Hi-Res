@@ -1,9 +1,16 @@
-""""Fix resolution": convert a fake file to the resolution it really has.
+""""Fix": correct a fake file so its properties show the resolution it really has.
 
-A fake 24/96 file that was upsampled from a 44.1 kHz CD master carries no
-information above 22.05 kHz and (often) nothing below its 16th bit, so it can
-be converted back to 16/44.1 without losing anything, at a third of the size,
-and honestly labelled.  Tags and cover art are kept.
+The sample rate and bit depth a player or the file manager shows (the file's
+"properties") come from the audio stream header.  Simply editing those numbers
+would make the file play at the wrong speed or as noise, so the file is
+rewritten at its real resolution instead.  A fake 24/96 file upsampled from a
+44.1 kHz CD master carries no information above 22.05 kHz and (often) nothing
+below its 16th bit, so it becomes a genuine 16/44.1 file without losing
+anything, at about a third of the size.
+
+By default the file is replaced in place: same name, same folder, tags and
+cover art kept; the original is moved to a backup folder.  Writing a corrected
+copy instead is also possible.
 
 The plan for each file is derived from the analysis result:
 
@@ -30,6 +37,7 @@ from .probe import _no_window, tool
 from .verdict import FAKE, FAKE_LOSSLESS, FileResult, analyze_file, fmt_rate
 
 FIXABLE_VERDICTS = (FAKE, FAKE_LOSSLESS)
+BACKUP_DIR_NAME = "Real-Hi-Res backups"
 
 # input extension -> (output extension, codec for 16 bit, codec for 24 bit, sample_fmt 16, sample_fmt 24)
 _SAME_FORMAT = {
@@ -60,6 +68,8 @@ class FixPlan:
     sample_fmt: Optional[str]
     replace_original: bool
     description: str              # "24/96 → 16/44.1"
+    backup: str = "folder"        # replace mode: "folder" | "bak" | "none"
+    backup_dir: Optional[str] = None
     notes: List[str] = field(default_factory=list)
 
 
@@ -139,22 +149,28 @@ def plan_fix(r: FileResult, cfg) -> tuple:
     if fmt is _FLAC and ext not in (".flac",) and getattr(cfg, "fix_format", "") != "FLAC":
         notes.append(f"{ext or 'This format'} cannot be written by FFmpeg; saving as FLAC.")
 
-    mode = getattr(cfg, "fix_output", "Next to the original")
+    mode = getattr(cfg, "fix_output", "Replace the file")
     folder, name = os.path.split(r.path)
     stem = os.path.splitext(name)[0]
     replace = mode.startswith("Replace")
+    backup, backup_dir = "folder", None
     if replace:
-        output = os.path.join(folder, stem + out_ext)
+        output = os.path.join(folder, stem + out_ext)  # same name (extension only changes for e.g. APE)
+        b = getattr(cfg, "fix_backup", "Move the original to a backup folder")
+        backup = "bak" if b.startswith("Keep") else "none" if b.startswith("Delete") else "folder"
+        if backup == "folder":
+            backup_dir = getattr(cfg, "fix_backup_folder", "") or os.path.join(folder, BACKUP_DIR_NAME)
     else:
         suffix = getattr(cfg, "fix_suffix", " [{bits}-{rate}]") or ""
         suffix = suffix.replace("{bits}", str(bits)).replace("{rate}", fmt_rate(rate))
         out_dir = folder
-        if mode == "Into a folder":
+        if mode.endswith("into a folder"):
             out_dir = getattr(cfg, "fix_folder", "") or os.path.join(folder, "Fixed")
         output = _unique(os.path.join(out_dir, stem + suffix + out_ext))
     plan = FixPlan(source=r.path, target_rate=rate, target_bits=bits, resample=rate != r.sample_rate,
                    output=output, codec=codec, sample_fmt=sfmt, replace_original=replace,
-                   description=f"{r.claimed} → {_fmt(bits, rate)}", notes=notes)
+                   description=f"{r.claimed} → {_fmt(bits, rate)}", notes=notes,
+                   backup=backup, backup_dir=backup_dir)
     return plan, None
 
 
@@ -218,12 +234,29 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
             return FixOutcome(plan, False, "FFmpeg failed: " + (msg[-1] if msg else f"exit {proc.returncode}"))
         output = plan.output
         if plan.replace_original:
-            backup = _unique(plan.source + ".bak")
-            os.replace(plan.source, backup)
-            if os.path.exists(output):  # different extension case: never overwrite other files
-                output = _unique(output)
-            os.replace(tmp, output)
-            note = f"original kept as {os.path.basename(backup)}"
+            if os.path.exists(output) and os.path.normcase(os.path.abspath(output)) != \
+                    os.path.normcase(os.path.abspath(plan.source)):
+                output = _unique(output)  # extension changed (e.g. APE -> FLAC): never overwrite others
+            if plan.backup == "none":
+                os.replace(tmp, output)
+                if os.path.abspath(output) != os.path.abspath(plan.source):
+                    os.remove(plan.source)
+                note = "original deleted"
+            else:
+                if plan.backup == "bak":
+                    backup = _unique(plan.source + ".bak")
+                else:
+                    os.makedirs(plan.backup_dir, exist_ok=True)
+                    backup = _unique(os.path.join(plan.backup_dir, os.path.basename(plan.source)))
+                shutil.move(plan.source, backup)
+                try:
+                    os.replace(tmp, output)
+                except OSError:
+                    shutil.move(backup, plan.source)  # put the original back
+                    raise
+                where = (os.path.basename(backup) if plan.backup == "bak"
+                         else os.path.join(os.path.basename(plan.backup_dir), os.path.basename(backup)))
+                note = f"original moved to {where}"
         else:
             output = _unique(output) if os.path.exists(output) else output
             os.replace(tmp, output)
@@ -233,7 +266,8 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
         new = None
         if getattr(cfg, "fix_verify", True):
             new = analyze_file(output, settings=cfg)
-        msg = f"Saved {os.path.basename(output)} ({plan.description}, {after / before:.0%} of the size; {note})."
+        verb = "Fixed" if plan.replace_original else "Saved"
+        msg = f"{verb} {os.path.basename(output)} ({plan.description}, {after / before:.0%} of the size; {note})."
         if new is not None:
             msg += f" Re-check: {new.verdict} – {new.summary}"
         return FixOutcome(plan, True, msg, output, new, before, after)

@@ -60,9 +60,9 @@ Press **Scan** when the list looks right. Everything updates live while the scan
 
 By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
 
-**Summary after each scan.** When a scan finishes, a summary window shows what percentage of the files got each verdict, as coloured bars, and how many files are fake or suspicious in total. From there you can jump to the problem files, show all files, or export a CSV report. You can reopen it at any time with **View → Scan summary…**, and you can switch it off in the Settings window or with the checkbox in the summary window itself.
+**Summary after each scan.** When a scan finishes, a summary window shows a **pie (donut) chart** of the verdicts. Each slice is labelled with its percentage, and the centre shows the share of fake or suspicious files. Next to the chart, a legend lists every verdict with its percentage, the number of files and a short explanation. **Clicking a slice or a legend entry lists only those files.** The buttons jump to all problem files or all files, or export a CSV report. You can reopen the window at any time with **View → Scan summary…**, and you can switch it off in Settings or with the checkbox in the window itself.
 
-![Scan summary window with the percentage of files per verdict](docs/gui-summary.png)
+![Scan summary window: donut chart of the verdicts with percentages and a clickable legend](docs/gui-summary.png)
 
 **Dashboard.** Clicking a file fills the dashboard below the list with the following:
 
@@ -74,22 +74,27 @@ By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, a
 
 **Opening files quickly.** **Open Folder** opens the file's folder in Explorer, Finder or your Linux file manager with the file selected, and **Open File** plays it in your default player. Double-clicking a row or pressing **Enter** opens the folder, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) opens the file. You can swap these two in Settings. Right-click a row for the same actions, or **Ctrl+C** to copy the paths of the selected rows. **File → Export…** saves the listed files as CSV or JSON.
 
-**Fix resolution.** Select one or more fake files and click **Fix resolution…** (or press **Ctrl+F**, use the right-click menu, or choose **Edit → Fix resolution of all fake files…**). Each file is converted to the sample rate and bit depth it really contains. A fake 24/96 file upsampled from a CD becomes 16/44.1, a 16-bit file padded to 24 bits becomes 16-bit, and a fake 24/192 file made from a 96 kHz master becomes 24/96. Nothing audible is lost and the files get much smaller. The dialog shows "claimed → real" for every file before you start, and lets you choose the following:
+**Fix to real resolution.** Select one or more fake files and click **Fix to real resolution…** (or press **Ctrl+F**, use the right-click menu, or choose **Edit → Fix all fake files to real resolution…**). The file itself is corrected: it keeps its name, its folder, its tags (including non-Latin text) and its cover art, and afterwards its properties show the resolution it really has. In Explorer, Finder, your music player or Real-Hi-Res, a fake 24-bit/96 kHz file upsampled from a CD then shows 16-bit/44.1 kHz. A 16-bit file padded to 24 bits shows 16-bit, and a fake 24/192 file made from a 96 kHz master shows 24/96. Nothing audible is lost, and the files usually get much smaller.
 
-- **Where to save the result:** next to the original (default, e.g. `Song [16-44.1].flac`), into a folder, or replacing the original (which is renamed to `Song.flac.bak` first, so you can always restore it).
-- **The output format:** the same as the original (FLAC, WAV, AIFF, ALAC, WavPack; other formats become FLAC), or always FLAC.
-- **The target bit depth:** "16-bit for CD-sourced files" is the default. Resampling a 16-bit CD master to 96 kHz fills the low bits, so such files measure as 24-bit, and this option restores 16-bit where the source was a CD or a lossy file. The other choices are "As detected" and "Always 16-bit".
+The sample rate and bit depth in a file's properties come from its audio stream. Only changing those numbers, without touching the audio, would make the file play at the wrong speed or as noise. Real-Hi-Res therefore rewrites the audio at the real resolution with the SoX resampler. It adds triangular dither only when a resampled signal is reduced to 16 bits, so padded audio is converted bit-exactly. It writes to a temporary file first, so an interrupted fix never leaves a broken file.
 
-Tags (including non-Latin text) and cover art are kept. The conversion uses the SoX resampler, adds triangular dither only when a resampled signal is reduced to 16 bits, and writes to a temporary file first, so an interrupted conversion never leaves a broken file. Each converted file is checked again, and its new verdict is shown (for example "now 16/44.1 (CD quality)"). The converted files are also added to the list. Files made from an MP3/AAC can be reduced too, but this only removes their fake hi-res part, because they remain lossy-sourced.
+The dialog shows "claimed → real" for every file before you start, then each file's new verdict after re-checking it (for example "Fixed: now 16/44.1 (CD quality)"). The list updates to match. Its options are:
 
-![Fix resolution dialog after converting six fake files to their real resolution](docs/gui-fix.png)
+- **Original file** says what happens to the original. By default it is moved to a **Real-Hi-Res backups** folder inside the file's folder (or into a backup folder you choose), from where you can restore it at any time. The backup folder is never scanned. You can also keep it as `<name>.bak` next to the file, or delete it (no backup, asked for confirmation).
+- **Fix files by** chooses between replacing the file (the default) and leaving it alone while saving a corrected copy next to it (`Song [16-44.1].flac`) or into a folder.
+- **Target bit depth** defaults to "16-bit for CD-sourced files". Resampling a 16-bit CD master to 96 kHz fills the low bits, so such files measure as 24-bit, and this option restores 16-bit where the source was a CD or a lossy file. The other choices are "As detected" and "Always 16-bit".
+- **Output format** keeps the same format as the original (FLAC, WAV, AIFF, ALAC, WavPack; other formats become FLAC), or always writes FLAC.
+
+Files made from an MP3/AAC can be fixed too, but this only removes their fake hi-res part, because they remain lossy-sourced and stay marked as fake lossless.
+
+![Fix to real resolution dialog after fixing six files in place; originals moved to the backup folder](docs/gui-fix.png)
 
 **Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with four tabs, and pointing at any setting shows an explanation of what it does:
 
 - **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the upsampling cliff, the lossy cut-off drop and search range, the expected ultrasonic content, the bit-usage threshold and more.
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
 - **Display** sets which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
-- **Fixing** holds the defaults of the Fix resolution dialog: where to save, the output format, the target bit depth, the file name suffix and the re-check.
+- **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check.
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
@@ -159,10 +164,11 @@ Scanned 8 file(s): 1 fake lossless (12.5%), 3 fake hi-res (37.5%), 2 real hi-res
 | `--spectrogram DIR` | Write a PNG spectrogram for each file, with the detected cut-off marked. |
 | `--plot DIR` | Write an SVG average-spectrum plot for each file. |
 | `-j N`, `--jobs N` | Analyse N files in parallel (1–512). `0` means one per CPU core, which is the default. |
-| `--fix` | After scanning, convert every fake file to its real resolution. Tags and cover art are kept, and originals are left untouched (fixed copies are saved next to them). See "Fix resolution" above. |
-| `--fix-dir DIR` | With `--fix`, write the fixed files into `DIR` instead. |
-| `--fix-replace` | With `--fix`, replace the originals, keeping each one as `<name>.bak`. |
-| `--dry-run` | With `--fix`, only show what would be converted. |
+| `--fix` | After scanning, fix every fake file in place so that its properties show its real resolution (same name, tags and cover art). Originals are moved to a `Real-Hi-Res backups` folder next to them. See "Fix to real resolution" above. |
+| `--fix-backup folder\|bak\|none` | With `--fix`, keep originals in the backup folder (default), as `<name>.bak`, or delete them. |
+| `--fix-backup-dir DIR` | With `--fix`, move the originals into `DIR`. |
+| `--fix-copy` / `--fix-dir DIR` | With `--fix`, leave the files alone and save corrected copies next to them or into `DIR`. |
+| `--dry-run` | With `--fix`, only show what would be changed. |
 | `-t SECONDS`, `--max-seconds SECONDS` | Analyse only the first N seconds of each file, which is faster but slightly less reliable. |
 | `-n`, `--no-recursive` | Do not descend into sub-folders. |
 | `--set NAME=VALUE` | Override one setting for this run, for example `--set cliff_db=30` or `--set lossy_max_khz=20.8`. You can repeat it. |
@@ -170,14 +176,14 @@ Scanned 8 file(s): 1 fake lossless (12.5%), 3 fake hi-res (37.5%), 2 real hi-res
 | `--settings FILE` / `--no-settings` | Use a different settings file, or ignore the saved settings and use the defaults. |
 | `--no-color` | Disable coloured output. Setting the `NO_COLOR` environment variable does the same. |
 
-For example, the following command converts all fake files in a library into a separate folder, after showing what it would do:
+For example, the following commands first show what would be fixed and then fix all fake files in a library in place, with the originals kept in backup folders:
 
 ```bash
 realhires ~/Music --fix --dry-run
 ```
 
 ```bash
-realhires ~/Music --fix --fix-dir ~/Music-fixed
+realhires ~/Music --fix
 ```
 
 And the following command lists only the problem files and saves spectrograms and a CSV report:

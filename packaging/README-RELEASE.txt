@@ -21,13 +21,15 @@ none), and the files are listed right away as "Not scanned".  Then press
 "Scan".  After the scan the list shows the problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
 (upsampled or 16-bit padded) and SUSPICIOUS, each with a one-line reason; tick
 the other boxes to see everything.  After the scan a summary window shows the
-percentage of files per verdict.
+percentage of files per verdict as a pie chart (click a slice to list
+only those files).
 
 Click a row for the dashboard: verdict, reason, key facts, spectrogram and
 average spectrum.  "Open Folder" (or double-click / Enter) shows the file in
-your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Fix resolution..."
-(Ctrl/Cmd+F) converts selected fake files to the resolution they really have,
-e.g. a fake 24/96 to 16/44.1, keeping tags and cover art (originals are kept).
+your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Fix to real
+resolution..." (Ctrl/Cmd+F) corrects selected fake files in place so their
+properties show the real resolution (e.g. a fake 24/96 becomes 16/44.1), keeping
+name, tags and cover art; originals go to a "Real-Hi-Res backups" folder.
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 

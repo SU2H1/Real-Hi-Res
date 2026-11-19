@@ -121,15 +121,26 @@ class Settings:
 
     # ---- Fixing ("Fix resolution") ---------------------------------------
     fix_output: str = _f(
-        "Next to the original", "Fixing", "Save fixed files",
-        "Where 'Fix resolution' writes the converted file. 'Replace the original' renames the "
-        "original to <name>.bak first, so nothing is lost.",
-        choices=["Next to the original", "Into a folder", "Replace the original (keep .bak)"],
+        "Replace the file", "Fixing", "Fix files by",
+        "'Replace the file' rewrites the file itself at its real resolution, keeping its name, "
+        "folder, tags and cover art, so its properties (sample rate, bit depth) show the actual "
+        "values. The other choices write a corrected copy instead and leave the file alone.",
+        choices=["Replace the file", "Saving a copy next to it", "Saving a copy into a folder"],
         kind="choice")
+    fix_backup: str = _f(
+        "Move the original to a backup folder", "Fixing", "Original when replacing",
+        "What happens to the original file when it is replaced. The backup folder is "
+        "'Real-Hi-Res backups' inside the file's folder unless a folder is set below.",
+        choices=["Move the original to a backup folder", "Keep it as <name>.bak next to the file",
+                 "Delete it (no backup)"], kind="choice")
+    fix_backup_folder: str = _f(
+        "", "Fixing", "Backup folder",
+        "Where originals are moved when replacing. Empty = a 'Real-Hi-Res backups' folder next to "
+        "each file.", kind="str")
     fix_folder: str = _f(
-        "", "Fixing", "Folder for fixed files",
-        "Used when 'Save fixed files' is 'Into a folder'. Empty = a 'Fixed' folder next to each "
-        "original.", kind="str")
+        "", "Fixing", "Folder for copies",
+        "Used with 'Saving a copy into a folder'. Empty = a 'Fixed' folder next to each original.",
+        kind="str")
     fix_format: str = _f(
         "Same as the original", "Fixing", "Output format",
         "'Same as the original' keeps FLAC as FLAC, WAV as WAV, ALAC as ALAC, AIFF as AIFF, WavPack "
@@ -145,7 +156,7 @@ class Settings:
     fix_suffix: str = _f(
         " [{bits}-{rate}]", "Fixing", "File name suffix",
         "Added to the file name of fixed copies; {bits} and {rate} are replaced, e.g. "
-        "'Song [16-44.1].flac'. Not used when replacing the original.", kind="str")
+        "'Song [16-44.1].flac'. Only used for copies; a replaced file keeps its name.", kind="str")
     fix_verify: bool = _f(True, "Fixing", "Re-check fixed files",
                           "Analyse every fixed file again and show its new verdict.", kind="bool")
 
@@ -170,6 +181,14 @@ class Settings:
         s = cls()
         if not isinstance(data, dict):
             return s
+        data = dict(data)
+        old = {"Next to the original": "Saving a copy next to it",          # 1.4.0 names
+               "Into a folder": "Saving a copy into a folder",
+               "Replace the original (keep .bak)": "Replace the file"}
+        if data.get("fix_output") in old:
+            if data["fix_output"].startswith("Replace"):
+                data.setdefault("fix_backup", "Keep it as <name>.bak next to the file")
+            data["fix_output"] = old[data["fix_output"]]
         for f in fields(cls):
             if f.name in data:
                 v = _coerce(f, data[f.name])
