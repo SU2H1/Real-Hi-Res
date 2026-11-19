@@ -14,8 +14,8 @@ from typing import Iterable, List, Optional
 from . import __version__
 from . import settings as settings_mod
 from .probe import ToolMissingError, require_tools
-from .report import (eprint, header, row, summary, summary_bars, use_color, write_csv, write_json,
-                     write_svg)
+from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
+                     write_json, write_svg)
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
                       analyze_file)
 
@@ -136,6 +136,7 @@ def write_spectrogram_png(r: FileResult, out_dir: str, cfg: settings_mod.Setting
 
 
 def main(argv=None) -> int:
+    setup_console()
     args = build_parser().parse_args(argv)
     try:
         cfg = _load_settings(args)

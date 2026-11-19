@@ -20,6 +20,40 @@ _COLORS = {REAL: "32", FAKE: "31", FAKE_LOSSLESS: "1;31", SUSPECT: "33", NOT_HIR
            LOSSY: "35", ERROR: "90"}
 
 
+def setup_console() -> None:
+    """Never crash on characters the console cannot show (Japanese file names,
+    arrows, bar blocks on a Windows cp1252 console): unencodable characters are
+    replaced, and redirected output (files, pipes) is written as UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        reconf = getattr(stream, "reconfigure", None)
+        if reconf is None:
+            continue
+        try:
+            if stream.isatty():
+                reconf(errors="replace")
+            else:
+                reconf(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+def _can_encode(text: str, stream: TextIO = None) -> bool:
+    enc = getattr(stream or sys.stdout, "encoding", None) or "ascii"
+    try:
+        text.encode(enc)
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def arrow() -> str:
+    return "→" if _can_encode("→") else "->"
+
+
+def bar_char() -> str:
+    return "█" if _can_encode("█") else "#"
+
+
 def use_color(stream: TextIO, force_off: bool = False) -> bool:
     return (not force_off) and stream.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -42,7 +76,7 @@ def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = 
             + f" {r.claimed:<10} {r.estimated:<11} {_bw(r):<9}  {name}")
     pad = f"\n{'':<15}"
     if r.summary and (verbose or r.is_problem or r.verdict == ERROR):
-        line += f"{pad}→ {r.summary}"
+        line += f"{pad}{arrow()} {r.summary}"
     if verbose:
         for reason in r.reasons:
             line += f"{pad}- {reason}"
@@ -68,7 +102,7 @@ def summary_bars(results: List[FileResult], color: bool, width: int = 30) -> str
     """Multi-line percentage breakdown with bars, printed after a scan."""
     lines = []
     for v, n, pct in verdict_breakdown(results):
-        bar = "█" * max(1 if n else 0, int(round(pct / 100 * width)))
+        bar = bar_char() * max(1 if n else 0, int(round(pct / 100 * width)))
         lines.append(f"  {paint(f'{v:<14}', v, color)} {pct:5.1f}%  {n:>5}  {paint(bar, v, color)}")
     return "\n".join(lines)
 

@@ -157,3 +157,30 @@ if __name__ == "__main__":
                           timeout=180, env=env)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.startswith("OK 1 ")  # one summary pop-up was shown
+
+
+# ---------------------------------------------------------- console output ---
+@needs_ffmpeg
+def test_cli_survives_legacy_console_encoding(library, tmp_path):
+    """A Windows cp1252 console cannot encode '→', '█' or Japanese names."""
+    src = Path(library["fake_up_44_to_96"])
+    jp = tmp_path / "ハイレゾ 偽物 テスト.flac"
+    shutil.copy(src, jp)
+    env = dict(os.environ, PYTHONIOENCODING="cp1252", REALHIRES_SETTINGS=str(tmp_path / "s.json"))
+    proc = subprocess.run([sys.executable, "-m", "realhires", str(jp), "--no-color"],
+                          capture_output=True, env=env, timeout=120,
+                          cwd=str(Path(__file__).resolve().parents[1]))
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    out = proc.stdout.decode("utf-8")  # redirected output is written as UTF-8
+    assert "ハイレゾ 偽物 テスト.flac" in out and "FAKE HI-RES" in out
+
+
+def test_ascii_console_fallbacks(monkeypatch):
+    import io
+
+    from realhires import report
+
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="ascii"))
+    assert report.arrow() == "->" and report.bar_char() == "#"
+    r = FileResult(path="/x/a.flac", verdict=FAKE, summary="Upsampled from 44.1 kHz")
+    assert "-> Upsampled" in report.row(r, color=False)

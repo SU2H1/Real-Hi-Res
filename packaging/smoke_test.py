@@ -30,6 +30,8 @@ def write_wav(path: str, samples: np.ndarray, rate: int, width: int) -> None:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):  # CI consoles may be cp1252
+        stream.reconfigure(encoding="utf-8", errors="replace")
     cli = os.path.abspath(sys.argv[1])
     rng = np.random.default_rng(0)
     tmp = tempfile.mkdtemp()
@@ -40,21 +42,24 @@ def main() -> int:
     # Genuine 24-bit white noise at 96 kHz            -> REAL HI-RES
     write_wav(os.path.join(tmp, "real_24_96.wav"), np.round(noise * 8388607).astype(np.int64), 96000, 3)
     # CD quality                                       -> NOT HI-RES
-    write_wav(os.path.join(tmp, "cd_16_44.wav"), s16[: 44100 * 3], 44100, 2)
+    write_wav(os.path.join(tmp, "cd_16_44 テスト曲 é.wav"), s16[: 44100 * 3], 44100, 2)
 
     out_json = os.path.join(tmp, "r.json")
     env = dict(os.environ, PATH="")
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
     if os.name == "nt":
         env["PATH"] = os.environ.get("SystemRoot", r"C:\Windows") + r"\System32"
     proc = subprocess.run([cli, tmp, "--no-color", "-j", "2", "--json", out_json],
-                          capture_output=True, text=True, env=env, timeout=600)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=env, timeout=600)
     print(proc.stdout)
     print(proc.stderr, file=sys.stderr)
     if proc.returncode != 0:
         print(f"CLI exited with {proc.returncode}", file=sys.stderr)
         return 1
     got = {os.path.basename(r["path"]): r["verdict"] for r in json.load(open(out_json, encoding="utf-8"))}
-    want = {"padded_24_96.wav": "FAKE HI-RES", "real_24_96.wav": "REAL HI-RES", "cd_16_44.wav": "NOT HI-RES"}
+    want = {"padded_24_96.wav": "FAKE HI-RES", "real_24_96.wav": "REAL HI-RES", "cd_16_44 テスト曲 é.wav": "NOT HI-RES"}
     if got != want:
         print(f"Unexpected verdicts: {got}", file=sys.stderr)
         return 1
