@@ -60,6 +60,8 @@ VERDICT_STYLE = {
     LOSSY: ("Lossy format", "#6a1b9a", "MP3/AAC/... file"),
     ERROR: ("Error", "#616161", "Could not be analysed"),
 }
+PENDING = "PENDING"  # GUI-only state of a listed file that has not been scanned yet
+PENDING_STYLE = ("Not scanned", "#808080")
 
 
 def _work(path: str, max_seconds: Optional[float], cfg) -> FileResult:
@@ -95,19 +97,29 @@ def fmt_duration(sec: Optional[float]) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-class Scanner(threading.Thread):
-    """Background thread: collects files, fans them out to worker processes
-    and posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
+def list_source(source: str, cfg, out: queue.Queue) -> None:
+    """Find the audio files of one added folder/file (background thread) and
+    post ("listed", source, [absolute paths]) so they can be shown at once."""
+    try:
+        files = [os.path.abspath(f) for f in collect([source], recursive=cfg.recursive,
+                                                     extensions=cfg.extension_set())]
+    except OSError:
+        files = []
+    out.put(("listed", source, files))
 
-    def __init__(self, sources: List[str], cfg, max_seconds: Optional[float], out: queue.Queue):
+
+class Scanner(threading.Thread):
+    """Background thread: fans the listed files out to worker processes and
+    posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
+
+    def __init__(self, files: List[str], cfg, max_seconds: Optional[float], out: queue.Queue):
         super().__init__(daemon=True)
-        self.sources, self.cfg, self.max_seconds, self.out = sources, cfg, max_seconds, out
+        self.files, self.cfg, self.max_seconds, self.out = files, cfg, max_seconds, out
         self.stop_event = threading.Event()
 
     def run(self) -> None:
         try:
-            files = collect(self.sources, recursive=self.cfg.recursive,
-                            extensions=self.cfg.extension_set())
+            files = list(self.files)
             self.out.put(("total", len(files)))
             if not files:
                 self.out.put(("done", None))
@@ -212,7 +224,7 @@ class SpectrogramCanvas(_PlotBase):
             return
         sg = (self.plot or {}).get("spectrogram") if self.plot else None
         if self.result is None:
-            self.create_text(w / 2, h / 2, text="Select a file to see its spectrogram", fill="#aaa")
+            self.create_text(w / 2, h / 2, text="Select a scanned file to see its spectrogram", fill="#aaa")
             return
         if not sg:
             self.create_text(w / 2, h / 2, text="No spectrogram (silent or unreadable file)", fill="#aaa")
@@ -265,7 +277,8 @@ class SpectrumCanvas(_PlotBase):
             return
         p = self.plot
         if self.result is None or not p or not p.get("freqs"):
-            self._message("Select a file to see its spectrum" if self.result is None else "No spectrum available")
+            self._message("Select a scanned file to see its spectrum" if self.result is None
+                          else "No spectrum available")
             return
         L, R, T, B = self.L, self.R, self.T, self.B
         pw, ph = w - L - R, h - T - B
@@ -510,7 +523,10 @@ class App(ttk.Frame):
         super().__init__(root, padding=8)
         self.root = root
         self.cfg = cfg or settings_mod.load()
-        self.sources: List[str] = []
+        self.sources: List[str] = []                 # added folders/files, in order
+        self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
+        self.listing: set = set()                     # sources still being listed
+        self.scan_when_listed = False
         self.results: Dict[str, FileResult] = {}
         self.cache = PlotCache()
         self.queue: queue.Queue = queue.Queue()
@@ -524,7 +540,6 @@ class App(ttk.Frame):
         self.search_var = tk.StringVar()
         self.quick_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Add a folder or files, then press Scan.")
-        self.sources_var = tk.StringVar(value="Nothing selected yet.")
         self._build_menu()
         self._build()
         self.grid(sticky="nsew")
@@ -534,7 +549,7 @@ class App(ttk.Frame):
         if initial:
             for p in initial:
                 self._add_source(p)
-            self.after(200, self.start_scan)
+            self.after(200, self.start_scan)  # waits for the listing to finish
         self.after(100, self._poll)
 
     # ---------- layout ---------------------------------------------------
@@ -587,8 +602,35 @@ class App(ttk.Frame):
         self.scan_btn = ttk.Button(bar, text="Scan", command=self.start_scan)
         self.scan_btn.pack(side="right", padx=(0, 4))
 
-        ttk.Label(self, textvariable=self.sources_var, foreground="#555").grid(
-            row=1, column=0, sticky="ew", pady=(6, 4))
+        src = ttk.LabelFrame(self, text="Sources to scan", padding=(6, 4))
+        src.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        src.columnconfigure(0, weight=1)
+        self.src_tree = ttk.Treeview(src, columns=("kind", "files", "problems"), height=3,
+                                     show="tree headings", selectmode="extended")
+        self.src_tree.heading("#0", text="Folder / file", anchor="w")
+        self.src_tree.heading("kind", text="Type")
+        self.src_tree.heading("files", text="Audio files")
+        self.src_tree.heading("problems", text="Fake / suspicious")
+        self.src_tree.column("#0", width=560, stretch=True)
+        self.src_tree.column("kind", width=70, anchor="center", stretch=False)
+        self.src_tree.column("files", width=150, anchor="center", stretch=False)
+        self.src_tree.column("problems", width=130, anchor="center", stretch=False)
+        self.src_tree.tag_configure("empty", foreground="#c62828")
+        self.src_tree.tag_configure("busy", foreground="#808080")
+        sys_ = ttk.Scrollbar(src, orient="vertical", command=self.src_tree.yview)
+        self.src_tree.configure(yscrollcommand=sys_.set)
+        self.src_tree.grid(row=0, column=0, sticky="ew")
+        sys_.grid(row=0, column=1, sticky="ns")
+        side = ttk.Frame(src)
+        side.grid(row=0, column=2, sticky="n", padx=(6, 0))
+        self.remove_btn = ttk.Button(side, text="Remove", command=self.remove_sources)
+        self.remove_btn.pack(fill="x")
+        self.src_hint = ttk.Label(src, foreground="#666",
+                                  text="Nothing added yet. Click “Add Folder…” or “Add Files…”: the files "
+                                       "found are listed below straight away, then press Scan.")
+        self.src_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.src_tree.bind("<Delete>", lambda e: self.remove_sources())
+        self.src_tree.bind("<BackSpace>", lambda e: self.remove_sources())
 
         filt = ttk.Frame(self)
         filt.grid(row=2, column=0, sticky="ew", pady=(0, 4))
@@ -612,7 +654,8 @@ class App(ttk.Frame):
         table = ttk.Frame(panes)
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended")
+        self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended",
+                                 height=7)
         widths = {"verdict": 105, "why": 400, "claimed": 70, "estimated": 85, "bandwidth": 82,
                   "name": 230, "folder": 220}
         for c in self.COLUMNS:
@@ -621,6 +664,7 @@ class App(ttk.Frame):
                              anchor="w" if c in ("name", "folder", "verdict", "why") else "center")
         for v, (_, color, _) in VERDICT_STYLE.items():
             self.tree.tag_configure(v, foreground=color)
+        self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
         ys = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -676,7 +720,7 @@ class App(ttk.Frame):
         txt_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
         txt_frame.rowconfigure(0, weight=1)
         txt_frame.columnconfigure(0, weight=1)
-        self.text = tk.Text(txt_frame, wrap="word", height=6, relief="flat", padx=6, pady=4,
+        self.text = tk.Text(txt_frame, wrap="word", height=4, relief="flat", padx=6, pady=4,
                             background="#fafafa", foreground="#1f2328", font=("TkDefaultFont", 9))
         tys = ttk.Scrollbar(txt_frame, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=tys.set, state="disabled")
@@ -686,15 +730,16 @@ class App(ttk.Frame):
         info.bind("<Configure>", lambda e: self.why_label.configure(wraplength=max(200, e.width - 20)))
 
         plots = ttk.Notebook(dash)
-        self.spectrogram = SpectrogramCanvas(plots, self, height=260)
-        self.spectrum = SpectrumCanvas(plots, height=260)
+        self.spectrogram = SpectrogramCanvas(plots, self, height=200)
+        self.spectrum = SpectrumCanvas(plots, height=200)
         plots.add(self.spectrogram, text="Spectrogram")
         plots.add(self.spectrum, text="Average spectrum")
         dash.add(plots, weight=3)
         panes.add(dash, weight=2)
 
         status = ttk.Frame(self)
-        status.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        status.grid(row=4, column=0, sticky="ews", pady=(6, 0))
+        self.rowconfigure(4, weight=0, minsize=24)
         status.columnconfigure(1, weight=1)
         self.progress = ttk.Progressbar(status, length=220, mode="determinate")
         self.progress.grid(row=0, column=0, padx=(0, 8))
@@ -720,7 +765,13 @@ class App(ttk.Frame):
 
     def apply_settings(self, new) -> None:
         old_shown = set(self.cfg.shown_verdicts)
+        relist = (new.extension_set() != self.cfg.extension_set() or new.recursive != self.cfg.recursive)
         self.cfg = new
+        if relist and not self.scanning:  # file list depends on these: list the sources again
+            sources = list(self.sources)
+            self.clear()
+            for src in sources:
+                self._add_source(src)
         self.save_settings()
         if set(new.shown_verdicts) != old_shown:
             self.set_filters(new.shown_verdicts)
@@ -730,11 +781,98 @@ class App(ttk.Frame):
 
     # ---------- sources --------------------------------------------------
     def _add_source(self, path: str) -> None:
-        if path and path not in self.sources:
-            self.sources.append(path)
-        n = len(self.sources)
-        shown = "; ".join(self.sources[:3]) + (f"; … (+{n - 3} more)" if n > 3 else "")
-        self.sources_var.set(f"{n} source(s): {shown}" if n else "Nothing selected yet.")
+        """Add a folder/file and list its audio files right away (in the
+        background), so the user sees exactly what will be scanned."""
+        if not path:
+            return
+        path = os.path.abspath(path)
+        if path in self.sources:
+            self.status_var.set(f"Already added: {path}")
+            if self.src_tree.exists(path):
+                self.src_tree.selection_set(path)
+                self.src_tree.see(path)
+            return
+        self.sources.append(path)
+        kind = "Folder" if os.path.isdir(path) else "File"
+        self.src_tree.insert("", "end", iid=path, text=path, values=(kind, "counting…", ""),
+                             tags=("busy",))
+        self.src_tree.see(path)
+        self.src_hint.grid_remove()
+        self.src_tree.configure(height=min(max(len(self.sources), 2), 5))
+        self.listing.add(path)
+        self.status_var.set(f"Looking for audio files in {path} …")
+        threading.Thread(target=list_source, args=(path, self.cfg, self.queue), daemon=True).start()
+
+    def _on_listed(self, source: str, files: List[str]) -> None:
+        self.listing.discard(source)
+        if source not in self.sources:  # removed while listing
+            return
+        self.source_files[source] = files
+        if self.src_tree.exists(source):
+            n = len(files)
+            if n:
+                self.src_tree.item(source, values=(self.src_tree.set(source, "kind"),
+                                                   f"{n} file{'s' if n != 1 else ''}", ""), tags=())
+            else:
+                why = ("not an audio file (check Settings → Scanning → File extensions)"
+                       if os.path.isfile(source) else "no audio files found")
+                self.src_tree.item(source, values=(self.src_tree.set(source, "kind"), why, ""),
+                                   tags=("empty",))
+        self.refresh()
+        if not self.listing:
+            total = len(self.all_files())
+            empty = [s for s in self.sources if not self.source_files.get(s)]
+            msg = (f"{total} audio file{'s' if total != 1 else ''} ready in {len(self.sources)} "
+                   f"source{'s' if len(self.sources) != 1 else ''}. Press Scan.")
+            if empty:
+                msg += f"  ({len(empty)} source(s) contain no audio files.)"
+            if not self.scanning:
+                self.status_var.set(msg)
+            if self.scan_when_listed:
+                self.scan_when_listed = False
+                self.start_scan()
+
+    def all_files(self) -> List[str]:
+        seen, out = set(), []
+        for src in self.sources:
+            for f in self.source_files.get(src, []):
+                if f not in seen:
+                    seen.add(f)
+                    out.append(f)
+        return out
+
+    def remove_sources(self) -> None:
+        if self.scanning:
+            self.status_var.set("Stop the scan before removing sources.")
+            return
+        sel = list(self.src_tree.selection())
+        if not sel:
+            self.status_var.set("Select a source in the “Sources to scan” list to remove it.")
+            return
+        for src in sel:
+            if src in self.sources:
+                self.sources.remove(src)
+            self.source_files.pop(src, None)
+            self.listing.discard(src)
+            self.src_tree.delete(src)
+        keep = set(self.all_files())
+        for path in [p for p in self.results if p not in keep]:
+            del self.results[path]
+        if not self.sources:
+            self.src_hint.grid()
+        self.refresh()
+        self.show_details()
+        n = len(keep)
+        self.status_var.set(f"Removed {len(sel)} source(s). {n} audio file{'s' if n != 1 else ''} left to scan.")
+
+    def _update_source_counts(self) -> None:
+        for src in self.sources:
+            if not self.src_tree.exists(src) or src in self.listing:
+                continue
+            files = self.source_files.get(src, [])
+            done = [self.results[f] for f in files if f in self.results]
+            probs = sum(1 for r in done if r.is_problem)
+            self.src_tree.set(src, "problems", f"{probs} of {len(done)}" if done else "")
 
     def add_folder(self) -> None:
         d = filedialog.askdirectory(title="Choose a music folder")
@@ -752,12 +890,17 @@ class App(ttk.Frame):
         if self.scanning:
             return
         self.sources.clear()
+        self.source_files.clear()
+        self.listing.clear()
         self.results.clear()
         self.cache.clear()
-        self._add_source("")
+        self.src_tree.delete(*self.src_tree.get_children())
+        self.src_hint.grid()
         self.refresh()
         self.show_details()
         self.progress["value"] = 0
+        for v, cb in self.filter_checks.items():
+            cb.configure(text=VERDICT_STYLE[v][0])
         self.status_var.set("Add a folder or files, then press Scan.")
 
     # ---------- scanning -------------------------------------------------
@@ -767,6 +910,15 @@ class App(ttk.Frame):
         if not self.sources:
             messagebox.showinfo("Real-Hi-Res", "Add a folder or some files first.")
             return
+        if self.listing:
+            self.scan_when_listed = True
+            self.status_var.set("Still looking for audio files… the scan starts as soon as the list is complete.")
+            return
+        files = self.all_files()
+        if not files:
+            messagebox.showinfo("Real-Hi-Res", "The added folders/files contain no audio files.\n\n"
+                                "Check the file extensions under Settings → Scanning.")
+            return
         try:
             require_tools()
         except ToolMissingError as exc:
@@ -774,18 +926,18 @@ class App(ttk.Frame):
             return
         self.results.clear()
         self.cache.clear()
+        self.total, self.done = len(files), 0
+        self.scanning = True
         self.refresh()
         self.show_details()
-        self.total = self.done = 0
-        self.scanning = True
+        self._update_source_counts()
         self.scan_started = time.time()
-        self.progress.configure(mode="indeterminate")
-        self.progress.start(12)
-        self.status_var.set("Looking for audio files…")
+        self.progress.configure(mode="determinate", maximum=max(len(files), 1), value=0)
+        self.status_var.set(f"Scanning {len(files)} files…")
         self.scan_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         max_seconds = self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
-        self.scanner = Scanner(list(self.sources), self.cfg, max_seconds, self.queue)
+        self.scanner = Scanner(files, self.cfg, max_seconds, self.queue)
         self.scanner.start()
 
     def stop_scan(self) -> None:
@@ -798,13 +950,15 @@ class App(ttk.Frame):
         dirty = False
         try:
             for _ in range(500):
-                kind, payload = self.queue.get_nowait()
+                kind, payload, *rest = self.queue.get_nowait()
                 if kind == "total":
                     self.total = payload
                     self.progress.stop()
                     self.progress.configure(mode="determinate", maximum=max(payload, 1), value=0)
                     if payload == 0:
                         self.status_var.set("No audio files found in the selected sources.")
+                elif kind == "listed":
+                    self._on_listed(payload, rest[0])
                 elif kind == "result":
                     self.done += 1
                     self.cache.put(payload.path, payload.plot)
@@ -822,6 +976,7 @@ class App(ttk.Frame):
         if dirty and self.scanning:
             self.progress["value"] = self.done
             self._update_status()
+            self._update_source_counts()
         self.after(100, self._poll)
 
     def _finish(self, stopped: bool) -> None:
@@ -833,6 +988,7 @@ class App(ttk.Frame):
         self.stop_btn.configure(state="disabled")
         self._update_status(final=True, stopped=stopped)
         self.refresh()
+        self._update_source_counts()
         kids = self.tree.get_children()
         if kids and not self.tree.selection():
             self.tree.selection_set(kids[0])
@@ -879,9 +1035,28 @@ class App(ttk.Frame):
         return (VERDICT_STYLE[r.verdict][0], r.summary, r.claimed, r.estimated, bw,
                 os.path.basename(r.path), os.path.dirname(r.path))
 
+    def _pending_values(self, path: str):
+        why = "Waiting in the scan queue…" if self.scanning else "Not scanned yet: press Scan"
+        return (PENDING_STYLE[0], why, "", "", "", os.path.basename(path), os.path.dirname(path))
+
+    def _search_ok(self, path: str, summary: str = "") -> bool:
+        q = self.search_var.get().strip().lower()
+        return not q or q in path.lower() or q in summary.lower()
+
     def _insert(self, r: FileResult) -> None:
-        if self._matches(r) and not self.tree.exists(r.path):
-            self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        """Show a new result: replace its "not scanned" row, or hide it when
+        the current filters exclude its verdict."""
+        exists = self.tree.exists(r.path)
+        if self._matches(r):
+            if exists:
+                self.tree.item(r.path, values=self._values(r), tags=(r.verdict,))
+            else:
+                self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        elif exists:
+            was_selected = r.path in self.tree.selection()
+            self.tree.delete(r.path)
+            if was_selected:
+                self.show_details()
 
     def _sort_key(self, r: FileResult):
         c = self.sort_col
@@ -911,6 +1086,11 @@ class App(ttk.Frame):
                       key=self._sort_key, reverse=self.sort_rev)
         for r in rows:
             self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        # Listed files that have not been scanned yet are always shown, so the
+        # user can see what was added.
+        for path in self.all_files():
+            if path not in self.results and self._search_ok(path) and not self.tree.exists(path):
+                self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
         keep = [i for i in selected if self.tree.exists(i)]
         if keep:
             self.tree.selection_set(keep)
@@ -925,6 +1105,10 @@ class App(ttk.Frame):
         sel = self.tree.selection()
         return self.results.get(sel[0]) if sel else None
 
+    def _current_path(self) -> Optional[str]:
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
     def _set_text(self, parts) -> None:
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
@@ -934,9 +1118,21 @@ class App(ttk.Frame):
 
     def show_details(self) -> None:
         r = self._current()
-        state = "normal" if r else "disabled"
+        path = self._current_path()
+        state = "normal" if path else "disabled"
         for b in (self.open_folder_btn, self.open_file_btn, self.copy_btn):
             b.configure(state=state)
+        if r is None and path:  # listed but not scanned yet
+            self.badge.configure(text=PENDING_STYLE[0].upper(), bg=PENDING_STYLE[1])
+            self.name_var.set(os.path.basename(path))
+            self.why_var.set("Waiting in the scan queue…" if self.scanning else
+                             "This file will be analysed when you press Scan.")
+            for v in self.fact_vars.values():
+                v.set("–")
+            self._set_text([path + "\n"])
+            self.spectrogram.show(None, None)
+            self.spectrum.show(None, None)
+            return
         if r is None:
             self.badge.configure(text="", bg="#9e9e9e")
             self.name_var.set("Select a file in the list")
@@ -978,18 +1174,18 @@ class App(ttk.Frame):
         (self.reveal if self.cfg.double_click == "Open file" else self.open_file)()
 
     def reveal(self) -> None:
-        r = self._current()
-        if r:
+        path = self._current_path()
+        if path:
             try:
-                reveal_in_file_manager(r.path)
+                reveal_in_file_manager(path)
             except OSError as exc:
                 messagebox.showerror("Real-Hi-Res", f"Could not open the folder: {exc}")
 
     def open_file(self) -> None:
-        r = self._current()
-        if r:
+        path = self._current_path()
+        if path:
             try:
-                open_with_default_app(r.path)
+                open_with_default_app(path)
             except OSError as exc:
                 messagebox.showerror("Real-Hi-Res", f"Could not open the file: {exc}")
 

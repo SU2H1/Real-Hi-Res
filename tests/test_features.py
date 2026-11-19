@@ -128,7 +128,22 @@ def run():
     import tkinter as tk
     from realhires import gui, settings
     root = tk.Tk()
-    app = gui.App(root, initial=[{str(Path(library['real_24_96']).parent)!r}])
+    folder = {str(Path(library['real_24_96']).parent)!r}
+    app = gui.App(root)
+    app._add_source(folder)
+    app._add_source(folder)  # adding twice must not duplicate
+    def listed():
+        if app.listing:
+            return root.after(100, listed)
+        rows = app.tree.get_children()
+        n = len(app.all_files())
+        assert len(app.sources) == 1 and n >= 10, (app.sources, n)
+        assert len(rows) == n, "listed files are not all shown before scanning"
+        assert all(app.tree.set(i, "verdict") == "Not scanned" for i in rows)
+        assert app.src_tree.set(folder, "files") == f"{{n}} files"
+        assert "ready" in app.status_var.get()
+        app.start_scan()
+        root.after(200, check)
     def check():
         if app.scanning or not app.results:
             return root.after(200, check)
@@ -142,12 +157,13 @@ def run():
         app.tree.selection_set(listed[0]); root.update()
         assert app.badge.cget("text"), "dashboard not filled"
         assert app.cache.get(listed[0])["spectrogram"], "no spectrogram"
+        assert " of " in app.src_tree.set(folder, "problems"), "source problem count missing"
         new = settings.Settings(); new.colormap = "gray"
         app.apply_settings(new)
         assert settings.load().colormap == "gray"
         print("OK", len(dialogs), len(listed))
         app.quit_app()
-    root.after(300, check)
+    root.after(300, listed)
     root.mainloop()
 if __name__ == "__main__":
     run()

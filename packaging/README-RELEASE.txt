@@ -15,8 +15,10 @@ Start the app
             ./uninstall.sh removes that again.  The app runs from this
             folder, so re-run install.sh if you move the folder.
 
-Click "Add Folder..." (or "Add Files..."), then "Scan".  The list shows the
-problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
+Click "Add Folder..." (or "Add Files...").  Every folder/file you add appears
+in the "Sources to scan" panel with the number of audio files found (red if
+none), and the files are listed right away as "Not scanned".  Then press
+"Scan".  After the scan the list shows the problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
 (upsampled or 16-bit padded) and SUSPICIOUS, each with a one-line reason; tick
 the other boxes to see everything.  After the scan a summary window shows the
 percentage of files per verdict.
