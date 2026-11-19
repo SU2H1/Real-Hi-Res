@@ -15,10 +15,17 @@ Start the app
             ./uninstall.sh removes that again.  The app runs from this
             folder, so re-run install.sh if you move the folder.
 
-Click "Add Folder..." (or "Add Files..."), then "Scan".  By default the list
-shows only files judged FAKE HI-RES or SUSPICIOUS; tick the other boxes to see
-everything.  Click a row for the reasons and the spectrum.  Double-click opens
-the file's folder.  Use "Export CSV..." / "Export JSON..." to save the list.
+Click "Add Folder..." (or "Add Files..."), then "Scan".  The list shows the
+problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
+(upsampled or 16-bit padded) and SUSPICIOUS, each with a one-line reason; tick
+the other boxes to see everything.  After the scan a summary window shows the
+percentage of files per verdict.
+
+Click a row for the dashboard: verdict, reason, key facts, spectrogram and
+average spectrum.  "Open Folder" (or double-click / Enter) shows the file in
+your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Settings..." lets
+you change detection thresholds, scanning options and display preferences;
+they are saved and also used by the command-line tool.
 
 Command line
 ------------
@@ -26,7 +33,8 @@ Command line
   macOS   : /Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music
   Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)
 
-  Run with --help for all options (--only fake, --csv, --json, --plot, -v ...).
+  Run with --help for all options (--only problems, --csv, --json,
+  --spectrogram DIR, --set NAME=VALUE, --list-settings, -v ...).
 
 First launch on macOS
 ---------------------

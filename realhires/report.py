@@ -9,14 +9,15 @@ import json
 import os
 import re
 import sys
-from collections import Counter
 from typing import Iterable, List, Optional, TextIO
 
 import numpy as np
 
-from .verdict import ERROR, FAKE, LOSSY, NOT_HIRES, REAL, SUSPECT, VERDICT_ORDER, FileResult
+from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
+                      verdict_breakdown)
 
-_COLORS = {REAL: "32", FAKE: "31", SUSPECT: "33", NOT_HIRES: "36", LOSSY: "35", ERROR: "90"}
+_COLORS = {REAL: "32", FAKE: "31", FAKE_LOSSLESS: "1;31", SUSPECT: "33", NOT_HIRES: "36",
+           LOSSY: "35", ERROR: "90"}
 
 
 def use_color(stream: TextIO, force_off: bool = False) -> bool:
@@ -32,33 +33,44 @@ def _bw(r: FileResult) -> str:
 
 
 def header() -> str:
-    return f"{'VERDICT':<13} {'CLAIMED':<10} {'REAL(EST)':<11} {'BANDWIDTH':<9}  FILE"
+    return f"{'VERDICT':<14} {'CLAIMED':<10} {'REAL(EST)':<11} {'BANDWIDTH':<9}  FILE"
 
 
 def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = False) -> str:
     name = os.path.relpath(r.path, base) if base else r.path
-    line = (paint(f"{r.verdict:<13}", r.verdict, color)
+    line = (paint(f"{r.verdict:<14}", r.verdict, color)
             + f" {r.claimed:<10} {r.estimated:<11} {_bw(r):<9}  {name}")
-    show = verbose or r.verdict in (FAKE, SUSPECT, ERROR)
-    if show:
-        for reason in r.reasons:
-            line += f"\n{'':<14}- {reason}"
+    pad = f"\n{'':<15}"
+    if r.summary and (verbose or r.is_problem or r.verdict == ERROR):
+        line += f"{pad}→ {r.summary}"
     if verbose:
+        for reason in r.reasons:
+            line += f"{pad}- {reason}"
         for note in r.notes:
-            line += f"\n{'':<14}· {note}"
+            line += f"{pad}· {note}"
         if r.bit_usage:
             top = ", ".join(f"{b}-bit LSB {v:.1%}" for b, v in list(r.bit_usage.items())[:3])
-            line += f"\n{'':<14}· Lowest-set-bit usage: {top}"
+            line += f"{pad}· Lowest-set-bit usage: {top}"
         if r.cliffs_db:
             cl = ", ".join(f"{k / 2000:g}k:{v:.0f}dB" for k, v in r.cliffs_db.items() if np.isfinite(v))
-            line += f"\n{'':<14}· Edge drop at candidate source Nyquists: {cl}"
+            line += f"{pad}· Edge drop at candidate source Nyquists: {cl}"
     return line
 
 
 def summary(results: List[FileResult], color: bool) -> str:
-    c = Counter(r.verdict for r in results)
-    parts = [paint(f"{c[v]} {v.lower()}", v, color) for v in VERDICT_ORDER if c[v]]
+    """Totals with percentages, e.g. 'Scanned 20 file(s): 5 fake hi-res (25.0%), ...'."""
+    parts = [paint(f"{n} {v.lower()} ({pct:.1f}%)", v, color)
+             for v, n, pct in verdict_breakdown(results)]
     return f"Scanned {len(results)} file(s): " + ", ".join(parts)
+
+
+def summary_bars(results: List[FileResult], color: bool, width: int = 30) -> str:
+    """Multi-line percentage breakdown with bars, printed after a scan."""
+    lines = []
+    for v, n, pct in verdict_breakdown(results):
+        bar = "█" * max(1 if n else 0, int(round(pct / 100 * width)))
+        lines.append(f"  {paint(f'{v:<14}', v, color)} {pct:5.1f}%  {n:>5}  {paint(bar, v, color)}")
+    return "\n".join(lines)
 
 
 def write_json(results: Iterable[FileResult], path: str) -> None:
@@ -66,9 +78,9 @@ def write_json(results: Iterable[FileResult], path: str) -> None:
         json.dump([r.to_dict() for r in results], f, indent=2, ensure_ascii=False)
 
 
-CSV_FIELDS = ["path", "verdict", "claimed", "estimated_real", "codec", "sample_rate",
-              "claimed_bits", "effective_bits", "bandwidth_hz", "upsampled_from",
-              "cutoff_drop_db", "duration", "reasons"]
+CSV_FIELDS = ["path", "verdict", "summary", "flags", "claimed", "estimated_real", "codec",
+              "sample_rate", "claimed_bits", "effective_bits", "bandwidth_hz", "upsampled_from",
+              "lossy_cutoff_hz", "cutoff_drop_db", "duration", "reasons"]
 
 
 def write_csv(results: Iterable[FileResult], path: str) -> None:
@@ -78,6 +90,7 @@ def write_csv(results: Iterable[FileResult], path: str) -> None:
         for r in results:
             d = r.to_dict()
             d["reasons"] = " | ".join(r.reasons)
+            d["flags"] = " ".join(r.flags)
             w.writerow(d)
 
 
@@ -112,7 +125,8 @@ def write_svg(r: FileResult, out_dir: str) -> Optional[str]:
         return T + ph * (top - np.clip(level, bottom, top)) / (top - bottom)
 
     pts = " ".join(f"{L + i + 0.5:.1f},{Y(v):.1f}" for i, v in enumerate(ys) if v > -299)
-    color = {REAL: "#1a7f37", FAKE: "#cf222e", SUSPECT: "#9a6700"}.get(r.verdict, "#0969da")
+    color = {REAL: "#1a7f37", FAKE: "#cf222e", FAKE_LOSSLESS: "#a40e26",
+             SUSPECT: "#9a6700"}.get(r.verdict, "#0969da")
     out: List[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
         'font-family="Helvetica,Arial,sans-serif" font-size="12">',

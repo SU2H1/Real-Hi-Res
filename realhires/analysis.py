@@ -6,7 +6,9 @@ bounded memory.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Dict, Optional
 
 import numpy as np
@@ -17,6 +19,19 @@ SOURCE_RATES = (44100, 48000, 88200, 96000, 176400, 192000)
 
 # Floor for log conversion (-300 dB): keeps digital silence finite.
 _EPS = 1e-30
+
+# Spectrogram (GUI / --spectrogram): linear frequency bands, time resolution,
+# maximum number of time columns kept, and the dB value stored as 0.
+SPECTRO_BANDS = 256
+SPECTRO_ROW_SECONDS = 0.25
+SPECTRO_MAX_COLUMNS = 1200
+SPECTRO_DB_MIN = -230.0
+
+
+def decode_spectrogram(sg: dict) -> np.ndarray:
+    """dB matrix (time, frequency) from spectrogram_result()'s compact form."""
+    q = np.frombuffer(zlib.decompress(sg["data"]), dtype=np.uint8).reshape(sg["shape"])
+    return q.astype(np.float32) + np.float32(sg["db_min"])
 
 
 def _blackman_harris(n: int) -> np.ndarray:
@@ -37,7 +52,7 @@ def choose_nfft(sample_rate: int) -> int:
 class SpectrumAccumulator:
     """Welch-style averaged power spectrum (50 % overlap, all channels summed)."""
 
-    def __init__(self, sample_rate: int, channels: int):
+    def __init__(self, sample_rate: int, channels: int, spectrogram: bool = False):
         self.sample_rate = sample_rate
         self.channels = channels
         self.nfft = choose_nfft(sample_rate)
@@ -48,6 +63,16 @@ class SpectrumAccumulator:
         self._tail = np.zeros((0, channels))
         # A full-scale sine then reads 0 dB per channel.
         self._norm = (self.window.sum() / 2.0) ** 2 * channels
+        # Optional spectrogram: SPECTRO_BANDS linear frequency bands, one row per
+        # ~SPECTRO_ROW_SECONDS of audio (mean power), kept as float32.
+        self.spectrogram = spectrogram
+        if spectrogram:
+            nbins = self.nfft // 2 + 1
+            self._edges = np.linspace(0, nbins, SPECTRO_BANDS + 1).astype(int)
+            self._band_n = np.diff(self._edges).astype(np.float64)
+            self._rows_per = max(1, int(round(SPECTRO_ROW_SECONDS * sample_rate / self.hop)))
+            self._rows: list = []
+            self._pending = np.zeros((0, SPECTRO_BANDS))
 
     def update(self, block: np.ndarray) -> None:
         """block: float64 array (frames, channels) scaled to [-1, 1)."""
@@ -60,9 +85,18 @@ class SpectrumAccumulator:
         view = np.lib.stride_tricks.sliding_window_view(x, self.nfft, axis=0)
         frames = view[: (count - 1) * self.hop + 1 : self.hop]  # (count, ch, nfft)
         spec = np.fft.rfft(frames * self.window, axis=-1)
-        self.power += (spec.real ** 2 + spec.imag ** 2).sum(axis=(0, 1))
+        p = (spec.real ** 2 + spec.imag ** 2).sum(axis=1)  # (count, bins), channels summed
+        self.power += p.sum(axis=0)
         self.frames += count
         self._tail = x[count * self.hop:].copy()
+        if self.spectrogram:
+            bands = np.add.reduceat(p, self._edges[:-1], axis=1) / self._band_n
+            buf = np.concatenate([self._pending, bands]) if self._pending.size else bands
+            k = self._rows_per
+            n = buf.shape[0] // k
+            if n:
+                self._rows.append(buf[: n * k].reshape(n, k, -1).mean(axis=1).astype(np.float32))
+            self._pending = buf[n * k:]
 
     def result(self):
         if self.frames == 0 and self._tail.shape[0] > 0:
@@ -75,6 +109,30 @@ class SpectrumAccumulator:
         freqs = np.fft.rfftfreq(self.nfft, 1.0 / self.sample_rate)
         mean = self.power / max(self.frames, 1) / self._norm
         return freqs, mean
+
+    def spectrogram_result(self, max_columns: int = SPECTRO_MAX_COLUMNS) -> Optional[dict]:
+        """Compact spectrogram: dB levels quantised to uint8 (1 dB steps from
+        SPECTRO_DB_MIN), zlib-compressed, time on axis 0 and frequency on axis 1."""
+        if not self.spectrogram:
+            return None
+        rows = list(self._rows)
+        if self._pending.size:
+            rows.append(self._pending.mean(axis=0, keepdims=True).astype(np.float32))
+        if not rows:
+            return None
+        m = np.concatenate(rows).astype(np.float64) / self._norm
+        t = m.shape[0]
+        group = int(np.ceil(t / max_columns))
+        if group > 1:  # average neighbouring rows down to <= max_columns
+            pad = (-t) % group
+            if pad:
+                m = np.concatenate([m, np.repeat(m[-1:], pad, axis=0)])
+            m = m.reshape(-1, group, m.shape[1]).mean(axis=1)
+        db = 10.0 * np.log10(m + _EPS)
+        q = np.clip(np.round(db - SPECTRO_DB_MIN), 0, 255).astype(np.uint8)
+        seconds_per_row = self._rows_per * group * self.hop / self.sample_rate
+        return {"data": zlib.compress(q.tobytes(), 6), "shape": q.shape, "db_min": SPECTRO_DB_MIN,
+                "nyquist": self.sample_rate / 2.0, "seconds_per_column": seconds_per_row}
 
     @property
     def noise_gain(self) -> float:
@@ -157,6 +215,8 @@ CLIFF_STRONG_DB = 40.0
 EDGE_RATIO = 0.98          # typical (-20 dB point / source Nyquist) of a resampler
 LOSSY_MAX_HZ = 20300.0     # MP3/AAC encoders low-pass below this
 LOSSY_CLIFF_DB = 25.0      # drop within ~1 kHz that marks an encoder low-pass
+LOSSY_MIN_HZ = 11000.0     # lossy low-pass search starts here
+BIT_THRESHOLD = 0.005      # share of samples for a bit position to count as used
 RELEVANT_RANGE_DB = 110.0  # content more than this below the spectral peak is ignored
 ULTRASONIC_HZ = 24500.0    # anything above this cannot come from a 44.1/48 kHz master
 
@@ -171,6 +231,22 @@ def _smooth_db(freqs: np.ndarray, power: np.ndarray, width_hz: float = 150.0) ->
 def _band(freqs, db, lo, hi) -> float:
     m = (freqs >= lo) & (freqs <= hi)
     return float(np.median(db[m])) if m.any() else float("nan")
+
+
+def detection_params(cfg=None) -> SimpleNamespace:
+    """Detection thresholds from a settings.Settings object (or the defaults)."""
+    if cfg is None:
+        return SimpleNamespace(content_margin=CONTENT_MARGIN_DB, steep=STEEP_DROP_DB, cliff=CLIFF_DB,
+                               strong=CLIFF_STRONG_DB, edge_ratio=EDGE_RATIO, lossy_min=LOSSY_MIN_HZ,
+                               lossy_max=LOSSY_MAX_HZ, lossy_cliff=LOSSY_CLIFF_DB,
+                               relevant=RELEVANT_RANGE_DB, ultrasonic=ULTRASONIC_HZ,
+                               bit_threshold=BIT_THRESHOLD)
+    return SimpleNamespace(content_margin=cfg.content_margin_db, steep=cfg.steep_drop_db,
+                           cliff=cfg.cliff_db, strong=cfg.cliff_strong_db, edge_ratio=cfg.edge_ratio,
+                           lossy_min=cfg.lossy_min_khz * 1000.0, lossy_max=cfg.lossy_max_khz * 1000.0,
+                           lossy_cliff=cfg.lossy_cliff_db, relevant=cfg.relevant_range_db,
+                           ultrasonic=cfg.ultrasonic_khz * 1000.0,
+                           bit_threshold=cfg.bit_threshold_pct / 100.0)
 
 
 def quantization_floor_db(bits: int, noise_gain: float) -> float:
@@ -189,7 +265,8 @@ def _edge_frequency(freqs, db, lo_hz, hi_hz, ref_lo, ref_hi, fall_db=20.0) -> fl
 
 
 def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
-                     noise_gain: float, effective_bits: Optional[int] = 24) -> SpectrumStats:
+                     noise_gain: float, effective_bits: Optional[int] = 24, cfg=None) -> SpectrumStats:
+    c = detection_params(cfg)
     nyq = sample_rate / 2.0
     db = _smooth_db(freqs, power)
     df = freqs[1] - freqs[0]
@@ -206,7 +283,7 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
     bits = min(max(effective_bits or 24, 8), 24)
     qfloor = quantization_floor_db(bits, noise_gain)
     reference = min(floor, qfloor + 30.0)
-    threshold = max(reference + CONTENT_MARGIN_DB, peak - RELEVANT_RANGE_DB)
+    threshold = max(reference + c.content_margin, peak - c.relevant)
 
     # Effective bandwidth: highest frequency where a contiguous ~300 Hz band sits
     # above the threshold (isolated tones / resampler images are ignored).
@@ -221,7 +298,7 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
         below_l = _band(freqs, db, bandwidth - 2500.0, bandwidth - 500.0)
         above_l = _band(freqs, db, bandwidth + 500.0, min(bandwidth + 2500.0, 0.995 * nyq))
         drop = below_l - above_l
-    steep = bool(np.isfinite(drop) and drop >= STEEP_DROP_DB)
+    steep = bool(np.isfinite(drop) and drop >= c.steep)
 
     # --- Upsampling: cliff test at the Nyquist of every plausible lower rate.
     cliffs: Dict[int, float] = {}
@@ -237,11 +314,11 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
     upsampled_from = None
     confidence = None
     edge = float("nan")
-    strong = sorted(r for r, d in cliffs.items() if d >= CLIFF_DB)
+    strong = sorted(r for r, d in cliffs.items() if d >= c.cliff)
     if strong:
         best = max(strong, key=cliffs.get)
         upsampled_from = best
-        confidence = "high" if cliffs[best] >= CLIFF_STRONG_DB else "medium"
+        confidence = "high" if cliffs[best] >= c.strong else "medium"
         # Neighbouring rates (44.1 vs 48 kHz) can both show a big cliff when the
         # resampler's transition band straddles them.  Decide by where the level
         # actually falls 20 dB: resamplers put that point at ~0.97-1.02 x the
@@ -249,10 +326,10 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
         lo_n, hi_n = strong[0] / 2.0, strong[-1] / 2.0
         edge = _edge_frequency(freqs, db, 0.80 * lo_n, 1.2 * hi_n, 0.70 * lo_n, 0.80 * lo_n)
         if len(strong) > 1 and np.isfinite(edge):
-            upsampled_from = min(strong, key=lambda r: abs(edge / (r / 2.0) - EDGE_RATIO))
-            if cliffs[upsampled_from] < CLIFF_STRONG_DB:
+            upsampled_from = min(strong, key=lambda r: abs(edge / (r / 2.0) - c.edge_ratio))
+            if cliffs[upsampled_from] < c.strong:
                 confidence = "medium"
-    if upsampled_from is None and steep and bandwidth >= LOSSY_MAX_HZ:
+    if upsampled_from is None and steep and bandwidth >= c.lossy_max:
         # Fallback: a brick wall right at (or just under) a lower Nyquist.
         for rate in sorted(cliffs):
             if bandwidth <= rate / 2.0 * 1.04:
@@ -267,7 +344,7 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
     lossy = False
     lossy_hz = float("nan")
     lossy_drop = float("nan")
-    scan = np.nonzero((freqs >= 11000.0) & (freqs <= LOSSY_MAX_HZ))[0]
+    scan = np.nonzero((freqs >= c.lossy_min) & (freqs <= c.lossy_max))[0]
     if scan.size:
         step = max(1, int(100.0 / df))
         best_d, best_f = -np.inf, 0.0
@@ -276,10 +353,10 @@ def analyze_spectrum(freqs: np.ndarray, power: np.ndarray, sample_rate: int,
             d = _band(freqs, db, f - 1000.0, f - 200.0) - _band(freqs, db, f + 200.0, f + 1000.0)
             if d > best_d:
                 best_d, best_f = d, f
-        if best_d >= LOSSY_CLIFF_DB:
+        if best_d >= c.lossy_cliff:
             before = _band(freqs, db, best_f - 1000.0, best_f - 200.0)
             after = _band(freqs, db, best_f + 200.0, min(best_f + 4000.0, 0.995 * nyq))
-            if before - after >= LOSSY_CLIFF_DB:
+            if before - after >= c.lossy_cliff:
                 lossy, lossy_hz, lossy_drop = True, best_f, best_d
 
     return SpectrumStats(

@@ -9,7 +9,7 @@ import pytest
 
 from realhires.analysis import BitDepthAccumulator
 from realhires.cli import main
-from realhires.verdict import FAKE, LOSSY, NOT_HIRES, REAL, SUSPECT, analyze_file
+from realhires.verdict import FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, analyze_file
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -57,11 +57,19 @@ def _need(library, name):
     return library[name]
 
 
-def test_lossy_sourced(library):
+def test_lossy_sourced_hires_is_fake_lossless(library):
     r = analyze_file(_need(library, "fake_from_mp3"))
-    assert r.verdict == FAKE
+    assert r.verdict == FAKE_LOSSLESS
+    assert "lossy-source" in r.flags and "lossy" in r.summary.lower()
     assert r.lossy_cutoff_hz and 14000 < r.lossy_cutoff_hz < 20300
     assert r.estimated.startswith("lossy")
+
+
+def test_fake_flac_at_cd_resolution(library):
+    r = analyze_file(_need(library, "fake_flac_cd"))
+    assert r.verdict == FAKE_LOSSLESS, r.reasons
+    assert r.claimed == "16/44.1"
+    assert r.summary.startswith("Made from a lossy file")
 
 
 def test_lossy_format(library):
@@ -106,7 +114,8 @@ def test_cli_scan_with_exports(library, tmp_path, capsys):
     assert "FAKE HI-RES" in out and "REAL HI-RES" in out
     data = json.loads(out_json.read_text())
     assert {d["verdict"] for d in data} >= {FAKE, REAL, NOT_HIRES}
-    assert out_csv.read_text().startswith("path,verdict")
+    assert all("summary" in d and "flags" in d for d in data)
+    assert "%" in out  # percentage summary    assert out_csv.read_text().startswith("path,verdict")
     assert len(list(plots.glob("*.svg"))) >= 10
 
 

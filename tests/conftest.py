@@ -112,6 +112,9 @@ def library(tmp_path_factory):
                                                 [*hq_resample(96000), "-c:a", "flac", "-sample_fmt", "s32"])
         # A lossy file is reported as such.
         files["lossy_mp3"] = mp3
+        # The classic "fake FLAC": an MP3 decoded into a 16/44.1 FLAC.
+        files["fake_flac_cd"] = ffmpeg_convert(mp3, d / "fake_flac_cd.flac",
+                                               ["-c:a", "flac", "-sample_fmt", "s16"])
 
     # Ambiguous: a 96 kHz file whose content gently fades out well below 22 kHz.
     files["dull_96"] = ffmpeg_write(d / "dull_96.wav", music_like(96000, top_hz=4000, seed=7, order=8), 96000,

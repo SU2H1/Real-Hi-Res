@@ -10,23 +10,32 @@ from typing import List, Optional
 import numpy as np
 
 from .analysis import (
-    ULTRASONIC_HZ,
     BitDepthAccumulator,
     SpectrumAccumulator,
     SpectrumStats,
     analyze_spectrum,
     compact_spectrum,
+    detection_params,
 )
 from .probe import AudioInfo, iter_pcm, probe
 
-REAL = "REAL HI-RES"
-FAKE = "FAKE HI-RES"
+FAKE_LOSSLESS = "FAKE LOSSLESS"   # a "fake FLAC": lossless container, lossy (MP3/AAC...) source
+FAKE = "FAKE HI-RES"              # upsampled and/or bit-padded hi-res
 SUSPECT = "SUSPICIOUS"
-NOT_HIRES = "NOT HI-RES"
-LOSSY = "LOSSY FORMAT"
+REAL = "REAL HI-RES"
+NOT_HIRES = "NOT HI-RES"          # genuine lossless at CD resolution
+LOSSY = "LOSSY FORMAT"            # MP3, AAC, ... files themselves
 ERROR = "ERROR"
 
-VERDICT_ORDER = [FAKE, SUSPECT, REAL, NOT_HIRES, LOSSY, ERROR]
+VERDICT_ORDER = [FAKE_LOSSLESS, FAKE, SUSPECT, REAL, NOT_HIRES, LOSSY, ERROR]
+PROBLEM_VERDICTS = (FAKE_LOSSLESS, FAKE, SUSPECT)
+
+# Short machine-readable flags (JSON/CSV "flags" column).
+FLAG_LOSSY_SOURCE = "lossy-source"
+FLAG_UPSAMPLED = "upsampled"
+FLAG_PADDED = "padded-bits"
+FLAG_PARTIAL_BITS = "partial-bits"
+FLAG_NO_ULTRASONIC = "no-ultrasonic"
 
 
 def fmt_rate(rate: Optional[float]) -> str:
@@ -45,8 +54,10 @@ def fmt_res(bits, rate, is_float: bool = False) -> str:
 class FileResult:
     path: str
     verdict: str
+    summary: str = ""                 # one-line reason, shown in lists
     reasons: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    flags: List[str] = field(default_factory=list)
     codec: str = ""
     sample_rate: int = 0
     channels: int = 0
@@ -66,7 +77,7 @@ class FileResult:
     analysed_seconds: float = 0.0
     elapsed: float = 0.0
     spectrum: Optional[SpectrumStats] = None  # full arrays, for SVG plots; not serialised
-    plot: Optional[dict] = None               # compact spectrum for the GUI; not serialised
+    plot: Optional[dict] = None               # compact spectrum + spectrogram for the GUI; not serialised
 
     @property
     def claimed(self) -> str:
@@ -87,6 +98,10 @@ class FileResult:
             return f"lossy~{self.lossy_cutoff_hz / 1000:.0f}k"
         return fmt_res(bits, self.true_rate or self.sample_rate)
 
+    @property
+    def is_problem(self) -> bool:
+        return self.verdict in PROBLEM_VERDICTS
+
     def to_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k not in ("spectrum", "plot")}
         d["claimed"] = self.claimed
@@ -99,11 +114,14 @@ class FileResult:
         return d
 
 
-def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res: FileResult) -> None:
+def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res: FileResult,
+           cfg=None) -> None:
+    c = detection_params(cfg)
     fake: List[str] = []
     suspect: List[str] = []
+    short: List[str] = []
     notes: List[str] = res.notes
-    eff = bits.effective_bits()
+    eff = bits.effective_bits(c.bit_threshold)
     res.effective_bits = eff
     res.bit_usage = {k: round(v, 4) for k, v in sorted(bits.bit_usage().items(), reverse=True)}
     res.bandwidth_hz = spec.bandwidth_hz
@@ -117,32 +135,43 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
 
     bw_k = spec.bandwidth_hz / 1000.0
 
+    # ---- lossy source ("fake FLAC") --------------------------------------
+    if spec.lossy_cutoff:
+        res.flags.append(FLAG_LOSSY_SOURCE)
+        fake.append(
+            f"Brick-wall low-pass at {spec.lossy_cutoff_hz / 1000:.1f} kHz "
+            f"({spec.lossy_drop_db:.0f} dB drop within ~1 kHz, never recovers): typical of an "
+            f"MP3/AAC/Vorbis encoder, so this {info.codec.upper()} file was made from a lossy file "
+            "and is not truly lossless."
+        )
+        short.append(f"Made from a lossy file (MP3/AAC-style cut-off at {spec.lossy_cutoff_hz / 1000:.1f} kHz)")
+
     # ---- bit depth -------------------------------------------------------
     claimed_bits = info.claimed_bits or 16
     if claimed_bits > 16 or info.is_float:
         if eff is not None and eff <= 16:
+            res.flags.append(FLAG_PADDED)
             if info.is_float:
                 fake.append(f"Every sample is an exact {eff}-bit value: 16-bit audio stored in a "
                             f"{claimed_bits}-bit float container.")
+                short.append(f"16-bit audio in a {claimed_bits}-bit float file")
             else:
                 fake.append(f"Only {eff} of {claimed_bits} bits are used: the low {claimed_bits - eff} "
                             f"bits are always zero (16-bit audio padded into a {claimed_bits}-bit container).")
+                short.append(f"Padded: only {eff} of {claimed_bits} bits used")
         elif eff is not None and eff < min(claimed_bits, 24) and not info.is_float:
+            res.flags.append(FLAG_PARTIAL_BITS)
             suspect.append(
                 f"Only {eff} of {claimed_bits} bits are used (low {claimed_bits - eff} bits always zero); "
                 "better than CD but not true 24-bit."
             )
+            short.append(f"Only {eff} of {claimed_bits} bits used")
         elif eff is not None:
             notes.append(f"Bit depth OK: {min(eff, 24) if info.is_float else eff} significant bits in use.")
 
-    # ---- spectrum ---------------------------------------------------------
-    if spec.lossy_cutoff:
-        fake.append(
-            f"Brick-wall low-pass at {spec.lossy_cutoff_hz / 1000:.1f} kHz "
-            f"({spec.lossy_drop_db:.0f} dB drop within ~1 kHz, never recovers): typical of an "
-            "MP3/AAC/Vorbis encoder, so this was made from a lossy file."
-        )
+    # ---- sample rate -----------------------------------------------------
     if spec.upsampled_from and info.sample_rate > spec.upsampled_from:
+        res.flags.append(FLAG_UPSAMPLED)
         drop = spec.cliffs_db.get(spec.upsampled_from, spec.cutoff_drop_db)
         src = fmt_rate(spec.upsampled_from)
         edge = (f" (level is down 20 dB by {spec.upsample_edge_hz / 1000:.1f} kHz)"
@@ -153,40 +182,58 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
         if spec.upsampled_from >= 88200:
             msg += f" Still hi-res, but not the advertised {fmt_rate(info.sample_rate)} kHz."
         fake.append(msg)
+        if not spec.lossy_cutoff:
+            short.append(f"Upsampled from {src} kHz: nothing above {spec.upsampled_from / 2000:g} kHz")
     elif info.sample_rate > 48000 and not spec.lossy_cutoff:
-        if spec.bandwidth_hz < ULTRASONIC_HZ:
+        if spec.bandwidth_hz < c.ultrasonic:
+            res.flags.append(FLAG_NO_ULTRASONIC)
             suspect.append(
                 f"No content above {bw_k:.1f} kHz although the format allows "
                 f"{spec.nyquist / 1000:.0f} kHz, yet there is no brick-wall edge. Could be a dull/old "
-                "recording or a gentle-filter upsample; listen/inspect the plot."
+                "recording or a gentle-filter upsample; check the spectrogram."
             )
+            short.append(f"No content above {bw_k:.1f} kHz, but no brick-wall edge")
         else:
             notes.append(f"Real ultrasonic content up to {bw_k:.1f} kHz "
                          f"(format limit {spec.nyquist / 1000:.0f} kHz).")
     elif info.sample_rate <= 48000:
         notes.append(f"Bandwidth {bw_k:.1f} kHz.")
 
-    if not info.claims_hires:
+    # ---- verdict -----------------------------------------------------------
+    if spec.lossy_cutoff:
+        res.verdict, res.reasons = FAKE_LOSSLESS, fake + suspect
+        if info.claims_hires:
+            res.reasons.append(f"The file also claims {fmt_res(info.claimed_bits, info.sample_rate)} "
+                               "hi-res, which a lossy source cannot provide.")
+    elif not info.claims_hires:
         res.verdict = NOT_HIRES
         res.reasons = ["Standard resolution "
-                       f"({fmt_res(info.claimed_bits, info.sample_rate)}): does not claim to be hi-res."]
-        if spec.lossy_cutoff:
-            res.reasons.append(fake[-1] if fake else "Lossy-sourced.")
-        return
-
-    if fake:
+                       f"({fmt_res(info.claimed_bits, info.sample_rate)}): does not claim to be hi-res. "
+                       "No sign of a lossy source, so it is genuine lossless audio."]
+        short = [f"Genuine lossless at CD quality, content up to {bw_k:.1f} kHz"]
+    elif fake:
         res.verdict, res.reasons = FAKE, fake + suspect
     elif suspect:
         res.verdict, res.reasons = SUSPECT, suspect
     else:
         res.verdict = REAL
         res.reasons = ["Passed spectral and bit-depth checks."]
+        real_bits = min(eff, 24) if (eff and info.is_float) else eff
+        if info.sample_rate > 48000:
+            short = [f"Genuine: content up to {bw_k:.1f} kHz, {real_bits} bits used"]
+        else:
+            short = [f"Genuine {real_bits}-bit audio"]
+    res.summary = "; ".join(short)
 
 
 def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: bool = False,
-                 keep_plot: bool = False) -> FileResult:
+                 keep_plot: bool = False, settings=None) -> FileResult:
+    """Analyse one file.  `settings` is a settings.Settings (None = defaults);
+    an explicit `max_seconds` overrides settings.max_seconds."""
     t0 = time.time()
     res = FileResult(path=path, verdict=ERROR)
+    if max_seconds is None and settings is not None and settings.max_seconds > 0:
+        max_seconds = settings.max_seconds
     try:
         info = probe(path)
         res.codec, res.sample_rate, res.channels = info.codec, info.sample_rate, info.channels
@@ -194,7 +241,7 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
         if info.sample_rate <= 0:
             raise RuntimeError("could not determine sample rate")
 
-        spec_acc = SpectrumAccumulator(info.sample_rate, info.channels)
+        spec_acc = SpectrumAccumulator(info.sample_rate, info.channels, spectrogram=keep_plot)
         bit_acc = BitDepthAccumulator()
         scale = 1.0 / 2147483648.0
         frames = 0
@@ -208,29 +255,46 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
         if bit_acc.nonzero == 0:
             res.verdict = SUSPECT if info.claims_hires else NOT_HIRES
             res.reasons = ["File is digital silence; nothing to analyse."]
+            res.summary = "Digital silence: nothing to analyse"
             return res
 
+        c = detection_params(settings)
         freqs, power = spec_acc.result()
         spec = analyze_spectrum(freqs, power, info.sample_rate, spec_acc.noise_gain,
-                                bit_acc.effective_bits())
+                                bit_acc.effective_bits(c.bit_threshold), cfg=settings)
         if keep_spectrum:
             res.spectrum = spec
         if keep_plot:
             res.plot = compact_spectrum(spec)
+            res.plot["spectrogram"] = spec_acc.spectrogram_result()
 
         if info.is_lossy:
             res.verdict = LOSSY
-            res.reasons = [f"Lossy codec ({info.codec}); can never be real hi-res whatever the "
-                           f"{fmt_rate(info.sample_rate)} kHz sample rate says."]
+            res.reasons = [f"Lossy codec ({info.codec}); can never be real hi-res or lossless, whatever "
+                           f"the {fmt_rate(info.sample_rate)} kHz sample rate says."]
+            res.summary = f"{info.codec.upper()} file: lossy by design"
             res.bandwidth_hz = spec.bandwidth_hz
-            res.effective_bits = bit_acc.effective_bits()
+            res.effective_bits = bit_acc.effective_bits(c.bit_threshold)
             return res
 
-        _judge(info, spec, bit_acc, res)
+        _judge(info, spec, bit_acc, res, settings)
     except Exception as exc:  # noqa: BLE001 - report every failure per file
         res.verdict = ERROR
         res.reasons = [str(exc)]
+        res.summary = f"Could not analyse: {str(exc).splitlines()[0][:120] if str(exc) else type(exc).__name__}"
     finally:
         res.elapsed = time.time() - t0
         res.path = os.path.abspath(path)
     return res
+
+
+def verdict_breakdown(results) -> List[tuple]:
+    """[(verdict, count, percent)] in VERDICT_ORDER, only verdicts that occur."""
+    results = list(results)
+    total = len(results) or 1
+    out = []
+    for v in VERDICT_ORDER:
+        n = sum(1 for r in results if r.verdict == v)
+        if n:
+            out.append((v, n, 100.0 * n / total))
+    return out
