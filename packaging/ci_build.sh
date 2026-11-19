@@ -7,7 +7,7 @@
 # Environment:
 #   ASSET          name of the archive to produce (required)
 #   PYTHON         python to use (default: python)
-#   MACOS_MIN      macOS only: minimum macOS the package must support (default 11.0)
+#   MACOS_MIN      macOS only: minimum macOS the package must support (default 12.0)
 #   MAX_GLIBC      Linux only: newest glibc the package may require (default 2.28)
 #   SKIP_FETCH=1   use an FFmpeg already in build/ffmpeg (or none)
 #   SKIP_TESTS=1   skip pytest
@@ -15,7 +15,7 @@
 set -euo pipefail
 : "${ASSET:?set ASSET}"
 PY="${PYTHON:-python}"
-export REALHIRES_MACOS_MIN="${MACOS_MIN:-11.0}"
+export REALHIRES_MACOS_MIN="${MACOS_MIN:-12.0}"
 MAX_GLIBC="${MAX_GLIBC:-2.28}"
 OS="$(uname -s)"
 mkdir -p out

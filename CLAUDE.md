@@ -8,7 +8,7 @@ Every change to behaviour, options, thresholds, verdicts, file layout, packaging
 
 ## What the project does
 
-`realhires` scans audio files or folders and classifies each file as REAL HI-RES, FAKE HI-RES, SUSPICIOUS, NOT HI-RES, LOSSY FORMAT or ERROR. It decodes the audio with FFmpeg and inspects the samples, so it never trusts tags or headers. There is a CLI (`realhires`) and a Tkinter desktop app (`realhires-gui`). Both are also shipped as self-contained PyInstaller packages, with FFmpeg bundled, for Windows, macOS and Linux.
+`realhires` scans audio files or folders and classifies each file as REAL HI-RES, FAKE HI-RES, SUSPICIOUS, NOT HI-RES, LOSSY FORMAT or ERROR. It decodes the audio with FFmpeg and inspects the samples, so it never trusts tags or headers. There is a CLI (`realhires`) and a Tkinter desktop app (`realhires-gui`). Both are also shipped as self-contained PyInstaller packages, with FFmpeg bundled, for Windows x64, macOS arm64 (12+), macOS x86_64 (10.15+), Linux x64 and Linux arm64 (glibc 2.28+).
 
 ## Commands
 
@@ -18,8 +18,10 @@ Every change to behaviour, options, thresholds, verdicts, file layout, packaging
 | Run the CLI from the source tree | `python3 -m realhires PATH... [-v] [--json F] [--csv F] [--plot DIR]` |
 | Run the GUI from the source tree (needs Tkinter) | `python3 -m realhires.gui [PATH...]`. Passing paths starts a scan automatically. |
 | Install the `realhires` and `realhires-gui` commands | `pip install .` |
-| Build a release package locally | `python packaging/fetch_ffmpeg.py && pyinstaller --noconfirm packaging/realhires.spec` |
+| Build, verify and package locally (what CI runs) | `ASSET=RealHiRes-local bash packaging/ci_build.sh`. The output goes to `out/`. Linux builds belong inside AlmaLinux 8 (`packaging/linux/setup_almalinux8.sh`, then `PYTHON=/opt/venv/bin/python`). |
+| Check binary compatibility of a build | `python packaging/check_compat.py dist/RealHiRes --max-glibc 2.28`, or `... dist/RealHiRes.app --max-macos 12.0 --arch arm64` |
 | Smoke-test a built package | `python packaging/smoke_test.py dist/RealHiRes/realhires-cli` |
+| Regenerate the app icon | `python packaging/make_icon.py`, which writes `realhires/assets/icon.png` |
 | Publish a release | Push a tag `vX.Y.Z`. CI builds the three packages and creates the GitHub Release. |
 
 The runtime requirements are Python 3.9 or newer, NumPy, and `ffmpeg`/`ffprobe` (bundled or on `PATH`). The GUI additionally needs Tkinter (standard library). There are no other runtime dependencies, and plots are hand-written SVG or Tk canvas, so matplotlib is not needed. Keep it that way unless there is a strong reason.
@@ -36,10 +38,15 @@ The runtime requirements are Python 3.9 or newer, NumPy, and `ffmpeg`/`ffprobe` 
 | `realhires/gui.py` | The Tkinter app. The `Scanner` thread uses a spawn-context `ProcessPoolExecutor` and a `queue` that `App._poll()` drains every 100 ms. Its pieces are a `ttk.Treeview` result list (default filter: Fake plus Suspicious), filter checkboxes with counts, search, sortable columns, a details text panel, a `SpectrumCanvas`, and export/reveal/copy actions. |
 | `packaging/realhires.spec` | PyInstaller spec. It builds one folder `RealHiRes/` holding the `RealHiRes` GUI (windowed) and the `realhires-cli` console executable, which share one runtime, with FFmpeg in `_internal/ffmpeg/`. On macOS it is wrapped as `RealHiRes.app`, with the CLI at `Contents/MacOS/realhires-cli`. |
 | `packaging/entry_gui.py`, `packaging/entry_cli.py` | Frozen entry points. Both call `multiprocessing.freeze_support()`. |
-| `packaging/fetch_ffmpeg.py` | Downloads static ffmpeg and ffprobe into `build/ffmpeg`: BtbN LGPL builds for Windows and Linux x64, Martin Riedl builds for macOS. It also writes `FFMPEG-NOTICE.txt`. |
+| `packaging/ci_build.sh` | The single build pipeline used by every CI job. It fetches FFmpeg, runs pytest with it, runs PyInstaller, runs `check_compat.py` (plus `codesign --verify` on macOS), smoke-tests, and then packages: zip on Windows, `.dmg` plus `.zip` on macOS, `.tar.gz` with `install.sh`/`uninstall.sh`/icon on Linux. |
+| `packaging/check_compat.py` | Fails if any ELF file needs a GLIBC symbol version above `--max-glibc` (`objdump -T`), or any Mach-O file has a `minos` above `--max-macos` or lacks the `--arch` slice (`otool -l`, `lipo -archs`). |
+| `packaging/linux/setup_almalinux8.sh` | Prepares the AlmaLinux 8 build container: dnf python3.12 with tkinter and the shared libpython, binutils, and a venv in `/opt/venv`. |
+| `packaging/linux/install.sh`, `uninstall.sh` | Shipped in the Linux tarball. They add or remove `~/.local/share/applications/realhires.desktop`, the hicolor icon, and a `~/.local/bin/realhires-cli` symlink. They need no root. |
+| `packaging/make_icon.py`, `realhires/assets/icon.png` | The NumPy-drawn app icon. It is used as the Tk window icon, converted by PyInstaller (with Pillow) into the `.ico`/`.icns`, and used as the Linux menu icon. |
+| `packaging/fetch_ffmpeg.py` | Downloads static ffmpeg and ffprobe into `build/ffmpeg`: BtbN LGPL builds for Windows x64 and Linux x64/arm64, Martin Riedl builds for macOS arm64 (needs macOS 12), evermeet.cx builds for macOS x86_64. It also writes `FFMPEG-NOTICE.txt`. |
 | `packaging/smoke_test.py` | Runs a frozen CLI with an empty `PATH` on three generated WAVs and checks the verdicts. |
 | `packaging/README-RELEASE.txt`, `packaging/RELEASE_NOTES.md` | The README copied into each package, and the body of the GitHub Release. |
-| `.github/workflows/build.yml` | On every push or PR, a matrix job (windows-latest, macos-latest arm64, ubuntu-22.04) fetches FFmpeg, runs pytest with that FFmpeg, builds, smoke-tests, packages and uploads artifacts. On a `v*` tag, the `release` job publishes them with softprops/action-gh-release. |
+| `.github/workflows/build.yml` | On every push or PR, it runs the jobs `windows` (windows-latest), `macos` (arm64 on macos-latest with min 12.0 (Riedl FFmpeg), x86_64 on macos-15-intel with min 10.15 (evermeet FFmpeg), each with NumPy wheels downloaded for that minimum via `pip download --platform`) and `linux` (x64 on ubuntu-24.04 and arm64 on ubuntu-24.04-arm, both in an `almalinux:8` container). All of them call `packaging/ci_build.sh` and upload `out/*`. On a `v*` tag, the `release` job publishes everything with softprops/action-gh-release. |
 | `tests/conftest.py` | `music_like()` synthesises pink-ish stereo noise. The session fixture `library` builds real and fake files with ffmpeg. `hq_resample()` falls back from soxr to a long swr filter, and MP3 fixtures are omitted (and their tests skipped) when the FFmpeg build has no MP3 encoder. |
 | `tests/test_detection.py` | End-to-end verdict tests plus a CLI smoke test with all exports. |
 | `docs/gui-screenshot.png` | The screenshot shown in the README. |
@@ -67,13 +74,18 @@ Candidate source rates are limited to `rate * 1.5 <= file_rate`, so a 96 kHz fil
 - `analyze_file()` must never raise. Any exception becomes `verdict=ERROR` with the message in `reasons`.
 - `FileResult.spectrum` holds large arrays. It is only kept for `--plot` and is cleared after plotting. `FileResult.plot` is the small GUI version. Anything that the estimated-resolution logic needs must be copied onto `FileResult` fields, never read from `spectrum`.
 - GUI worker processes use the **spawn** context, so any script that starts the GUI must guard its code with `if __name__ == "__main__":`. Otherwise every worker re-runs the script and opens another window. Frozen entry points must call `multiprocessing.freeze_support()` first.
+- Every external program must be started with `probe.external_env()` (it is included in `_no_window()`). A frozen Linux build sets `LD_LIBRARY_PATH` to its bundled libraries, and a system ffmpeg or `xdg-open` that inherits it loads the bundle's old `libstdc++`/`libX11` and crashes.
+- Linux packages must stay buildable on glibc 2.28, because CI enforces it. Do not add `MAX_GLIBC` exceptions. Instead, find out why a library needs a newer glibc. The spec deliberately leaves out `libfontconfig`/`libfreetype` so that the desktop's own copies are used, because an old bundled fontconfig cannot parse newer configs. Frozen Tk also needs the system `libxcb`, which every X11/XWayland desktop has.
+- macOS minimums are declared through `REALHIRES_MACOS_MIN` (into `LSMinimumSystemVersion`) and verified by `check_compat.py`. If a dependency raises its minimum, CI fails, and you must then either raise the documented minimum (README, RELEASE_NOTES, README-RELEASE, the workflow) or pin the dependency.
+- Do not edit `Info.plist` or any file inside the built `.app` after PyInstaller has signed it, because that breaks the ad-hoc signature and Apple Silicon then reports the app as "damaged".
 - Executable names must not differ only by case (`RealHiRes` vs `realhires`), because Windows and macOS file systems are case-insensitive. That is why the CLI in packages is `realhires-cli`.
 - On Linux the GUI uses the `clam` ttk theme, whose progress bar is invisible by default, so `main()` sets an explicit bar colour.
-- You can test the GUI headlessly with `xvfb-run` and take screenshots with ImageMagick `import -window root out.png`.
+- You can test the GUI headlessly with `xvfb-run` and take screenshots with ImageMagick `import -window root out.png`. Without a display, `gui.main()` prints a clear message and returns 1.
+- Local Linux package builds: inside the cloud dev container, dockerd can be started and `almalinux:8` run with `--network host`, with the proxy CA mounted and the repo `baseurl` used instead of `mirrorlist`.
 - The tests must stay self-contained. Generate audio in fixtures instead of committing audio files. They must pass with both the distro FFmpeg and the bundled BtbN/Riedl builds used in CI.
 - Always use full, specific sentences in user-facing reasons, because they are printed verbatim in the CLI and the GUI.
 
 ## Changelog
 
-- 1.1.0 (2026-11-19): Added the Tkinter desktop GUI, with a scrollable list of fake and suspicious files, filters, search, sorting, a details panel with a spectrum, and export. Added self-contained release packages (PyInstaller with bundled FFmpeg) for Windows x64, macOS arm64 and Linux x64, built and published by GitHub Actions on `v*` tags. Added the bundled-FFmpeg lookup and suppressed console windows on Windows. Added the edge-frequency tie-break between neighbouring source rates. Tests now work with FFmpeg builds that lack soxr or an MP3 encoder.
+- 1.1.0 (2026-11-19): Broadened Linux and macOS support. Linux packages are now built on AlmaLinux 8 (glibc 2.28) for x64 and arm64 and come with `install.sh`/`uninstall.sh`. A macOS Intel build (10.15+) was added next to arm64 (12+), as `.dmg` plus `.zip`, with an app icon. CI now checks compatibility of every bundled binary. Fixed `LD_LIBRARY_PATH` leaking from the frozen app into child processes, and added clear errors when Tk or a display is missing. Added the Tkinter desktop GUI, with a scrollable list of fake and suspicious files, filters, search, sorting, a details panel with a spectrum, and export. Added self-contained release packages (PyInstaller with bundled FFmpeg) for Windows x64, macOS arm64 and Linux x64, built and published by GitHub Actions on `v*` tags. Added the bundled-FFmpeg lookup and suppressed console windows on Windows. Added the edge-frequency tie-break between neighbouring source rates. Tests now work with FFmpeg builds that lack soxr or an MP3 encoder.
 - 1.0.0 (2026-11-19): Initial release. Added the spectral cliff test, the lossy cliff scan, effective bandwidth, the bit-padding test (integer and float), the CLI with JSON/CSV/SVG output and parallel jobs, and the synthetic test suite.

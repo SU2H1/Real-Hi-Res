@@ -4,11 +4,16 @@ Real-Hi-Res - fake hi-res audio detector
 This package is self-contained: Python, NumPy and FFmpeg are bundled, so
 nothing else needs to be installed.
 
-GUI
----
+Start the app
+-------------
   Windows : double-click RealHiRes.exe
-  macOS   : open RealHiRes.app (see "First launch on macOS" below)
+  macOS   : drag RealHiRes.app into Applications, then open it
+            (see "First launch on macOS" below)
   Linux   : run ./RealHiRes
+            Optional: ./install.sh adds Real-Hi-Res to your application menu
+            and links realhires-cli into ~/.local/bin (no root needed).
+            ./uninstall.sh removes that again.  The app runs from this
+            folder, so re-run install.sh if you move the folder.
 
 Click "Add Folder..." (or "Add Files..."), then "Scan".  By default the list
 shows only files judged FAKE HI-RES or SUSPICIOUS; tick the other boxes to see
@@ -18,23 +23,33 @@ the file's folder.  Use "Export CSV..." / "Export JSON..." to save the list.
 Command line
 ------------
   Windows : realhires-cli.exe "D:\Music"
-  macOS   : RealHiRes.app/Contents/MacOS/realhires-cli ~/Music
-  Linux   : ./realhires-cli ~/Music
+  macOS   : /Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music
+  Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)
 
   Run with --help for all options (--only fake, --csv, --json, --plot, -v ...).
 
 First launch on macOS
 ---------------------
-The app is not signed with an Apple Developer ID, so macOS may say it "is
-damaged" or "cannot be opened".  Either right-click RealHiRes.app > Open, or
-run once in Terminal:
-
-  xattr -dr com.apple.quarantine /path/to/RealHiRes.app
+The app is not signed with an Apple Developer ID, so macOS blocks the first
+launch ("damaged" / "cannot be opened").
+  * macOS 15 Sequoia and later: System Settings > Privacy & Security, scroll
+    down and click "Open Anyway" next to the RealHiRes message.
+  * Older macOS: right-click RealHiRes.app > Open.
+  * Any version, in Terminal:
+      xattr -dr com.apple.quarantine /Applications/RealHiRes.app
 
 First launch on Windows
 -----------------------
 SmartScreen may warn about an unrecognised app.  Click "More info" > "Run
 anyway".
 
+Linux requirements
+------------------
+glibc 2.28 or newer (any distribution from 2018 onwards) and, for the app, a
+graphical desktop (X11, or Wayland with XWayland).  The command-line tool also
+works on servers without a desktop.
+
 Full documentation: https://github.com/SU2H1/Real-Hi-Res
-FFmpeg licence information: see FFMPEG-NOTICE.txt in the ffmpeg folder.
+FFmpeg licence information: see FFMPEG-NOTICE.txt in the "ffmpeg" folder
+inside the package (Windows/Linux: _internal/ffmpeg; macOS: inside the app,
+right-click RealHiRes.app > Show Package Contents > Contents).

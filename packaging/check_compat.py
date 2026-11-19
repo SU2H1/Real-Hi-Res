@@ -8,7 +8,7 @@ macOS : every Mach-O file's minimum macOS (LC_BUILD_VERSION / LC_VERSION_MIN_MAC
 
 Usage:
   python packaging/check_compat.py dist/RealHiRes --max-glibc 2.28
-  python packaging/check_compat.py dist/RealHiRes.app --max-macos 11.0 --arch arm64
+  python packaging/check_compat.py dist/RealHiRes.app --max-macos 12.0 --arch arm64
 """
 
 import argparse

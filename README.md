@@ -6,15 +6,45 @@ Real-Hi-Res is a desktop app and command-line tool that scans your music library
 
 ## Download and run (no installation needed)
 
-Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unzip and start it.
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it.
 
-| System | File | Start the app | Command line |
+| System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
-| Windows 10/11 (64-bit) | `RealHiRes-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
-| macOS 11+ (Apple Silicon) | `RealHiRes-macos-arm64.zip` | `RealHiRes.app` | `RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
-| Linux x86-64 (glibc 2.35+, e.g. Ubuntu 22.04+) | `RealHiRes-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+| Windows 10/11, 64-bit | `RealHiRes-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
+| macOS 12 Monterey or later, Apple Silicon (M1 and later) | `RealHiRes-macos-arm64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
+| macOS 10.15 Catalina or later, Intel | `RealHiRes-macos-x86_64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
+| Linux, x86-64 (PC) | `RealHiRes-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+| Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
 
-The packages are not code-signed, so your system may warn you the first time. On Windows, SmartScreen may show "Windows protected your PC", and you can continue with **More info → Run anyway**. On macOS, the system may say the app "is damaged" or "cannot be opened"; right-click `RealHiRes.app` and choose **Open**, or run `xattr -dr com.apple.quarantine RealHiRes.app` once in Terminal. Intel Macs and other platforms can run Real-Hi-Res from source as described below.
+If you are not sure which Mac you have, open the Apple menu and choose **About This Mac**. "Chip: Apple M…" means Apple Silicon, and "Processor: Intel…" means Intel. On Linux, `uname -m` prints `x86_64` for the x64 package or `aarch64` for the ARM64 package.
+
+### macOS
+
+Open the `.dmg` and drag **RealHiRes** into **Applications**. The app is not signed with an Apple Developer ID, so the first launch is blocked with a message that the app "is damaged" or "cannot be opened". On macOS 15 Sequoia and later, open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the RealHiRes message. On older versions, right-click the app and choose **Open**. Alternatively, this Terminal command works on every version:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/RealHiRes.app
+```
+
+### Linux
+
+The Linux packages are built on glibc 2.28. They therefore run on practically every distribution from 2018 onwards, including Ubuntu 18.10+, Debian 10+, Linux Mint 20+, Fedora 29+, RHEL/Rocky/AlmaLinux 8+, openSUSE Leap 15.3+, Arch and Manjaro. The app needs a graphical desktop (X11, or Wayland with XWayland, which every mainstream desktop provides). The command-line tool runs anywhere, including on servers. Unpack the archive wherever you like to keep the app:
+
+```bash
+tar -xzf RealHiRes-linux-x64.tar.gz
+```
+
+Then optionally add Real-Hi-Res to your application menu and put `realhires-cli` on your `PATH` (in `~/.local/bin`). This installs for your user only and needs no root:
+
+```bash
+RealHiRes/install.sh
+```
+
+The app keeps running from the unpacked folder, so run `install.sh` again if you move the folder, and run `RealHiRes/uninstall.sh` to remove the menu entry.
+
+### Windows
+
+Unzip the archive and double-click `RealHiRes.exe`. The app is not code-signed, so SmartScreen may show "Windows protected your PC" the first time. Continue with **More info → Run anyway**.
 
 ## Desktop app (GUI)
 
@@ -145,7 +175,16 @@ python3 -m pytest -q
 
 ### Building the packages and publishing a release
 
-The release packages are built by GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) on Windows, macOS and Linux. Every push builds them and attaches them to the workflow run as artifacts. Pushing a version tag also publishes them as a GitHub Release:
+The release packages are built by GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) in six jobs: Windows x64, macOS Apple Silicon, macOS Intel, Linux x64 and Linux ARM64. The Linux jobs run inside an AlmaLinux 8 container so that the packages only need glibc 2.28. Every job runs [`packaging/ci_build.sh`](packaging/ci_build.sh), which goes through the following steps in order:
+
+1. It downloads a static FFmpeg.
+2. It runs the test suite with that FFmpeg.
+3. It builds the package with PyInstaller.
+4. It runs [`packaging/check_compat.py`](packaging/check_compat.py), which fails the build if any bundled file needs a newer glibc or macOS than the package claims, or (on macOS) lacks the right CPU architecture.
+5. It smoke-tests the frozen command-line tool with an empty `PATH`.
+6. It packages the result.
+
+Every push uploads the packages as workflow artifacts, and pushing a version tag also publishes them as a GitHub Release:
 
 ```bash
 git tag v1.1.0
@@ -155,19 +194,17 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-To build a package on your own machine, install the build tools, download FFmpeg into `build/ffmpeg`, and run PyInstaller. The result appears in `dist/RealHiRes` (on macOS, in `dist/RealHiRes.app`).
+To build a package on your own machine, install the build tools and run the same script with the name of the archive you want. The result appears in `out/`.
 
 ```bash
-pip install numpy pyinstaller
+pip install numpy pyinstaller pillow pytest
 ```
 
 ```bash
-python packaging/fetch_ffmpeg.py
+ASSET=RealHiRes-local bash packaging/ci_build.sh
 ```
 
-```bash
-pyinstaller --noconfirm packaging/realhires.spec
-```
+On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).
 

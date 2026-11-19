@@ -47,7 +47,7 @@ jobs:
         include:
           - arch: arm64          # Apple Silicon (M1 and later)
             runner: macos-latest
-            macos_min: "11.0"
+            macos_min: "12.0"    # bundled FFmpeg (martin-riedl.de) needs 12
             numpy_platform: macosx_11_0_arm64
           - arch: x86_64         # Intel Macs
             runner: macos-15-intel

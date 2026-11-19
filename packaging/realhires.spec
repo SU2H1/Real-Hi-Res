@@ -34,7 +34,7 @@ except ImportError:
     print("WARNING: Pillow not installed - building without an application icon")
 # Oldest macOS the app declares support for; CI verifies every bundled binary
 # against it with packaging/check_compat.py.
-MACOS_MIN = os.environ.get("REALHIRES_MACOS_MIN", "11.0")
+MACOS_MIN = os.environ.get("REALHIRES_MACOS_MIN", "12.0")
 
 EXCLUDES = ["matplotlib", "scipy", "pandas", "PIL", "IPython", "pytest", "setuptools", "pip"]
 
