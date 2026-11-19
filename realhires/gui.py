@@ -28,7 +28,7 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 try:
@@ -45,7 +45,8 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 
 from . import __version__
 from . import settings as settings_mod
-from .cli import collect
+from .listing import list_source
+from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
 from .report import write_csv, write_json
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, PROBLEM_VERDICTS, REAL, SUSPECT,
@@ -62,6 +63,8 @@ VERDICT_STYLE = {
 }
 PENDING = "PENDING"  # GUI-only state of a listed file that has not been scanned yet
 PENDING_STYLE = ("Not scanned", "#808080")
+RUNNING = "RUNNING"  # GUI-only: being analysed right now
+RUNNING_STYLE = ("Analysing…", "#0b62c4")
 
 
 def _work(path: str, max_seconds: Optional[float], cfg) -> FileResult:
@@ -97,17 +100,6 @@ def fmt_duration(sec: Optional[float]) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-def list_source(source: str, cfg, out: queue.Queue) -> None:
-    """Find the audio files of one added folder/file (background thread) and
-    post ("listed", source, [absolute paths]) so they can be shown at once."""
-    try:
-        files = [os.path.abspath(f) for f in collect([source], recursive=cfg.recursive,
-                                                     extensions=cfg.extension_set())]
-    except OSError:
-        files = []
-    out.put(("listed", source, files))
-
-
 class Scanner(threading.Thread):
     """Background thread: fans the listed files out to worker processes and
     posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
@@ -125,7 +117,8 @@ class Scanner(threading.Thread):
                 self.out.put(("done", None))
                 return
             ctx = multiprocessing.get_context("spawn")  # safe with a GUI thread running
-            with ProcessPoolExecutor(max_workers=max(1, int(self.cfg.jobs)), mp_context=ctx) as ex:
+            workers = min(effective_jobs(self.cfg.jobs), len(files))
+            with MultiProcessPool(workers, mp_context=ctx) as ex:
                 futures = {ex.submit(_work, f, self.max_seconds, self.cfg): f for f in files}
                 for fut in as_completed(futures):
                     if self.stop_event.is_set():
@@ -513,6 +506,225 @@ class SettingsDialog(tk.Toplevel):
         self.destroy()
 
 
+
+class FixDialog(tk.Toplevel):
+    """Convert fake files to the resolution they really have (realhires.fix)."""
+
+    def __init__(self, app: "App", results: List[FileResult]):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Fix resolution")
+        self.transient(app.root)
+        self.results = results
+        self.plans: list = []
+        self.running = False
+        self.q: queue.Queue = queue.Queue()
+        cfg = app.cfg
+        frm = ttk.Frame(self, padding=12)
+        frm.grid(sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(2, weight=1)
+        self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
+        self.head.grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
+                  text="Each file is converted to the sample rate and bit depth it really contains "
+                       "(e.g. a fake 24/96 upsampled from a CD becomes 16/44.1). Nothing audible is lost, "
+                       "the file gets smaller, and tags and cover art are kept.").grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(2, 8))
+        cols = ("change", "status", "output")
+        self.tv = ttk.Treeview(frm, columns=cols, show="tree headings", height=min(max(len(results), 3), 10))
+        self.tv.heading("#0", text="File", anchor="w")
+        self.tv.heading("change", text="Claimed → real")
+        self.tv.heading("status", text="Status")
+        self.tv.heading("output", text="Saved as", anchor="w")
+        self.tv.column("#0", width=230)
+        self.tv.column("change", width=140, anchor="center", stretch=False)
+        self.tv.column("status", width=230)
+        self.tv.column("output", width=260)
+        self.tv.tag_configure("skip", foreground="#888")
+        self.tv.tag_configure("ok", foreground="#2e7d32")
+        self.tv.tag_configure("fail", foreground="#c62828")
+        ys = ttk.Scrollbar(frm, orient="vertical", command=self.tv.yview)
+        self.tv.configure(yscrollcommand=ys.set)
+        self.tv.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        ys.grid(row=2, column=2, sticky="ns")
+
+        opts = ttk.LabelFrame(frm, text="Options", padding=8)
+        opts.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        opts.columnconfigure(1, weight=1)
+        info = {i["name"]: i for i in settings_mod.Settings.field_info()}
+        self.v_output = tk.StringVar(value=cfg.fix_output)
+        self.v_folder = tk.StringVar(value=cfg.fix_folder)
+        self.v_format = tk.StringVar(value=cfg.fix_format)
+        self.v_bits = tk.StringVar(value=cfg.fix_bits)
+        self.v_verify = tk.BooleanVar(value=cfg.fix_verify)
+        ttk.Label(opts, text="Save fixed files:").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(opts, textvariable=self.v_output, values=info["fix_output"]["choices"],
+                     state="readonly", width=34).grid(row=0, column=1, sticky="w")
+        fr = ttk.Frame(opts)
+        fr.grid(row=1, column=1, sticky="ew", pady=2)
+        fr.columnconfigure(0, weight=1)
+        self.folder_entry = ttk.Entry(fr, textvariable=self.v_folder)
+        self.folder_entry.grid(row=0, column=0, sticky="ew")
+        self.browse_btn = ttk.Button(fr, text="Browse…", command=self._browse)
+        self.browse_btn.grid(row=0, column=1, padx=(4, 0))
+        ttk.Label(opts, text="Folder:").grid(row=1, column=0, sticky="w")
+        ttk.Label(opts, text="Output format:").grid(row=2, column=0, sticky="w")
+        ttk.Combobox(opts, textvariable=self.v_format, values=info["fix_format"]["choices"],
+                     state="readonly", width=34).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(opts, text="Target bit depth:").grid(row=3, column=0, sticky="w")
+        ttk.Combobox(opts, textvariable=self.v_bits, values=info["fix_bits"]["choices"],
+                     state="readonly", width=34).grid(row=3, column=1, sticky="w", pady=2)
+        ttk.Checkbutton(opts, text="Re-check each fixed file", variable=self.v_verify).grid(
+            row=4, column=1, sticky="w", pady=(2, 0))
+        for v in (self.v_output, self.v_folder, self.v_format, self.v_bits):
+            v.trace_add("write", lambda *a: self._replan())
+        self.note = ttk.Label(frm, foreground="#9a6700", wraplength=760, justify="left")
+        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        bottom = ttk.Frame(frm)
+        bottom.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.columnconfigure(1, weight=1)
+        self.pb = ttk.Progressbar(bottom, length=200, mode="determinate")
+        self.pb.grid(row=0, column=0, padx=(0, 8))
+        self.status = ttk.Label(bottom, text="")
+        self.status.grid(row=0, column=1, sticky="w")
+        self.open_btn = ttk.Button(bottom, text="Open output folder", command=self._open_folder, state="disabled")
+        self.open_btn.grid(row=0, column=2, padx=4)
+        self.start_btn = ttk.Button(bottom, text="Convert", command=self._start)
+        self.start_btn.grid(row=0, column=3)
+        ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=4, padx=(4, 0))
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.bind("<Escape>", lambda e: self._close())
+        self._replan()
+        self.after(100, self._poll)
+
+    def _cfg(self):
+        c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
+        c.fix_output, c.fix_folder = self.v_output.get(), self.v_folder.get()
+        c.fix_format, c.fix_bits, c.fix_verify = self.v_format.get(), self.v_bits.get(), self.v_verify.get()
+        return c
+
+    def _replan(self) -> None:
+        from .fix import plan_fix
+
+        if self.running:
+            return
+        cfg = self._cfg()
+        into = cfg.fix_output == "Into a folder"
+        self.folder_entry.configure(state="normal" if into else "disabled")
+        self.browse_btn.configure(state="normal" if into else "disabled")
+        self.tv.delete(*self.tv.get_children())
+        self.plans = []
+        notes = set()
+        for r in self.results:
+            plan, why = plan_fix(r, cfg)
+            name = os.path.basename(r.path)
+            if plan:
+                self.plans.append(plan)
+                notes.update(plan.notes)
+                out = plan.output if cfg.fix_output == "Into a folder" else os.path.basename(plan.output)
+                if plan.replace_original:
+                    out += "  (original → .bak)"
+                self.tv.insert("", "end", iid=r.path, text=name, values=(plan.description, "Ready", out))
+            else:
+                self.tv.insert("", "end", iid=r.path, text=name, values=(r.claimed, why, ""), tags=("skip",))
+        n = len(self.plans)
+        self.head.configure(text=f"Convert {n} file{'s' if n != 1 else ''} to their real resolution"
+                            if n else "Nothing to convert")
+        self.note.configure(text="\n".join(sorted(notes)))
+        self.start_btn.configure(state="normal" if n else "disabled")
+        self.pb.configure(maximum=max(n, 1), value=0)
+        skipped = len(self.results) - n
+        self.status.configure(text=f"{skipped} selected file(s) need no fixing." if skipped else "")
+
+    def _browse(self) -> None:
+        d = filedialog.askdirectory(title="Folder for fixed files", parent=self)
+        if d:
+            self.v_folder.set(d)
+
+    def _start(self) -> None:
+        from .fix import run_fix
+
+        if not self.plans or self.running:
+            return
+        if self.v_output.get().startswith("Replace") and not messagebox.askyesno(
+                "Replace originals?", f"Replace {len(self.plans)} original file(s) with the fixed version?\n\n"
+                "Each original is renamed to <name>.bak first, so you can restore it.", parent=self):
+            return
+        cfg = self._cfg()
+        # remember the chosen options
+        for k in ("fix_output", "fix_folder", "fix_format", "fix_bits", "fix_verify"):
+            setattr(self.app.cfg, k, getattr(cfg, k))
+        self.app.save_settings()
+        self.running = True
+        self.start_btn.configure(state="disabled")
+        self.status.configure(text="Converting…")
+        for p in self.plans:
+            self.tv.set(p.source, "status", "Waiting…")
+        plans = list(self.plans)
+
+        def worker():
+            with ThreadPoolExecutor(max_workers=max(1, min(effective_jobs(cfg.jobs), 8))) as ex:
+                futs = {}
+                for p in plans:
+                    self.q.put(("start", p.source))
+                    futs[ex.submit(run_fix, p, cfg)] = p
+                for fut in as_completed(futs):
+                    self.q.put(("done", fut.result()))
+            self.q.put(("finished", None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _poll(self) -> None:
+        try:
+            while True:
+                kind, payload = self.q.get_nowait()
+                if kind == "start":
+                    self.tv.set(payload, "status", "Converting…")
+                elif kind == "done":
+                    o = payload
+                    self.pb["value"] = self.pb["value"] + 1
+                    src = o.plan.source
+                    if o.ok:
+                        txt = "Done"
+                        if o.new_result is not None:
+                            txt += f": now {o.new_result.claimed} ({VERDICT_STYLE[o.new_result.verdict][0]})"
+                        txt += f", {o.bytes_after / max(o.bytes_before, 1):.0%} of the size"
+                        self.tv.item(src, tags=("ok",))
+                        self.tv.set(src, "output", o.output)
+                        self.app.add_fixed_result(o)
+                    else:
+                        txt = o.message
+                        self.tv.item(src, tags=("fail",))
+                    self.tv.set(src, "status", txt)
+                elif kind == "finished":
+                    self.running = False
+                    ok = sum(1 for i in self.tv.get_children() if "ok" in self.tv.item(i, "tags"))
+                    bad = sum(1 for i in self.tv.get_children() if "fail" in self.tv.item(i, "tags"))
+                    self.status.configure(text=f"{ok} converted" + (f", {bad} failed" if bad else "") + ".")
+                    self.open_btn.configure(state="normal" if ok else "disabled")
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(100, self._poll)
+
+    def _open_folder(self) -> None:
+        for i in self.tv.get_children():
+            if "ok" in self.tv.item(i, "tags"):
+                out = self.tv.set(i, "output")
+                if out:
+                    reveal_in_file_manager(out)
+                    return
+
+    def _close(self) -> None:
+        if self.running and not messagebox.askyesno(
+                "Conversion running", "Conversions are still running. Close anyway? "
+                "Files being converted are finished in the background.", parent=self):
+            return
+        self.destroy()
+
 # -------------------------------------------------------------------- app ---
 class App(ttk.Frame):
     COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "name", "folder")
@@ -525,7 +737,10 @@ class App(ttk.Frame):
         self.cfg = cfg or settings_mod.load()
         self.sources: List[str] = []                 # added folders/files, in order
         self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
-        self.listing: set = set()                     # sources still being listed
+        self.listing: Dict[str, threading.Event] = {}  # sources still being listed -> cancel flag
+        self.scan_order: List[str] = []
+        self.scan_ptr = 0
+        self.scan_workers = 1
         self.scan_when_listed = False
         self.results: Dict[str, FileResult] = {}
         self.cache = PlotCache()
@@ -571,6 +786,10 @@ class App(ttk.Frame):
         e.add_command(label="Open file", accelerator=f"{acc}+Enter", command=self.open_file)
         e.add_command(label="Copy path", accelerator=f"{acc}+C", command=self.copy_path)
         e.add_separator()
+        e.add_command(label="Fix resolution of selected files…", accelerator=f"{acc}+F",
+                      command=self.fix_selected)
+        e.add_command(label="Fix resolution of all fake files…", command=self.fix_all)
+        e.add_separator()
         e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
         m.add_cascade(label="Edit", menu=e)
         v = tk.Menu(m, tearoff=False)
@@ -585,6 +804,7 @@ class App(ttk.Frame):
         self.root.bind_all(f"<{mod}-o>", lambda e: self.add_folder())
         self.root.bind_all(f"<{mod}-q>", lambda e: self.quit_app())
         self.root.bind_all(f"<{mod}-comma>", lambda e: self.open_settings())
+        self.root.bind_all(f"<{mod}-f>", lambda e: self.fix_selected())
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -665,6 +885,7 @@ class App(ttk.Frame):
         for v, (_, color, _) in VERDICT_STYLE.items():
             self.tree.tag_configure(v, foreground=color)
         self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
+        self.tree.tag_configure(RUNNING, foreground=RUNNING_STYLE[1])
         ys = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -715,6 +936,8 @@ class App(ttk.Frame):
         self.open_file_btn.pack(side="left", padx=4)
         self.copy_btn = ttk.Button(btns, text="Copy Path", command=self.copy_path, state="disabled")
         self.copy_btn.pack(side="left")
+        self.fix_btn = ttk.Button(btns, text="Fix resolution…", command=self.fix_selected, state="disabled")
+        self.fix_btn.pack(side="left", padx=(12, 0))
         ttk.Label(info, text="Details", foreground="#666").grid(row=4, column=0, columnspan=2, sticky="w")
         txt_frame = ttk.Frame(info)
         txt_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
@@ -749,6 +972,8 @@ class App(ttk.Frame):
         self.menu.add_command(label="Open file location", command=self.reveal)
         self.menu.add_command(label="Open file", command=self.open_file)
         self.menu.add_command(label="Copy path", command=self.copy_path)
+        self.menu.add_separator()
+        self.menu.add_command(label="Fix resolution…", command=self.fix_selected)
 
     def _update_quick_label(self) -> None:
         self.quick_cb.configure(text=f"Quick scan (first {self.cfg.quick_scan_seconds:g} s)")
@@ -799,15 +1024,33 @@ class App(ttk.Frame):
         self.src_tree.see(path)
         self.src_hint.grid_remove()
         self.src_tree.configure(height=min(max(len(self.sources), 2), 5))
-        self.listing.add(path)
+        cancel = threading.Event()
+        self.listing[path] = cancel
+        self.source_files[path] = []
         self.status_var.set(f"Looking for audio files in {path} …")
-        threading.Thread(target=list_source, args=(path, self.cfg, self.queue), daemon=True).start()
+        threading.Thread(target=list_source, args=(path, self.cfg, self.queue, cancel), daemon=True).start()
 
-    def _on_listed(self, source: str, files: List[str]) -> None:
-        self.listing.discard(source)
+    def _on_listing(self, source: str, batch: List[str]) -> None:
+        """A batch of files found while a folder is still being walked."""
+        if source not in self.sources or source not in self.listing:
+            return
+        known = set(self.all_files())
+        self.source_files[source].extend(batch)
+        n = len(self.source_files[source])
+        if self.src_tree.exists(source):
+            self.src_tree.set(source, "files", f"{n} so far…")
+        for path in batch:
+            if path not in known and not self.tree.exists(path) and self._search_ok(path):
+                self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
+        self.status_var.set(f"Looking for audio files… {len(known) + len(batch)} found so far")
+
+    def _on_listed(self, source: str, files: Optional[List[str]] = None) -> None:
+        self.listing.pop(source, None)
         if source not in self.sources:  # removed while listing
             return
-        self.source_files[source] = files
+        if files is not None:
+            self.source_files[source] = files
+        files = self.source_files.get(source, [])
         if self.src_tree.exists(source):
             n = len(files)
             if n:
@@ -853,7 +1096,9 @@ class App(ttk.Frame):
             if src in self.sources:
                 self.sources.remove(src)
             self.source_files.pop(src, None)
-            self.listing.discard(src)
+            cancel = self.listing.pop(src, None)
+            if cancel:
+                cancel.set()
             self.src_tree.delete(src)
         keep = set(self.all_files())
         for path in [p for p in self.results if p not in keep]:
@@ -891,6 +1136,8 @@ class App(ttk.Frame):
             return
         self.sources.clear()
         self.source_files.clear()
+        for cancel in self.listing.values():
+            cancel.set()
         self.listing.clear()
         self.results.clear()
         self.cache.clear()
@@ -927,6 +1174,8 @@ class App(ttk.Frame):
         self.results.clear()
         self.cache.clear()
         self.total, self.done = len(files), 0
+        self.scan_order, self.scan_ptr = list(files), 0
+        self.scan_workers = min(effective_jobs(self.cfg.jobs), len(files))
         self.scanning = True
         self.refresh()
         self.show_details()
@@ -939,6 +1188,24 @@ class App(ttk.Frame):
         max_seconds = self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
         self.scanner = Scanner(files, self.cfg, max_seconds, self.queue)
         self.scanner.start()
+        self._mark_running()
+
+    def _mark_running(self) -> None:
+        """Show which files are being analysed right now.  The pools hand out
+        work in submission order, so these are the first unfinished files."""
+        while self.scan_ptr < len(self.scan_order) and self.scan_order[self.scan_ptr] in self.results:
+            self.scan_ptr += 1
+        shown = 0
+        i = self.scan_ptr
+        while i < len(self.scan_order) and shown < self.scan_workers:
+            path = self.scan_order[i]
+            if path not in self.results:
+                shown += 1
+                if self.tree.exists(path) and PENDING in self.tree.item(path, "tags"):
+                    self.tree.item(path, values=(RUNNING_STYLE[0], "Analysing…", "", "", "",
+                                                 os.path.basename(path), os.path.dirname(path)),
+                                   tags=(RUNNING,))
+            i += 1
 
     def stop_scan(self) -> None:
         if self.scanner:
@@ -957,6 +1224,8 @@ class App(ttk.Frame):
                     self.progress.configure(mode="determinate", maximum=max(payload, 1), value=0)
                     if payload == 0:
                         self.status_var.set("No audio files found in the selected sources.")
+                elif kind == "listing":
+                    self._on_listing(payload, rest[0])
                 elif kind == "listed":
                     self._on_listed(payload, rest[0])
                 elif kind == "result":
@@ -965,6 +1234,8 @@ class App(ttk.Frame):
                     payload.plot = None
                     self.results[payload.path] = payload
                     self._insert(payload)
+                    if payload.path in self.tree.selection():
+                        self.show_details()  # the selected file just finished: show it live
                     dirty = True
                 elif kind == "done":
                     self._finish(stopped=payload == "stopped")
@@ -977,6 +1248,7 @@ class App(ttk.Frame):
             self.progress["value"] = self.done
             self._update_status()
             self._update_source_counts()
+            self._mark_running()
         self.after(100, self._poll)
 
     def _finish(self, stopped: bool) -> None:
@@ -1012,11 +1284,14 @@ class App(ttk.Frame):
         c = self._counts()
         for v, cb in self.filter_checks.items():
             cb.configure(text=f"{VERDICT_STYLE[v][0]} ({c[v]})")
-        head = ("Stopped" if stopped else "Finished") if final else "Scanning"
-        n = max(self.done, 1)
         fakes = c[FAKE] + c[FAKE_LOSSLESS]
-        self.status_var.set(f"{head}: {self.done}/{self.total} files  ·  {fakes} fake "
-                            f"({100 * fakes / n:.0f} %), {c[SUSPECT]} suspicious, {c[REAL]} real hi-res")
+        n = max(len(self.results), 1)
+        tail = f"{fakes} fake ({100 * fakes / n:.0f} %), {c[SUSPECT]} suspicious, {c[REAL]} real hi-res"
+        if final:
+            head = "Stopped" if stopped else "Finished"
+            self.status_var.set(f"{head}: {len(self.results)} files  ·  {tail}")
+        else:
+            self.status_var.set(f"Scanning ({self.scan_workers} at a time): {self.done}/{self.total} files  ·  {tail}")
 
     # ---------- table ----------------------------------------------------
     def set_filters(self, verdicts) -> None:
@@ -1047,7 +1322,9 @@ class App(ttk.Frame):
         """Show a new result: replace its "not scanned" row, or hide it when
         the current filters exclude its verdict."""
         exists = self.tree.exists(r.path)
-        if self._matches(r):
+        if self._matches(r) or (self.scanning and exists):
+            # while scanning every row stays visible and updates in place;
+            # the verdict filters are applied when the scan has finished
             if exists:
                 self.tree.item(r.path, values=self._values(r), tags=(r.verdict,))
             else:
@@ -1122,6 +1399,10 @@ class App(ttk.Frame):
         state = "normal" if path else "disabled"
         for b in (self.open_folder_btn, self.open_file_btn, self.copy_btn):
             b.configure(state=state)
+        from .fix import FIXABLE_VERDICTS
+        fixable = any(self.results.get(i) is not None and self.results[i].verdict in FIXABLE_VERDICTS
+                      for i in self.tree.selection())
+        self.fix_btn.configure(state="normal" if fixable and not self.scanning else "disabled")
         if r is None and path:  # listed but not scanned yet
             self.badge.configure(text=PENDING_STYLE[0].upper(), bg=PENDING_STYLE[1])
             self.name_var.set(os.path.basename(path))
@@ -1166,6 +1447,43 @@ class App(ttk.Frame):
         plot = self.cache.get(r.path)
         self.spectrogram.show(r, plot)
         self.spectrum.show(r, plot)
+
+    def fix_selected(self) -> None:
+        if self.scanning:
+            self.status_var.set("Wait for the scan to finish before fixing files.")
+            return
+        rs = [self.results[i] for i in self.tree.selection() if i in self.results]
+        if not rs:
+            self.status_var.set("Select one or more scanned fake files to fix.")
+            return
+        FixDialog(self, rs)
+
+    def fix_all(self) -> None:
+        from .fix import FIXABLE_VERDICTS
+
+        if self.scanning:
+            self.status_var.set("Wait for the scan to finish before fixing files.")
+            return
+        rs = [r for r in self.results.values() if r.verdict in FIXABLE_VERDICTS]
+        if not rs:
+            messagebox.showinfo("Fix resolution", "No fake hi-res or fake lossless files to fix.")
+            return
+        FixDialog(self, rs)
+
+    def add_fixed_result(self, outcome) -> None:
+        """Show a freshly converted file (and drop a replaced original)."""
+        if outcome.plan.replace_original and outcome.plan.source in self.results:
+            del self.results[outcome.plan.source]
+            if self.tree.exists(outcome.plan.source):
+                self.tree.delete(outcome.plan.source)
+        r = outcome.new_result
+        if r is None:
+            return
+        if r.path in self.results and self.tree.exists(r.path):
+            self.tree.delete(r.path)
+        self.results[r.path] = r
+        self.refresh()
+        self._update_source_counts()
 
     def _primary_action(self) -> None:
         (self.open_file if self.cfg.double_click == "Open file" else self.reveal)()

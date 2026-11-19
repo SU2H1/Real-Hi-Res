@@ -20,7 +20,7 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-GROUPS = ("Detection", "Scanning", "Display")
+GROUPS = ("Detection", "Scanning", "Display", "Fixing")
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
                 "LOSSY FORMAT", "ERROR"]
@@ -84,8 +84,12 @@ class Settings:
 
     # ---- Scanning -------------------------------------------------------
     jobs: int = _f(
-        max(1, min(4, os.cpu_count() or 1)), "Scanning", "Parallel jobs",
-        "How many files are analysed at the same time.", 1, 64, kind="int")
+        0, "Scanning", "Parallel jobs (0 = automatic)",
+        "How many files are analysed at the same time. 0 uses one job per CPU core "
+        f"({os.cpu_count() or 1} on this computer), which is the fastest setting: more jobs than cores "
+        "do not scan faster, they only use more memory. Up to 512 are allowed. (Python on Windows "
+        "limits one process pool to 61 workers; Real-Hi-Res uses several pools to go beyond that.)",
+        0, 512, kind="int")
     max_seconds: float = _f(
         0.0, "Scanning", "Analyse at most (seconds, 0 = whole file)",
         "Analysing only the start of each file is faster but can miss content.", 0, 36000)
@@ -114,6 +118,36 @@ class Settings:
     spectrogram_range_db: float = _f(
         120.0, "Display", "Spectrogram range (dB)",
         "Dynamic range shown in the spectrogram; quieter detail is drawn black.", 40, 200)
+
+    # ---- Fixing ("Fix resolution") ---------------------------------------
+    fix_output: str = _f(
+        "Next to the original", "Fixing", "Save fixed files",
+        "Where 'Fix resolution' writes the converted file. 'Replace the original' renames the "
+        "original to <name>.bak first, so nothing is lost.",
+        choices=["Next to the original", "Into a folder", "Replace the original (keep .bak)"],
+        kind="choice")
+    fix_folder: str = _f(
+        "", "Fixing", "Folder for fixed files",
+        "Used when 'Save fixed files' is 'Into a folder'. Empty = a 'Fixed' folder next to each "
+        "original.", kind="str")
+    fix_format: str = _f(
+        "Same as the original", "Fixing", "Output format",
+        "'Same as the original' keeps FLAC as FLAC, WAV as WAV, ALAC as ALAC, AIFF as AIFF, WavPack "
+        "as WavPack (others become FLAC). 'FLAC' always writes FLAC.",
+        choices=["Same as the original", "FLAC"], kind="choice")
+    fix_bits: str = _f(
+        "16-bit for CD-sourced files", "Fixing", "Target bit depth",
+        "'As detected' keeps the bit depth actually found in the file. Resampling a 16-bit CD "
+        "master to 96 kHz fills the low bits, so such files are detected as 24-bit; "
+        "'16-bit for CD-sourced files' restores 16-bit when the file was upsampled from 44.1/48 kHz "
+        "or made from a lossy file. 'Always 16-bit' converts everything to 16-bit.",
+        choices=["As detected", "16-bit for CD-sourced files", "Always 16-bit"], kind="choice")
+    fix_suffix: str = _f(
+        " [{bits}-{rate}]", "Fixing", "File name suffix",
+        "Added to the file name of fixed copies; {bits} and {rate} are replaced, e.g. "
+        "'Song [16-44.1].flac'. Not used when replacing the original.", kind="str")
+    fix_verify: bool = _f(True, "Fixing", "Re-check fixed files",
+                          "Analyse every fixed file again and show its new verdict.", kind="bool")
 
     # ------------------------------------------------------------------
     def extension_set(self) -> set:

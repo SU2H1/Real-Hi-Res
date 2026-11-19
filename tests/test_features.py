@@ -37,9 +37,9 @@ def test_settings_roundtrip_and_validation(tmp_path):
     t = settings.load(str(path))
     assert (t.cliff_db, t.colormap, t.shown_verdicts) == (33.0, "viridis", ["FAKE LOSSLESS"])
     # broken / out-of-range / unknown values fall back to defaults instead of crashing
-    path.write_text(json.dumps({"cliff_db": "x", "jobs": 0, "colormap": "nope", "zzz": 1}))
+    path.write_text(json.dumps({"cliff_db": "x", "jobs": -5, "colormap": "nope", "zzz": 1}))
     u = settings.load(str(path))
-    assert (u.cliff_db, u.colormap) == (25.0, "inferno") and u.jobs >= 1
+    assert (u.cliff_db, u.colormap, u.jobs) == (25.0, "inferno", 0)  # 0 = automatic
     path.write_text("{not json")
     assert settings.load(str(path)).cliff_db == 25.0
     with pytest.raises(ValueError):
@@ -200,3 +200,109 @@ def test_ascii_console_fallbacks(monkeypatch):
     assert report.arrow() == "->" and report.bar_char() == "#"
     r = FileResult(path="/x/a.flac", verdict=FAKE, summary="Upsampled from 44.1 kHz")
     assert "-> Upsampled" in report.row(r, color=False)
+
+
+# ------------------------------------------------------------ parallelism ---
+def test_pool_split_respects_windows_limit():
+    from realhires.pool import MultiProcessPool, effective_jobs, split_workers
+
+    assert split_workers(64, 61) == [32, 32]
+    assert split_workers(130, 61) == [44, 43, 43] and sum(split_workers(500, 61)) == 500
+    assert all(n <= 61 for n in split_workers(512, 61))
+    assert split_workers(8, 61) == [8]
+    assert effective_jobs(0) >= 1 and effective_jobs(10_000) == 512
+    import multiprocessing
+
+    with MultiProcessPool(3, mp_context=multiprocessing.get_context("spawn"), limit=2) as pool:  # 2 + 1
+        assert pool.sizes == [2, 1]
+        assert sorted(f.result() for f in [pool.submit(abs, -i) for i in range(6)]) == list(range(6))
+
+
+def test_settings_jobs_zero_is_automatic():
+    s = settings.Settings()
+    assert s.jobs == 0
+    s.set_value("jobs", "200")
+    assert s.jobs == 200
+    with pytest.raises(ValueError):
+        s.set_value("jobs", "513")
+
+
+def test_listing_streams_batches(tmp_path):
+    import queue
+    import threading
+
+    from realhires.listing import list_source
+
+    for i in range(1200):
+        (tmp_path / f"t{i:04d}.flac").write_bytes(b"")
+    (tmp_path / "notes.txt").write_text("x")
+    q = queue.Queue()
+    list_source(str(tmp_path), settings.Settings(), q, threading.Event())
+    msgs = list(q.queue)
+    assert msgs[-1] == ("listed", str(tmp_path), None)
+    batches = [m[2] for m in msgs[:-1]]
+    assert len(batches) >= 3 and sum(len(b) for b in batches) == 1200  # streamed, not all at once
+
+
+# ------------------------------------------------------------------- fixing ---
+@needs_ffmpeg
+def test_fix_upsampled_and_padded(library, tmp_path):
+    from realhires.fix import plan_fix, run_fix
+
+    cfg = settings.Settings()
+    cfg.fix_output, cfg.fix_folder = "Into a folder", str(tmp_path / "out")
+    r = analyze_file(library["fake_up_44_to_96"])
+    plan, why = plan_fix(r, cfg)
+    assert plan and plan.description == "24/96 → 16/44.1", why
+    out = run_fix(plan, cfg)
+    assert out.ok, out.message
+    assert out.new_result.verdict == "NOT HI-RES" and out.new_result.claimed == "16/44.1"
+    assert out.bytes_after < out.bytes_before
+    assert os.path.exists(library["fake_up_44_to_96"])  # original untouched
+    cfg.fix_bits = "As detected"
+    plan2, _ = plan_fix(r, cfg)
+    assert plan2.description == "24/96 → 24/44.1"
+    p = analyze_file(library["fake_padded_16_in_24"])
+    plan3, _ = plan_fix(p, cfg)
+    assert plan3.description == "24/96 → 16/96" and not plan3.resample
+    assert run_fix(plan3, cfg).new_result.effective_bits == 16
+    plan4, why4 = plan_fix(analyze_file(library["real_24_96"]), cfg)
+    assert plan4 is None and "need fixing" in why4
+
+
+@needs_ffmpeg
+def test_fix_replace_keeps_backup_and_tags(library, tmp_path):
+    from realhires.fix import plan_fix, run_fix
+    from realhires.probe import probe
+
+    src = tmp_path / "Track テスト.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", library["fake_up_96_to_192"], "-c:a", "flac",
+                    "-sample_fmt", "s32", "-metadata", "title=曲名", "-metadata", "artist=A", str(src)],
+                   check=True)
+    cfg = settings.Settings()
+    cfg.fix_output = "Replace the original (keep .bak)"
+    plan, _ = plan_fix(analyze_file(str(src)), cfg)
+    assert plan.description == "24/192 → 24/96"
+    out = run_fix(plan, cfg)
+    assert out.ok and out.output == str(src)
+    assert (tmp_path / "Track テスト.flac.bak").exists()
+    info = probe(str(src))
+    assert info.sample_rate == 96000 and info.claimed_bits == 24
+    tags = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags=title,artist",
+                           "-of", "json", str(src)], capture_output=True, text=True, encoding="utf-8").stdout
+    assert "曲名" in tags and '"artist": "A"' in tags
+
+
+@needs_ffmpeg
+def test_cli_fix_dry_run_and_convert(library, tmp_path, capsys):
+    folder = tmp_path / "in"
+    folder.mkdir()
+    shutil.copy(library["fake_up_44_to_96"], folder / "a.flac")
+    shutil.copy(library["real_24_96"], folder / "b.flac")
+    assert main([str(folder), "--no-color", "--no-settings", "--fix", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "would convert 1 file" in out and "24/96 → 16/44.1" in out
+    assert main([str(folder), "--no-color", "--no-settings", "--fix", "--fix-dir", str(tmp_path / "fixed"),
+                 "-j", "0"]) == 0
+    assert "1 converted, 0 failed" in capsys.readouterr().out
+    assert [p.name for p in (tmp_path / "fixed").iterdir()] == ["a [16-44.1].flac"]

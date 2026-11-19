@@ -7,12 +7,13 @@ import hashlib
 import os
 import re
 import sys
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Iterable, List, Optional
 
 from . import __version__
 from . import settings as settings_mod
+from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, require_tools
 from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
                      write_json, write_svg)
@@ -35,24 +36,30 @@ FILTERS = {
 }
 
 
-def collect(paths: Iterable[str], recursive: bool, extensions: Optional[set] = None) -> List[str]:
+def iter_audio_files(path: str, recursive: bool, extensions: Optional[set] = None):
+    """Yield audio files of one folder (sorted, folder by folder) or the file itself."""
     exts = extensions or AUDIO_EXTENSIONS
+    if os.path.isdir(path):
+        if recursive:
+            for root, dirs, files in os.walk(path):
+                dirs.sort()
+                for name in sorted(files):
+                    if os.path.splitext(name)[1].lower() in exts:
+                        yield os.path.join(root, name)
+        else:
+            for name in sorted(os.listdir(path)):
+                fp = os.path.join(path, name)
+                if os.path.isfile(fp) and os.path.splitext(name)[1].lower() in exts:
+                    yield fp
+    elif os.path.isfile(path):
+        yield path
+
+
+def collect(paths: Iterable[str], recursive: bool, extensions: Optional[set] = None) -> List[str]:
     found: List[str] = []
     for p in paths:
-        if os.path.isdir(p):
-            if recursive:
-                for root, dirs, files in os.walk(p):
-                    dirs.sort()
-                    for name in sorted(files):
-                        if os.path.splitext(name)[1].lower() in exts:
-                            found.append(os.path.join(root, name))
-            else:
-                for name in sorted(os.listdir(p)):
-                    fp = os.path.join(p, name)
-                    if os.path.isfile(fp) and os.path.splitext(name)[1].lower() in exts:
-                        found.append(fp)
-        elif os.path.isfile(p):
-            found.append(p)
+        if os.path.exists(p):
+            found.extend(iter_audio_files(p, recursive, extensions))
         else:
             eprint(f"warning: not found: {p}")
     seen, unique = set(), []
@@ -78,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-n", "--no-recursive", action="store_true",
                    help="do not descend into sub-folders")
     p.add_argument("-j", "--jobs", type=int, default=None,
-                   help="files analysed in parallel (default: from settings)")
+                   help="files analysed in parallel; 0 = one per CPU core (default: from settings)")
     p.add_argument("-t", "--max-seconds", type=float, default=None,
                    help="analyse only the first N seconds of each file (default: from settings, "
                         "normally the whole file)")
@@ -91,6 +98,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--csv", metavar="FILE", help="write a CSV summary")
     p.add_argument("--plot", metavar="DIR", help="write an SVG average-spectrum plot per file into DIR")
     p.add_argument("--spectrogram", metavar="DIR", help="write a PNG spectrogram per file into DIR")
+    p.add_argument("--fix", action="store_true",
+                   help="after scanning, convert fake files to their real resolution (e.g. a fake "
+                        "24/96 to 16/44.1); tags and cover art are kept, originals stay untouched "
+                        "unless --fix-replace")
+    p.add_argument("--fix-dir", metavar="DIR", help="with --fix: write fixed files into DIR")
+    p.add_argument("--fix-replace", action="store_true",
+                   help="with --fix: replace the originals (each original is kept as <name>.bak)")
+    p.add_argument("--dry-run", action="store_true", help="with --fix: only show what would be converted")
     p.add_argument("--settings", metavar="FILE", help="use this settings file instead of the saved one")
     p.add_argument("--no-settings", action="store_true", help="ignore saved settings; use defaults")
     p.add_argument("--set", metavar="NAME=VALUE", action="append", default=[],
@@ -168,9 +183,14 @@ def main(argv=None) -> int:
     work = partial(analyze_file, max_seconds=max_seconds, keep_spectrum=bool(args.plot),
                    keep_plot=bool(args.spectrogram), settings=cfg)
 
+    if args.fix_dir:
+        cfg.fix_output, cfg.fix_folder = "Into a folder", os.path.abspath(args.fix_dir)
+    if args.fix_replace:
+        cfg.fix_output = "Replace the original (keep .bak)"
+
     results: List[FileResult] = []
     print(header())
-    jobs = max(1, args.jobs if args.jobs is not None else cfg.jobs)
+    jobs = effective_jobs(args.jobs if args.jobs is not None else cfg.jobs)
     show_progress = sys.stderr.isatty()
 
     def handle(i: int, r: FileResult) -> None:
@@ -192,9 +212,10 @@ def main(argv=None) -> int:
         for i, f in enumerate(files, 1):
             handle(i, work(f))
     else:
-        with ProcessPoolExecutor(max_workers=jobs) as ex:
-            for i, r in enumerate(ex.map(work, files), 1):
-                handle(i, r)
+        with MultiProcessPool(min(jobs, len(files))) as ex:
+            futures = [ex.submit(work, f) for f in files]
+            for i, fut in enumerate(futures, 1):
+                handle(i, fut.result())
     if show_progress:
         eprint("\r\033[K", end="")
 
@@ -211,7 +232,36 @@ def main(argv=None) -> int:
         print(f"Spectrum plots written to {args.plot}/")
     if args.spectrogram:
         print(f"Spectrograms written to {args.spectrogram}/")
+    if args.fix:
+        return run_fixes(results, cfg, jobs, args.dry_run)
     return 0
+
+
+def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) -> int:
+    from .fix import plan_fix, run_fix
+
+    plans = []
+    for r in results:
+        plan, why = plan_fix(r, cfg)
+        if plan:
+            plans.append(plan)
+    print()
+    if not plans:
+        print("Fix: nothing to convert (no fake hi-res / fake lossless files that can be reduced).")
+        return 0
+    print(f"Fix: {'would convert' if dry_run else 'converting'} {len(plans)} file(s) to their real resolution:")
+    if dry_run:
+        for p in plans:
+            print(f"  {p.description:<22} {p.source}\n  {'':<22} -> {p.output}")
+        return 0
+    failed = 0
+    with ThreadPoolExecutor(max_workers=max(1, min(jobs, 16))) as ex:
+        for out in ex.map(lambda p: run_fix(p, cfg), plans):
+            mark = "OK  " if out.ok else "FAIL"
+            failed += not out.ok
+            print(f"  {mark} {out.plan.source}\n       {out.message}")
+    print(f"Fix: {len(plans) - failed} converted, {failed} failed.")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

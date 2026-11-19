@@ -52,7 +52,13 @@ Click **Add Folder…** (or **Add Files…**). Each folder or file you add appea
 
 ![Sources panel listing an added folder with 10 audio files and an empty folder in red; the files are listed as "Not scanned"](docs/gui-sources.png)
 
-Press **Scan** when the list looks right. Files are analysed in parallel, and each "Not scanned" row turns into its verdict as soon as that file is done. The Sources panel then shows how many files of each source are fake or suspicious. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
+Large folders are listed progressively while they are being searched ("1500 so far…"), so you see files appear immediately instead of waiting.
+
+Press **Scan** when the list looks right. Everything updates live while the scan runs. The files being worked on right now are marked **Analysing…** in blue, and every finished file shows its verdict and reason in place straight away. The progress bar and status line count along ("Scanning (8 at a time): 120/500 files"), and the Sources panel shows the number of fake or suspicious files per source. If the selected file finishes, the dashboard updates with it. All rows stay visible during the scan, and the verdict filters are applied once it has finished.
+
+![Live scan: finished files show their verdict, the files being worked on are marked "Analysing…", the rest wait in the queue](docs/gui-live.png)
+
+By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
 
 **Summary after each scan.** When a scan finishes, a summary window shows what percentage of the files got each verdict, as coloured bars, and how many files are fake or suspicious in total. From there you can jump to the problem files, show all files, or export a CSV report. You can reopen it at any time with **View → Scan summary…**, and you can switch it off in the Settings window or with the checkbox in the summary window itself.
 
@@ -68,11 +74,22 @@ Press **Scan** when the list looks right. Files are analysed in parallel, and ea
 
 **Opening files quickly.** **Open Folder** opens the file's folder in Explorer, Finder or your Linux file manager with the file selected, and **Open File** plays it in your default player. Double-clicking a row or pressing **Enter** opens the folder, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) opens the file. You can swap these two in Settings. Right-click a row for the same actions, or **Ctrl+C** to copy the paths of the selected rows. **File → Export…** saves the listed files as CSV or JSON.
 
-**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with three tabs, and pointing at any setting shows an explanation of what it does:
+**Fix resolution.** Select one or more fake files and click **Fix resolution…** (or press **Ctrl+F**, use the right-click menu, or choose **Edit → Fix resolution of all fake files…**). Each file is converted to the sample rate and bit depth it really contains. A fake 24/96 file upsampled from a CD becomes 16/44.1, a 16-bit file padded to 24 bits becomes 16-bit, and a fake 24/192 file made from a 96 kHz master becomes 24/96. Nothing audible is lost and the files get much smaller. The dialog shows "claimed → real" for every file before you start, and lets you choose the following:
+
+- **Where to save the result:** next to the original (default, e.g. `Song [16-44.1].flac`), into a folder, or replacing the original (which is renamed to `Song.flac.bak` first, so you can always restore it).
+- **The output format:** the same as the original (FLAC, WAV, AIFF, ALAC, WavPack; other formats become FLAC), or always FLAC.
+- **The target bit depth:** "16-bit for CD-sourced files" is the default. Resampling a 16-bit CD master to 96 kHz fills the low bits, so such files measure as 24-bit, and this option restores 16-bit where the source was a CD or a lossy file. The other choices are "As detected" and "Always 16-bit".
+
+Tags (including non-Latin text) and cover art are kept. The conversion uses the SoX resampler, adds triangular dither only when a resampled signal is reduced to 16 bits, and writes to a temporary file first, so an interrupted conversion never leaves a broken file. Each converted file is checked again, and its new verdict is shown (for example "now 16/44.1 (CD quality)"). The converted files are also added to the list. Files made from an MP3/AAC can be reduced too, but this only removes their fake hi-res part, because they remain lossy-sourced.
+
+![Fix resolution dialog after converting six fake files to their real resolution](docs/gui-fix.png)
+
+**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with four tabs, and pointing at any setting shows an explanation of what it does:
 
 - **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the upsampling cliff, the lossy cut-off drop and search range, the expected ultrasonic content, the bit-usage threshold and more.
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
 - **Display** sets which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
+- **Fixing** holds the defaults of the Fix resolution dialog: where to save, the output format, the target bit depth, the file name suffix and the re-check.
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
@@ -141,7 +158,11 @@ Scanned 8 file(s): 1 fake lossless (12.5%), 3 fake hi-res (37.5%), 2 real hi-res
 | `--csv FILE` | Write a CSV summary, which is handy for spreadsheets. |
 | `--spectrogram DIR` | Write a PNG spectrogram for each file, with the detected cut-off marked. |
 | `--plot DIR` | Write an SVG average-spectrum plot for each file. |
-| `-j N`, `--jobs N` | Analyse N files in parallel. The default comes from the settings (up to 4). |
+| `-j N`, `--jobs N` | Analyse N files in parallel (1–512). `0` means one per CPU core, which is the default. |
+| `--fix` | After scanning, convert every fake file to its real resolution. Tags and cover art are kept, and originals are left untouched (fixed copies are saved next to them). See "Fix resolution" above. |
+| `--fix-dir DIR` | With `--fix`, write the fixed files into `DIR` instead. |
+| `--fix-replace` | With `--fix`, replace the originals, keeping each one as `<name>.bak`. |
+| `--dry-run` | With `--fix`, only show what would be converted. |
 | `-t SECONDS`, `--max-seconds SECONDS` | Analyse only the first N seconds of each file, which is faster but slightly less reliable. |
 | `-n`, `--no-recursive` | Do not descend into sub-folders. |
 | `--set NAME=VALUE` | Override one setting for this run, for example `--set cliff_db=30` or `--set lossy_max_khz=20.8`. You can repeat it. |
@@ -149,7 +170,17 @@ Scanned 8 file(s): 1 fake lossless (12.5%), 3 fake hi-res (37.5%), 2 real hi-res
 | `--settings FILE` / `--no-settings` | Use a different settings file, or ignore the saved settings and use the defaults. |
 | `--no-color` | Disable coloured output. Setting the `NO_COLOR` environment variable does the same. |
 
-For example, the following command lists only the problem files in a library and saves spectrograms and a CSV report:
+For example, the following command converts all fake files in a library into a separate folder, after showing what it would do:
+
+```bash
+realhires ~/Music --fix --dry-run
+```
+
+```bash
+realhires ~/Music --fix --fix-dir ~/Music-fixed
+```
+
+And the following command lists only the problem files and saves spectrograms and a CSV report:
 
 ```bash
 realhires ~/Music --only problems --spectrogram realhires-report/spectrograms --csv realhires-report/report.csv
@@ -190,6 +221,10 @@ The third is the **effective bandwidth** measurement, which is the highest frequ
 ### 2. Bit-depth test
 
 FFmpeg decodes every integer format into left-justified 32-bit samples, so a 24-bit sample keeps its 8 unused bits at zero and a 16-bit sample keeps 16 zero bits. For every non-zero sample the tool records the lowest bit that is set. In real 24-bit audio the 24th bit is set in about half of all samples, because the lowest bits carry noise and fine detail. If a 16-bit master was simply padded to 24 bits, nothing below bit 16 is ever set, and the file is reported as "16 of 24 bits used". A threshold of 0.5 % of samples means that a handful of clipped or odd samples cannot hide the padding. The same test catches 16-bit audio stored as 32-bit float, because every sample is then an exact 16-bit value.
+
+## Why was the number of parallel jobs limited to 61?
+
+That limit comes from Python on Windows, not from Real-Hi-Res. Python's process pool waits for its worker processes with the Windows function `WaitForMultipleObjects`, which can watch at most 64 handles, and Python keeps 3 of those for itself, so one pool can have at most 61 workers. Since version 1.4.0, Real-Hi-Res splits larger job counts over several pools (for example 64 jobs run as 2 × 32), so all cores of a big workstation can be used, up to 512 jobs. On macOS and Linux there was never such a limit. For the fastest scans, leave **Parallel jobs** at 0 (automatic), which uses one job per CPU core. More jobs than cores only makes the files compete for the same processors.
 
 ## Limitations
 

@@ -25,9 +25,11 @@ percentage of files per verdict.
 
 Click a row for the dashboard: verdict, reason, key facts, spectrogram and
 average spectrum.  "Open Folder" (or double-click / Enter) shows the file in
-your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Settings..." lets
-you change detection thresholds, scanning options and display preferences;
-they are saved and also used by the command-line tool.
+your file manager, "Open File" (Ctrl/Cmd+Enter) plays it.  "Fix resolution..."
+(Ctrl/Cmd+F) converts selected fake files to the resolution they really have,
+e.g. a fake 24/96 to 16/44.1, keeping tags and cover art (originals are kept).
+"Settings..." lets you change detection thresholds, scanning options, display
+and fixing preferences; they are saved and also used by the command-line tool.
 
 Command line
 ------------
@@ -36,7 +38,7 @@ Command line
   Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)
 
   Run with --help for all options (--only problems, --csv, --json,
-  --spectrogram DIR, --set NAME=VALUE, --list-settings, -v ...).
+  --spectrogram DIR, --fix, --fix-dir DIR, --set NAME=VALUE, -v ...).
 
 First launch on macOS
 ---------------------
