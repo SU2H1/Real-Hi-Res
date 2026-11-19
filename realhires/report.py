@@ -50,8 +50,15 @@ def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = 
             top = ", ".join(f"{b}-bit LSB {v:.1%}" for b, v in list(r.bit_usage.items())[:3])
             line += f"\n{'':<14}· Lowest-set-bit usage: {top}"
         if r.cliffs_db:
-            cl = ", ".join(f"{k / 2000:g}k:{v:.0f}dB" for k, v in r.cliffs_db.items() if np.isfinite(v))
-            line += f"\n{'':<14}· Edge drop at candidate source Nyquists: {cl}"
+            deep = r.deep_cliffs_db or {}
+            cl = ", ".join(f"{k / 2000:g}k:{v:.0f}/{deep.get(k, float('nan')):.0f}dB"
+                           for k, v in r.cliffs_db.items() if np.isfinite(v))
+            line += f"\n{'':<14}· Edge drop at candidate source Nyquists (narrow/deep): {cl}"
+        if r.converter_floor_db is not None and np.isfinite(r.converter_floor_db):
+            line += f"\n{'':<14}· 26-40 kHz band: {r.converter_floor_db:+.0f} dB relative to the rounding noise"
+        if r.grid_step:
+            line += (f"\n{'':<14}· Value grid: step {r.grid_step:.1f} (24-bit LSBs), "
+                     f"{r.grid_bits}-bit master, gain {r.grid_gain_db:+.1f} dB")
     return line
 
 
@@ -68,7 +75,7 @@ def write_json(results: Iterable[FileResult], path: str) -> None:
 
 CSV_FIELDS = ["path", "verdict", "claimed", "estimated_real", "codec", "sample_rate",
               "claimed_bits", "effective_bits", "bandwidth_hz", "upsampled_from",
-              "cutoff_drop_db", "duration", "reasons"]
+              "cutoff_drop_db", "grid_step", "duration", "reasons"]
 
 
 def write_csv(results: Iterable[FileResult], path: str) -> None:

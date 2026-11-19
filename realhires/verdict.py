@@ -10,12 +10,18 @@ from typing import List, Optional
 import numpy as np
 
 from .analysis import (
+    ANALOG_FLOOR_DB,
+    SMEAR_HZ,
     ULTRASONIC_HZ,
     BitDepthAccumulator,
+    GRID_FULL,
+    Grid,
+    GridAccumulator,
     SpectrumAccumulator,
     SpectrumStats,
     analyze_spectrum,
     compact_spectrum,
+    converter_noise_floor,
 )
 from .probe import AudioInfo, iter_pcm, probe
 
@@ -60,8 +66,14 @@ class FileResult:
     noise_floor_db: Optional[float] = None
     upsampled_from: Optional[int] = None
     upsample_edge_hz: Optional[float] = None
+    upsample_mid_hz: Optional[float] = None
     lossy_cutoff_hz: Optional[float] = None
     cliffs_db: dict = field(default_factory=dict)
+    deep_cliffs_db: dict = field(default_factory=dict)
+    converter_floor_db: Optional[float] = None  # 26-40 kHz level above the rounding noise
+    grid_step: Optional[float] = None           # value-grid step in 24-bit LSBs, if any
+    grid_bits: Optional[int] = None             # resolution of the master that grid implies
+    grid_gain_db: Optional[float] = None        # gain applied to that master
     bit_usage: dict = field(default_factory=dict)
     analysed_seconds: float = 0.0
     elapsed: float = 0.0
@@ -94,25 +106,33 @@ class FileResult:
         for k, v in list(d.items()):
             if isinstance(v, float) and not np.isfinite(v):
                 d[k] = None
-        d["cliffs_db"] = {str(k): (round(v, 1) if np.isfinite(v) else None)
-                          for k, v in self.cliffs_db.items()}
+        for key in ("cliffs_db", "deep_cliffs_db"):
+            d[key] = {str(k): (round(v, 1) if np.isfinite(v) else None)
+                      for k, v in getattr(self, key).items()}
         return d
 
 
-def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res: FileResult) -> None:
+def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res: FileResult,
+           grid: Optional[Grid] = None) -> None:
     fake: List[str] = []
     suspect: List[str] = []
     notes: List[str] = res.notes
     eff = bits.effective_bits()
-    res.effective_bits = eff
+    res.effective_bits = eff if grid is None or eff is None else min(eff, grid.bits)
+    if grid is not None:
+        res.grid_step, res.grid_bits = round(grid.step, 2), grid.bits
+        res.grid_gain_db = round(grid.gain_db, 2)
     res.bit_usage = {k: round(v, 4) for k, v in sorted(bits.bit_usage().items(), reverse=True)}
     res.bandwidth_hz = spec.bandwidth_hz
     res.cutoff_drop_db = spec.cutoff_drop_db
     res.noise_floor_db = spec.noise_floor_db
     res.upsampled_from = spec.upsampled_from
     res.upsample_edge_hz = spec.upsample_edge_hz
+    res.upsample_mid_hz = spec.upsample_mid_hz
     res.lossy_cutoff_hz = spec.lossy_cutoff_hz if spec.lossy_cutoff else None
     res.cliffs_db = spec.cliffs_db
+    res.deep_cliffs_db = spec.deep_cliffs_db
+    res.converter_floor_db = spec.ultra_floor_db - spec.quantization_floor_db
     res.true_rate = spec.upsampled_from or info.sample_rate
 
     bw_k = spec.bandwidth_hz / 1000.0
@@ -127,10 +147,32 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
             else:
                 fake.append(f"Only {eff} of {claimed_bits} bits are used: the low {claimed_bits - eff} "
                             f"bits are always zero (16-bit audio padded into a {claimed_bits}-bit container).")
+        elif grid is not None and grid.bits <= 16 and grid.strength >= GRID_FULL:
+            kind = "float" if info.is_float else f"{claimed_bits}-bit"
+            how = (f"after a gain change of {grid.gain_db:+.1f} dB (with or without dither)"
+                   if abs(grid.gain_db) >= 0.05 else "when it is only dithered, with no gain change,")
+            fake.append(
+                f"Every sample lies on an even grid with a step of {grid.step:.1f} levels of the 24-bit "
+                f"scale instead of 1. That is what a 16-bit master gives {how} on its way into a {kind} "
+                "file, so the low bits hold no real detail and the resolution is still 16 bits."
+            )
+        elif grid is not None and grid.bits <= 16:
+            fake.append(
+                f"About {grid.strength:.0%} of the samples sit exactly on the grid of a 16-bit master "
+                f"(a step of {grid.step:.1f} levels of the 24-bit scale), which real 24-bit audio never "
+                "does. An upsample by a whole-number ratio leaves this trace, because it keeps every "
+                "second (or third) sample of the 16-bit master unchanged."
+            )
         elif eff is not None and eff < min(claimed_bits, 24) and not info.is_float:
             suspect.append(
                 f"Only {eff} of {claimed_bits} bits are used (low {claimed_bits - eff} bits always zero); "
                 "better than CD but not true 24-bit."
+            )
+        elif grid is not None:
+            suspect.append(
+                f"Every sample lies on an even grid with a step of {grid.step:.1f} levels of the 24-bit "
+                f"scale instead of 1, so only about {grid.bits} bits carry detail: a {grid.bits}-bit "
+                f"master scaled by {grid.gain_db:+.1f} dB. Better than CD but not true 24-bit."
             )
         elif eff is not None:
             notes.append(f"Bit depth OK: {min(eff, 24) if info.is_float else eff} significant bits in use.")
@@ -143,10 +185,16 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
             "MP3/AAC/Vorbis encoder, so this was made from a lossy file."
         )
     if spec.upsampled_from and info.sample_rate > spec.upsampled_from:
-        drop = spec.cliffs_db.get(spec.upsampled_from, spec.cutoff_drop_db)
+        drops = [d for d in (spec.cliffs_db.get(spec.upsampled_from),
+                             spec.deep_cliffs_db.get(spec.upsampled_from)) if d is not None and np.isfinite(d)]
+        drop = max(drops) if drops else spec.cutoff_drop_db
         src = fmt_rate(spec.upsampled_from)
-        edge = (f" (level is down 20 dB by {spec.upsample_edge_hz / 1000:.1f} kHz)"
-                if np.isfinite(spec.upsample_edge_hz) else "")
+        marks = []
+        if np.isfinite(spec.upsample_mid_hz) and not spec.upsample_mid_hz > spec.upsample_edge_hz:
+            marks.append(f"down 6 dB at {spec.upsample_mid_hz / 1000:.1f} kHz")
+        if np.isfinite(spec.upsample_edge_hz):
+            marks.append(f"down 20 dB by {spec.upsample_edge_hz / 1000:.1f} kHz")
+        edge = f" (level is {' and '.join(marks)})" if marks else ""
         msg = (f"Spectrum collapses by {drop:.0f} dB around {spec.upsampled_from / 2000:.2f} kHz{edge}, "
                f"the Nyquist limit of a {src} kHz master: upsampled from {src} kHz "
                f"({spec.upsample_confidence} confidence).")
@@ -155,10 +203,40 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
         fake.append(msg)
     elif info.sample_rate > 48000 and not spec.lossy_cutoff:
         if spec.bandwidth_hz < ULTRASONIC_HZ:
+            above_q = spec.ultra_floor_db - spec.quantization_floor_db
+            if converter_noise_floor(spec):
+                notes.append(
+                    f"No musical content above {bw_k:.1f} kHz, but the converter's analogue noise floor "
+                    f"continues evenly from there to {spec.ultra_band_hz / 1000:.0f} kHz, {above_q:.0f} dB "
+                    "above the rounding noise and with no step at 22.05 or 24 kHz. An upsampled file "
+                    "would hold only rounding noise above 22-24 kHz, so this was digitised at "
+                    f"{fmt_rate(info.sample_rate)} kHz (typical of an old or dull analogue recording)."
+                )
+            elif np.isfinite(above_q) and above_q < ANALOG_FLOOR_DB:
+                suspect.append(
+                    f"No content above {bw_k:.1f} kHz although the format allows "
+                    f"{spec.nyquist / 1000:.0f} kHz, and there is no brick-wall edge. The ultrasonic band "
+                    "holds only rounding noise, without the analogue noise floor that a converter "
+                    "running at this rate would leave, so it cannot be shown that it was recorded at "
+                    f"{fmt_rate(info.sample_rate)} kHz. Could be a gently filtered upsample of a quiet "
+                    "digital master, or a digitally low-passed recording; inspect the plot."
+                )
+            else:
+                suspect.append(
+                    f"No content above {bw_k:.1f} kHz although the format allows "
+                    f"{spec.nyquist / 1000:.0f} kHz, yet there is no brick-wall edge. The ultrasonic band "
+                    "holds noise, but it is not an even converter noise floor that continues from the "
+                    "audio band. Could be a dull/old recording or a gentle-filter upsample; listen/inspect "
+                    "the plot."
+                )
+        elif (spec.bandwidth_hz < SMEAR_HZ
+              and not spec.ultra_floor_db - spec.quantization_floor_db >= ANALOG_FLOOR_DB):
             suspect.append(
-                f"No content above {bw_k:.1f} kHz although the format allows "
-                f"{spec.nyquist / 1000:.0f} kHz, yet there is no brick-wall edge. Could be a dull/old "
-                "recording or a gentle-filter upsample; listen/inspect the plot."
+                f"Content stops at {bw_k:.1f} kHz, just above the 24 kHz limit of a 48 kHz master, "
+                "where a soft resampler such as FFmpeg's default one smears that edge, and the band "
+                "above holds only rounding noise, without the analogue noise floor that a converter "
+                f"running at {fmt_rate(info.sample_rate)} kHz would leave. Could be a gently filtered "
+                "upsample; inspect the plot."
             )
         else:
             notes.append(f"Real ultrasonic content up to {bw_k:.1f} kHz "
@@ -196,11 +274,16 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
 
         spec_acc = SpectrumAccumulator(info.sample_rate, info.channels)
         bit_acc = BitDepthAccumulator()
+        # The value-grid test only matters for files that claim more than 16 bits.
+        grid_acc = (GridAccumulator(info.channels)
+                    if info.claims_hires and ((info.claimed_bits or 16) > 16 or info.is_float) else None)
         scale = 1.0 / 2147483648.0
         frames = 0
         for block in iter_pcm(path, info.channels, chunk_frames=max(1 << 16, 4 * spec_acc.nfft),
                               max_seconds=max_seconds):
             bit_acc.update(block)
+            if grid_acc is not None:
+                grid_acc.update(block)
             spec_acc.update(block.astype(np.float64) * scale)
             frames += block.shape[0]
         res.analysed_seconds = frames / info.sample_rate
@@ -211,8 +294,11 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
             return res
 
         freqs, power = spec_acc.result()
-        spec = analyze_spectrum(freqs, power, info.sample_rate, spec_acc.noise_gain,
-                                bit_acc.effective_bits())
+        grid = grid_acc.result(bit_acc.peak) if grid_acc is not None else None
+        eff_bits = bit_acc.effective_bits()
+        if grid is not None and eff_bits is not None:
+            eff_bits = min(eff_bits, grid.bits)
+        spec = analyze_spectrum(freqs, power, info.sample_rate, spec_acc.noise_gain, eff_bits)
         if keep_spectrum:
             res.spectrum = spec
         if keep_plot:
@@ -226,7 +312,7 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
             res.effective_bits = bit_acc.effective_bits()
             return res
 
-        _judge(info, spec, bit_acc, res)
+        _judge(info, spec, bit_acc, res, grid)
     except Exception as exc:  # noqa: BLE001 - report every failure per file
         res.verdict = ERROR
         res.reasons = [str(exc)]

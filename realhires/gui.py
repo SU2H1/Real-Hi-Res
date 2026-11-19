@@ -503,8 +503,15 @@ class App(ttk.Frame):
             f"Bandwidth: {r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "Bandwidth: -",
         ]
         if r.cliffs_db:
-            lines.append("Drop at source Nyquists: " + ", ".join(
-                f"{k / 2000:g} kHz {v:.0f} dB" for k, v in r.cliffs_db.items() if v == v))
+            deep = r.deep_cliffs_db or {}
+            lines.append("Drop at source Nyquists (narrow/deep): " + ", ".join(
+                f"{k / 2000:g} kHz {v:.0f}/{deep.get(k, float('nan')):.0f} dB"
+                for k, v in r.cliffs_db.items() if v == v))
+        if r.converter_floor_db is not None and r.converter_floor_db == r.converter_floor_db:
+            lines.append(f"26-40 kHz band: {r.converter_floor_db:+.0f} dB relative to the rounding noise")
+        if r.grid_step:
+            lines.append(f"Value grid: step {r.grid_step:.1f} (24-bit LSBs), {r.grid_bits}-bit master, "
+                         f"gain {r.grid_gain_db:+.1f} dB")
         parts += [(f"{x}\n", None) for x in lines]
         self._set_text(parts)
 

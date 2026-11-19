@@ -1,3 +1,7 @@
+## What's new in 1.2.0
+
+Detection is more accurate in the three cases that were known to be hard. The source sample rate of an upsampled file is now found reliably for FFmpeg's default resampler as well, and files that this soft resampler upsampled from 48 kHz are no longer passed as real. A new value-grid test catches 16-bit masters that were converted to 24-bit or float with only a volume change or dither. A new converter-noise-floor test proves that a dull or old analogue recording was really digitised at its high sample rate, so such files are now reported as real instead of suspicious when the evidence is there. See the README for how each test works.
+
 ## Download
 
 Pick the package for your computer, unpack it and run it. Python, NumPy and FFmpeg are bundled, so nothing else has to be installed.

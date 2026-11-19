@@ -27,6 +27,18 @@ def music_like(fs: int, seconds: float = 6.0, top_hz: float = None, seed: int = 
     return x
 
 
+def converter(x: np.ndarray, fs: int, noise_dbfs: float = -115.0, seed: int = 9) -> np.ndarray:
+    """What an analogue-to-digital converter running at `fs` adds: white
+    thermal noise (`noise_dbfs` over a 20 kHz band) and a half-band style
+    anti-alias filter, flat to 0.4535*fs and -6 dB at Nyquist."""
+    rng = np.random.default_rng(seed)
+    x = x + rng.normal(size=x.shape) * 0.707 * 10 ** (noise_dbfs / 20) * np.sqrt(fs / 2 / 20000)
+    X = np.fft.rfft(x, axis=0)
+    f = np.fft.rfftfreq(x.shape[0], 1 / fs) / fs
+    g = np.clip((f - 0.4535) / (0.5465 - 0.4535), 0, 1)
+    return np.fft.irfft(X * (0.5 + 0.5 * np.cos(np.pi * g))[:, None], n=x.shape[0], axis=0)
+
+
 def ffmpeg_write(path, x: np.ndarray, fs: int, out_args):
     """Pipe float64 stereo samples into ffmpeg and encode with `out_args`."""
     cmd = ["ffmpeg", "-v", "error", "-y", "-f", "f64le", "-ar", str(fs), "-ac", str(x.shape[1]),
@@ -90,6 +102,32 @@ def library(tmp_path_factory):
     m48 = ffmpeg_write(d / "m48.wav", music_like(48000, seed=3), 48000, ["-c:a", "pcm_s16le"])
     files["fake_up_48_to_96"] = ffmpeg_convert(m48, d / "fake_up_48_to_96.wav",
                                                [*hq_resample(96000), "-c:a", "pcm_s24le"])
+    # Fake: the same with ffmpeg's default (soft) resampler, which hides the cliff.
+    files["fake_up_48_to_96_swr"] = ffmpeg_convert(m48, d / "fake_up_48_to_96_swr.wav",
+                                                   ["-ar", "96000", "-c:a", "pcm_s24le"])
+
+    # Fakes without any change of sample rate: a CD master turned into 24 bits
+    # with a volume change (ffmpeg), with dither only, or into float with a gain.
+    files["fake_gain_16_to_24"] = ffmpeg_convert(cd, d / "fake_gain_16_to_24.flac",
+                                                 ["-af", "volume=-3dB", "-c:a", "flac", "-sample_fmt", "s32"])
+    rng = np.random.default_rng(2)
+    x16 = np.round(music_like(44100, seed=6) * 32768) / 32768
+    dithered = np.round(x16 * 2 ** 23 + rng.random(x16.shape) - rng.random(x16.shape)) / 2 ** 23
+    files["fake_dither_16_to_24"] = ffmpeg_write(d / "fake_dither_16_to_24.wav", dithered, 44100,
+                                                 ["-c:a", "pcm_s24le"])
+    files["fake_gain_16_to_float"] = ffmpeg_convert(cd, d / "fake_gain_16_to_float.wav",
+                                                    ["-af", "volume=-1.5dB", "-c:a", "pcm_f32le"])
+
+    # Genuine 96 kHz transfer of a dull analogue recording: nothing above
+    # ~10 kHz but the converter's own noise floor, which reaches 43 kHz.
+    files["analog_transfer_96"] = ffmpeg_write(
+        d / "analog_transfer_96.wav",
+        converter(music_like(96000, top_hz=4000, seed=8, order=8), 96000), 96000, ["-c:a", "pcm_s24le"])
+    # Fake: a dull 48 kHz analogue transfer (converter noise included) upsampled to 96 kHz.
+    dull48 = ffmpeg_write(d / "dull48.wav", converter(music_like(48000, top_hz=6000, seed=8, order=6), 48000),
+                          48000, ["-c:a", "pcm_s24le"])
+    files["fake_dull_up_48_to_96"] = ffmpeg_convert(dull48, d / "fake_dull_up_48_to_96.wav",
+                                                    [*hq_resample(96000), "-c:a", "pcm_s24le"])
     # Fake: 96 kHz master upsampled to 192 kHz.
     m96 = ffmpeg_write(d / "m96.wav", music_like(96000, 4, seed=4), 96000, ["-c:a", "pcm_s24le"])
     files["fake_up_96_to_192"] = ffmpeg_convert(m96, d / "fake_up_96_to_192.wav",
