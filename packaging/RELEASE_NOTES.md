@@ -1,6 +1,6 @@
-## What's new in 1.2.0
+## What's new in 1.7.0
 
-Detection is more accurate in the three cases that were known to be hard. The source sample rate of an upsampled file is now found reliably for FFmpeg's default resampler as well, and files that this soft resampler upsampled from 48 kHz are no longer passed as real. A new value-grid test catches 16-bit masters that were converted to 24-bit or float with only a volume change or dither. A new converter-noise-floor test proves that a dull or old analogue recording was really digitised at its high sample rate, so such files are now reported as real instead of suspicious when the evidence is there. See the README for how each test works.
+Detection is more accurate in the three cases that were known to be hard. The source sample rate of an upsampled file is now found reliably for FFmpeg's default resampler as well, so "Fix to real resolution" converts such files back to 44.1 kHz instead of 48 kHz, and files that this soft resampler upsampled from 48 kHz are no longer passed as real. A new value-grid test catches 16-bit masters that were converted to 24-bit or float with only a volume change or dither. A new converter-noise-floor test proves that a dull or old analogue recording was really digitised at its high sample rate, so such files are now reported as real instead of suspicious when the evidence is there. Fix now restores padded and dithered 16-bit masters bit-exactly. Ctrl+A (Cmd+A on a Mac) selects every listed file, so you can tick only "Fake lossless" and "Fake hi-res", press Ctrl+A and fix them all at once. Rescan your library before fixing, because older scans used the less accurate source-rate estimate. See the README for how each test works.
 
 ## Download
 

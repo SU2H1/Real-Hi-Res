@@ -1,8 +1,8 @@
 # Real-Hi-Res
 
-Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine high-resolution audio and which ones are fakes. A "fake" hi-res file is one whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside actually came from a CD-quality master, a 48 kHz master, a lossy MP3/AAC file, or a 16-bit master that was padded with zeros or only given a volume change or dither on its way to 24 bits. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed resolution should contain.
+Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain.
 
-![Real-Hi-Res desktop app listing fake and suspicious files, with the reasons and spectrum of the selected file](docs/gui-screenshot.png)
+![Real-Hi-Res desktop app: list of fake and suspicious files, and the dashboard showing a fake FLAC with its spectrogram and a one-line reason](docs/gui-screenshot.png)
 
 ## Download and run (no installation needed)
 
@@ -48,9 +48,71 @@ Unzip the archive and double-click `RealHiRes.exe`. The app is not code-signed, 
 
 ## Desktop app (GUI)
 
-Click **Add Folder…** (or **Add Files…**) and then **Scan**. Files are analysed in parallel, and results appear while the scan is running. The list shows only files judged **Fake hi-res** and **Suspicious** by default, so you can scroll straight through the problem files. Tick the other boxes (Real hi-res, Not hi-res, Lossy format, Error) to see everything, and use the search box to filter by file or folder name. Each checkbox shows how many files have that verdict.
+Click **Add Folder…** (or **Add Files…**). Each folder or file you add appears straight away in the **Sources to scan** panel with the number of audio files found in it. A folder without audio files is shown in red ("no audio files found"), so you know immediately whether it was added correctly. All files that were found are listed below as **Not scanned**, and you can select one and open its folder before scanning. Adding the same folder twice is ignored, and **Remove** (or the Delete key) takes a selected source out again.
 
-Click a column header to sort by it. Click a row to see why that file got its verdict, its measurements, and its averaged spectrum, where the cliff of an upsampled file is easy to see. Double-click a row (or use **Show in Folder**) to open its folder, right-click it to copy its path, and use **Export CSV…** or **Export JSON…** to save the files currently listed. **Quick scan** analyses only the first 90 seconds of each file, which is faster on large libraries.
+![Sources panel listing an added folder with 10 audio files and an empty folder in red; the files are listed as "Not scanned"](docs/gui-sources.png)
+
+Large folders are listed progressively while they are being searched ("1500 so far…"), so you see files appear immediately instead of waiting.
+
+Press **Scan** when the list looks right. Everything updates live while the scan runs. The files being worked on right now are marked **Analysing…** in blue, and every finished file shows its verdict and reason in place straight away. The progress bar and status line count along ("Scanning (8 at a time): 120/500 files"), and the Sources panel shows the number of fake or suspicious files per source. If the selected file finishes, the dashboard updates with it. All rows stay visible during the scan, and the verdict filters are applied once it has finished.
+
+![Live scan: finished files show their verdict, the files being worked on are marked "Analysing…", the rest wait in the queue](docs/gui-live.png)
+
+By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
+
+**Views: Files, By album, By artist.** The **View** switch above the list changes how results are shown. **Files** is the file list. **By album** and **By artist** show your library like a music player, as a grid of cards. Each card shows the cover art, the album (or artist) name, and a **ring** that shows how much of it is fake. Red stands for fake, orange for suspicious and green for fine, and the centre of the ring reads the percentage (for example "25%") or the songs ("1/4"), your choice under **Rings show**. A line such as "1 fake of 4 songs" or "All 3 songs fine" sits under each card. The cards with the most fakes come first; use **Sort** to switch to alphabetical order. **Click a card** to list that album's or artist's songs in track order, with their verdicts. **◀ Back to albums** returns to the grid.
+
+Album, artist and track numbers come from the files' tags (FLAC/Vorbis, ID3, MP4/iTunes, APE, RIFF), using the album artist when present. Untagged files fall back to their folders, so `Artist/Album/track.flac` still groups correctly. The cover is the picture embedded in a track, or else a `cover.jpg`, `folder.jpg`, `front.jpg` (or similar) image in the album folder. Covers load in the background, and a coloured placeholder with initials is shown until then, or when there is no cover. The Search box filters the cards by album or artist name.
+
+![By album view: album covers with rings showing the share of fake songs](docs/gui-albums.png)
+
+![By artist view](docs/gui-artists.png)
+
+**Find (Ctrl+F).** **Ctrl+F** (**Cmd+F** on a Mac) opens a find bar that works like a web browser's. As you type, all rows (or album/artist cards) containing the text are highlighted, the first match is selected, and a counter shows "2 of 5". It searches file names, folders, verdicts, reasons and tags such as artist, album and title. **Enter** or **▼** goes to the next match, **Shift+Enter** or **▲** to the previous one (**F3** and **Shift+F3** also work), and **Esc** closes the bar. Unlike the Search box, find does not hide anything; it only highlights and jumps.
+
+![Find bar highlighting matches, with the current one selected](docs/gui-find.png)
+
+**Summary after each scan.** When a scan finishes, a summary window shows a **pie (donut) chart** of the verdicts. Each slice is labelled with its percentage, and the centre shows the share of fake or suspicious files. Next to the chart, a legend lists every verdict with its percentage, the number of files and a short explanation. **Clicking a slice or a legend entry lists only those files.** The buttons jump to all problem files or all files, or export a CSV report. You can reopen the window at any time with **View → Scan summary…**, and you can switch it off in Settings or with the checkbox in the window itself.
+
+![Scan summary window: donut chart of the verdicts with percentages and a clickable legend](docs/gui-summary.png)
+
+**Dashboard.** Clicking a file fills the dashboard below the list with the following:
+
+- The verdict as a coloured badge, together with the concise reason.
+- The key facts: the claimed resolution, the resolution the audio really has, the bandwidth, how many bits are actually used, the format and the duration.
+- A **spectrogram** (time left to right, frequency bottom to top). On an upsampled or MP3-sourced file it shows a hard black area above the cut-off for the whole track, and the detected cut-off is marked with a labelled line.
+- The **average spectrum** tab, which shows the same thing as a single curve.
+- The full reasoning and measurements under **Details**.
+
+**Opening files quickly.** **Open Folder** opens the file's folder in Explorer, Finder or your Linux file manager with the file selected, and **Open File** plays it in your default player. Double-clicking a row or pressing **Enter** opens the folder, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) opens the file. You can swap these two in Settings. Right-click a row for the same actions, or **Ctrl+C** to copy the paths of the selected rows. **Ctrl+A** (**Cmd+A** on a Mac, or **Edit → Select all listed files**) selects every file the list currently shows, so the filters decide what it takes; in the Search and Find boxes it still selects their text. **File → Export…** saves the listed files as CSV or JSON.
+
+**Fix to real resolution.** Select one or more fake files and click **Fix to real resolution…** (or press **Ctrl+Shift+F**, use the right-click menu, or choose **Edit → Fix all fake files to real resolution…**). To fix every fake file, tick only **Fake lossless** and **Fake hi-res**, press **Ctrl+A** and click **Fix to real resolution…**. The file itself is corrected: it keeps its name, its folder, its tags (including non-Latin text) and its cover art, and afterwards its properties show the resolution it really has. In Explorer, Finder, your music player or Real-Hi-Res, a fake 24-bit/96 kHz file upsampled from a CD then shows 16-bit/44.1 kHz. A 16-bit file padded to 24 bits shows 16-bit, and a fake 24/192 file made from a 96 kHz master shows 24/96. Nothing audible is lost, and the files usually get much smaller.
+
+The sample rate and bit depth in a file's properties come from its audio stream. Only changing those numbers, without touching the audio, would make the file play at the wrong speed or as noise. Real-Hi-Res therefore rewrites the audio at the real resolution with the SoX resampler. It adds triangular dither when a resampled signal is reduced to 16 bits, and when a 16-bit master that was given a volume change goes back to 16 bits. Without resampling, the 24-to-16-bit conversion runs through floating point, which rounds (FFmpeg's direct integer conversion truncates), so padded and only-dithered audio come back as the exact 16-bit values of the master. It writes to a temporary file first, so an interrupted fix never leaves a broken file.
+
+The dialog shows "claimed → real" for every file before you start, then each file's new verdict after re-checking it (for example "Fixed: now 16/44.1 (CD quality)"). The list updates to match. Its options are:
+
+- **Original file** says what happens to the original. By default it is moved to a **Real-Hi-Res backups** folder inside the file's folder (or into a backup folder you choose), from where you can restore it at any time. The backup folder is never scanned. You can also keep it as `<name>.bak` next to the file, or delete it (no backup, asked for confirmation).
+- **Fix files by** is **Replace the file** by default: the original file itself is corrected. You can instead leave it alone and save a corrected copy next to it (`Song [16-44.1].flac`) or into a folder. (Settings saved by version 1.5.0 or older switch to "Replace the file" automatically, because earlier versions stored their own old default there.)
+- **Target bit depth** defaults to "16-bit for CD-sourced files". Resampling a 16-bit CD master to 96 kHz fills the low bits, so such files measure as 24-bit, and this option restores 16-bit where the source was a CD or a lossy file. The other choices are "As detected" and "Always 16-bit".
+- **Output format** keeps the same format as the original (FLAC, WAV, AIFF, ALAC, WavPack; other formats become FLAC), or always writes FLAC.
+
+Files made from an MP3/AAC can be fixed too, but this only removes their fake hi-res part, because they remain lossy-sourced and stay marked as fake lossless.
+
+Before fixing a large library, keep in mind that the target is the *estimated* real resolution. Only fake files are fixed, never suspicious ones, but a source-rate estimate can still be off for very dull music (see [Limitations](#limitations)). Rewritten files are not bit-identical to the originals (only padded and only-dithered files are), so checksums, torrent seeding and store re-downloads no longer match them. Keep the backups until you have listened to a few results.
+
+![Fix to real resolution dialog after fixing six files in place; originals moved to the backup folder](docs/gui-fix.png)
+
+**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with four tabs, and pointing at any setting shows an explanation of what it does:
+
+- **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the narrow and deep upsampling cliffs, the resampler mid-point ratio, the lossy cut-off drop and search range, the expected ultrasonic content, the converter noise floor, the value-grid strength, the bit-usage threshold and more.
+- **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
+- **Display** sets the view at start-up (Files, By album or By artist), what the album/artist rings show, the card order, which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
+- **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check.
+
+Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
+
+![Settings window](docs/gui-settings.png)
 
 ## Running from source
 
@@ -78,64 +140,89 @@ Point the tool at one or more files or folders. Folders are scanned recursively.
 realhires ~/Music/HiRes
 ```
 
-The output is one line per file, and fake or suspicious files get their reasons printed underneath:
+The output is one line per file. Fake and suspicious files get a one-line reason underneath, marked with `→`, and `-v` adds the full reasoning. At the end, the percentage of files per verdict is printed:
 
 ```
-VERDICT       CLAIMED    REAL(EST)   BANDWIDTH  FILE
-FAKE HI-RES   24/96      24/44.1     22.0k      fake_up_44_to_96.flac
-              - Spectrum collapses by 114 dB around 22.05 kHz (level is down 6 dB at 21.1 kHz and down 20 dB by 21.4 kHz), the Nyquist limit of a 44.1 kHz master: upsampled from 44.1 kHz (high confidence).
-FAKE HI-RES   24/96      16/96       47.8k      fake_padded_16_in_24.flac
-              - Only 16 of 24 bits are used: the low 8 bits are always zero (16-bit audio padded into a 24-bit container).
-FAKE HI-RES   24/44.1    16/44.1     21.9k      fake_gain_16_to_24.flac
-              - Every sample lies on an even grid with a step of 181.2 levels of the 24-bit scale instead of 1. That is what a 16-bit master gives after a gain change of -3.0 dB (with or without dither) on its way into a 24-bit file, so the low bits hold no real detail and the resolution is still 16 bits.
-FAKE HI-RES   24/96      lossy~17k   21.1k      fake_from_mp3.flac
-              - Brick-wall low-pass at 17.0 kHz (87 dB drop within ~1 kHz, never recovers): typical of an MP3/AAC/Vorbis encoder, so this was made from a lossy file.
-              - Spectrum collapses by 23 dB around 22.05 kHz (level is down 20 dB by 17.6 kHz), the Nyquist limit of a 44.1 kHz master: upsampled from 44.1 kHz (medium confidence).
-FAKE HI-RES   24/192     24/96       47.9k      fake_up_96_to_192.wav
-              - Spectrum collapses by 115 dB around 48.00 kHz ... upsampled from 96 kHz (high confidence). Still hi-res, but not the advertised 192 kHz.
-SUSPICIOUS    24/96      24/96       16.4k      dull_96.wav
-              - No content above 16.4 kHz although the format allows 48 kHz, and there is no brick-wall edge. The ultrasonic band holds only rounding noise, without the analogue noise floor that a converter running at this rate would leave, ...
-REAL HI-RES   24/96      24/96       13.4k      analog_transfer_96.wav
-REAL HI-RES   24/96      24/96       47.8k      real_24_96.flac
-REAL HI-RES   24/192     24/192      95.5k      real_24_192.wav
-NOT HI-RES    16/44.1    16/44.1     21.9k      cd_16_44.wav
-LOSSY FORMAT  mp3/44.1   -           17.4k      src.mp3
+VERDICT        CLAIMED    REAL(EST)   BANDWIDTH  FILE
+FAKE LOSSLESS  16/44.1    lossy~17k   17.4k      album_track_from_mp3.flac
+               → Made from a lossy file (MP3/AAC-style cut-off at 17.0 kHz)
+FAKE HI-RES    24/96      24/44.1     22.0k      fake_up_44_to_96.flac
+               → Upsampled from 44.1 kHz: nothing above 22.05 kHz
+FAKE HI-RES    24/96      16/96       47.8k      fake_padded_16_in_24.flac
+               → Padded: only 16 of 24 bits used
+FAKE HI-RES    24/44.1    16/44.1     21.9k      fake_gain_16_to_24.flac
+               → 16-bit master given a volume change or dither
+FAKE HI-RES    24/192     24/96       47.9k      fake_up_96_to_192.wav
+               → Upsampled from 96 kHz: nothing above 48 kHz
+REAL HI-RES    24/96      24/96       47.8k      real_24_96.flac
+REAL HI-RES    24/192     24/192      95.5k      real_24_192.wav
+NOT HI-RES     16/44.1    16/44.1     21.9k      cd_16_44.wav
+LOSSY FORMAT   mp3/44.1   -           17.4k      src.mp3
 
-Scanned 11 file(s): 5 fake hi-res, 1 suspicious, 3 real hi-res, 1 not hi-res, 1 lossy format
+Scanned 9 file(s): 1 fake lossless (11.1%), 4 fake hi-res (44.4%), 2 real hi-res (22.2%), 1 not hi-res (11.1%), 1 lossy format (11.1%)
+  FAKE LOSSLESS   11.1%      1  ███
+  FAKE HI-RES     44.4%      4  █████████████
+  REAL HI-RES     22.2%      2  ███████
+  NOT HI-RES      11.1%      1  ███
+  LOSSY FORMAT    11.1%      1  ███
 ```
 
-`CLAIMED` is the resolution the file advertises (bits/kHz, with `f` marking floating point). `REAL(EST)` is the resolution the audio actually carries according to the analysis. `BANDWIDTH` is the highest frequency at which the file contains real content. The `analog_transfer_96.wav` line shows a dull recording with nothing above 13.4 kHz that is still judged real, because its converter noise floor proves that it was digitised at 96 kHz (see "How detection works" below). With `-v`, that explanation and all raw measurements are printed for every file.
+`CLAIMED` is the resolution the file advertises (bits/kHz, with `f` marking floating point). `REAL(EST)` is the resolution the audio actually carries according to the analysis, or `lossy~17k` when the source was a lossy file cut off at about 17 kHz. `BANDWIDTH` is the highest frequency at which the file contains real content.
 
 ### Options
 
 | Option | Meaning |
 | --- | --- |
-| `-v`, `--verbose` | Show the reasoning and raw measurements for every file, not just the fakes. |
-| `--only fake` | List only files with a given verdict. You can repeat it, and the choices are `fake`, `suspicious`, `real`, `not-hires`, `lossy` and `error`. |
-| `--json FILE` | Write every measurement to a JSON file. |
+| `-v`, `--verbose` | Show the full reasoning and raw measurements for every file, not just the one-line reasons of the problem files. |
+| `--only VERDICT` | List only some files. You can repeat it. `fake` means fake hi-res and fake lossless, `problems` means fake plus suspicious, and the other choices are `fake-hires`, `fake-lossless`, `suspicious`, `real`, `not-hires`, `lossy` and `error`. |
+| `--json FILE` | Write every measurement, including the one-line `summary` and the `flags`, to a JSON file. |
 | `--csv FILE` | Write a CSV summary, which is handy for spreadsheets. |
-| `--plot DIR` | Write an SVG spectrum plot for each file so you can check the verdict visually. |
-| `-j N`, `--jobs N` | Analyse N files in parallel. The default is up to 4. |
+| `--spectrogram DIR` | Write a PNG spectrogram for each file, with the detected cut-off marked. |
+| `--plot DIR` | Write an SVG average-spectrum plot for each file. |
+| `-j N`, `--jobs N` | Analyse N files in parallel (1–512). `0` means one per CPU core, which is the default. |
+| `--fix` | After scanning, fix every fake file in place so that its properties show its real resolution (same name, tags and cover art). Originals are moved to a `Real-Hi-Res backups` folder next to them. See "Fix to real resolution" above. |
+| `--fix-backup folder\|bak\|none` | With `--fix`, keep originals in the backup folder (default), as `<name>.bak`, or delete them. |
+| `--fix-backup-dir DIR` | With `--fix`, move the originals into `DIR`. |
+| `--fix-copy` / `--fix-dir DIR` | With `--fix`, leave the files alone and save corrected copies next to them or into `DIR`. |
+| `--dry-run` | With `--fix`, only show what would be changed. |
 | `-t SECONDS`, `--max-seconds SECONDS` | Analyse only the first N seconds of each file, which is faster but slightly less reliable. |
 | `-n`, `--no-recursive` | Do not descend into sub-folders. |
+| `--set NAME=VALUE` | Override one setting for this run, for example `--set cliff_db=30` or `--set lossy_max_khz=20.8`. You can repeat it. |
+| `--list-settings` | Print every setting with its current value and description. |
+| `--settings FILE` / `--no-settings` | Use a different settings file, or ignore the saved settings and use the defaults. |
 | `--no-color` | Disable coloured output. Setting the `NO_COLOR` environment variable does the same. |
 
-For example, the following command lists only the fakes in a library and saves plots and a CSV report:
+For example, the following commands first show what would be fixed and then fix all fake files in a library in place, with the originals kept in backup folders:
 
 ```bash
-realhires ~/Music --only fake --plot realhires-report/plots --csv realhires-report/report.csv
+realhires ~/Music --fix --dry-run
 ```
+
+```bash
+realhires ~/Music --fix
+```
+
+And the following command lists only the problem files and saves spectrograms and a CSV report:
+
+```bash
+realhires ~/Music --only problems --spectrogram realhires-report/spectrograms --csv realhires-report/report.csv
+```
+
+### Settings file
+
+The desktop app and the command-line tool share one settings file. It lives at `%APPDATA%\RealHiRes\settings.json` on Windows, `~/Library/Application Support/RealHiRes/settings.json` on macOS, and `~/.config/realhires/settings.json` on Linux. You can point to another file with the `REALHIRES_SETTINGS` environment variable. It is plain JSON and is easiest to edit in the app's Settings window. Invalid or unknown values are ignored and fall back to their defaults, so a broken file never stops the program. `realhires --list-settings` shows every setting.
 
 ## Verdicts
 
-| Verdict | Meaning |
-| --- | --- |
-| **REAL HI-RES** | The file claims hi-res and passed both the spectral test and the bit-depth test. A high-rate file with no music above 20 kHz is also real when its converter noise floor shows that it was digitised at that rate. |
-| **FAKE HI-RES** | The file claims hi-res but was upsampled from a lower sample rate, made from a lossy file, or is a 16-bit master in a 24-bit or float container, either padded with zeros or only given a gain change or dither. The reasons tell you which. |
-| **SUSPICIOUS** | The file claims a high sample rate but has no content above roughly 24.5 kHz (28.8 kHz when only rounding noise lies above it), no brick-wall edge, and no converter noise floor that would prove the rate. This can be a dull recording that was digitally filtered or produced, or a gentle-filter upsample. A 20-bit master in a 24-bit file is also reported as suspicious. Check the plot to decide. |
-| **NOT HI-RES** | The file does not claim to be hi-res (16-bit at 44.1 or 48 kHz). If it was made from a lossy source, the reasons say so. |
-| **LOSSY FORMAT** | The file is MP3, AAC, Opus, Vorbis or a similar format, which can never be real hi-res whatever its sample rate. |
-| **ERROR** | The file could not be decoded. |
+| Verdict | In the app | Meaning |
+| --- | --- | --- |
+| **FAKE LOSSLESS** | Fake lossless | A "fake FLAC": a lossless file (FLAC, ALAC, WAV, AIFF, APE, WavPack…) at any resolution that was made from an MP3, AAC or other lossy file. Its spectrum has an encoder's brick-wall low-pass between 11 and 20.3 kHz. |
+| **FAKE HI-RES** | Fake hi-res | The file claims hi-res but was upsampled from a lower sample rate, or it is a 16-bit master in a 24-bit or float container, either padded with zeros or only given a volume change or dither. The reason says which. |
+| **SUSPICIOUS** | Suspicious | The file claims a high sample rate but has no content above about 24.5 kHz (28.8 kHz when only rounding noise lies above it), no brick-wall edge, and no converter noise floor that would prove the rate. This can be a dull recording that was digitally filtered or produced, or a gentle-filter upsample. A 20-bit master in a 24-bit file is also reported as suspicious. Check the spectrogram to decide. |
+| **REAL HI-RES** | Real hi-res | The file claims hi-res and passed both the spectral test and the bit-depth test. A high-rate file with no music above 20 kHz is also real when its converter noise floor shows that it was digitised at that rate. |
+| **NOT HI-RES** | CD quality | Genuine lossless audio at CD resolution (16-bit at 44.1 or 48 kHz). It does not claim to be hi-res, and no lossy source was found. |
+| **LOSSY FORMAT** | Lossy format | The file itself is MP3, AAC, Opus, Vorbis or a similar format, which is lossy by design. |
+| **ERROR** | Error | The file could not be decoded. |
 
 ## How detection works
 
@@ -151,7 +238,7 @@ The first is the **cliff test**. For every common lower source rate (44.1, 48, 8
 
 When neighbouring rates such as 44.1 and 48 kHz both show a cliff, which happens when a resampler's transition band straddles both, the tool finds the frequency where the level has fallen 6 dB below the music's own trend (a straight line fitted to the spectrum just below the transition). Common resamplers put that point at 0.95–1.0 times the source Nyquist frequency. Steep ones such as SoX/soxr put it just below that frequency, and soft ones such as FFmpeg's swr put it exactly on it, so the tool picks the rate whose Nyquist frequency fits best. Because this test looks at a narrow window around each candidate edge, it still works when noise-shaped dither (for example in a fake DSD file) fills the top of the spectrum.
 
-The second is the **lossy cliff scan**. MP3, AAC and Vorbis encoders throw away everything above about 16–20 kHz with an extremely steep low-pass. The tool searches the range from 11 to 20.3 kHz for a drop of 25 dB or more within about one kilohertz that never recovers at higher frequencies, which is the signature of a file that was decoded from a lossy source.
+The second is the **lossy cliff scan**, which finds fake lossless files ("fake FLACs"). MP3, AAC and Vorbis encoders throw away everything above about 16–20 kHz with an extremely steep low-pass: about 16 kHz for 128 kbps MP3, 19–20 kHz for 192–320 kbps. Converting such a file to FLAC or WAV keeps that hole. The tool searches the range from 11 to 20.3 kHz for a drop of 25 dB or more within about one kilohertz that never recovers at higher frequencies. This works at any sample rate, so it catches a 16/44.1 FLAC made from an MP3 just like a "24/96" one. A genuine CD master normally extends to 20–22 kHz.
 
 The third is the **effective bandwidth** measurement, which is the highest frequency where a continuous band of at least 300 Hz sits clearly above the noise floor. The floor reference is the top of the spectrum, capped near the theoretical quantisation noise of the file's bit depth so that content reaching Nyquist still counts. Content more than 110 dB below the spectral peak is ignored, and so is anything above an empty stretch wider than 3 kHz, because real spectra are continuous while the images and spurs that a weak resampler leaves far above its cliff are not. For an upsampled file the bandwidth is capped at the source's Nyquist frequency.
 
@@ -162,6 +249,10 @@ The fourth is the **converter noise floor** test. Every analogue-to-digital conv
 FFmpeg decodes every integer format into left-justified 32-bit samples, so a 24-bit sample keeps its 8 unused bits at zero and a 16-bit sample keeps 16 zero bits. For every non-zero sample the tool records the lowest bit that is set. In real 24-bit audio the 24th bit is set in about half of all samples, because the lowest bits carry noise and fine detail. If a 16-bit master was simply padded to 24 bits, nothing below bit 16 is ever set, and the file is reported as "16 of 24 bits used". A threshold of 0.5 % of samples means that a handful of clipped or odd samples cannot hide the padding. The same test catches 16-bit audio stored as 32-bit float, because every sample is then an exact 16-bit value.
 
 A 16-bit master that is given a volume change or dither on its way to 24 bits fills the low bits, so the test above sees 24 bits in use. Its samples still sit on a regular **value grid**, though. A gain g turns each 16-bit step into 256 × g steps of the 24-bit scale, and dither only blurs each grid point by a few steps. The tool therefore keeps a histogram of the sample values near zero (within ±65,536 on the 24-bit scale, separately for each channel) and looks for a periodic comb in it with a Fourier transform. Real 24-bit audio has a smooth histogram and a comb strength below 0.05, while a scaled or dithered 16-bit master scores 0.85–1.0, and a grid with a strength of 0.35 or more counts. The grid step gives the gain that was applied, and together with the file's peak level it gives the bit depth of the master, because a b-bit master can never span more than 2^b grid steps. A 16-bit grid is FAKE and a 17–22-bit grid is SUSPICIOUS. The test works the same in float files. It also catches many FFmpeg upsamples of 16-bit masters by a factor of two, which keep every second sample unchanged, so about half of the samples remain on the grid.
+
+## Why was the number of parallel jobs limited to 61?
+
+That limit comes from Python on Windows, not from Real-Hi-Res. Python's process pool waits for its worker processes with the Windows function `WaitForMultipleObjects`, which can watch at most 64 handles, and Python keeps 3 of those for itself, so one pool can have at most 61 workers. Since version 1.4.0, Real-Hi-Res splits larger job counts over several pools (for example 64 jobs run as 2 × 32), so all cores of a big workstation can be used, up to 512 jobs. On macOS and Linux there was never such a limit. For the fastest scans, leave **Parallel jobs** at 0 (automatic), which uses one job per CPU core. More jobs than cores only makes the files compete for the same processors.
 
 ## Limitations
 
@@ -175,7 +266,7 @@ Old analogue recordings often have no content above 20 kHz even when they were t
 
 A real hi-res file whose ultrasonic band contains only analogue tape or microphone hiss is reported as REAL, because that hiss is genuinely captured above 22 kHz.
 
-MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with ordinary CD anti-aliasing filters, so a lossy source is not always detectable in a 44.1 or 48 kHz file. Upsampled to hi-res, such a file is still caught by the cliff test.
+MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with ordinary CD anti-aliasing filters, so a lossy source is not always detectable in a 44.1 or 48 kHz file. Upsampled to hi-res, such a file is still caught by the cliff test. You can raise **Lossy cut-off search up to** in Settings (`lossy_max_khz`) to about 20.8 kHz to catch more of them, at the risk of flagging CD masters that have an unusually low and steep anti-aliasing filter.
 
 ## Development
 

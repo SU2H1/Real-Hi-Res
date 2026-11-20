@@ -1,9 +1,16 @@
 """Desktop GUI (Tkinter, part of the Python standard library).
 
-Pick folders or files, scan them in parallel, and scroll through the results.
-By default only FAKE HI-RES and SUSPICIOUS files are listed; the other verdicts
-can be switched on with the filter checkboxes.  Selecting a row shows the
-reasons and the averaged spectrum of that file.
+* Pick folders or files and scan them in parallel.
+* Scroll through the results.  By default only problem files are listed:
+  FAKE LOSSLESS ("fake FLAC", made from MP3/AAC), FAKE HI-RES (upsampled or
+  bit-padded) and SUSPICIOUS.  The filter checkboxes show the rest.
+* The dashboard below the list shows the selected file's verdict, a one-line
+  reason, key facts, its spectrogram and average spectrum, and buttons to
+  open the file or its folder.
+* After every scan a summary window shows what percentage of files got each
+  verdict.
+* Settings (detection thresholds, scanning, display) are edited in the
+  Settings window and saved for the next start (also used by the CLI).
 
 Run with ``realhires-gui`` (installed), ``python -m realhires.gui``, or the
 ``RealHiRes`` executable from a release package.
@@ -13,11 +20,15 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import pickle
 import queue
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 try:
@@ -33,28 +44,35 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
     ) from exc
 
 from . import __version__
-from .cli import AUDIO_EXTENSIONS, collect
+from . import settings as settings_mod
+from .listing import list_source
+from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
 from .report import write_csv, write_json
-from .verdict import ERROR, FAKE, LOSSY, NOT_HIRES, REAL, SUSPECT, VERDICT_ORDER, FileResult, analyze_file
+from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, PROBLEM_VERDICTS, REAL, SUSPECT,
+                      VERDICT_ORDER, FileResult, analyze_file, verdict_breakdown)
 
 VERDICT_STYLE = {
-    FAKE: ("Fake hi-res", "#c62828"),
-    SUSPECT: ("Suspicious", "#b26a00"),
-    REAL: ("Real hi-res", "#2e7d32"),
-    NOT_HIRES: ("Not hi-res", "#1565c0"),
-    LOSSY: ("Lossy format", "#6a1b9a"),
-    ERROR: ("Error", "#616161"),
+    FAKE_LOSSLESS: ("Fake lossless", "#a3122a", "Lossless file (FLAC/WAV/ALAC...) made from an MP3/AAC"),
+    FAKE: ("Fake hi-res", "#d32f2f", "Upsampled and/or 16-bit padded"),
+    SUSPECT: ("Suspicious", "#b26a00", "Could not be confirmed either way"),
+    REAL: ("Real hi-res", "#2e7d32", "Genuine high resolution"),
+    NOT_HIRES: ("CD quality", "#1565c0", "Genuine lossless, not hi-res"),
+    LOSSY: ("Lossy format", "#6a1b9a", "MP3/AAC/... file"),
+    ERROR: ("Error", "#616161", "Could not be analysed"),
 }
-DEFAULT_SHOWN = {FAKE, SUSPECT}
-QUICK_SECONDS = 90.0
+PENDING = "PENDING"  # GUI-only state of a listed file that has not been scanned yet
+PENDING_STYLE = ("Not scanned", "#808080")
+RUNNING = "RUNNING"  # GUI-only: being analysed right now
+RUNNING_STYLE = ("Analysing…", "#0b62c4")
 
 
-def _work(path: str, max_seconds: Optional[float]) -> FileResult:
+def _work(path: str, max_seconds: Optional[float], cfg) -> FileResult:
     """Runs in a worker process.  Must be module-level so it can be pickled."""
-    return analyze_file(path, max_seconds=max_seconds, keep_plot=True)
+    return analyze_file(path, max_seconds=max_seconds, keep_plot=True, settings=cfg)
 
 
+# ---------------------------------------------------------------- helpers ---
 def reveal_in_file_manager(path: str) -> None:
     env = external_env()  # do not leak the frozen app's library path
     if sys.platform.startswith("win"):
@@ -65,25 +83,43 @@ def reveal_in_file_manager(path: str) -> None:
         subprocess.Popen(["xdg-open", os.path.dirname(path) or "."], env=env)
 
 
-class Scanner(threading.Thread):
-    """Background thread: collects files, fans them out to worker processes
-    and posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
+def open_with_default_app(path: str) -> None:
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path], env=external_env())
+    else:
+        subprocess.Popen(["xdg-open", path], env=external_env())
 
-    def __init__(self, sources: List[str], jobs: int, max_seconds: Optional[float], out: queue.Queue):
+
+def fmt_duration(sec: Optional[float]) -> str:
+    if sec is None:
+        return "?"
+    m, s = divmod(int(round(sec)), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+class Scanner(threading.Thread):
+    """Background thread: fans the listed files out to worker processes and
+    posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
+
+    def __init__(self, files: List[str], cfg, max_seconds: Optional[float], out: queue.Queue):
         super().__init__(daemon=True)
-        self.sources, self.jobs, self.max_seconds, self.out = sources, jobs, max_seconds, out
+        self.files, self.cfg, self.max_seconds, self.out = files, cfg, max_seconds, out
         self.stop_event = threading.Event()
 
     def run(self) -> None:
         try:
-            files = collect(self.sources, recursive=True)
+            files = list(self.files)
             self.out.put(("total", len(files)))
             if not files:
                 self.out.put(("done", None))
                 return
             ctx = multiprocessing.get_context("spawn")  # safe with a GUI thread running
-            with ProcessPoolExecutor(max_workers=max(1, self.jobs), mp_context=ctx) as ex:
-                futures = {ex.submit(_work, f, self.max_seconds): f for f in files}
+            workers = min(effective_jobs(self.cfg.jobs), len(files))
+            with MultiProcessPool(workers, mp_context=ctx) as ex:
+                futures = {ex.submit(_work, f, self.max_seconds, self.cfg): f for f in files}
                 for fut in as_completed(futures):
                     if self.stop_event.is_set():
                         for other in futures:
@@ -92,37 +128,152 @@ class Scanner(threading.Thread):
                     try:
                         self.out.put(("result", fut.result()))
                     except Exception as exc:  # noqa: BLE001 - e.g. a crashed worker
-                        self.out.put(("result", FileResult(path=os.path.abspath(futures[fut]),
-                                                           verdict=ERROR, reasons=[str(exc)])))
+                        self.out.put(("result", FileResult(
+                            path=os.path.abspath(futures[fut]), verdict=ERROR, reasons=[str(exc)],
+                            summary=f"Could not analyse: {exc}")))
             self.out.put(("done", "stopped" if self.stop_event.is_set() else None))
         except Exception as exc:  # noqa: BLE001
             self.out.put(("error", str(exc)))
 
 
-class SpectrumCanvas(tk.Canvas):
-    """Draws the compact spectrum of the selected file."""
+class PlotCache:
+    """Keeps each file's spectrum + spectrogram on disk instead of in memory,
+    so libraries with thousands of files do not fill the RAM."""
+
+    def __init__(self):
+        self.dir = tempfile.mkdtemp(prefix="realhires-")
+        self.index: Dict[str, str] = {}
+
+    def put(self, path: str, plot: Optional[dict]) -> None:
+        if not plot:
+            return
+        fn = os.path.join(self.dir, f"{len(self.index)}.pkl")
+        with open(fn, "wb") as fh:
+            pickle.dump(plot, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        self.index[path] = fn
+
+    def get(self, path: str) -> Optional[dict]:
+        fn = self.index.get(path)
+        if not fn:
+            return None
+        try:
+            with open(fn, "rb") as fh:
+                return pickle.load(fh)  # our own data, written above
+        except (OSError, pickle.PickleError, EOFError):
+            return None
+
+    def clear(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+        self.dir = tempfile.mkdtemp(prefix="realhires-")
+        self.index.clear()
+
+    def close(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+# ------------------------------------------------------------------ plots ---
+class _PlotBase(tk.Canvas):
+    L, R, T, B = 52, 12, 24, 28
 
     def __init__(self, master, **kw):
         super().__init__(master, background="#ffffff", highlightthickness=0, **kw)
         self.result: Optional[FileResult] = None
+        self.plot: Optional[dict] = None
         self.bind("<Configure>", lambda e: self.redraw())
 
-    def show(self, result: Optional[FileResult]) -> None:
-        self.result = result
+    def show(self, result: Optional[FileResult], plot: Optional[dict]) -> None:
+        self.result, self.plot = result, plot
         self.redraw()
+
+    def _message(self, text: str) -> None:
+        self.create_text(self.winfo_width() / 2, self.winfo_height() / 2, text=text, fill="#888")
+
+    def _freq_axis(self, nyq: float, x0: float, y_of) -> None:
+        kstep = 2 if nyq <= 24000 else 5 if nyq <= 50000 else 10 if nyq <= 100000 else 20
+        k = 0
+        while k * 1000 <= nyq:
+            y = y_of(k * 1000)
+            self.create_line(x0 - 4, y, x0, y, fill="#666")
+            self.create_text(x0 - 6, y, text=f"{k}k", anchor="e", fill="#555", font=("TkDefaultFont", 8))
+            k += kstep
+
+
+class SpectrogramCanvas(_PlotBase):
+    """Time-frequency picture: an upsampled or lossy-sourced file shows a hard
+    black area above its cut-off for the whole duration of the track."""
+
+    def __init__(self, master, app: "App", **kw):
+        super().__init__(master, **kw)
+        self.app = app
+        self.configure(background="#1e1e1e")
+        self._img = None
+
+    def redraw(self) -> None:
+        from .imaging import spectrogram_rgb, to_ppm
+
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 80 or h < 60:
+            return
+        sg = (self.plot or {}).get("spectrogram") if self.plot else None
+        if self.result is None:
+            self.create_text(w / 2, h / 2, text="Select a scanned file to see its spectrogram", fill="#aaa")
+            return
+        if not sg:
+            self.create_text(w / 2, h / 2, text="No spectrogram (silent or unreadable file)", fill="#aaa")
+            return
+        L, R, T, B = self.L, self.R, self.T, self.B
+        pw, ph = w - L - R, h - T - B
+        cfg = self.app.cfg
+        rgb = spectrogram_rgb(sg, pw, ph, cfg.spectrogram_range_db, cfg.colormap)
+        self._img = tk.PhotoImage(data=to_ppm(rgb), format="PPM")
+        self.create_image(L, T, image=self._img, anchor="nw")
+        nyq = sg["nyquist"]
+
+        def Y(f):
+            return T + ph - ph * f / nyq
+
+        self._freq_axis(nyq, L, Y)
+        for c in self.find_withtag("all"):
+            if self.type(c) == "text":
+                self.itemconfigure(c, fill="#ccc")
+        total = sg["shape"][0] * sg["seconds_per_column"]
+        for frac in (0, 0.25, 0.5, 0.75, 1.0):
+            x = L + frac * pw
+            self.create_line(x, T + ph, x, T + ph + 4, fill="#aaa")
+            self.create_text(x, T + ph + 13, text=fmt_duration(frac * total),
+                             fill="#ccc", font=("TkDefaultFont", 8))
+        r = self.result
+        marks = []
+        if r.upsampled_from:
+            marks.append((r.upsampled_from / 2.0, "#4fc3f7",
+                          f"{r.upsampled_from / 2000:g} kHz: limit of a {r.upsampled_from / 1000:g} kHz master"))
+        if r.lossy_cutoff_hz:
+            marks.append((r.lossy_cutoff_hz, "#ff6e6e", f"{r.lossy_cutoff_hz / 1000:.1f} kHz: lossy encoder cut-off"))
+        for hz, color, label in marks:
+            if 0 < hz < nyq:
+                y = Y(hz)
+                self.create_line(L, y, L + pw, y, fill=color, dash=(6, 4), width=2)
+                self.create_text(L + pw - 4, y - 8, text=label, anchor="e", fill=color,
+                                 font=("TkDefaultFont", 9, "bold"))
+        self.create_text(L, 12, anchor="w", fill="#eee", font=("TkDefaultFont", 9, "bold"),
+                         text="Spectrogram (time →, frequency ↑)")
+
+
+class SpectrumCanvas(_PlotBase):
+    """Average spectrum over the whole file."""
 
     def redraw(self) -> None:
         self.delete("all")
         w, h = self.winfo_width(), self.winfo_height()
-        r = self.result
-        if w < 50 or h < 50:
+        if w < 80 or h < 60:
             return
-        if r is None or not r.plot or not r.plot.get("freqs"):
-            msg = "Select a file to see its spectrum" if r is None else "No spectrum available"
-            self.create_text(w / 2, h / 2, text=msg, fill="#888")
+        p = self.plot
+        if self.result is None or not p or not p.get("freqs"):
+            self._message("Select a scanned file to see its spectrum" if self.result is None
+                          else "No spectrum available")
             return
-        p = r.plot
-        L, R, T, B = 52, 12, 26, 30
+        L, R, T, B = self.L, self.R, self.T, self.B
         pw, ph = w - L - R, h - T - B
         nyq = p["nyquist"]
         top = (int(p["peak_db"] + 5) // 10 + 1) * 10
@@ -153,58 +304,810 @@ class SpectrumCanvas(tk.Canvas):
                 self.create_line(X(ref), T, X(ref), T + ph, fill="#aaaaaa", dash=(2, 3))
                 self.create_text(X(ref) + 3, T + ph - 8 - 12 * (i % 2), text=f"{ref / 1000:g}k",
                                  anchor="w", fill="#999", font=("TkDefaultFont", 8))
-        color = VERDICT_STYLE.get(r.verdict, ("", "#1565c0"))[1]
+        color = VERDICT_STYLE.get(self.result.verdict, ("", "#1565c0"))[1]
         if p.get("bandwidth_hz"):
             x = X(p["bandwidth_hz"])
             self.create_line(x, T, x, T + ph, fill=color, dash=(6, 4), width=2)
             anchor, dx = ("e", -4) if x > L + pw - 130 else ("w", 4)
             self.create_text(x + dx, T + 10, text=f"bandwidth {p['bandwidth_hz'] / 1000:.1f} kHz",
                              anchor=anchor, fill=color)
-        yf = Y(p["floor_db"])
-        self.create_line(L, yf, L + pw, yf, fill="#8250df", dash=(4, 4))
+        self.create_line(L, Y(p["floor_db"]), L + pw, Y(p["floor_db"]), fill="#8250df", dash=(4, 4))
         pts = []
         for f, v in zip(p["freqs"], p["db"]):
             pts += [X(f), Y(v)]
         if len(pts) >= 4:
             self.create_line(*pts, fill="#1f2328", width=1)
         self.create_rectangle(L, T, L + pw, T + ph, outline="#999")
-        self.create_text(L, 12, anchor="w", font=("TkDefaultFont", 9, "bold"),
-                         text=f"{os.path.basename(r.path)}  —  {r.verdict}", fill=color)
+        self.create_text(L, 12, anchor="w", font=("TkDefaultFont", 9, "bold"), fill="#333",
+                         text="Average spectrum (dB per bin)")
 
 
+# ---------------------------------------------------------------- dialogs ---
+class SummaryDialog(tk.Toplevel):
+    """Pop-up shown after a scan: a donut (pie) chart of the verdicts with a
+    legend of percentages.  Clicking a slice or a legend row lists only those
+    files."""
+
+    SIZE = 260
+
+    def __init__(self, app: "App", results: List[FileResult], elapsed: Optional[float]):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Scan summary")
+        self.transient(app.root)
+        self.resizable(False, False)
+        frm = ttk.Frame(self, padding=16)
+        frm.grid(sticky="nsew")
+        n = len(results)
+        problems = sum(1 for r in results if r.verdict in PROBLEM_VERDICTS)
+        head = f"Scanned {n} file{'s' if n != 1 else ''}" + (f" in {elapsed:.1f} s" if elapsed else "")
+        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        pct_problems = 100.0 * problems / n if n else 0.0
+        ttk.Label(frm, text=f"{problems} file{'s' if problems != 1 else ''} ({pct_problems:.1f} %) are fake or "
+                            "suspicious." if problems else "No fake or suspicious files found.",
+                  foreground="#a3122a" if problems else "#2e7d32").grid(row=1, column=0, columnspan=2,
+                                                                         sticky="w", pady=(2, 10))
+        breakdown = verdict_breakdown(results)
+        self.canvas = tk.Canvas(frm, width=self.SIZE, height=self.SIZE, highlightthickness=0,
+                                background=self._bg())
+        self.canvas.grid(row=2, column=0, sticky="n", padx=(0, 18))
+        self._draw_pie(breakdown, n, pct_problems)
+
+        legend = ttk.Frame(frm)
+        legend.grid(row=2, column=1, sticky="nw")
+        for i, (v, count, pct) in enumerate(breakdown):
+            label, color, desc = VERDICT_STYLE[v]
+            sw = tk.Canvas(legend, width=14, height=14, highlightthickness=0, background=self._bg())
+            sw.create_rectangle(0, 0, 14, 14, fill=color, outline="")
+            sw.grid(row=2 * i, column=0, padx=(0, 6), pady=(4, 0), sticky="w")
+            name = ttk.Label(legend, text=label, foreground=color, font=("TkDefaultFont", 10, "bold"),
+                             cursor="hand2")
+            name.grid(row=2 * i, column=1, sticky="w", pady=(4, 0))
+            ttk.Label(legend, text=f"{pct:5.1f} %", width=7, anchor="e",
+                      font=("TkDefaultFont", 10, "bold")).grid(row=2 * i, column=2, sticky="e", pady=(4, 0))
+            ttk.Label(legend, text=f"{count} file{'s' if count != 1 else ''}", foreground="#555").grid(
+                row=2 * i, column=3, sticky="w", padx=(8, 0), pady=(4, 0))
+            ttk.Label(legend, text=desc, foreground="#777", font=("TkDefaultFont", 8)).grid(
+                row=2 * i + 1, column=1, columnspan=3, sticky="w")
+            for w in (sw, name):
+                w.bind("<Button-1>", lambda e, v=v: self._close(only=v))
+        ttk.Label(frm, text="Click a slice or a name to list only those files.", foreground="#777",
+                  font=("TkDefaultFont", 8)).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.again = tk.BooleanVar(value=app.cfg.show_summary_popup)
+        ttk.Checkbutton(frm, text="Show this summary after every scan", variable=self.again).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(6, 8))
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, columnspan=2, sticky="e")
+        ttk.Button(btns, text="Show problem files", command=lambda: self._close(problems_only=True)).pack(side="left")
+        ttk.Button(btns, text="Show all files", command=lambda: self._close(show_all=True)).pack(side="left", padx=4)
+        ttk.Button(btns, text="Export CSV…", command=lambda: app.export("csv", all_results=True)).pack(side="left")
+        close = ttk.Button(btns, text="Close", command=self._close)
+        close.pack(side="left", padx=(4, 0))
+        close.focus_set()
+        self.bind("<Escape>", lambda e: self._close())
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.update_idletasks()
+        x = app.root.winfo_rootx() + (app.root.winfo_width() - self.winfo_width()) // 2
+        y = app.root.winfo_rooty() + (app.root.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    def _bg(self) -> str:
+        try:
+            return ttk.Style(self).lookup("TFrame", "background") or "#f0f0f0"
+        except tk.TclError:
+            return "#f0f0f0"
+
+    def _draw_pie(self, breakdown, total: int, pct_problems: float) -> None:
+        c, size, pad = self.canvas, self.SIZE, 8
+        box = (pad, pad, size - pad, size - pad)
+        start = 90.0  # 12 o'clock, clockwise like most pie charts
+        for v, count, pct in breakdown:
+            color = VERDICT_STYLE[v][1]
+            extent = 360.0 * count / max(total, 1)
+            tag = f"slice-{v}"
+            if extent >= 359.99:
+                c.create_oval(*box, fill=color, outline="white", width=2, tags=(tag,))
+            else:
+                c.create_arc(*box, start=start, extent=-extent, fill=color, outline="white", width=2,
+                             style="pieslice", tags=(tag,))
+            c.tag_bind(tag, "<Button-1>", lambda e, v=v: self._close(only=v))
+            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+            if pct >= 7:  # label big slices with their percentage
+                import math
+
+                mid = math.radians(start - extent / 2)
+                r = (size / 2 - pad) * 0.78
+                c.create_text(size / 2 + r * math.cos(mid), size / 2 - r * math.sin(mid),
+                              text=f"{pct:.0f}%", fill="white", font=("TkDefaultFont", 9, "bold"))
+            start -= extent
+        hole = size * 0.27  # donut hole with the headline number
+        c.create_oval(size / 2 - hole, size / 2 - hole, size / 2 + hole, size / 2 + hole,
+                      fill=self._bg(), outline="")
+        c.create_text(size / 2, size / 2 - 12, text=f"{pct_problems:.0f}%",
+                      font=("TkDefaultFont", 20, "bold"),
+                      fill="#a3122a" if pct_problems else "#2e7d32")
+        c.create_text(size / 2, size / 2 + 16, text="fake or suspicious", fill="#555",
+                      font=("TkDefaultFont", 8))
+
+    def _close(self, problems_only: bool = False, show_all: bool = False, only: Optional[str] = None) -> None:
+        if self.again.get() != self.app.cfg.show_summary_popup:
+            self.app.cfg.show_summary_popup = self.again.get()
+            self.app.save_settings()
+        if only:
+            self.app.set_filters([only])
+        elif problems_only:
+            self.app.set_filters(PROBLEM_VERDICTS)
+        elif show_all:
+            self.app.set_filters(VERDICT_ORDER)
+        self.destroy()
+
+
+class SettingsDialog(tk.Toplevel):
+    """Edit every field of settings.Settings, grouped in tabs."""
+
+    def __init__(self, app: "App"):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Settings")
+        self.transient(app.root)
+        self.vars: Dict[str, object] = {}
+        outer = ttk.Frame(self, padding=12)
+        outer.grid(sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        nb = ttk.Notebook(outer)
+        nb.grid(row=0, column=0, sticky="nsew")
+        self.help_var = tk.StringVar(value="Point at a setting to see what it does.")
+        infos = settings_mod.Settings.field_info()
+        for group in settings_mod.GROUPS:
+            tab = ttk.Frame(nb, padding=10)
+            tab.columnconfigure(1, weight=1)
+            nb.add(tab, text=group)
+            row = 0
+            if group == "Detection":
+                ttk.Label(tab, text="Changes apply to the next scan.", foreground="#666").grid(
+                    row=row, column=0, columnspan=2, sticky="w", pady=(0, 6))
+                row += 1
+            for info in [i for i in infos if i["group"] == group]:
+                widget = self._widget(tab, info)
+                lab = ttk.Label(tab, text=info["label"])
+                lab.grid(row=row, column=0, sticky="nw", padx=(0, 12), pady=3)
+                widget.grid(row=row, column=1, sticky="w", pady=3)
+                for wdg in (lab, widget):
+                    wdg.bind("<Enter>", lambda e, h=info["help"]: self.help_var.set(h))
+                    wdg.bind("<FocusIn>", lambda e, h=info["help"]: self.help_var.set(h), add="+")
+                row += 1
+        ttk.Label(outer, textvariable=self.help_var, wraplength=520, foreground="#444",
+                  justify="left").grid(row=1, column=0, sticky="ew", pady=(8, 4))
+        ttk.Label(outer, text=f"Saved in {settings_mod.default_path()}", foreground="#888",
+                  font=("TkDefaultFont", 8)).grid(row=2, column=0, sticky="w")
+        btns = ttk.Frame(outer)
+        btns.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(btns, text="Restore defaults", command=self._defaults).pack(side="left")
+        ttk.Button(btns, text="Save", command=self._save).pack(side="right")
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._load(app.cfg)
+        self.update_idletasks()
+        self.minsize(self.winfo_width(), self.winfo_height())
+        self.grab_set()
+
+    def _widget(self, parent, info):
+        kind, name = info.get("kind"), info["name"]
+        if kind == "bool":
+            v = tk.BooleanVar()
+            self.vars[name] = v
+            return ttk.Checkbutton(parent, variable=v)
+        if kind == "choice":
+            v = tk.StringVar()
+            self.vars[name] = v
+            return ttk.Combobox(parent, textvariable=v, values=info["choices"], state="readonly", width=18)
+        if kind == "multi":
+            frame = ttk.Frame(parent)
+            sub = {}
+            for i, choice in enumerate(info["choices"]):
+                b = tk.BooleanVar()
+                sub[choice] = b
+                label = VERDICT_STYLE.get(choice, (choice,))[0]
+                ttk.Checkbutton(frame, text=label, variable=b).grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 8))
+            self.vars[name] = sub
+            return frame
+        v = tk.StringVar()
+        self.vars[name] = v
+        if kind == "str":
+            return ttk.Entry(parent, textvariable=v, width=60)
+        inc = 1 if kind == "int" or (info.get("max") or 0) > 50 else 0.1
+        return ttk.Spinbox(parent, textvariable=v, from_=info.get("min") or 0, to=info.get("max") or 1e9,
+                           increment=inc, width=10)
+
+    def _load(self, cfg) -> None:
+        for name, var in self.vars.items():
+            value = getattr(cfg, name)
+            if isinstance(var, dict):
+                for choice, b in var.items():
+                    b.set(choice in value)
+            elif isinstance(var, tk.BooleanVar):
+                var.set(bool(value))
+            else:
+                var.set(f"{value:g}" if isinstance(value, float) else str(value))
+
+    def _defaults(self) -> None:
+        self._load(settings_mod.Settings())
+
+    def _save(self) -> None:
+        data, bad = {}, []
+        infos = {i["name"]: i for i in settings_mod.Settings.field_info()}
+        for name, var in self.vars.items():
+            if isinstance(var, dict):
+                data[name] = [c for c, b in var.items() if b.get()]
+            else:
+                data[name] = var.get()
+        new = settings_mod.Settings.from_dict(data)
+        for name, raw in data.items():
+            if isinstance(raw, str) and infos[name].get("kind") not in ("str", "choice"):
+                try:
+                    ok = float(raw) == float(getattr(new, name))
+                except ValueError:
+                    ok = False
+                if not ok:
+                    lo, hi = infos[name].get("min"), infos[name].get("max")
+                    bad.append(f"{infos[name]['label']}: '{raw}' (allowed {lo:g} – {hi:g})")
+        if bad:
+            messagebox.showerror("Invalid settings", "Please fix:\n\n" + "\n".join(bad), parent=self)
+            return
+        self.app.apply_settings(new)
+        self.destroy()
+
+
+
+class FixDialog(tk.Toplevel):
+    """Convert fake files to the resolution they really have (realhires.fix)."""
+
+    def __init__(self, app: "App", results: List[FileResult]):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Fix to real resolution")
+        self.transient(app.root)
+        self.results = results
+        self.plans: list = []
+        self.done_paths: Dict[str, str] = {}
+        self.running = False
+        self.q: queue.Queue = queue.Queue()
+        cfg = app.cfg
+        frm = ttk.Frame(self, padding=12)
+        frm.grid(sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(2, weight=1)
+        self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
+        self.head.grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
+                  text="Each file is rewritten at the sample rate and bit depth it really contains, so "
+                       "its properties show the actual values (e.g. a fake 24/96 upsampled from a CD "
+                       "becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing "
+                       "audible is lost and it gets smaller. (Only editing the numbers in the file "
+                       "would make it play at the wrong speed, so the audio itself is converted.)").grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(2, 8))
+        cols = ("change", "status", "output")
+        self.tv = ttk.Treeview(frm, columns=cols, show="tree headings", height=min(max(len(results), 3), 10))
+        self.tv.heading("#0", text="File", anchor="w")
+        self.tv.heading("change", text="Claimed → real")
+        self.tv.heading("status", text="Status")
+        self.tv.heading("output", text="Result", anchor="w")
+        self.tv.column("#0", width=230)
+        self.tv.column("change", width=140, anchor="center", stretch=False)
+        self.tv.column("status", width=230)
+        self.tv.column("output", width=260)
+        self.tv.tag_configure("skip", foreground="#888")
+        self.tv.tag_configure("ok", foreground="#2e7d32")
+        self.tv.tag_configure("fail", foreground="#c62828")
+        ys = ttk.Scrollbar(frm, orient="vertical", command=self.tv.yview)
+        self.tv.configure(yscrollcommand=ys.set)
+        self.tv.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        ys.grid(row=2, column=2, sticky="ns")
+
+        opts = ttk.LabelFrame(frm, text="Options", padding=8)
+        opts.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        opts.columnconfigure(1, weight=1)
+        info = {i["name"]: i for i in settings_mod.Settings.field_info()}
+        self.v_output = tk.StringVar(value=cfg.fix_output)
+        self.v_backup = tk.StringVar(value=cfg.fix_backup)
+        self.v_backup_dir = tk.StringVar(value=cfg.fix_backup_folder)
+        self.v_folder = tk.StringVar(value=cfg.fix_folder)
+        self.v_format = tk.StringVar(value=cfg.fix_format)
+        self.v_bits = tk.StringVar(value=cfg.fix_bits)
+        self.v_verify = tk.BooleanVar(value=cfg.fix_verify)
+
+        def combo(row, label, var, key):
+            ttk.Label(opts, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
+            ttk.Combobox(opts, textvariable=var, values=info[key]["choices"], state="readonly",
+                         width=40).grid(row=row, column=1, sticky="w", pady=2)
+
+        def folder_row(row, label, var, title):
+            ttk.Label(opts, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
+            fr = ttk.Frame(opts)
+            fr.grid(row=row, column=1, sticky="ew", pady=2)
+            fr.columnconfigure(0, weight=1)
+            e = ttk.Entry(fr, textvariable=var)
+            e.grid(row=0, column=0, sticky="ew")
+            b = ttk.Button(fr, text="Browse…", command=lambda: self._browse(var, title))
+            b.grid(row=0, column=1, padx=(4, 0))
+            return e, b
+
+        combo(0, "Fix files by:", self.v_output, "fix_output")
+        combo(1, "Original file:", self.v_backup, "fix_backup")
+        self.backup_widgets = folder_row(2, "Backup folder:", self.v_backup_dir, "Folder for backups of originals")
+        self.copy_widgets = folder_row(3, "Copies folder:", self.v_folder, "Folder for corrected copies")
+        combo(4, "Output format:", self.v_format, "fix_format")
+        combo(5, "Target bit depth:", self.v_bits, "fix_bits")
+        ttk.Checkbutton(opts, text="Re-check each fixed file", variable=self.v_verify).grid(
+            row=6, column=1, sticky="w", pady=(2, 0))
+        ttk.Label(opts, foreground="#777", font=("TkDefaultFont", 8),
+                  text="Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never "
+                       "scanned).").grid(row=7, column=1, sticky="w")
+        for v in (self.v_backup, self.v_backup_dir):
+            v.trace_add("write", lambda *a: self._replan())
+        for v in (self.v_output, self.v_folder, self.v_format, self.v_bits):
+            v.trace_add("write", lambda *a: self._replan())
+        self.note = ttk.Label(frm, foreground="#9a6700", wraplength=760, justify="left")
+        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        bottom = ttk.Frame(frm)
+        bottom.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.columnconfigure(1, weight=1)
+        self.pb = ttk.Progressbar(bottom, length=200, mode="determinate")
+        self.pb.grid(row=0, column=0, padx=(0, 8))
+        self.status = ttk.Label(bottom, text="")
+        self.status.grid(row=0, column=1, sticky="w")
+        self.open_btn = ttk.Button(bottom, text="Show in folder", command=self._open_folder, state="disabled")
+        self.open_btn.grid(row=0, column=2, padx=4)
+        self.start_btn = ttk.Button(bottom, text="Fix files", command=self._start)
+        self.start_btn.grid(row=0, column=3)
+        ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=4, padx=(4, 0))
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.bind("<Escape>", lambda e: self._close())
+        self._replan()
+        self.after(100, self._poll)
+
+    def _cfg(self):
+        c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
+        c.fix_output, c.fix_folder = self.v_output.get(), self.v_folder.get()
+        c.fix_backup, c.fix_backup_folder = self.v_backup.get(), self.v_backup_dir.get()
+        c.fix_format, c.fix_bits, c.fix_verify = self.v_format.get(), self.v_bits.get(), self.v_verify.get()
+        return c
+
+    def _replan(self) -> None:
+        from .fix import plan_fix
+
+        if self.running:
+            return
+        cfg = self._cfg()
+        replace = cfg.fix_output.startswith("Replace")
+        into = cfg.fix_output.endswith("into a folder")
+        backup_folder = replace and cfg.fix_backup.startswith("Move")
+        for w in self.copy_widgets:
+            w.configure(state="normal" if into else "disabled")
+        for w in self.backup_widgets:
+            w.configure(state="normal" if backup_folder else "disabled")
+        self.tv.delete(*self.tv.get_children())
+        self.plans = []
+        notes = set()
+        for r in self.results:
+            plan, why = plan_fix(r, cfg)
+            name = os.path.basename(r.path)
+            if plan:
+                self.plans.append(plan)
+                notes.update(plan.notes)
+                if plan.replace_original:
+                    same = os.path.abspath(plan.output) == os.path.abspath(plan.source)
+                    out = "Same file" if same else f"Replaced by {os.path.basename(plan.output)}"
+                    out += {"folder": " (original → backup folder)", "bak": " (original → .bak)",
+                            "none": " (original deleted)"}[plan.backup]
+                else:
+                    out = plan.output if into else f"Copy: {os.path.basename(plan.output)}"
+                self.tv.insert("", "end", iid=r.path, text=name, values=(plan.description, "Ready", out))
+            else:
+                self.tv.insert("", "end", iid=r.path, text=name, values=(r.claimed, why, ""), tags=("skip",))
+        n = len(self.plans)
+        verb = "Fix" if replace else "Save corrected copies of"
+        self.head.configure(text=f"{verb} {n} file{'s' if n != 1 else ''}: real resolution"
+                            if n else "Nothing to fix")
+        self.note.configure(text="\n".join(sorted(notes)))
+        self.start_btn.configure(state="normal" if n else "disabled")
+        self.pb.configure(maximum=max(n, 1), value=0)
+        skipped = len(self.results) - n
+        self.status.configure(text=f"{skipped} selected file(s) need no fixing." if skipped else "")
+
+    def _browse(self, var, title) -> None:
+        d = filedialog.askdirectory(title=title, parent=self)
+        if d:
+            var.set(d)
+
+    def _start(self) -> None:
+        from .fix import run_fix
+
+        if not self.plans or self.running:
+            return
+        cfg = self._cfg()
+        if cfg.fix_output.startswith("Replace") and cfg.fix_backup.startswith("Delete") and not messagebox.askyesno(
+                "Delete originals?", f"Replace {len(self.plans)} file(s) and delete the originals?\n\n"
+                "There will be no backup. The converted files contain everything the originals really "
+                "had, but the originals cannot be restored.", parent=self, icon="warning"):
+            return
+        # remember the chosen options
+        for k in ("fix_output", "fix_folder", "fix_backup", "fix_backup_folder", "fix_format", "fix_bits",
+                  "fix_verify"):
+            setattr(self.app.cfg, k, getattr(cfg, k))
+        self.app.save_settings()
+        self.running = True
+        self.start_btn.configure(state="disabled")
+        self.status.configure(text="Fixing…")
+        for p in self.plans:
+            self.tv.set(p.source, "status", "Waiting…")
+        plans = list(self.plans)
+
+        def worker():
+            with ThreadPoolExecutor(max_workers=max(1, min(effective_jobs(cfg.jobs), 8))) as ex:
+                futs = {}
+                for p in plans:
+                    self.q.put(("start", p.source))
+                    futs[ex.submit(run_fix, p, cfg)] = p
+                for fut in as_completed(futs):
+                    self.q.put(("done", fut.result()))
+            self.q.put(("finished", None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _poll(self) -> None:
+        try:
+            while True:
+                kind, payload = self.q.get_nowait()
+                if kind == "start":
+                    self.tv.set(payload, "status", "Fixing…")
+                elif kind == "done":
+                    o = payload
+                    self.pb["value"] = self.pb["value"] + 1
+                    src = o.plan.source
+                    if o.ok:
+                        txt = "Fixed" if o.plan.replace_original else "Copy saved"
+                        if o.new_result is not None:
+                            txt += f": now {o.new_result.claimed} ({VERDICT_STYLE[o.new_result.verdict][0]})"
+                        txt += f", {o.bytes_after / max(o.bytes_before, 1):.0%} of the size"
+                        self.tv.item(src, tags=("ok",))
+                        if not o.plan.replace_original:
+                            self.tv.set(src, "output", o.output)
+                        self.done_paths[src] = o.output
+                        self.app.add_fixed_result(o)
+                    else:
+                        txt = o.message
+                        self.tv.item(src, tags=("fail",))
+                    self.tv.set(src, "status", txt)
+                elif kind == "finished":
+                    self.running = False
+                    ok = sum(1 for i in self.tv.get_children() if "ok" in self.tv.item(i, "tags"))
+                    bad = sum(1 for i in self.tv.get_children() if "fail" in self.tv.item(i, "tags"))
+                    self.status.configure(text=f"{ok} fixed" + (f", {bad} failed" if bad else "") + ".")
+                    self.open_btn.configure(state="normal" if ok else "disabled")
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(100, self._poll)
+
+    def _open_folder(self) -> None:
+        for i in self.tv.get_children():
+            if "ok" in self.tv.item(i, "tags"):
+                out = self.done_paths.get(i)
+                if out:
+                    reveal_in_file_manager(out)
+                    return
+
+    def _close(self) -> None:
+        if self.running and not messagebox.askyesno(
+                "Conversion running", "Conversions are still running. Close anyway? "
+                "Files being converted are finished in the background.", parent=self):
+            return
+        self.destroy()
+
+
+class CardGrid(ttk.Frame):
+    """Music-player style grid of album or artist cards: cover art, a ring
+    showing how many of the songs are fake/suspicious, and the names."""
+
+    CW, CH, COVER, PAD = 184, 246, 150, 12
+    RING_FAKE, RING_SUS, RING_OK, RING_BG = "#d32f2f", "#f39c12", "#43a047", "#e6e6e6"
+
+    def __init__(self, master, app: "App"):
+        super().__init__(master)
+        import tkinter.font as tkfont
+
+        self.app = app
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0)
+        self.vs = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vs.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vs.grid(row=0, column=1, sticky="ns")
+        self.groups: list = []
+        self.mode = "album"
+        self.images: Dict[str, tk.PhotoImage] = {}
+        self.image_items: Dict[str, int] = {}
+        self.positions: Dict[str, tuple] = {}
+        self.found: set = set()
+        self.current: Optional[str] = None
+        self.f_title = tkfont.Font(family="TkDefaultFont", size=10, weight="bold")
+        self.f_sub = tkfont.Font(family="TkDefaultFont", size=9)
+        self.f_ring = tkfont.Font(family="TkDefaultFont", size=9, weight="bold")
+        self._cols = 0
+        self.canvas.bind("<Configure>", lambda e: self._maybe_relayout())
+        for w in (self.canvas,):
+            w.bind("<MouseWheel>", self._wheel)
+            w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
+            w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+
+    @staticmethod
+    def _ph_tag(key: str) -> str:
+        """Canvas tag for a card's placeholder.  Album names can contain spaces,
+        braces and other characters Tcl rejects in tags, so use a hash."""
+        import hashlib
+
+        return "ph" + hashlib.md5(key.encode("utf-8", "replace")).hexdigest()[:12]
+
+    def _wheel(self, e) -> None:
+        step = -1 * (e.delta // 120 if abs(e.delta) >= 120 else (1 if e.delta > 0 else -1))
+        self.canvas.yview_scroll(step * 3, "units")
+
+    def set_groups(self, groups, mode: str) -> None:
+        self.groups, self.mode = groups, mode
+        self.relayout()
+
+    def _maybe_relayout(self) -> None:
+        cols = max(1, (self.canvas.winfo_width() - self.PAD) // self.CW)
+        if cols != self._cols:
+            self.relayout()
+
+    def _fit(self, text: str, font, width: int) -> str:
+        if font.measure(text) <= width:
+            return text
+        while text and font.measure(text + "…") > width:
+            text = text[:-1]
+        return text + "…"
+
+    def relayout(self) -> None:
+        c = self.canvas
+        c.delete("all")
+        self.image_items.clear()
+        self.positions.clear()
+        w = max(c.winfo_width(), self.CW + self.PAD)
+        self._cols = cols = max(1, (w - self.PAD) // self.CW)
+        if not self.groups:
+            msg = ("Scan some files first: albums and artists are read from the files' tags "
+                   "(untagged files are grouped by folder)." if not self.app.results else
+                   "No album or artist matches the search.")
+            c.create_text(w / 2, 60, text=msg, fill="#888", width=w - 40)
+            c.configure(scrollregion=(0, 0, w, 120))
+            return
+        for i, g in enumerate(self.groups):
+            x = self.PAD + (i % cols) * self.CW
+            y = self.PAD + (i // cols) * self.CH
+            self.positions[g.key] = (x, y)
+            self._draw_card(g, x, y)
+        rows = (len(self.groups) + cols - 1) // cols
+        c.configure(scrollregion=(0, 0, w, self.PAD + rows * self.CH))
+        self.app.request_covers(self.groups, self.mode)
+
+    def _draw_card(self, g, x: int, y: int) -> None:
+        c, S = self.canvas, self.COVER
+        tag = f"card{id(g)}"
+        hl = self.current == g.key
+        found = g.key in self.found
+        c.create_rectangle(x - 6, y - 6, x + self.CW - 18, y + self.CH - 14,
+                           fill="#fff3c4" if found else "#ffffff",
+                           outline="#f39c12" if hl else ("#e0c060" if found else "#ffffff"),
+                           width=3 if hl else 1, tags=(tag, "cardbg"))
+        img = self.images.get(f"{self.mode}:{g.key}")
+        if img is not None:
+            self.image_items[g.key] = c.create_image(x, y, image=img, anchor="nw", tags=(tag,))
+        else:  # placeholder until (or unless) a cover is found
+            hue = sum(map(ord, g.title)) % 360
+            import colorsys
+
+            r, gg, b = colorsys.hls_to_rgb(hue / 360, 0.42, 0.35)
+            col = f"#{int(r * 255):02x}{int(gg * 255):02x}{int(b * 255):02x}"
+            c.create_rectangle(x, y, x + S, y + S, fill=col, outline="", tags=(tag, self._ph_tag(g.key)))
+            initials = "".join(wd[0] for wd in g.title.split()[:2]).upper() or "?"
+            c.create_text(x + S / 2, y + S / 2, text=initials, fill="white",
+                          font=("TkDefaultFont", 28, "bold"), tags=(tag, self._ph_tag(g.key)))
+        # ring badge (bottom-right corner of the cover)
+        cx, cy, R, r = x + S - 8, y + S - 8, 27, 18
+        c.create_oval(cx - R - 3, cy - R - 3, cx + R + 3, cy + R + 3, fill="white", outline="", tags=(tag,))
+        total = max(g.total, 1)
+        start = 90.0
+        for count, color in ((g.fake, self.RING_FAKE), (g.suspicious, self.RING_SUS),
+                             (g.total - g.problems, self.RING_OK)):
+            if count <= 0:
+                continue
+            ext = 360.0 * count / total
+            if ext >= 359.99:
+                c.create_oval(cx - R, cy - R, cx + R, cy + R, fill=color, outline="", tags=(tag,))
+            else:
+                c.create_arc(cx - R, cy - R, cx + R, cy + R, start=start, extent=-ext, fill=color,
+                             outline="", style="pieslice", tags=(tag,))
+            start -= ext
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill="white", outline="", tags=(tag,))
+        if self.app.cfg.card_label.startswith("Songs"):
+            label = f"{g.problems}/{g.total}"
+        else:
+            label = f"{g.problem_pct:.0f}%"
+        c.create_text(cx, cy, text=label, font=self.f_ring,
+                      fill=self.RING_FAKE if g.fake else (self.RING_SUS if g.suspicious else self.RING_OK),
+                      tags=(tag,))
+        tw = self.CW - 28
+        c.create_text(x, y + S + 10, anchor="nw", text=self._fit(g.title, self.f_title, tw),
+                      font=self.f_title, fill="#1f2328", tags=(tag,))
+        c.create_text(x, y + S + 29, anchor="nw", text=self._fit(g.subtitle, self.f_sub, tw),
+                      font=self.f_sub, fill="#666", tags=(tag,))
+        if g.problems:
+            parts = []
+            if g.fake:
+                parts.append(f"{g.fake} fake")
+            if g.suspicious:
+                parts.append(f"{g.suspicious} suspicious")
+            line = f"{' + '.join(parts)} of {g.total} song{'s' if g.total != 1 else ''}"
+            col = self.RING_FAKE if g.fake else self.RING_SUS
+        else:
+            line, col = f"All {g.total} song{'s' if g.total != 1 else ''} fine", self.RING_OK
+        c.create_text(x, y + S + 46, anchor="nw", text=self._fit(line, self.f_sub, tw), font=self.f_sub,
+                      fill=col, tags=(tag,))
+        c.tag_bind(tag, "<Button-1>", lambda e, g=g: self.app.open_group(g, self.mode))
+        c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+        c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+
+    def set_cover(self, key: str, png: Optional[bytes]) -> None:
+        """A cover arrived from the loader thread: show it on its card."""
+        import base64
+
+        mode, _, gkey = key.partition(":")
+        if not png:
+            return
+        try:
+            img = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"), format="png")
+        except tk.TclError:
+            return
+        self.images[key] = img
+        if mode == self.mode and gkey in self.positions:
+            x, y = self.positions[gkey]
+            self.canvas.delete(self._ph_tag(gkey))
+            item = self.canvas.create_image(x, y, image=img, anchor="nw")
+            self.canvas.tag_lower(item)
+            self.canvas.tag_lower("cardbg")
+            for g in self.groups:
+                if g.key == gkey:
+                    self.canvas.addtag_withtag(f"card{id(g)}", item)
+                    break
+
+    def highlight(self, found: set, current: Optional[str]) -> None:
+        self.found, self.current = found, current
+        top = self.canvas.yview()[0]
+        self.relayout()
+        if current in self.positions:
+            y = self.positions[current][1]
+            total = float(self.canvas.cget("scrollregion").split()[3] or 1)
+            view_h = self.canvas.winfo_height()
+            vis_top, vis_bot = top * total, top * total + view_h
+            if not (vis_top <= y and y + self.CH <= vis_bot):
+                self.canvas.yview_moveto(max(0.0, (y - 10) / total))
+            else:
+                self.canvas.yview_moveto(top)
+        else:
+            self.canvas.yview_moveto(top)
+
+# -------------------------------------------------------------------- app ---
 class App(ttk.Frame):
-    COLUMNS = ("verdict", "claimed", "estimated", "bandwidth", "name", "folder")
-    HEADINGS = {"verdict": "Verdict", "claimed": "Claimed", "estimated": "Real (est.)",
+    COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "name", "folder")
+    HEADINGS = {"verdict": "Verdict", "why": "Why", "claimed": "Claimed", "estimated": "Real (est.)",
                 "bandwidth": "Bandwidth", "name": "File", "folder": "Folder"}
 
-    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None):
+    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None):
         super().__init__(root, padding=8)
         self.root = root
-        self.sources: List[str] = []
+        self.cfg = cfg or settings_mod.load()
+        self.sources: List[str] = []                 # added folders/files, in order
+        self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
+        self.listing: Dict[str, threading.Event] = {}  # sources still being listed -> cancel flag
+        self.scan_order: List[str] = []
+        self.scan_ptr = 0
+        self.scan_workers = 1
+        self.scan_when_listed = False
         self.results: Dict[str, FileResult] = {}
+        self.cache = PlotCache()
         self.queue: queue.Queue = queue.Queue()
         self.scanner: Optional[Scanner] = None
-        self.total = 0
-        self.done = 0
+        self.total = self.done = 0
         self.scanning = False
+        self.scan_started = 0.0
+        self.last_elapsed: Optional[float] = None
         self.sort_col, self.sort_rev = "verdict", False
-        self.show_vars = {v: tk.BooleanVar(value=v in DEFAULT_SHOWN) for v in VERDICT_ORDER}
+        self.view_var = tk.StringVar(value=self.cfg.view_mode)
+        self.group_filter: Optional[dict] = None   # {"mode","key","label","paths","back","filters"}
+        self.cover_requests: queue.Queue = queue.Queue()
+        self.cover_seen: set = set()
+        self.find_var = tk.StringVar()
+        self.find_matches: List[str] = []
+        self.find_index = -1
+        self.find_open = False
+        self._regroup_pending = False
+        self.show_vars = {v: tk.BooleanVar(value=v in self.cfg.shown_verdicts) for v in VERDICT_ORDER}
         self.search_var = tk.StringVar()
         self.quick_var = tk.BooleanVar(value=False)
-        self.jobs_var = tk.IntVar(value=max(1, min(4, os.cpu_count() or 1)))
         self.status_var = tk.StringVar(value="Add a folder or files, then press Scan.")
-        self.sources_var = tk.StringVar(value="Nothing selected yet.")
+        self._build_menu()
         self._build()
         self.grid(sticky="nsew")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
+        root.protocol("WM_DELETE_WINDOW", self.quit_app)
+        if self.view_var.get() != "Files":
+            self.after(50, self.switch_view)
         if initial:
             for p in initial:
                 self._add_source(p)
-            self.after(200, self.start_scan)
+            self.after(200, self.start_scan)  # waits for the listing to finish
         self.after(100, self._poll)
 
     # ---------- layout ---------------------------------------------------
+    def _build_menu(self) -> None:
+        mod = "Command" if sys.platform == "darwin" else "Control"
+        acc = "Cmd" if sys.platform == "darwin" else "Ctrl"
+        m = tk.Menu(self.root)
+        f = tk.Menu(m, tearoff=False)
+        f.add_command(label="Add Folder…", accelerator=f"{acc}+O", command=self.add_folder)
+        f.add_command(label="Add Files…", command=self.add_files)
+        f.add_separator()
+        f.add_command(label="Export listed files as CSV…", command=lambda: self.export("csv"))
+        f.add_command(label="Export listed files as JSON…", command=lambda: self.export("json"))
+        f.add_separator()
+        f.add_command(label="Quit", accelerator=f"{acc}+Q", command=self.quit_app)
+        m.add_cascade(label="File", menu=f)
+        e = tk.Menu(m, tearoff=False)
+        e.add_command(label="Open file location", accelerator="Enter", command=self.reveal)
+        e.add_command(label="Open file", accelerator=f"{acc}+Enter", command=self.open_file)
+        e.add_command(label="Select all listed files", accelerator=f"{acc}+A", command=self.select_all)
+        e.add_command(label="Copy path", accelerator=f"{acc}+C", command=self.copy_path)
+        e.add_separator()
+        e.add_command(label="Find…", accelerator=f"{acc}+F", command=self.open_find)
+        e.add_separator()
+        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+Shift+F",
+                      command=self.fix_selected)
+        e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
+        e.add_separator()
+        e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
+        m.add_cascade(label="Edit", menu=e)
+        v = tk.Menu(m, tearoff=False)
+        v.add_command(label="Files", command=lambda: self.set_view("Files"))
+        v.add_command(label="By album", command=lambda: self.set_view("By album"))
+        v.add_command(label="By artist", command=lambda: self.set_view("By artist"))
+        v.add_separator()
+        v.add_command(label="Scan summary…", command=self.show_summary)
+        v.add_command(label="Show problem files only", command=lambda: self.set_filters(PROBLEM_VERDICTS))
+        v.add_command(label="Show all files", command=lambda: self.set_filters(VERDICT_ORDER))
+        m.add_cascade(label="View", menu=v)
+        h = tk.Menu(m, tearoff=False)
+        h.add_command(label="About Real-Hi-Res", command=self.about)
+        m.add_cascade(label="Help", menu=h)
+        self.root.configure(menu=m)
+        self.root.bind_all(f"<{mod}-o>", lambda e: self.add_folder())
+        self.root.bind_all(f"<{mod}-q>", lambda e: self.quit_app())
+        self.root.bind_all(f"<{mod}-comma>", lambda e: self.open_settings())
+        self.root.bind_all(f"<{mod}-f>", lambda e: self.open_find())
+        self.root.bind_all(f"<{mod}-F>", lambda e: self.fix_selected())  # Shift+F
+        self.root.bind_all(f"<{mod}-a>", self.select_all)
+        self.root.bind_all("<F3>", lambda e: self.find_step(1))
+        self.root.bind_all("<Shift-F3>", lambda e: self.find_step(-1))
+
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
         bar = ttk.Frame(self)
@@ -212,21 +1115,70 @@ class App(ttk.Frame):
         ttk.Button(bar, text="Add Folder…", command=self.add_folder).pack(side="left")
         ttk.Button(bar, text="Add Files…", command=self.add_files).pack(side="left", padx=(4, 0))
         ttk.Button(bar, text="Clear", command=self.clear).pack(side="left", padx=(4, 12))
-        ttk.Label(bar, text="Parallel jobs:").pack(side="left")
-        ttk.Spinbox(bar, from_=1, to=max(32, os.cpu_count() or 1), width=4,
-                    textvariable=self.jobs_var).pack(side="left", padx=(2, 12))
-        ttk.Checkbutton(bar, text=f"Quick scan (first {QUICK_SECONDS:.0f} s)",
-                        variable=self.quick_var).pack(side="left")
+        self.quick_cb = ttk.Checkbutton(bar, variable=self.quick_var)
+        self.quick_cb.pack(side="left")
+        self._update_quick_label()
+        ttk.Button(bar, text="⚙ Settings…", command=self.open_settings).pack(side="right")
         self.stop_btn = ttk.Button(bar, text="Stop", command=self.stop_scan, state="disabled")
-        self.stop_btn.pack(side="right")
+        self.stop_btn.pack(side="right", padx=(0, 12))
         self.scan_btn = ttk.Button(bar, text="Scan", command=self.start_scan)
         self.scan_btn.pack(side="right", padx=(0, 4))
 
-        ttk.Label(self, textvariable=self.sources_var, foreground="#555").grid(
-            row=1, column=0, sticky="ew", pady=(6, 4))
+        src = ttk.LabelFrame(self, text="Sources to scan", padding=(6, 4))
+        src.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        src.columnconfigure(0, weight=1)
+        self.src_tree = ttk.Treeview(src, columns=("kind", "files", "problems"), height=3,
+                                     show="tree headings", selectmode="extended")
+        self.src_tree.heading("#0", text="Folder / file", anchor="w")
+        self.src_tree.heading("kind", text="Type")
+        self.src_tree.heading("files", text="Audio files")
+        self.src_tree.heading("problems", text="Fake / suspicious")
+        self.src_tree.column("#0", width=560, stretch=True)
+        self.src_tree.column("kind", width=70, anchor="center", stretch=False)
+        self.src_tree.column("files", width=150, anchor="center", stretch=False)
+        self.src_tree.column("problems", width=130, anchor="center", stretch=False)
+        self.src_tree.tag_configure("empty", foreground="#c62828")
+        self.src_tree.tag_configure("busy", foreground="#808080")
+        sys_ = ttk.Scrollbar(src, orient="vertical", command=self.src_tree.yview)
+        self.src_tree.configure(yscrollcommand=sys_.set)
+        self.src_tree.grid(row=0, column=0, sticky="ew")
+        sys_.grid(row=0, column=1, sticky="ns")
+        side = ttk.Frame(src)
+        side.grid(row=0, column=2, sticky="n", padx=(6, 0))
+        self.remove_btn = ttk.Button(side, text="Remove", command=self.remove_sources)
+        self.remove_btn.pack(fill="x")
+        self.src_hint = ttk.Label(src, foreground="#666",
+                                  text="Nothing added yet. Click “Add Folder…” or “Add Files…”: the files "
+                                       "found are listed below straight away, then press Scan.")
+        self.src_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.src_tree.bind("<Delete>", lambda e: self.remove_sources())
+        self.src_tree.bind("<BackSpace>", lambda e: self.remove_sources())
+
+        vbar = ttk.Frame(self)
+        vbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(vbar, text="View:").pack(side="left")
+        for label in ("Files", "By album", "By artist"):
+            ttk.Radiobutton(vbar, text=label, value=label, variable=self.view_var, style="Toolbutton",
+                            command=self.switch_view).pack(side="left", padx=(4, 0))
+        self.grid_opts = ttk.Frame(vbar)
+        ttk.Label(self.grid_opts, text="Rings show:").pack(side="left", padx=(16, 4))
+        self.card_label_var = tk.StringVar(value=self.cfg.card_label)
+        ttk.Combobox(self.grid_opts, textvariable=self.card_label_var, values=["Percentage", "Songs (x of n)"],
+                     state="readonly", width=14).pack(side="left")
+        ttk.Label(self.grid_opts, text="Sort:").pack(side="left", padx=(12, 4))
+        self.group_sort_var = tk.StringVar(value=self.cfg.group_sort)
+        ttk.Combobox(self.grid_opts, textvariable=self.group_sort_var, values=["Most fake first", "Name"],
+                     state="readonly", width=14).pack(side="left")
+        self.card_label_var.trace_add("write", lambda *a: self._grid_option_changed())
+        self.group_sort_var.trace_add("write", lambda *a: self._grid_option_changed())
+        self.chip = ttk.Frame(vbar)
+        self.chip_label = ttk.Label(self.chip, foreground="#0b62c4", font=("TkDefaultFont", 9, "bold"))
+        self.chip_label.pack(side="left", padx=(16, 6))
+        self.chip_back = ttk.Button(self.chip, command=self.close_group)
+        self.chip_back.pack(side="left")
 
         filt = ttk.Frame(self)
-        filt.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        filt.grid(row=3, column=0, sticky="ew", pady=(0, 4))
         ttk.Label(filt, text="Show:").pack(side="left")
         self.filter_checks: Dict[str, ttk.Checkbutton] = {}
         for v in VERDICT_ORDER:
@@ -234,26 +1186,53 @@ class App(ttk.Frame):
                                  command=self.refresh)
             cb.pack(side="left", padx=(6, 0))
             self.filter_checks[v] = cb
-        entry = ttk.Entry(filt, textvariable=self.search_var, width=28)
+        entry = ttk.Entry(filt, textvariable=self.search_var, width=24)
         entry.pack(side="right")
         ttk.Label(filt, text="Search:").pack(side="right", padx=(0, 4))
         self.search_var.trace_add("write", lambda *a: self.refresh())
 
-        panes = ttk.PanedWindow(self, orient="vertical")
-        panes.grid(row=3, column=0, sticky="nsew")
-        self.rowconfigure(3, weight=1)
+        # browser-style find bar (Ctrl/Cmd+F)
+        self.find_frame = ttk.Frame(self, padding=(4, 3))
+        self.find_frame.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(self.find_frame, text="Find:").pack(side="left")
+        self.find_entry = ttk.Entry(self.find_frame, textvariable=self.find_var, width=34)
+        self.find_entry.pack(side="left", padx=(4, 4))
+        ttk.Button(self.find_frame, text="▲", width=3, command=lambda: self.find_step(-1)).pack(side="left")
+        ttk.Button(self.find_frame, text="▼", width=3, command=lambda: self.find_step(1)).pack(side="left", padx=(2, 0))
+        self.find_count = ttk.Label(self.find_frame, text="", foreground="#555")
+        self.find_count.pack(side="left", padx=(8, 0))
+        ttk.Button(self.find_frame, text="✕", width=3, command=self.close_find).pack(side="right")
+        ttk.Label(self.find_frame, text="Enter = next, Shift+Enter = previous, Esc = close",
+                  foreground="#888", font=("TkDefaultFont", 8)).pack(side="right", padx=8)
+        self.find_entry.bind("<Return>", lambda e: self.find_step(1))
+        self.find_entry.bind("<KP_Enter>", lambda e: self.find_step(1))
+        self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
+        self.find_entry.bind("<Escape>", lambda e: self.close_find())
+        self.find_var.trace_add("write", lambda *a: self.update_find(reset=True))
+        self.find_frame.grid_remove()
 
+        panes = ttk.PanedWindow(self, orient="vertical")
+        panes.grid(row=5, column=0, sticky="nsew")
+        self.rowconfigure(5, weight=1)
+
+        # result list
         table = ttk.Frame(panes)
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended")
-        widths = {"verdict": 110, "claimed": 80, "estimated": 90, "bandwidth": 85, "name": 300, "folder": 320}
+        self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended",
+                                 height=7)
+        widths = {"verdict": 105, "why": 400, "claimed": 70, "estimated": 85, "bandwidth": 82,
+                  "name": 230, "folder": 220}
         for c in self.COLUMNS:
             self.tree.heading(c, text=self.HEADINGS[c], command=lambda c=c: self.sort_by(c))
-            self.tree.column(c, width=widths[c], stretch=c in ("name", "folder"),
-                             anchor="w" if c in ("name", "folder", "verdict") else "center")
-        for v, (_, color) in VERDICT_STYLE.items():
+            self.tree.column(c, width=widths[c], stretch=c in ("why", "name", "folder"),
+                             anchor="w" if c in ("name", "folder", "verdict", "why") else "center")
+        for v, (_, color, _) in VERDICT_STYLE.items():
             self.tree.tag_configure(v, foreground=color)
+        self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
+        self.tree.tag_configure(RUNNING, foreground=RUNNING_STYLE[1])
+        self.tree.tag_configure("found", background="#fff59d")
+        self.tree.tag_configure("found_cur", background="#ffb74d")
         ys = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -261,54 +1240,235 @@ class App(ttk.Frame):
         ys.grid(row=0, column=1, sticky="ns")
         xs.grid(row=1, column=0, sticky="ew")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_details())
-        self.tree.bind("<Double-1>", lambda e: self.reveal())
+        self.tree.bind("<Double-1>", lambda e: self._primary_action())
+        self.tree.bind("<Return>", lambda e: self._primary_action())
+        mod = "Command" if sys.platform == "darwin" else "Control"
+        self.tree.bind(f"<{mod}-Return>", lambda e: self._secondary_action())
+        self.tree.bind(f"<{mod}-c>", lambda e: self.copy_path())
         self.tree.bind("<Button-3>", self._context_menu)
         self.tree.bind("<Button-2>", self._context_menu)  # macOS right click
+        self.cards = CardGrid(table, self)
+        self.cards.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
+        self.cards.grid_remove()
+        self._table_widgets = (self.tree, ys, xs)
         panes.add(table, weight=3)
 
-        details = ttk.Frame(panes)
-        details.columnconfigure(0, weight=1)
-        details.columnconfigure(1, weight=1)
-        details.rowconfigure(0, weight=1)
-        txt_frame = ttk.Frame(details)
-        txt_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        # dashboard
+        dash = ttk.PanedWindow(panes, orient="horizontal")
+        info = ttk.Frame(dash, padding=(4, 6, 8, 4))
+        info.columnconfigure(1, weight=1)
+        info.rowconfigure(5, weight=1)
+        self.badge = tk.Label(info, text="", fg="white", bg="#9e9e9e", padx=10, pady=3,
+                              font=("TkDefaultFont", 11, "bold"))
+        self.badge.grid(row=0, column=0, sticky="w")
+        self.name_var = tk.StringVar(value="Select a file in the list")
+        ttk.Label(info, textvariable=self.name_var, font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=1, sticky="w", padx=(8, 0))
+        self.why_var = tk.StringVar(value="")
+        self.why_label = ttk.Label(info, textvariable=self.why_var, wraplength=420, justify="left",
+                                   font=("TkDefaultFont", 10))
+        self.why_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 6))
+        facts = ttk.Frame(info)
+        facts.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.fact_vars: Dict[str, tk.StringVar] = {}
+        for i, key in enumerate(("Claimed", "Real (estimated)", "Bandwidth", "Bits used", "Format",
+                                 "Duration")):
+            ttk.Label(facts, text=key + ":", foreground="#666").grid(row=i // 2, column=(i % 2) * 2,
+                                                                       sticky="w", padx=(0, 4))
+            var = tk.StringVar(value="–")
+            self.fact_vars[key] = var
+            ttk.Label(facts, textvariable=var).grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w",
+                                                    padx=(0, 18))
+        btns = ttk.Frame(info)
+        btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 6))
+        self.open_folder_btn = ttk.Button(btns, text="Open Folder", command=self.reveal, state="disabled")
+        self.open_folder_btn.pack(side="left")
+        self.open_file_btn = ttk.Button(btns, text="Open File", command=self.open_file, state="disabled")
+        self.open_file_btn.pack(side="left", padx=4)
+        self.copy_btn = ttk.Button(btns, text="Copy Path", command=self.copy_path, state="disabled")
+        self.copy_btn.pack(side="left")
+        self.fix_btn = ttk.Button(btns, text="Fix to real resolution…", command=self.fix_selected, state="disabled")
+        self.fix_btn.pack(side="left", padx=(12, 0))
+        ttk.Label(info, text="Details", foreground="#666").grid(row=4, column=0, columnspan=2, sticky="w")
+        txt_frame = ttk.Frame(info)
+        txt_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
         txt_frame.rowconfigure(0, weight=1)
         txt_frame.columnconfigure(0, weight=1)
-        self.text = tk.Text(txt_frame, wrap="word", height=10, relief="flat", padx=6, pady=6,
-                            background="#fafafa", foreground="#1f2328")
+        self.text = tk.Text(txt_frame, wrap="word", height=4, relief="flat", padx=6, pady=4,
+                            background="#fafafa", foreground="#1f2328", font=("TkDefaultFont", 9))
         tys = ttk.Scrollbar(txt_frame, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=tys.set, state="disabled")
-        self.text.tag_configure("h", font=("TkDefaultFont", 10, "bold"))
         self.text.grid(row=0, column=0, sticky="nsew")
         tys.grid(row=0, column=1, sticky="ns")
-        btns = ttk.Frame(txt_frame)
-        btns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Button(btns, text="Show in Folder", command=self.reveal).pack(side="left")
-        ttk.Button(btns, text="Copy Path", command=self.copy_path).pack(side="left", padx=4)
-        ttk.Button(btns, text="Export CSV…", command=lambda: self.export("csv")).pack(side="right")
-        ttk.Button(btns, text="Export JSON…", command=lambda: self.export("json")).pack(side="right", padx=4)
-        self.canvas = SpectrumCanvas(details, height=240)
-        self.canvas.grid(row=0, column=1, sticky="nsew")
-        panes.add(details, weight=2)
+        dash.add(info, weight=2)
+        info.bind("<Configure>", lambda e: self.why_label.configure(wraplength=max(200, e.width - 20)))
+
+        plots = ttk.Notebook(dash)
+        self.spectrogram = SpectrogramCanvas(plots, self, height=200)
+        self.spectrum = SpectrumCanvas(plots, height=200)
+        plots.add(self.spectrogram, text="Spectrogram")
+        plots.add(self.spectrum, text="Average spectrum")
+        dash.add(plots, weight=3)
+        panes.add(dash, weight=2)
 
         status = ttk.Frame(self)
-        status.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        status.grid(row=6, column=0, sticky="ews", pady=(6, 0))
+        self.rowconfigure(6, weight=0, minsize=24)
         status.columnconfigure(1, weight=1)
         self.progress = ttk.Progressbar(status, length=220, mode="determinate")
         self.progress.grid(row=0, column=0, padx=(0, 8))
         ttk.Label(status, textvariable=self.status_var).grid(row=0, column=1, sticky="w")
 
         self.menu = tk.Menu(self.root, tearoff=False)
-        self.menu.add_command(label="Show in Folder", command=self.reveal)
-        self.menu.add_command(label="Copy Path", command=self.copy_path)
+        self.menu.add_command(label="Open file location", command=self.reveal)
+        self.menu.add_command(label="Open file", command=self.open_file)
+        self.menu.add_command(label="Copy path", command=self.copy_path)
+        self.menu.add_separator()
+        self.menu.add_command(label="Fix to real resolution…", command=self.fix_selected)
+
+    def _update_quick_label(self) -> None:
+        self.quick_cb.configure(text=f"Quick scan (first {self.cfg.quick_scan_seconds:g} s)")
+
+    # ---------- settings -------------------------------------------------
+    def open_settings(self) -> None:
+        SettingsDialog(self)
+
+    def save_settings(self) -> None:
+        try:
+            settings_mod.save(self.cfg)
+        except OSError as exc:
+            messagebox.showwarning("Settings", f"Could not save settings: {exc}")
+
+    def apply_settings(self, new) -> None:
+        old_shown = set(self.cfg.shown_verdicts)
+        relist = (new.extension_set() != self.cfg.extension_set() or new.recursive != self.cfg.recursive)
+        self.cfg = new
+        if relist and not self.scanning:  # file list depends on these: list the sources again
+            sources = list(self.sources)
+            self.clear()
+            for src in sources:
+                self._add_source(src)
+        self.save_settings()
+        if set(new.shown_verdicts) != old_shown:
+            self.set_filters(new.shown_verdicts)
+        self._update_quick_label()
+        self.spectrogram.redraw()
+        self.status_var.set("Settings saved. Detection changes apply to the next scan.")
 
     # ---------- sources --------------------------------------------------
     def _add_source(self, path: str) -> None:
-        if path and path not in self.sources:
-            self.sources.append(path)
-        n = len(self.sources)
-        shown = "; ".join(self.sources[:3]) + (f"; … (+{n - 3} more)" if n > 3 else "")
-        self.sources_var.set(f"{n} source(s): {shown}" if n else "Nothing selected yet.")
+        """Add a folder/file and list its audio files right away (in the
+        background), so the user sees exactly what will be scanned."""
+        if not path:
+            return
+        path = os.path.abspath(path)
+        if path in self.sources:
+            self.status_var.set(f"Already added: {path}")
+            if self.src_tree.exists(path):
+                self.src_tree.selection_set(path)
+                self.src_tree.see(path)
+            return
+        self.sources.append(path)
+        kind = "Folder" if os.path.isdir(path) else "File"
+        self.src_tree.insert("", "end", iid=path, text=path, values=(kind, "counting…", ""),
+                             tags=("busy",))
+        self.src_tree.see(path)
+        self.src_hint.grid_remove()
+        self.src_tree.configure(height=min(max(len(self.sources), 2), 5))
+        cancel = threading.Event()
+        self.listing[path] = cancel
+        self.source_files[path] = []
+        self.status_var.set(f"Looking for audio files in {path} …")
+        threading.Thread(target=list_source, args=(path, self.cfg, self.queue, cancel), daemon=True).start()
+
+    def _on_listing(self, source: str, batch: List[str]) -> None:
+        """A batch of files found while a folder is still being walked."""
+        if source not in self.sources or source not in self.listing:
+            return
+        known = set(self.all_files())
+        self.source_files[source].extend(batch)
+        n = len(self.source_files[source])
+        if self.src_tree.exists(source):
+            self.src_tree.set(source, "files", f"{n} so far…")
+        for path in batch:
+            if path not in known and not self.tree.exists(path) and self._search_ok(path):
+                self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
+        self.status_var.set(f"Looking for audio files… {len(known) + len(batch)} found so far")
+
+    def _on_listed(self, source: str, files: Optional[List[str]] = None) -> None:
+        self.listing.pop(source, None)
+        if source not in self.sources:  # removed while listing
+            return
+        if files is not None:
+            self.source_files[source] = files
+        files = self.source_files.get(source, [])
+        if self.src_tree.exists(source):
+            n = len(files)
+            if n:
+                self.src_tree.item(source, values=(self.src_tree.set(source, "kind"),
+                                                   f"{n} file{'s' if n != 1 else ''}", ""), tags=())
+            else:
+                why = ("not an audio file (check Settings → Scanning → File extensions)"
+                       if os.path.isfile(source) else "no audio files found")
+                self.src_tree.item(source, values=(self.src_tree.set(source, "kind"), why, ""),
+                                   tags=("empty",))
+        self.refresh()
+        if not self.listing:
+            total = len(self.all_files())
+            empty = [s for s in self.sources if not self.source_files.get(s)]
+            msg = (f"{total} audio file{'s' if total != 1 else ''} ready in {len(self.sources)} "
+                   f"source{'s' if len(self.sources) != 1 else ''}. Press Scan.")
+            if empty:
+                msg += f"  ({len(empty)} source(s) contain no audio files.)"
+            if not self.scanning:
+                self.status_var.set(msg)
+            if self.scan_when_listed:
+                self.scan_when_listed = False
+                self.start_scan()
+
+    def all_files(self) -> List[str]:
+        seen, out = set(), []
+        for src in self.sources:
+            for f in self.source_files.get(src, []):
+                if f not in seen:
+                    seen.add(f)
+                    out.append(f)
+        return out
+
+    def remove_sources(self) -> None:
+        if self.scanning:
+            self.status_var.set("Stop the scan before removing sources.")
+            return
+        sel = list(self.src_tree.selection())
+        if not sel:
+            self.status_var.set("Select a source in the “Sources to scan” list to remove it.")
+            return
+        for src in sel:
+            if src in self.sources:
+                self.sources.remove(src)
+            self.source_files.pop(src, None)
+            cancel = self.listing.pop(src, None)
+            if cancel:
+                cancel.set()
+            self.src_tree.delete(src)
+        keep = set(self.all_files())
+        for path in [p for p in self.results if p not in keep]:
+            del self.results[path]
+        if not self.sources:
+            self.src_hint.grid()
+        self.refresh()
+        self.show_details()
+        n = len(keep)
+        self.status_var.set(f"Removed {len(sel)} source(s). {n} audio file{'s' if n != 1 else ''} left to scan.")
+
+    def _update_source_counts(self) -> None:
+        for src in self.sources:
+            if not self.src_tree.exists(src) or src in self.listing:
+                continue
+            files = self.source_files.get(src, [])
+            done = [self.results[f] for f in files if f in self.results]
+            probs = sum(1 for r in done if r.is_problem)
+            self.src_tree.set(src, "problems", f"{probs} of {len(done)}" if done else "")
 
     def add_folder(self) -> None:
         d = filedialog.askdirectory(title="Choose a music folder")
@@ -316,7 +1476,7 @@ class App(ttk.Frame):
             self._add_source(d)
 
     def add_files(self) -> None:
-        pattern = " ".join(f"*{e}" for e in sorted(AUDIO_EXTENSIONS))
+        pattern = " ".join(f"*{e}" for e in sorted(self.cfg.extension_set()))
         files = filedialog.askopenfilenames(title="Choose audio files",
                                             filetypes=[("Audio files", pattern), ("All files", "*")])
         for f in files:
@@ -326,12 +1486,19 @@ class App(ttk.Frame):
         if self.scanning:
             return
         self.sources.clear()
+        self.source_files.clear()
+        for cancel in self.listing.values():
+            cancel.set()
+        self.listing.clear()
         self.results.clear()
-        self._add_source("")
+        self.cache.clear()
+        self.src_tree.delete(*self.src_tree.get_children())
+        self.src_hint.grid()
         self.refresh()
-        self.canvas.show(None)
-        self._set_text([])
+        self.show_details()
         self.progress["value"] = 0
+        for v, cb in self.filter_checks.items():
+            cb.configure(text=VERDICT_STYLE[v][0])
         self.status_var.set("Add a folder or files, then press Scan.")
 
     # ---------- scanning -------------------------------------------------
@@ -341,27 +1508,55 @@ class App(ttk.Frame):
         if not self.sources:
             messagebox.showinfo("Real-Hi-Res", "Add a folder or some files first.")
             return
+        if self.listing:
+            self.scan_when_listed = True
+            self.status_var.set("Still looking for audio files… the scan starts as soon as the list is complete.")
+            return
+        files = self.all_files()
+        if not files:
+            messagebox.showinfo("Real-Hi-Res", "The added folders/files contain no audio files.\n\n"
+                                "Check the file extensions under Settings → Scanning.")
+            return
         try:
             require_tools()
         except ToolMissingError as exc:
             messagebox.showerror("FFmpeg not found", str(exc))
             return
-        try:
-            jobs = int(self.jobs_var.get())
-        except (tk.TclError, ValueError):
-            jobs = 1
         self.results.clear()
-        self.refresh()
-        self.total = self.done = 0
+        self.cache.clear()
+        self.total, self.done = len(files), 0
+        self.scan_order, self.scan_ptr = list(files), 0
+        self.scan_workers = min(effective_jobs(self.cfg.jobs), len(files))
         self.scanning = True
-        self.progress.configure(mode="indeterminate")
-        self.progress.start(12)
-        self.status_var.set("Looking for audio files…")
+        self.refresh()
+        self.show_details()
+        self._update_source_counts()
+        self.scan_started = time.time()
+        self.progress.configure(mode="determinate", maximum=max(len(files), 1), value=0)
+        self.status_var.set(f"Scanning {len(files)} files…")
         self.scan_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-        self.scanner = Scanner(list(self.sources), jobs,
-                               QUICK_SECONDS if self.quick_var.get() else None, self.queue)
+        max_seconds = self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
+        self.scanner = Scanner(files, self.cfg, max_seconds, self.queue)
         self.scanner.start()
+        self._mark_running()
+
+    def _mark_running(self) -> None:
+        """Show which files are being analysed right now.  The pools hand out
+        work in submission order, so these are the first unfinished files."""
+        while self.scan_ptr < len(self.scan_order) and self.scan_order[self.scan_ptr] in self.results:
+            self.scan_ptr += 1
+        shown = 0
+        i = self.scan_ptr
+        while i < len(self.scan_order) and shown < self.scan_workers:
+            path = self.scan_order[i]
+            if path not in self.results:
+                shown += 1
+                if self.tree.exists(path) and PENDING in self.tree.item(path, "tags"):
+                    self.tree.item(path, values=(RUNNING_STYLE[0], "Analysing…", "", "", "",
+                                                 os.path.basename(path), os.path.dirname(path)),
+                                   tags=(RUNNING,))
+            i += 1
 
     def stop_scan(self) -> None:
         if self.scanner:
@@ -373,17 +1568,27 @@ class App(ttk.Frame):
         dirty = False
         try:
             for _ in range(500):
-                kind, payload = self.queue.get_nowait()
+                kind, payload, *rest = self.queue.get_nowait()
                 if kind == "total":
                     self.total = payload
                     self.progress.stop()
                     self.progress.configure(mode="determinate", maximum=max(payload, 1), value=0)
                     if payload == 0:
                         self.status_var.set("No audio files found in the selected sources.")
+                elif kind == "cover":
+                    self.cards.set_cover(payload, rest[0])
+                elif kind == "listing":
+                    self._on_listing(payload, rest[0])
+                elif kind == "listed":
+                    self._on_listed(payload, rest[0])
                 elif kind == "result":
                     self.done += 1
+                    self.cache.put(payload.path, payload.plot)
+                    payload.plot = None
                     self.results[payload.path] = payload
                     self._insert(payload)
+                    if payload.path in self.tree.selection():
+                        self.show_details()  # the selected file just finished: show it live
                     dirty = True
                 elif kind == "done":
                     self._finish(stopped=payload == "stopped")
@@ -392,19 +1597,37 @@ class App(ttk.Frame):
                     messagebox.showerror("Scan failed", payload)
         except queue.Empty:
             pass
+        if dirty:
+            self._schedule_regroup()
         if dirty and self.scanning:
             self.progress["value"] = self.done
             self._update_status()
+            self._update_source_counts()
+            self._mark_running()
         self.after(100, self._poll)
 
     def _finish(self, stopped: bool) -> None:
         self.scanning = False
+        self.last_elapsed = time.time() - self.scan_started
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=max(self.total, 1), value=self.done)
         self.scan_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self._update_status(final=True, stopped=stopped)
         self.refresh()
+        self._update_source_counts()
+        kids = self.tree.get_children()
+        if kids and not self.tree.selection():
+            self.tree.selection_set(kids[0])
+            self.tree.focus(kids[0])
+        if self.results and self.cfg.show_summary_popup:
+            self.after(150, self.show_summary)
+
+    def show_summary(self) -> None:
+        if not self.results:
+            messagebox.showinfo("Scan summary", "Nothing scanned yet.")
+            return
+        SummaryDialog(self, list(self.results.values()), self.last_elapsed)
 
     def _counts(self) -> Dict[str, int]:
         c = {v: 0 for v in VERDICT_ORDER}
@@ -416,25 +1639,255 @@ class App(ttk.Frame):
         c = self._counts()
         for v, cb in self.filter_checks.items():
             cb.configure(text=f"{VERDICT_STYLE[v][0]} ({c[v]})")
-        head = ("Stopped" if stopped else "Finished") if final else "Scanning"
-        self.status_var.set(f"{head}: {self.done}/{self.total} files  ·  {c[FAKE]} fake, "
-                            f"{c[SUSPECT]} suspicious, {c[REAL]} real hi-res")
+        fakes = c[FAKE] + c[FAKE_LOSSLESS]
+        n = max(len(self.results), 1)
+        tail = f"{fakes} fake ({100 * fakes / n:.0f} %), {c[SUSPECT]} suspicious, {c[REAL]} real hi-res"
+        if final:
+            head = "Stopped" if stopped else "Finished"
+            self.status_var.set(f"{head}: {len(self.results)} files  ·  {tail}")
+        else:
+            self.status_var.set(f"Scanning ({self.scan_workers} at a time): {self.done}/{self.total} files  ·  {tail}")
+
+    # ---------- views: files / by album / by artist ----------------------
+    def set_view(self, mode: str) -> None:
+        self.view_var.set(mode)
+        self.switch_view()
+
+    def switch_view(self) -> None:
+        mode = self.view_var.get()
+        if mode != "Files" and self.group_filter:
+            self.close_group(switch=False)
+        grid_mode = mode != "Files"
+        for w in self._table_widgets:
+            (w.grid_remove if grid_mode else w.grid)()
+        if grid_mode:
+            self.cards.grid()
+            self.grid_opts.pack(side="left")
+            self.regroup()
+        else:
+            self.cards.grid_remove()
+            self.grid_opts.pack_forget()
+        if self.cfg.view_mode != mode:
+            self.cfg.view_mode = mode
+            self.save_settings()
+        if self.find_open:
+            self.update_find(reset=True)
+
+    def _grid_option_changed(self) -> None:
+        changed = False
+        for name, var in (("card_label", self.card_label_var), ("group_sort", self.group_sort_var)):
+            if getattr(self.cfg, name) != var.get():
+                setattr(self.cfg, name, var.get())
+                changed = True
+        if changed:
+            self.save_settings()
+            self.regroup()
+
+    def current_groups(self):
+        from .library import group_results, sort_groups
+
+        mode = "album" if self.view_var.get() == "By album" else "artist"
+        groups = group_results(list(self.results.values()), mode)
+        q = self.search_var.get().strip().lower()
+        if q:
+            groups = [g for g in groups if q in g.title.lower() or q in g.subtitle.lower()]
+        return mode, sort_groups(groups, self.cfg.group_sort)
+
+    def regroup(self) -> None:
+        self._regroup_pending = False
+        if self.view_var.get() == "Files":
+            return
+        mode, groups = self.current_groups()
+        self.cards.set_groups(groups, mode)
+        if self.find_open:
+            self.update_find(reset=False)
+
+    def _schedule_regroup(self) -> None:
+        if not self._regroup_pending and self.view_var.get() != "Files":
+            self._regroup_pending = True
+            self.after(800, self.regroup)
+
+    def request_covers(self, groups, mode: str) -> None:
+        """Queue cover look-ups (in display order) for a background thread."""
+        for g in groups:
+            key = f"{mode}:{g.key}"
+            if key not in self.cover_seen:
+                self.cover_seen.add(key)
+                self.cover_requests.put((key, list(g.cover_candidates)))
+        if not getattr(self, "_cover_thread", None):
+            self._cover_thread = threading.Thread(target=self._cover_worker, daemon=True)
+            self._cover_thread.start()
+
+    def _cover_worker(self) -> None:
+        from .covers import cover_png
+
+        while True:
+            key, paths = self.cover_requests.get()
+            try:
+                png = cover_png(paths, CardGrid.COVER)
+            except Exception:  # noqa: BLE001 - a broken cover must not stop the others
+                png = None
+            self.queue.put(("cover", key, png))
+
+    def open_group(self, g, mode: str) -> None:
+        """Clicking a card: list that album's/artist's songs (all verdicts)."""
+        back = self.view_var.get()
+        filters = {v: var.get() for v, var in self.show_vars.items()}
+        label = f"Album: {g.title} — {g.subtitle}" if mode == "album" else f"Artist: {g.title}"
+        label += f"  ({g.problems} of {g.total} fake/suspicious)"
+        self.group_filter = {"mode": mode, "key": g.key, "paths": set(g.paths), "back": back,
+                             "filters": filters, "order": list(g.paths)}
+        for var in self.show_vars.values():
+            var.set(True)
+        self.view_var.set("Files")
+        self.switch_view()
+        self.chip_label.configure(text=label)
+        self.chip_back.configure(text=f"◀ Back to {'albums' if mode == 'album' else 'artists'}")
+        self.chip.pack(side="left")
+        self.sort_col, self.sort_rev = "track", False
+        self.refresh()
+        kids = self.tree.get_children()
+        if kids:
+            first = next((k for k in kids if self.results.get(k) and self.results[k].is_problem), kids[0])
+            self.tree.selection_set(first)
+            self.tree.focus(first)
+            self.tree.see(first)
+
+    def close_group(self, switch: bool = True) -> None:
+        gf = self.group_filter
+        if not gf:
+            return
+        self.group_filter = None
+        self.chip.pack_forget()
+        for v, on in gf["filters"].items():
+            self.show_vars[v].set(on)
+        if self.sort_col == "track":
+            self.sort_col, self.sort_rev = "verdict", False
+        if switch:
+            self.view_var.set(gf["back"])
+            self.switch_view()
+        self.refresh()
+
+    # ---------- find (Ctrl/Cmd+F) -----------------------------------------
+    def open_find(self) -> None:
+        self.find_open = True
+        self.find_frame.grid()
+        self.find_entry.focus_set()
+        self.find_entry.select_range(0, "end")
+        self.update_find(reset=True)
+
+    def close_find(self) -> None:
+        self.find_open = False
+        self.find_frame.grid_remove()
+        self.find_matches, self.find_index = [], -1
+        self._apply_find_highlight()
+        self.tree.focus_set()
+
+    def _find_candidates(self) -> List[tuple]:
+        """[(id, searchable text)] of what is currently shown."""
+        if self.view_var.get() == "Files":
+            out = []
+            for iid in self.tree.get_children():
+                vals = self.tree.item(iid, "values")
+                r = self.results.get(iid)
+                extra = " ".join((r.tags or {}).values()) if r else ""
+                out.append((iid, " ".join(str(v) for v in vals) + " " + extra))
+            return out
+        return [(g.key, f"{g.title} {g.subtitle}") for g in self.cards.groups]
+
+    def update_find(self, reset: bool = False) -> None:
+        if not self.find_open:
+            return
+        q = self.find_var.get().strip().lower()
+        prev = self.find_matches[self.find_index] if 0 <= self.find_index < len(self.find_matches) else None
+        self.find_matches = [i for i, text in self._find_candidates() if q and q in text.lower()]
+        if not self.find_matches:
+            self.find_index = -1
+        elif reset or prev not in self.find_matches:
+            self.find_index = 0
+        else:
+            self.find_index = self.find_matches.index(prev)
+        self._apply_find_highlight(jump=reset)
+
+    def find_step(self, delta: int) -> str:
+        if not self.find_open:
+            self.open_find()
+            return "break"
+        if self.find_matches:
+            self.find_index = (self.find_index + delta) % len(self.find_matches)
+            self._apply_find_highlight(jump=True)
+        return "break"
+
+    def _apply_find_highlight(self, jump: bool = False) -> None:
+        q = self.find_var.get().strip()
+        n = len(self.find_matches)
+        if self.find_open:
+            self.find_count.configure(
+                text=(f"{self.find_index + 1} of {n}" if n else ("No matches" if q else "")),
+                foreground="#555" if n or not q else "#c62828")
+        current = self.find_matches[self.find_index] if 0 <= self.find_index < n else None
+        if self.view_var.get() == "Files":
+            found = set(self.find_matches)
+            for iid in self.tree.get_children():
+                tags = tuple(t for t in self.tree.item(iid, "tags") if t not in ("found", "found_cur"))
+                if iid == current:
+                    tags += ("found_cur",)
+                elif iid in found:
+                    tags += ("found",)
+                self.tree.item(iid, tags=tags)
+            if current and jump:
+                self.tree.see(current)
+                self.tree.selection_set(current)
+                self.tree.focus(current)
+        else:
+            self.cards.highlight(set(self.find_matches), current if jump or current else None)
 
     # ---------- table ----------------------------------------------------
+    def set_filters(self, verdicts) -> None:
+        for v, var in self.show_vars.items():
+            var.set(v in verdicts)
+        self.refresh()
+
+    def _in_group(self, path: str) -> bool:
+        return self.group_filter is None or path in self.group_filter["paths"]
+
     def _matches(self, r: FileResult) -> bool:
+        if not self._in_group(r.path):
+            return False
         if not self.show_vars.get(r.verdict, tk.BooleanVar(value=True)).get():
             return False
         q = self.search_var.get().strip().lower()
-        return not q or q in r.path.lower()
+        return not q or q in r.path.lower() or q in r.summary.lower()
 
     def _values(self, r: FileResult):
         bw = f"{r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "-"
-        return (VERDICT_STYLE[r.verdict][0], r.claimed, r.estimated, bw,
+        return (VERDICT_STYLE[r.verdict][0], r.summary, r.claimed, r.estimated, bw,
                 os.path.basename(r.path), os.path.dirname(r.path))
 
+    def _pending_values(self, path: str):
+        why = "Waiting in the scan queue…" if self.scanning else "Not scanned yet: press Scan"
+        return (PENDING_STYLE[0], why, "", "", "", os.path.basename(path), os.path.dirname(path))
+
+    def _search_ok(self, path: str, summary: str = "") -> bool:
+        q = self.search_var.get().strip().lower()
+        return not q or q in path.lower() or q in summary.lower()
+
     def _insert(self, r: FileResult) -> None:
-        if self._matches(r) and not self.tree.exists(r.path):
-            self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        """Show a new result: replace its "not scanned" row, or hide it when
+        the current filters exclude its verdict."""
+        exists = self.tree.exists(r.path)
+        if self._matches(r) or (self.scanning and exists):
+            # while scanning every row stays visible and updates in place;
+            # the verdict filters are applied when the scan has finished
+            if exists:
+                self.tree.item(r.path, values=self._values(r), tags=(r.verdict,))
+            else:
+                self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        elif exists:
+            was_selected = r.path in self.tree.selection()
+            self.tree.delete(r.path)
+            if was_selected:
+                self.show_details()
 
     def _sort_key(self, r: FileResult):
         c = self.sort_col
@@ -448,6 +1901,11 @@ class App(ttk.Frame):
             return (r.true_rate or 0, r.effective_bits or 0, r.path.lower())
         if c == "name":
             return os.path.basename(r.path).lower()
+        if c == "why":
+            return (r.summary.lower(), r.path.lower())
+        if c == "track" and self.group_filter:
+            order = self.group_filter["order"]
+            return order.index(r.path) if r.path in order else len(order)
         return r.path.lower()
 
     def sort_by(self, col: str) -> None:
@@ -462,6 +1920,12 @@ class App(ttk.Frame):
                       key=self._sort_key, reverse=self.sort_rev)
         for r in rows:
             self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+        # Listed files that have not been scanned yet are always shown, so the
+        # user can see what was added.
+        for path in self.all_files():
+            if (path not in self.results and self._search_ok(path) and self._in_group(path)
+                    and not self.tree.exists(path)):
+                self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
         keep = [i for i in selected if self.tree.exists(i)]
         if keep:
             self.tree.selection_set(keep)
@@ -470,58 +1934,172 @@ class App(ttk.Frame):
             self.tree.heading(c, text=self.HEADINGS[c] + arrow)
         if self.results:
             self._update_status(final=not self.scanning)
+        if self.view_var.get() != "Files":
+            self._schedule_regroup()
+        elif self.find_open:
+            self.update_find(reset=False)
 
-    # ---------- details --------------------------------------------------
+    # ---------- dashboard ------------------------------------------------
     def _current(self) -> Optional[FileResult]:
         sel = self.tree.selection()
         return self.results.get(sel[0]) if sel else None
 
+    def _current_path(self) -> Optional[str]:
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
     def _set_text(self, parts) -> None:
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
-        for chunk, tag in parts:
-            self.text.insert("end", chunk, tag)
+        for chunk in parts:
+            self.text.insert("end", chunk)
         self.text.configure(state="disabled")
 
     def show_details(self) -> None:
         r = self._current()
-        self.canvas.show(r)
-        if r is None:
-            self._set_text([])
+        path = self._current_path()
+        state = "normal" if path else "disabled"
+        for b in (self.open_folder_btn, self.open_file_btn, self.copy_btn):
+            b.configure(state=state)
+        from .fix import FIXABLE_VERDICTS
+        fixable = any(self.results.get(i) is not None and self.results[i].verdict in FIXABLE_VERDICTS
+                      for i in self.tree.selection())
+        self.fix_btn.configure(state="normal" if fixable and not self.scanning else "disabled")
+        if r is None and path:  # listed but not scanned yet
+            self.badge.configure(text=PENDING_STYLE[0].upper(), bg=PENDING_STYLE[1])
+            self.name_var.set(os.path.basename(path))
+            self.why_var.set("Waiting in the scan queue…" if self.scanning else
+                             "This file will be analysed when you press Scan.")
+            for v in self.fact_vars.values():
+                v.set("–")
+            self._set_text([path + "\n"])
+            self.spectrogram.show(None, None)
+            self.spectrum.show(None, None)
             return
-        parts = [(f"{r.verdict}\n", "h"), (f"{r.path}\n\n", None)]
-        parts.append(("Why\n", "h"))
-        parts += [(f"• {x}\n", None) for x in r.reasons]
-        if r.notes:
-            parts += [(f"• {x}\n", None) for x in r.notes]
-        parts.append(("\nMeasurements\n", "h"))
-        dur = f"{r.duration:.0f} s" if r.duration else "?"
-        lines = [
-            f"Codec: {r.codec}   Channels: {r.channels}   Duration: {dur}",
-            f"Claimed: {r.claimed}   Estimated real: {r.estimated}",
-            f"Significant bits: {r.effective_bits if r.effective_bits is not None else '?'}",
-            f"Bandwidth: {r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "Bandwidth: -",
-        ]
+        if r is None:
+            self.badge.configure(text="", bg="#9e9e9e")
+            self.name_var.set("Select a file in the list")
+            self.why_var.set("")
+            for v in self.fact_vars.values():
+                v.set("–")
+            self._set_text([])
+            self.spectrogram.show(None, None)
+            self.spectrum.show(None, None)
+            return
+        label, color, _ = VERDICT_STYLE[r.verdict]
+        self.badge.configure(text=label.upper(), bg=color)
+        self.name_var.set(os.path.basename(r.path))
+        self.why_var.set(r.summary or (r.reasons[0] if r.reasons else ""))
+        bits = r.effective_bits
+        if bits is not None and r.is_float and bits > 24:
+            bits = 24
+        self.fact_vars["Claimed"].set(r.claimed)
+        self.fact_vars["Real (estimated)"].set(r.estimated)
+        self.fact_vars["Bandwidth"].set(f"{r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "–")
+        self.fact_vars["Bits used"].set(f"{bits} of {r.claimed_bits}" if bits and r.claimed_bits else
+                                        (str(bits) if bits else "–"))
+        self.fact_vars["Format"].set(f"{r.codec}, {r.channels} ch" if r.codec else "–")
+        self.fact_vars["Duration"].set(fmt_duration(r.duration) if r.duration else "?")
+        parts = [f"• {x}\n" for x in r.reasons] + [f"• {x}\n" for x in r.notes]
         if r.cliffs_db:
             deep = r.deep_cliffs_db or {}
-            lines.append("Drop at source Nyquists (narrow/deep): " + ", ".join(
+            parts.append("• Drop at source Nyquists (narrow/deep): " + ", ".join(
                 f"{k / 2000:g} kHz {v:.0f}/{deep.get(k, float('nan')):.0f} dB"
-                for k, v in r.cliffs_db.items() if v == v))
+                for k, v in r.cliffs_db.items() if v == v) + "\n")
         if r.converter_floor_db is not None and r.converter_floor_db == r.converter_floor_db:
-            lines.append(f"26-40 kHz band: {r.converter_floor_db:+.0f} dB relative to the rounding noise")
+            parts.append(f"• 26-40 kHz band: {r.converter_floor_db:+.0f} dB relative to the rounding noise\n")
         if r.grid_step:
-            lines.append(f"Value grid: step {r.grid_step:.1f} (24-bit LSBs), {r.grid_bits}-bit master, "
-                         f"gain {r.grid_gain_db:+.1f} dB")
-        parts += [(f"{x}\n", None) for x in lines]
+            parts.append(f"• Value grid: step {r.grid_step:.1f} (24-bit LSBs), {r.grid_bits}-bit master, "
+                         f"gain {r.grid_gain_db:+.1f} dB\n")
+        parts.append(f"\n{r.path}\n")
         self._set_text(parts)
+        plot = self.cache.get(r.path)
+        self.spectrogram.show(r, plot)
+        self.spectrum.show(r, plot)
+
+    def select_all(self, event=None):
+        """Ctrl/Cmd+A: select every file in the list, as it is filtered now, so that
+        e.g. "Fake lossless + Fake hi-res, Ctrl+A, Fix" fixes all of them."""
+        if event is not None:
+            try:
+                w = self.root.focus_get()
+            except (KeyError, tk.TclError):  # focus in a combobox pop-down
+                w = None
+            if w is not None and w.winfo_toplevel() is not self.root:
+                return None  # another window (Settings, Fix...) has the keyboard
+            if isinstance(w, (tk.Entry, tk.Text, tk.Spinbox, ttk.Entry, ttk.Spinbox)):
+                return None  # text fields keep their own select-all
+            if w is self.src_tree:
+                self.src_tree.selection_set(self.src_tree.get_children())
+                return "break"
+        if self.view_var.get() != "Files":
+            self.status_var.set("Open an album or artist, or switch to the Files view, to select files.")
+            return "break"
+        items = self.tree.get_children()
+        if items:
+            self.tree.selection_set(items)
+            self.tree.focus_set()
+            self.status_var.set(f"Selected {len(items)} listed file(s).")
+        return "break"
+
+    def fix_selected(self) -> None:
+        if self.scanning:
+            self.status_var.set("Wait for the scan to finish before fixing files.")
+            return
+        rs = [self.results[i] for i in self.tree.selection() if i in self.results]
+        if not rs:
+            self.status_var.set("Select one or more scanned fake files to fix.")
+            return
+        FixDialog(self, rs)
+
+    def fix_all(self) -> None:
+        from .fix import FIXABLE_VERDICTS
+
+        if self.scanning:
+            self.status_var.set("Wait for the scan to finish before fixing files.")
+            return
+        rs = [r for r in self.results.values() if r.verdict in FIXABLE_VERDICTS]
+        if not rs:
+            messagebox.showinfo("Fix to real resolution", "No fake hi-res or fake lossless files to fix.")
+            return
+        FixDialog(self, rs)
+
+    def add_fixed_result(self, outcome) -> None:
+        """Show a freshly converted file (and drop a replaced original)."""
+        if outcome.plan.replace_original and outcome.plan.source in self.results:
+            del self.results[outcome.plan.source]
+            if self.tree.exists(outcome.plan.source):
+                self.tree.delete(outcome.plan.source)
+        r = outcome.new_result
+        if r is None:
+            return
+        if r.path in self.results and self.tree.exists(r.path):
+            self.tree.delete(r.path)
+        self.results[r.path] = r
+        self.refresh()
+        self._update_source_counts()
+
+    def _primary_action(self) -> None:
+        (self.open_file if self.cfg.double_click == "Open file" else self.reveal)()
+
+    def _secondary_action(self) -> None:
+        (self.reveal if self.cfg.double_click == "Open file" else self.open_file)()
 
     def reveal(self) -> None:
-        r = self._current()
-        if r:
+        path = self._current_path()
+        if path:
             try:
-                reveal_in_file_manager(r.path)
+                reveal_in_file_manager(path)
             except OSError as exc:
                 messagebox.showerror("Real-Hi-Res", f"Could not open the folder: {exc}")
+
+    def open_file(self) -> None:
+        path = self._current_path()
+        if path:
+            try:
+                open_with_default_app(path)
+            except OSError as exc:
+                messagebox.showerror("Real-Hi-Res", f"Could not open the file: {exc}")
 
     def copy_path(self) -> None:
         paths = list(self.tree.selection())
@@ -537,7 +2115,7 @@ class App(ttk.Frame):
                 self.tree.selection_set(row)
             self.menu.tk_popup(event.x_root, event.y_root)
 
-    def export(self, kind: str) -> None:
+    def export(self, kind: str, all_results: bool = False) -> None:
         if not self.results:
             messagebox.showinfo("Real-Hi-Res", "Nothing to export yet; run a scan first.")
             return
@@ -547,9 +2125,22 @@ class App(ttk.Frame):
         if not path:
             return
         visible = [self.results[i] for i in self.tree.get_children()]
-        rows = visible if visible else list(self.results.values())
+        rows = list(self.results.values()) if all_results or not visible else visible
         (write_csv if kind == "csv" else write_json)(rows, path)
-        self.status_var.set(f"Exported {len(rows)} row(s) (the files currently listed) to {path}")
+        self.status_var.set(f"Exported {len(rows)} row(s) to {path}")
+
+    def about(self) -> None:
+        messagebox.showinfo(
+            "About Real-Hi-Res",
+            f"Real-Hi-Res {__version__}\n\nFinds fake hi-res audio (upsampled or 16-bit padded) and fake "
+            "lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.\n\n"
+            "https://github.com/SU2H1/Real-Hi-Res")
+
+    def quit_app(self) -> None:
+        if self.scanner and self.scanning:
+            self.scanner.stop_event.set()
+        self.cache.close()
+        self.root.destroy()
 
 
 def main(argv=None) -> int:
@@ -563,9 +2154,9 @@ def main(argv=None) -> int:
               "On a server or over SSH use the command-line tool instead "
               "(realhires / realhires-cli).", file=sys.stderr)
         return 1
-    root.title(f"Real-Hi-Res {__version__} — fake hi-res audio detector")
-    root.geometry("1180x760")
-    root.minsize(820, 520)
+    root.title(f"Real-Hi-Res {__version__} — fake hi-res & fake lossless detector")
+    root.geometry("1280x820")
+    root.minsize(900, 600)
     icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
     try:
         root.iconphoto(True, tk.PhotoImage(file=icon))

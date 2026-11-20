@@ -9,7 +9,7 @@ import pytest
 
 from realhires.analysis import BitDepthAccumulator, GridAccumulator
 from realhires.cli import main
-from realhires.verdict import FAKE, LOSSY, NOT_HIRES, REAL, SUSPECT, analyze_file
+from realhires.verdict import FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, analyze_file
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -78,6 +78,20 @@ def test_gain_or_dither_on_16_bit_master(library, name, gain):
     assert "grid" in r.reasons[0]
 
 
+def test_fix_plan_for_grid_files(library):
+    from realhires import settings
+    from realhires.fix import ffmpeg_command, plan_fix
+
+    cfg = settings.Settings()
+    plan, why = plan_fix(analyze_file(library["fake_gain_16_to_24"]), cfg)
+    assert why is None and plan.target_bits == 16 and plan.target_rate == 44100
+    assert plan.dither and "dither_method=triangular" in " ".join(ffmpeg_command(plan, "x.flac"))
+    plan, why = plan_fix(analyze_file(library["fake_dither_16_to_24"]), cfg)
+    assert why is None and plan.target_bits == 16 and not plan.dither  # rounds back exactly
+    cmd = " ".join(ffmpeg_command(plan, "x.wav"))
+    assert "aformat=sample_fmts=flt" in cmd and "dither_method" not in cmd
+
+
 def test_analog_transfer_with_converter_noise_is_real(library):
     r = analyze_file(library["analog_transfer_96"])
     assert r.verdict == REAL, r.reasons
@@ -112,11 +126,19 @@ def _need(library, name):
     return library[name]
 
 
-def test_lossy_sourced(library):
+def test_lossy_sourced_hires_is_fake_lossless(library):
     r = analyze_file(_need(library, "fake_from_mp3"))
-    assert r.verdict == FAKE
+    assert r.verdict == FAKE_LOSSLESS
+    assert "lossy-source" in r.flags and "lossy" in r.summary.lower()
     assert r.lossy_cutoff_hz and 14000 < r.lossy_cutoff_hz < 20300
     assert r.estimated.startswith("lossy")
+
+
+def test_fake_flac_at_cd_resolution(library):
+    r = analyze_file(_need(library, "fake_flac_cd"))
+    assert r.verdict == FAKE_LOSSLESS, r.reasons
+    assert r.claimed == "16/44.1"
+    assert r.summary.startswith("Made from a lossy file")
 
 
 def test_lossy_format(library):
@@ -164,7 +186,8 @@ def test_cli_scan_with_exports(library, tmp_path, capsys):
     assert "FAKE HI-RES" in out and "REAL HI-RES" in out
     data = json.loads(out_json.read_text())
     assert {d["verdict"] for d in data} >= {FAKE, REAL, NOT_HIRES}
-    assert out_csv.read_text().startswith("path,verdict")
+    assert all("summary" in d and "flags" in d for d in data)
+    assert "%" in out  # percentage summary    assert out_csv.read_text().startswith("path,verdict")
     assert len(list(plots.glob("*.svg"))) >= 10
 
 

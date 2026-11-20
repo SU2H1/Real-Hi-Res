@@ -115,6 +115,7 @@ class AudioInfo:
     duration: Optional[float]
     bit_rate: Optional[int]
     extra: dict = field(default_factory=dict)
+    tags: dict = field(default_factory=dict)   # artist, album, album_artist, title, track, disc, date, genre
 
     @property
     def claims_hires(self) -> bool:
@@ -145,7 +146,7 @@ def probe(path: str) -> AudioInfo:
         tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
         "-show_entries",
         "stream=codec_name,sample_rate,channels,sample_fmt,bits_per_sample,"
-        "bits_per_raw_sample,bit_rate,duration:format=format_name,duration,bit_rate",
+        "bits_per_raw_sample,bit_rate,duration:stream_tags:format=format_name,duration,bit_rate:format_tags",
         "-of", "json", path,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -192,7 +193,38 @@ def probe(path: str) -> AudioInfo:
         is_lossy=is_lossy,
         duration=_float_or_none(s.get("duration")) or _float_or_none(fmt.get("duration")),
         bit_rate=_int_or_none(s.get("bit_rate")) or _int_or_none(fmt.get("bit_rate")),
+        tags=normalize_tags(fmt.get("tags"), s.get("tags")),
     )
+
+
+# tag name variants used by FLAC/Vorbis, ID3, MP4/iTunes, APE, RIFF INFO...
+_TAG_ALIASES = {
+    "artist": ("artist", "iart", "author"),
+    "album_artist": ("album_artist", "albumartist", "album artist", "aart", "band", "tpe2"),
+    "album": ("album", "iprd"),
+    "title": ("title", "inam"),
+    "track": ("track", "tracknumber", "trck", "itrk"),
+    "disc": ("disc", "discnumber", "tpos"),
+    "date": ("date", "year", "icrd"),
+    "genre": ("genre", "ignr"),
+}
+
+
+def normalize_tags(*sources) -> dict:
+    """Merge ffprobe format/stream tag dicts into a small, case-insensitive set."""
+    raw: dict = {}
+    for src in sources:
+        if isinstance(src, dict):
+            for k, v in src.items():
+                if isinstance(v, str) and v.strip():
+                    raw.setdefault(k.strip().lower(), v.strip())
+    out = {}
+    for key, names in _TAG_ALIASES.items():
+        for n in names:
+            if n in raw:
+                out[key] = raw[n]
+                break
+    return out
 
 
 def iter_pcm(

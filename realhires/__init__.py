@@ -8,4 +8,4 @@ The package decodes audio with ffmpeg and runs two independent forensic tests:
   which exposes 16-bit audio padded with zeros into a 24-bit container.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.7.0"
