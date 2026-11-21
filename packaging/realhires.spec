@@ -25,13 +25,47 @@ for name in ("ffmpeg", "ffprobe"):
 ffmpeg_docs = [(p, "ffmpeg") for p in glob.glob(os.path.join(FFMPEG_DIR, "*.txt"))]
 ICON_PNG = os.path.join(ROOT, "realhires", "assets", "icon.png")
 assets = [(ICON_PNG, os.path.join("realhires", "assets"))]
+IS_WIN = sys.platform == "win32"
 # PyInstaller converts the PNG to .ico/.icns itself when Pillow is installed.
 try:
-    import PIL  # noqa: F401
+    from PIL import Image
     exe_icon = ICON_PNG
 except ImportError:
+    Image = None
     exe_icon = None
     print("WARNING: Pillow not installed - building without an application icon")
+if IS_WIN and Image is not None:
+    # Uncompressed (BMP) icon images: PNG-compressed icons are high-entropy resources,
+    # one of the traits antivirus heuristics count against an executable.
+    exe_icon = os.path.join(ROOT, "build", "realhires.ico")
+    os.makedirs(os.path.dirname(exe_icon), exist_ok=True)
+    Image.open(ICON_PNG).convert("RGBA").save(
+        exe_icon, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        bitmap_format="bmp")
+
+# Windows: keep the compressed program archive out of the .exe (it is written next to
+# it as <name>.pkg), so the .exe is only the launcher, and give both executables
+# version information.  A bare launcher with an appended high-entropy archive and no
+# version resource is what antivirus heuristics most often mistake for a packed
+# trojan.  REALHIRES_APPEND_PKG=0/1 overrides the default (for testing).
+APPEND_PKG = os.environ.get("REALHIRES_APPEND_PKG", "0" if IS_WIN else "1") == "1"
+
+
+def version_info(name, description):
+    if not IS_WIN:
+        return None
+    from PyInstaller.utils.win32.versioninfo import (FixedFileInfo, StringFileInfo, StringStruct,
+                                                    StringTable, VarFileInfo, VarStruct, VSVersionInfo)
+    nums = tuple(int(x) for x in (VERSION.split(".") + ["0", "0", "0"])[:3]) + (0,)
+    strings = [("CompanyName", "SU2H1"), ("FileDescription", description), ("FileVersion", VERSION),
+               ("InternalName", name), ("LegalCopyright", "Copyright (c) SU2H1"),
+               ("OriginalFilename", name + ".exe"), ("ProductName", "Real-Hi-Res"),
+               ("ProductVersion", VERSION), ("Comments", "https://github.com/SU2H1/Real-Hi-Res")]
+    return VSVersionInfo(
+        ffi=FixedFileInfo(filevers=nums, prodvers=nums, mask=0x3F, flags=0x0, OS=0x40004, fileType=0x1,
+                          subtype=0x0, date=(0, 0)),
+        kids=[StringFileInfo([StringTable("040904B0", [StringStruct(k, v) for k, v in strings])]),
+              VarFileInfo([VarStruct("Translation", [0x0409, 1200])])])
 # Oldest macOS the app declares support for; CI verifies every bundled binary
 # against it with packaging/check_compat.py.
 MACOS_MIN = os.environ.get("REALHIRES_MACOS_MIN", "12.0")
@@ -50,11 +84,13 @@ if sys.platform.startswith("linux"):
     gui_a.binaries = [b for b in gui_a.binaries if not os.path.basename(b[0]).startswith(SYSTEM_LIBS)]
 
 gui_exe = EXE(PYZ(gui_a.pure), gui_a.scripts, [], exclude_binaries=True, name="RealHiRes",
-              console=False, upx=False, icon=exe_icon)
+              console=False, upx=False, icon=exe_icon, append_pkg=APPEND_PKG,
+              version=version_info("RealHiRes", "Real-Hi-Res - checks whether hi-res audio is genuine"))
 # Different name from the GUI on purpose: Windows and macOS file systems are
 # case-insensitive, so "realhires" would clash with "RealHiRes".
 cli_exe = EXE(PYZ(cli_a.pure), cli_a.scripts, [], exclude_binaries=True, name="realhires-cli",
-              console=True, upx=False, icon=exe_icon)
+              console=True, upx=False, icon=exe_icon, append_pkg=APPEND_PKG,
+              version=version_info("realhires-cli", "Real-Hi-Res command-line tool"))
 
 # The GUI must come first: on macOS the first executable becomes the app's main program.
 coll = COLLECT(gui_exe, gui_a.binaries, gui_a.datas, cli_exe, cli_a.binaries, cli_a.datas,

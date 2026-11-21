@@ -28,7 +28,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install --upgrade pip numpy pyinstaller pillow pytest
+      - run: python -m pip install --upgrade pip numpy pillow pytest
+      # Compile PyInstaller's launcher here instead of using the prebuilt one from the
+      # wheel: that one is shared by every PyInstaller program, malware included, so
+      # antivirus engines flag it.  packaging/check_windows.py logs the launcher hash.
+      - name: Install PyInstaller with a locally compiled launcher
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: python -m pip install --no-binary pyinstaller pyinstaller
       - name: Build, test and package
         shell: bash
         env:

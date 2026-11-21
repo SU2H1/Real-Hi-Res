@@ -57,6 +57,7 @@ case "$OS" in
     ;;
   *)
     CLI=dist/RealHiRes/realhires-cli.exe
+    "$PY" packaging/check_windows.py dist/RealHiRes
     ;;
 esac
 

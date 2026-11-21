@@ -60,7 +60,12 @@ launch ("damaged" / "cannot be opened").
 First launch on Windows
 -----------------------
 SmartScreen may warn about an unrecognised app.  Click "More info" > "Run
-anyway".
+anyway".  Keep the whole folder together: RealHiRes.exe and realhires-cli.exe
+are small launchers, and the program itself is in RealHiRes.pkg,
+realhires-cli.pkg and the _internal folder next to them.  If an antivirus
+program reports a trojan, it is a false positive caused by the PyInstaller
+packaging (see the README on GitHub); restore the file and report it to the
+vendor.
 
 Linux requirements
 ------------------

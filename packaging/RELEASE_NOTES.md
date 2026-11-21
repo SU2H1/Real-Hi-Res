@@ -1,3 +1,7 @@
+## What's new in 1.8.1
+
+The Windows package no longer looks like a packed trojan to antivirus heuristics, which made a few engines flag earlier builds as false positives. Its launcher is now compiled on the build machine instead of being PyInstaller's widely shared prebuilt one, the compressed program sits in separate `.pkg` files next to the small `.exe` launchers, and both executables carry version information and uncompressed icons. Keep the `.pkg` files and the `_internal` folder next to the `.exe` files.
+
 ## What's new in 1.8.0
 
 "Fix to real resolution" is safer and more faithful. It never lowers the sample rate below a point where the music is still present, so a doubtful estimate errs towards keeping a higher rate instead of cutting anything. Fake hi-res files that FFmpeg upsampled by a whole-number ratio (for example 48 → 192 kHz) are turned back into the original 16-bit master bit for bit, without any resampling. Gapless albums (live recordings, DJ mixes, classical works) stay gapless: each track is converted together with the audio around it, so there is no click at the joins.
