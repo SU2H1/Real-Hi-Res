@@ -727,7 +727,7 @@ class FixDialog(tk.Toplevel):
             var.set(d)
 
     def _start(self) -> None:
-        from .fix import run_fix
+        from .fix import prepare_gapless, run_fix
 
         if not self.plans or self.running:
             return
@@ -750,6 +750,11 @@ class FixDialog(tk.Toplevel):
         plans = list(self.plans)
 
         def worker():
+            # Read the joins between album neighbours before any file is replaced.
+            everything = list(self.app.results.values()) + list(self.results)
+            joins = prepare_gapless(plans, everything, progress=lambda m: self.q.put(("status", m)))
+            if joins:
+                self.q.put(("status", f"Fixing… ({joins} gapless join(s) kept seamless)"))
             with ThreadPoolExecutor(max_workers=max(1, min(effective_jobs(cfg.jobs), 8))) as ex:
                 futs = {}
                 for p in plans:
@@ -765,7 +770,9 @@ class FixDialog(tk.Toplevel):
         try:
             while True:
                 kind, payload = self.q.get_nowait()
-                if kind == "start":
+                if kind == "status":
+                    self.status.configure(text=payload)
+                elif kind == "start":
                     self.tv.set(payload, "status", "Fixing…")
                 elif kind == "done":
                     o = payload

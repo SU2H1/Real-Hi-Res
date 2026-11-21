@@ -293,6 +293,93 @@ def test_fix_upsampled_and_padded(library, tmp_path):
     assert plan4 is None and "need fixing" in why4
 
 
+def test_fix_never_cuts_below_a_safe_rate():
+    from realhires.fix import safe_source_rate
+
+    r = FileResult(path="x.flac", verdict=FAKE, sample_rate=96000, channels=2, claimed_bits=24,
+                   effective_bits=24, upsampled_from=44100)
+    r.cliffs_db, r.deep_cliffs_db, r.upsample_mid_hz = {44100: 60.0, 48000: 70.0}, {}, 21100.0
+    assert safe_source_rate(r) == 44100                 # clear cliff at 22.05 kHz: cut there
+    r.upsample_mid_hz = 23000.0                         # music still there at 23 kHz
+    assert safe_source_rate(r) == 48000                 # -> keep 48 kHz, nothing is lost
+    r.cliffs_db = {44100: 15.0, 48000: 12.0}            # weak evidence everywhere
+    assert safe_source_rate(r) == 96000                 # -> do not resample at all
+
+
+def _pcm(path, channels=2):
+    from realhires.probe import iter_pcm
+
+    return np.concatenate(list(iter_pcm(str(path), channels)))
+
+
+@needs_ffmpeg
+def test_fix_restores_16_bit_master_bit_exactly(library, tmp_path):
+    from realhires.fix import plan_fix, run_fix
+
+    master = Path(library["fake_up_48_to_96_swr"]).parent / "m48.wav"
+    fakes = {}
+    for rate in (96000, 192000):  # FFmpeg's default resampler, 2x and 4x
+        f = tmp_path / f"fake_{rate}.flac"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(master), "-ar", str(rate), "-c:a", "flac",
+                        "-sample_fmt", "s32", "-metadata", "title=曲名", str(f)], check=True)
+        fakes[rate] = f
+    cfg = settings.Settings()
+    cfg.fix_output, cfg.fix_folder = "Saving a copy into a folder", str(tmp_path / "out")
+    want = _pcm(master)
+    for rate, f in fakes.items():
+        plan, why = plan_fix(analyze_file(str(f)), cfg)
+        assert plan and plan.exact_ratio == rate // 48000, why
+        out = run_fix(plan, cfg)
+        assert out.ok and "bit-exactly" in out.message, out.message
+        got = _pcm(out.output)
+        assert got.shape == want.shape and np.array_equal(got, want)  # the master itself
+        tags = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags=title", "-of", "json",
+                               out.output], capture_output=True, text=True, encoding="utf-8").stdout
+        assert "曲名" in tags
+    # A soxr upsample does not keep the master: it is resampled as before.
+    plan, _ = plan_fix(analyze_file(library["fake_up_48_to_96"]), cfg)
+    out = run_fix(plan, cfg)
+    assert out.ok and "bit-exactly" not in out.message
+
+
+@needs_ffmpeg
+def test_fix_keeps_gapless_joins(tmp_path):
+    from conftest import ffmpeg_write, hq_resample, music_like
+    from realhires.fix import _resample_filter, plan_fix, prepare_gapless, run_fix
+
+    # One continuous 44.1 kHz recording, upsampled to 24/96 as a whole and cut into
+    # three tracks at points that are not on the 44.1 kHz grid.
+    album = ffmpeg_write(tmp_path / "album44.wav", music_like(44100, 9, seed=11), 44100, ["-c:a", "pcm_s16le"])
+    up = tmp_path / "album96.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", album, *hq_resample(96000), "-c:a", "pcm_s24le",
+                    str(up)], check=True)
+    x = _pcm(up)
+    cuts = [0, 300007, 600013, x.shape[0]]
+    d = tmp_path / "Album"
+    d.mkdir()
+    for i in range(3):
+        ffmpeg_write(d / f"0{i + 1} track.wav", x[cuts[i]:cuts[i + 1]] / 2.0 ** 31, 96000, ["-c:a", "pcm_s24le"])
+    cfg = settings.Settings()
+    cfg.fix_bits = "As detected"   # 24-bit output: no dither, so the joins can be compared exactly
+    cfg.fix_output, cfg.fix_folder = "Saving a copy into a folder", str(tmp_path / "out")
+    results = [analyze_file(str(f)) for f in sorted(d.iterdir())]
+    plans = [plan_fix(r, cfg)[0] for r in results]
+    assert all(p and p.target_rate == 44100 for p in plans)
+    assert prepare_gapless(plans, results) == 2
+    outs = [run_fix(p, cfg) for p in plans]
+    assert all(o.ok for o in outs) and all("gapless" in o.message for o in outs), [o.message for o in outs]
+    joined = np.concatenate([_pcm(o.output) for o in outs]).astype(np.float64)
+    whole = tmp_path / "whole.wav"   # the reference: the album converted in one piece, same filter
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(up), "-af", _resample_filter(plans[0]),
+                    "-c:a", "pcm_s24le", str(whole)], check=True)
+    ref = _pcm(whole).astype(np.float64)
+    assert joined.shape == ref.shape
+    err = np.abs(joined - ref).max(axis=1) / 2.0 ** 31
+    assert err.max() < 10 ** (-100 / 20), (20 * np.log10(err.max()), int(err.argmax()))  # 24-bit rounding
+    # A silent join needs nothing.
+    assert prepare_gapless([plan_fix(results[0], cfg)[0]], results[:1]) == 0
+
+
 @needs_ffmpeg
 def test_fix_replace_keeps_backup_and_tags(library, tmp_path):
     from realhires.fix import plan_fix, run_fix

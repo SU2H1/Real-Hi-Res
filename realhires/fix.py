@@ -30,18 +30,32 @@ exact 16-bit values of the master, with no dither.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import List, Optional
+from fractions import Fraction
+from typing import Callable, Dict, List, Optional, Tuple
 
-from .probe import _no_window, tool
-from .verdict import FAKE, FAKE_LOSSLESS, FileResult, analyze_file, fmt_rate
+import numpy as np
+
+from .analysis import detection_params
+from .probe import _no_window, iter_pcm, tool
+from .verdict import ERROR, FAKE, FAKE_LOSSLESS, LOSSY, FileResult, analyze_file, fmt_rate
 
 FIXABLE_VERDICTS = (FAKE, FAKE_LOSSLESS)
 BACKUP_DIR_NAME = "Real-Hi-Res backups"
+
+# Gapless joins: audio of the neighbouring track fed to the resampler on each side
+# (soxr and swr need about 1,000 input samples; 8,192 leaves a wide margin), and
+# the peak below which a join counts as silent, so that no neighbour is needed.
+CONTEXT_FRAMES = 8192
+SILENT_JOIN = int(2 ** 31 * 10 ** (-70 / 20))   # -70 dBFS on the int32 scale
+EXACT_MIN_SAMPLES = 20000   # non-zero samples per phase needed to prove an untouched master
 
 # input extension -> (output extension, codec for 16 bit, codec for 24 bit, sample_fmt 16, sample_fmt 24)
 _SAME_FORMAT = {
@@ -76,6 +90,13 @@ class FixPlan:
     backup_dir: Optional[str] = None
     notes: List[str] = field(default_factory=list)
     dither: bool = False          # dither a 24->16 reduction that is not resampled
+    channels: int = 2
+    source_rate: int = 0
+    exact_ratio: int = 0          # >1: try restoring the master by keeping every Nth sample
+    frames: Optional[int] = None  # exact length of the source (gapless joins)
+    offset: int = 0               # start of the source on its gapless run, in source samples
+    context_before: Optional[np.ndarray] = None  # end of the previous track (int32 frames)
+    context_after: Optional[np.ndarray] = None   # start of the next track
 
 
 @dataclass
@@ -93,6 +114,35 @@ def _family_rate(rate: int) -> int:
     return 44100 if rate % 11025 == 0 else 48000
 
 
+def _cut_is_safe(r: FileResult, rate: int, c) -> bool:
+    """True when the file holds nothing real above rate/2: its spectrum has
+    collapsed there (narrow or deep cliff test passed at that very rate) and the
+    music had already dropped 6 dB before that frequency."""
+    narrow = (r.cliffs_db or {}).get(rate, float("-inf"))
+    deep = (r.deep_cliffs_db or {}).get(rate, float("-inf"))
+    if not (narrow >= c.cliff or deep >= c.deep_cliff):
+        return False
+    mid = r.upsample_mid_hz
+    return not (mid is not None and mid == mid and mid > 1.02 * rate / 2.0)
+
+
+def safe_source_rate(r: FileResult, cfg=None) -> int:
+    """The rate Fix may convert an upsampled file to without cutting real content.
+
+    Normally that is the detected source rate.  When the evidence at that rate
+    is weak (it was chosen as the weaker neighbour of a stronger candidate, or
+    by the brick-wall fallback), the next higher candidate that is safe is used,
+    or the file keeps its own rate.  Erring upwards never loses anything."""
+    c = detection_params(cfg)
+    rate = r.upsampled_from
+    if not rate or _cut_is_safe(r, rate, c):
+        return rate or r.sample_rate
+    for cand in sorted(set(r.cliffs_db or {}) | set(r.deep_cliffs_db or {})):
+        if rate < cand < r.sample_rate and _cut_is_safe(r, cand, c):
+            return cand
+    return r.sample_rate
+
+
 def target_resolution(r: FileResult, cfg) -> Optional[tuple]:
     """(rate, bits, notes) the file really has, or None when unknown."""
     if not r.sample_rate or r.effective_bits is None:
@@ -100,6 +150,13 @@ def target_resolution(r: FileResult, cfg) -> Optional[tuple]:
     notes: List[str] = []
     rate = r.upsampled_from or r.sample_rate
     cd_sourced = bool(r.upsampled_from and r.upsampled_from <= 48000)
+    if r.upsampled_from and r.verdict == FAKE:
+        safe = safe_source_rate(r, cfg)
+        if safe != rate:
+            notes.append(f"Kept {fmt_rate(safe)} kHz instead of the estimated {fmt_rate(rate)} kHz: the "
+                         f"spectrum does not collapse clearly enough at {rate / 2000:g} kHz to cut there "
+                         "without losing content.")
+            rate = safe
     if r.verdict == FAKE_LOSSLESS:
         cd_sourced = True
         if rate > 48000:
@@ -179,10 +236,17 @@ def plan_fix(r: FileResult, cfg) -> tuple:
     if dither:
         notes.append(f"Reduced to 16-bit with dither (the 16-bit master had been scaled by "
                      f"{r.grid_gain_db:+.1f} dB).")
+    # An upsample by a whole-number ratio (FFmpeg's default resampler, for one) can
+    # keep every Nth sample of a 16-bit master untouched; run_fix then restores the
+    # master bit-exactly instead of resampling, if the samples prove it.
+    exact = (r.sample_rate // rate if rate != r.sample_rate and bits == 16 and rate
+             and r.sample_rate % rate == 0 else 0)
     plan = FixPlan(source=r.path, target_rate=rate, target_bits=bits, resample=rate != r.sample_rate,
                    output=output, codec=codec, sample_fmt=sfmt, replace_original=replace,
                    description=f"{r.claimed} → {_fmt(bits, rate)}", notes=notes,
-                   backup=backup, backup_dir=backup_dir, dither=dither)
+                   backup=backup, backup_dir=backup_dir, dither=dither,
+                   channels=r.channels or 2, source_rate=r.sample_rate,
+                   exact_ratio=exact if exact >= 2 else 0)
     return plan, None
 
 
@@ -198,36 +262,350 @@ def _has_soxr() -> bool:
 _SOXR: Optional[bool] = None
 
 
-def ffmpeg_command(plan: FixPlan, output: str) -> List[str]:
+def _resample_filter(plan: FixPlan) -> str:
     global _SOXR
     if _SOXR is None:
         _SOXR = _has_soxr()
+    af = f"aresample={plan.target_rate}" + (":resampler=soxr:precision=28" if _SOXR else
+                                           ":filter_size=256:cutoff=0.97:phase_shift=10")
+    if plan.target_bits == 16:
+        af += ":dither_method=triangular"
+    return af
+
+
+def _output_args(plan: FixPlan, output: str, cover_input: int) -> List[str]:
+    """Cover art, tags, codec and container options for the converted file."""
     out_ext = os.path.splitext(output)[1].lower()
-    cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-y", "-i", plan.source, "-map", "0:a:0"]
+    args: List[str] = []
     if out_ext in _KEEPS_COVER:
-        cmd += ["-map", "0:v?", "-c:v", "copy", "-disposition:v", "attached_pic"]
-    cmd += ["-map_metadata", "0"]
+        args += ["-map", f"{cover_input}:v?", "-c:v", "copy", "-disposition:v", "attached_pic"]
+    args += ["-map_metadata", str(cover_input)]
+    return args
+
+
+def _codec_args(plan: FixPlan, output: str) -> List[str]:
+    args = ["-c:a", plan.codec]
+    if plan.sample_fmt:
+        args += ["-sample_fmt", plan.sample_fmt]
+    if plan.target_bits == 24 and plan.codec in ("flac", "alac", "wavpack"):
+        args += ["-bits_per_raw_sample", "24"]
+    if os.path.splitext(output)[1].lower() == ".m4a":
+        args += ["-movflags", "+faststart"]
+    return args
+
+
+def ffmpeg_command(plan: FixPlan, output: str) -> List[str]:
+    cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-y", "-i", plan.source, "-map", "0:a:0"]
+    cmd += _output_args(plan, output, 0)
     af = []
     if plan.resample:
-        af.append(f"aresample={plan.target_rate}" + (":resampler=soxr:precision=28" if _SOXR else
-                                                    ":filter_size=256:cutoff=0.97:phase_shift=10"))
-        if plan.target_bits == 16:
-            af[-1] += ":dither_method=triangular"
+        af.append(_resample_filter(plan))
     elif plan.target_bits == 16:
         af.append("aformat=sample_fmts=flt")  # float -> s16 rounds; s32 -> s16 would truncate
         if plan.dither:
             af.append("aresample=dither_method=triangular")
     if af:
         cmd += ["-af", ",".join(af)]
-    cmd += ["-c:a", plan.codec]
-    if plan.sample_fmt:
-        cmd += ["-sample_fmt", plan.sample_fmt]
-    if plan.target_bits == 24 and plan.codec in ("flac", "alac", "wavpack"):
-        cmd += ["-bits_per_raw_sample", "24"]
-    if out_ext == ".m4a":
-        cmd += ["-movflags", "+faststart"]
+    cmd += _codec_args(plan, output)
     cmd.append(output)
     return cmd
+
+
+def _pipe_command(plan: FixPlan, output: str, in_fmt: str, in_rate: int, af: Optional[str]) -> List[str]:
+    """Encode raw PCM from stdin, taking tags and cover art from the original file."""
+    cmd = [tool("ffmpeg"), "-v", "error", "-y", "-f", in_fmt, "-ar", str(in_rate), "-ac", str(plan.channels),
+           "-i", "pipe:0", "-i", plan.source, "-map", "0:a"]
+    cmd += _output_args(plan, output, 1)
+    if af:
+        cmd += ["-af", af]
+    cmd += _codec_args(plan, output)
+    cmd.append(output)
+    return cmd
+
+
+class _Encoder:
+    """An FFmpeg process fed with raw PCM blocks."""
+
+    def __init__(self, cmd: List[str]):
+        self.err = tempfile.TemporaryFile()
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=self.err,
+                                     **_no_window())
+
+    def write(self, data: bytes) -> bool:
+        try:
+            self.proc.stdin.write(data)
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
+    def abort(self) -> None:
+        try:
+            self.proc.kill()
+        finally:
+            self.proc.wait()
+            self.err.close()
+
+    def finish(self) -> Tuple[bool, str]:
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        rc = self.proc.wait()
+        self.err.seek(0)
+        msg = self.err.read().decode("utf-8", "replace").strip().splitlines()
+        self.err.close()
+        return rc == 0, (msg[-1] if msg else f"exit {rc}")
+
+
+def _exact_restore(plan: FixPlan, output: str) -> bool:
+    """Restore a 16-bit master from a whole-number-ratio upsample by keeping every
+    Nth sample, when one sample phase holds nothing but exact 16-bit values (as
+    FFmpeg's default resampler leaves it) and the others do not.  Returns False,
+    having written nothing usable, when the file does not prove that."""
+    n = plan.exact_ratio
+    blocks = iter_pcm(plan.source, plan.channels)
+    head, counts = [], np.zeros(n, dtype=np.int64)
+    pos = 0
+    for b in blocks:  # read until every phase has enough signal to judge
+        head.append(b)
+        for ph in range(n):
+            counts[ph] += np.count_nonzero(b[(ph - pos) % n::n])
+        pos += b.shape[0]
+        if counts.min() >= EXACT_MIN_SAMPLES:
+            break
+    if not head or counts.min() < EXACT_MIN_SAMPLES:
+        blocks.close()
+        return False
+    x = np.concatenate(head)
+    on_grid = []
+    for ph in range(n):
+        s = x[ph::n]
+        nz = s[s != 0]
+        on_grid.append(float(np.mean((nz & 0xFFFF) == 0)))
+    keep = [ph for ph in range(n) if on_grid[ph] == 1.0]
+    if len(keep) != 1 or max(g for ph, g in enumerate(on_grid) if ph != keep[0]) > 0.05:
+        blocks.close()
+        return False
+    phase = keep[0]
+    enc = _Encoder(_pipe_command(plan, output, "s16le", plan.target_rate, None))
+
+    def emit(block: np.ndarray, start_pos: int) -> bool:
+        sel = block[(phase - start_pos) % n::n]
+        if np.any(sel & 0xFFFF):
+            return False  # a sample that is not the untouched master: give up
+        return enc.write(np.ascontiguousarray(sel >> 16).astype("<i2").tobytes())
+
+    pos = 0
+    ok = True
+    for b in head:
+        ok = ok and emit(b, pos)
+        pos += b.shape[0]
+    if ok:
+        for b in blocks:
+            if not emit(b, pos):
+                ok = False
+                break
+            pos += b.shape[0]
+    if not ok:
+        blocks.close()
+        enc.abort()
+        return False
+    done, _ = enc.finish()
+    return done and os.path.getsize(output) > 0
+
+
+def _ceil_div(a: int, b: int) -> int:
+    return -((-a) // b)
+
+
+def _resample_with_context(plan: FixPlan, output: str) -> bool:
+    """Resample with the end of the previous and the start of the next track around
+    the file, on the sample grid of the whole gapless run, and keep only this file's
+    part: the result joins its neighbours exactly as if the album had been
+    converted in one piece, so gapless playback gets no click at the joins."""
+    if plan.frames is None:
+        return False
+    ch = plan.channels
+    r = Fraction(plan.target_rate, plan.source_rate)
+    p, q = r.numerator, r.denominator
+    before = plan.context_before if plan.context_before is not None else np.zeros((0, ch), np.int32)
+    after = plan.context_after if plan.context_after is not None else np.zeros((0, ch), np.int32)
+    t = before.shape[0]
+    cb = t - ((t - plan.offset) % q) if t else 0
+    if (plan.offset - cb) % q:
+        return False  # only a run's first track may start without context, at offset 0
+    a = plan.offset - cb
+    first = _ceil_div(plan.offset * p, q) - a * p // q
+    last = _ceil_div((plan.offset + plan.frames) * p, q) - a * p // q
+    af = _resample_filter(plan) + f",atrim=start_sample={first}:end_sample={last}"
+    enc = _Encoder(_pipe_command(plan, output, "s32le", plan.source_rate, af))
+    ok = enc.write(np.ascontiguousarray(before[t - cb:], "<i4").tobytes()) if cb else True
+    n = 0
+    for b in iter_pcm(plan.source, ch):
+        if ok:
+            ok = enc.write(np.ascontiguousarray(b, "<i4").tobytes())
+        n += b.shape[0]
+    if not ok or n != plan.frames:
+        enc.abort()
+        return False
+    if after.shape[0] and not enc.write(np.ascontiguousarray(after, "<i4").tobytes()):
+        enc.abort()
+        return False
+    done, _ = enc.finish()
+    return done and os.path.getsize(output) > 0
+
+
+def _convert(plan: FixPlan, output: str) -> Tuple[bool, str, str]:
+    """(ok, error, how): how is "exact", "gapless" or "" for a plain conversion."""
+    if plan.exact_ratio:
+        try:
+            if _exact_restore(plan, output):
+                return True, "", "exact"
+        except (OSError, RuntimeError, ValueError):
+            pass
+    if plan.context_before is not None or plan.context_after is not None:
+        try:
+            if _resample_with_context(plan, output):
+                return True, "", "gapless"
+        except (OSError, RuntimeError, ValueError):
+            pass
+    proc = subprocess.run(ffmpeg_command(plan, output), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", **_no_window())
+    if proc.returncode != 0 or os.path.getsize(output) == 0:
+        msg = (proc.stderr or "").strip().splitlines()
+        return False, (msg[-1] if msg else f"exit {proc.returncode}"), ""
+    return True, "", ""
+
+
+# --------------------------------------------------------------- gapless ---
+def _number(value) -> int:
+    m = re.match(r"\s*(\d+)", str(value or ""))
+    return int(m.group(1)) if m else 10 ** 6
+
+
+def _track_key(r: FileResult):
+    tags = r.tags or {}
+    return (_number(tags.get("disc")), _number(tags.get("track")), os.path.basename(r.path).lower())
+
+
+def _read_head(path: str, channels: int, rate: int, frames: int) -> np.ndarray:
+    out, n = [], 0
+    gen = iter_pcm(path, channels, chunk_frames=frames, max_seconds=frames / rate * 1.2 + 0.05)
+    try:
+        for b in gen:
+            out.append(b)
+            n += b.shape[0]
+            if n >= frames:
+                break
+    finally:
+        gen.close()
+    return np.concatenate(out)[:frames] if out else np.zeros((0, channels), np.int32)
+
+
+def _read_tail(path: str, channels: int, rate: int, frames: int) -> np.ndarray:
+    secs = frames / rate * 1.5 + 0.05
+    cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-sseof", f"-{secs:.3f}", "-i", path, "-map", "0:a:0",
+           "-vn", "-f", "s32le", "-acodec", "pcm_s32le", "-"]
+    proc = subprocess.run(cmd, capture_output=True, **_no_window())
+    if proc.returncode != 0:
+        raise RuntimeError("tail decode failed")
+    x = np.frombuffer(proc.stdout[: len(proc.stdout) // (4 * channels) * 4 * channels], "<i4")
+    return x.reshape(-1, channels)[-frames:].copy()
+
+
+def _frame_count(path: str, rate: int) -> Optional[int]:
+    """Exact number of sample frames (FLAC/WAV/AIFF/ALAC/WavPack headers), or None."""
+    cmd = [tool("ffprobe"), "-v", "error", "-select_streams", "a:0",
+           "-show_entries", "stream=duration_ts,time_base", "-of", "json", path]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          **_no_window())
+    try:
+        st = json.loads(proc.stdout or "{}")["streams"][0]
+        if Fraction(st["time_base"]) != Fraction(1, rate):
+            return None
+        n = int(st["duration_ts"])
+        return n if n > 0 else None
+    except (KeyError, IndexError, ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
+def prepare_gapless(plans: List[FixPlan], results, progress: Optional[Callable[[str], None]] = None) -> int:
+    """Give each file that will be resampled the audio of its album neighbours, so the
+    converted tracks join without a click (live albums, DJ mixes, classical works).
+
+    Neighbours are the files next to it in its folder, ordered by disc and track
+    number (then file name), with the same sample rate and channel count.  A join
+    whose two sides are both quieter than -70 dBFS needs nothing and is skipped.
+    Everything is read now, before any file is replaced.  Returns the number of
+    gapless joins found; on any problem a file simply gets the plain conversion."""
+    todo = {os.path.abspath(p.source): p for p in plans if p.resample}
+    if not todo:
+        return 0
+    by_folder: Dict[str, List[FileResult]] = {}
+    seen = set()
+    for r in results:
+        key = os.path.abspath(r.path)
+        if key in seen or not r.sample_rate or r.verdict in (LOSSY, ERROR):
+            continue
+        seen.add(key)
+        by_folder.setdefault(os.path.dirname(key), []).append(r)
+    joins: List[Tuple[FileResult, FileResult]] = []
+    for items in by_folder.values():
+        items.sort(key=_track_key)
+        for a, b in zip(items, items[1:]):
+            if (a.sample_rate, a.channels) != (b.sample_rate, b.channels):
+                continue
+            if os.path.abspath(a.path) in todo or os.path.abspath(b.path) in todo:
+                joins.append((a, b))
+    if not joins:
+        return 0
+    if progress:
+        progress(f"Checking {len(joins)} track join(s) for gapless playback…")
+
+    def edges(pair):
+        a, b = pair
+        try:
+            tail = _read_tail(a.path, a.channels or 2, a.sample_rate, CONTEXT_FRAMES)
+            head = _read_head(b.path, b.channels or 2, b.sample_rate, CONTEXT_FRAMES)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        loud = max(int(np.abs(tail.astype(np.int64)).max(initial=0)),
+                   int(np.abs(head.astype(np.int64)).max(initial=0)))
+        return (tail, head) if loud >= SILENT_JOIN else None
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        found = list(ex.map(edges, joins))
+    gapless = [(a, b, e) for (a, b), e in zip(joins, found) if e is not None]
+    if not gapless:
+        return 0
+    # Runs of consecutive gapless joins share one sample grid, starting at the run's
+    # first track, so every track needs the exact lengths of the tracks before it.
+    nxt = {os.path.abspath(a.path): (b, e) for a, b, e in gapless}
+    firsts = {os.path.abspath(a.path): a for a, _, _ in gapless}
+    starts = set(firsts) - {os.path.abspath(b.path) for _, b, _ in gapless}
+    count = 0
+    for start in starts:
+        run = [firsts[start]]
+        links = []
+        while os.path.abspath(run[-1].path) in nxt:
+            b, e = nxt[os.path.abspath(run[-1].path)]
+            links.append(e)
+            run.append(b)
+        frames = [_frame_count(r.path, r.sample_rate) for r in run]
+        if any(f is None for f in frames):
+            continue
+        offset = 0
+        for i, r in enumerate(run):
+            plan = todo.get(os.path.abspath(r.path))
+            if plan is not None:
+                plan.frames, plan.offset = frames[i], offset
+                if i > 0:
+                    plan.context_before = links[i - 1][0]
+                if i < len(links):
+                    plan.context_after = links[i][1]
+            offset += frames[i]
+        count += len(links)
+    return count
 
 
 def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
@@ -243,11 +621,9 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
     except OSError as exc:
         return FixOutcome(plan, False, f"Cannot write to {out_dir}: {exc}")
     try:
-        proc = subprocess.run(ffmpeg_command(plan, tmp), capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", **_no_window())
-        if proc.returncode != 0 or os.path.getsize(tmp) == 0:
-            msg = (proc.stderr or "").strip().splitlines()
-            return FixOutcome(plan, False, "FFmpeg failed: " + (msg[-1] if msg else f"exit {proc.returncode}"))
+        ok, err, how = _convert(plan, tmp)
+        if not ok:
+            return FixOutcome(plan, False, "FFmpeg failed: " + err)
         output = plan.output
         if plan.replace_original:
             if os.path.exists(output) and os.path.normcase(os.path.abspath(output)) != \
@@ -284,6 +660,11 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
             new = analyze_file(output, settings=cfg)
         verb = "Fixed" if plan.replace_original else "Saved"
         msg = f"{verb} {os.path.basename(output)} ({plan.description}, {after / before:.0%} of the size; {note})."
+        if how == "exact":
+            msg += (f" Every {_ordinal(plan.exact_ratio)} sample was the untouched 16-bit master, so it was "
+                    "restored bit-exactly, without resampling.")
+        elif how == "gapless":
+            msg += " Converted together with the neighbouring track(s), so the joins stay gapless."
         if new is not None:
             msg += f" Re-check: {new.verdict} – {new.summary}"
         return FixOutcome(plan, True, msg, output, new, before, after)
@@ -295,6 +676,10 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
                 os.remove(tmp)
             except OSError:
                 pass
+
+
+def _ordinal(n: int) -> str:
+    return {2: "second", 3: "third", 4: "fourth"}.get(n, f"{n}th")
 
 
 def ffmpeg_available() -> bool:

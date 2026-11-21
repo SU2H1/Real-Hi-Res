@@ -257,7 +257,7 @@ def main(argv=None) -> int:
 
 
 def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) -> int:
-    from .fix import plan_fix, run_fix
+    from .fix import plan_fix, prepare_gapless, run_fix
 
     plans = []
     for r in results:
@@ -278,6 +278,11 @@ def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) 
                 print(f"  {'':<22}    original: " + {"folder": f"moved to {p.backup_dir}",
                                                       "bak": "kept as .bak", "none": "deleted"}[p.backup])
         return 0
+    # Read the joins between album neighbours before any file is replaced.
+    joins = prepare_gapless(plans, results, progress=lambda m: print(f"Fix: {m}", flush=True))
+    if joins:
+        print(f"Fix: {joins} gapless join(s) found; those tracks are converted together with their "
+              "neighbours so the joins stay seamless.")
     failed = 0
     with ThreadPoolExecutor(max_workers=max(1, min(jobs, 16))) as ex:
         for out in ex.map(lambda p: run_fix(p, cfg), plans):
