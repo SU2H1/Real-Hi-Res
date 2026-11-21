@@ -98,6 +98,7 @@ jobs:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           KASPERSKY_OPENTIP_API_KEY: ${{ secrets.KASPERSKY_OPENTIP_API_KEY }}
+          PYTHONUNBUFFERED: "1"   # log each service's reply when it arrives
         run: |
           shopt -s nullglob
           mapfile -t INNER < inner-args.txt

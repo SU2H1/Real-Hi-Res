@@ -22,9 +22,11 @@ a key is skipped and its column links to the public report instead:
 * KASPERSKY_OPENTIP_API_KEY   optional: Kaspersky OpenTIP hash lookup / file
                               scan.  Kaspersky's own verdict is also read from
                               its engine row in the VirusTotal report.
-* HYBRID_ANALYSIS_API_KEY     Hybrid Analysis API v2: quick scan (AV
-                              multiscan) and a sandbox submission of the
-                              Windows .exe files.
+* HYBRID_ANALYSIS_API_KEY     Hybrid Analysis API v2: the Windows .exe files
+                              are submitted to the sandbox (when it has not
+                              seen them) before anything else, and the
+                              verdict plus the AV multiscan are read from
+                              /overview/<sha256> at the end.
 
 The Hybrid Analysis and OpenTIP response formats are read defensively (several
 field names are accepted) and their raw replies are printed to the log, so a
@@ -275,7 +277,7 @@ class OpenTIP:
         if zone.lower() in ("yellow", "orange"):
             return Result("suspicious", f"{zone} zone", self.gui(t.sha256), [("Kaspersky OpenTIP", f"{zone} zone")], 1)
         if zone.lower() == "green":
-            return Result("clean", "Green zone (clean)", self.gui(t.sha256), [], 1)
+            return Result("clean", "Green zone", self.gui(t.sha256), [], 1)
         return Result("pending", f"{zone or 'no'} verdict", self.gui(t.sha256))
 
 
@@ -309,48 +311,67 @@ class HybridAnalysis:
         print(f"Hybrid Analysis {method} {path}: HTTP {status} {json.dumps(js)[:600] if js is not None else body[:200]!r}")
         return status, js
 
-    def check(self, t: Target, deadline: float, submit: bool) -> Result:
-        link = self.gui(t.sha256)
-        with open(t.path, "rb") as f:
-            blob = f.read()
-        dets: List[Tuple[str, str]] = []
-        av_note = ""
-        status, js = self.call("POST", "/quick-scan/file", {"scan_type": "all"}, {"file": (t.name, blob)})
-        qid = (js or {}).get("id") if isinstance(js, dict) else None
-        while qid and self.clock() < deadline and not (isinstance(js, dict) and js.get("finished")):
-            self.sleep(30)
-            status, js = self.call("GET", f"/quick-scan/{qid}")
-        positives = total = 0
-        if isinstance(js, dict):
-            for sc in js.get("scanners") or js.get("scanners_v2") or []:
-                if not isinstance(sc, dict):
-                    continue
-                p, n = int(sc.get("positives") or 0), int(sc.get("total") or 0)
-                positives, total = positives + p, total + n
-                if p or str(sc.get("status", "")).lower() in ("malicious", "suspicious"):
-                    dets.append((sc.get("name") or "Hybrid Analysis scanner",
-                                 str(sc.get("status") or f"{p}/{n} engines")))
-            if total:
-                av_note = f"AV {positives}/{total}"
-        # Sandbox verdict: from an existing report, or start one.
-        status, ov = self.call("GET", f"/overview/{t.sha256}")
-        if status == 404 and submit:
+    def start(self, t: Target) -> None:
+        """Make sure a sandbox report exists or is being made (submitting the
+        file when Hybrid Analysis has never seen it), so it runs while the
+        other services are queried."""
+        status, _ = self.call("GET", f"/overview/{t.sha256}")
+        if status == 404:
+            with open(t.path, "rb") as f:
+                blob = f.read()
             self.call("POST", "/submit/file", {"environment_id": str(self.environment)},
                       {"file": (t.name, blob)}, timeout=1800)
-        verdict = str((ov or {}).get("verdict") or "").strip() if isinstance(ov, dict) else ""
-        score = (ov or {}).get("threat_score") if isinstance(ov, dict) else None
-        parts = [p for p in (verdict, f"threat score {score}/100" if score is not None else "", av_note) if p]
-        text = ", ".join(parts) if parts else ("sandbox report pending" if submit else "no report")
-        if verdict.lower() == "malicious" or positives:
-            return Result("detected", text, link, dets or [("Hybrid Analysis", verdict)], total)
-        if verdict.lower() == "suspicious":
-            return Result("suspicious", text, link, dets or [("Hybrid Analysis sandbox", "suspicious")], total)
-        if verdict or total:
+
+    def check(self, t: Target, deadline: float) -> Result:
+        """The report's verdict, waiting for a running analysis until `deadline`."""
+        while True:
+            status, ov = self.call("GET", f"/overview/{t.sha256}")
+            res = self.parse(t, ov if status == 200 else None)
+            if res.status != "pending" or self.clock() >= deadline:
+                return res
+            self.sleep(60)
+
+    @staticmethod
+    def parse(t: Target, ov) -> Result:
+        """Result from an /overview reply: the sandbox verdict plus the
+        antivirus multiscan in its "scanners" list."""
+        link = HybridAnalysis.gui(t.sha256)
+        if not isinstance(ov, dict):
+            return Result("pending", "sandbox report pending", link)
+        verdict = str(ov.get("verdict") or "").strip()
+        score = ov.get("threat_score")
+        scanners = ov.get("scanners") if isinstance(ov.get("scanners"), list) else []
+        v2 = ov.get("scanners_v2")
+        if not scanners and isinstance(v2, dict):
+            scanners = [dict(v, name=v.get("name") or k) for k, v in v2.items() if isinstance(v, dict)]
+        dets: List[Tuple[str, str]] = []
+        positives = total = 0
+        for sc in scanners:
+            if not isinstance(sc, dict):
+                continue
+            try:
+                p, n = int(sc.get("positives") or 0), int(sc.get("total") or 0)
+            except (TypeError, ValueError):
+                p = n = 0
+            state = str(sc.get("status") or "").lower()
+            positives, total = positives + p, total + n
+            if p or state in ("malicious", "suspicious"):
+                dets.append((f"{sc.get('name') or 'scanner'} (Hybrid Analysis)",
+                             state if state and not p else f"{p}/{n} engines"))
+        parts = [verdict, f"threat score {score}/100" if score is not None else "",
+                 f"AV {positives}/{total}" if total else ""]
+        text = ", ".join(x for x in parts if x) or "sandbox report pending"
+        v = verdict.lower()
+        if v == "malicious" or dets:
+            return Result("detected" if v == "malicious" or positives else "suspicious", text, link,
+                          dets or [("Hybrid Analysis sandbox", verdict)], total)
+        if v == "suspicious":
+            return Result("suspicious", text, link, [("Hybrid Analysis sandbox", "suspicious")], total)
+        if v in ("no specific threat", "whitelisted"):
             return Result("clean", text, link, [], total)
         return Result("pending", text, link)
 
 
-# ------------------------------------------------------------- the report ---
 def classify(detections: List[Tuple[str, str]], total: int) -> str:
     """'isolated' when only a few engines and no major one flag the file."""
     engines = {e for e, _ in detections}
@@ -413,7 +434,7 @@ def render(tag: str, targets: List[Target], table: Dict[str, Dict[str, Result]],
     configured = configured or {}
     lines = [START, "## Antivirus scan results", "",
              f"Last checked {now:%Y-%m-%d %H:%M} UTC. The files of this release are scanned with VirusTotal "
-             "(70+ engines), Kaspersky and the Hybrid Analysis sandbox before it is published and again every "
+             "(70+ engines), Kaspersky and the Hybrid Analysis sandbox, and the results are refreshed every "
              "day, because vendors keep changing their signatures. Click a result for the full report.", "",
              "| File | SHA-256 | VirusTotal | Kaspersky | Hybrid Analysis |",
              "| --- | --- | --- | --- | --- |"]
@@ -475,6 +496,18 @@ def main(argv=None) -> int:
     table: Dict[str, Dict[str, Result]] = {t.sha256: {} for t in targets}
     configured = {}
 
+    # The sandbox needs minutes per file, so it gets the files first.
+    ha_key = os.environ.get("HYBRID_ANALYSIS_API_KEY", "").strip()
+    configured["Hybrid Analysis"] = bool(ha_key)
+    ha = HybridAnalysis(ha_key, environment=int(os.environ.get("HYBRID_ANALYSIS_ENVIRONMENT", "160"))) \
+        if ha_key else None
+    exes = [t for t in targets if t.is_exe]  # the sandbox runs Windows programs; archives go to VirusTotal
+    for t in exes if ha else []:
+        try:
+            ha.start(t)
+        except Exception as exc:  # noqa: BLE001 - one service must not break the report
+            print(f"Hybrid Analysis {t.name}: {exc!r}")
+
     vt_key = os.environ.get("VT_API_KEY", "").strip()
     configured["VirusTotal"] = bool(vt_key)
     if vt_key:
@@ -509,21 +542,14 @@ def main(argv=None) -> int:
     for t in targets:
         table[t.sha256].setdefault("Kaspersky", Result("not-configured", "open report", OpenTIP.gui(t.sha256)))
 
-    ha_key = os.environ.get("HYBRID_ANALYSIS_API_KEY", "").strip()
-    configured["Hybrid Analysis"] = bool(ha_key)
-    ha = HybridAnalysis(ha_key, environment=int(os.environ.get("HYBRID_ANALYSIS_ENVIRONMENT", "160"))) \
-        if ha_key else None
-    for t in targets:
-        if not t.is_exe:
-            continue  # the sandbox runs Windows programs; archives are covered by VirusTotal
-        if ha:
-            try:
-                table[t.sha256]["Hybrid Analysis"] = ha.check(t, deadline, submit=True)
-            except Exception as exc:  # noqa: BLE001 - one service must not break the report
-                table[t.sha256]["Hybrid Analysis"] = Result("error", f"error: {exc}", HybridAnalysis.gui(t.sha256))
-        else:
-            table[t.sha256]["Hybrid Analysis"] = Result("not-configured", "open report",
-                                                        HybridAnalysis.gui(t.sha256))
+    for t in exes:
+        if ha is None:
+            table[t.sha256]["Hybrid Analysis"] = Result("not-configured", "open report", HybridAnalysis.gui(t.sha256))
+            continue
+        try:
+            table[t.sha256]["Hybrid Analysis"] = ha.check(t, deadline)
+        except Exception as exc:  # noqa: BLE001
+            table[t.sha256]["Hybrid Analysis"] = Result("error", f"error: {exc}", HybridAnalysis.gui(t.sha256))
 
     section = render(args.tag, targets, table, args.build_url, configured=configured)
     with open(args.notes_in, encoding="utf-8") as f:

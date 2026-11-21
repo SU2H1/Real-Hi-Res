@@ -141,3 +141,46 @@ def test_require_results_holds_the_release_back(tmp_path, monkeypatch):
     # A detection is a finished result: it is explained in the notes, not a reason to hold back.
     det, _ = VirusTotal.parse(t, _report(t.sha256, flagged=[("Zillya", "Trojan.Stealer.Win64.2764")]))
     assert av_scan.missing_results([t], {t.sha256: {"VirusTotal": det}}, configured) == []
+
+
+def test_hybrid_analysis_overview_parsing(tmp_path):
+    t = _target(tmp_path)
+    # The reply format Hybrid Analysis gave for the v1.8.1 launchers.
+    ov = {"sha256": t.sha256, "last_file_name": "RealHiRes.exe", "threat_score": None,
+          "verdict": "no specific threat", "multiscan_result": 0, "tags": ["evasive"],
+          "scanners": [{"name": "CrowdStrike Falcon", "status": "no-classification", "positives": None,
+                        "total": None},
+                       {"name": "Metadefender", "status": "clean", "positives": 0, "total": 25}]}
+    r = HybridAnalysis.parse(t, ov)
+    assert r.status == "clean" and r.summary == "no specific threat, AV 0/25" and not r.detections
+    bad = dict(ov, verdict="malicious", threat_score=88,
+               scanners=[{"name": "Metadefender", "status": "malicious", "positives": 3, "total": 25}])
+    r = HybridAnalysis.parse(t, bad)
+    assert r.status == "detected" and r.detections == [("Metadefender (Hybrid Analysis)", "3/25 engines")]
+    assert "threat score 88/100" in r.summary
+    assert HybridAnalysis.parse(t, dict(ov, verdict="no verdict")).status == "pending"
+    assert HybridAnalysis.parse(t, None).status == "pending"
+
+
+def test_hybrid_analysis_submits_unknown_file_once(tmp_path):
+    t = _target(tmp_path)
+    calls = []
+
+    def transport(method, url, headers=None, data=None, timeout=0):
+        calls.append((method, url.split("/api/v2")[1]))
+        assert headers["api-key"] == "k"
+        if url.endswith(f"/overview/{t.sha256}"):
+            done = any(m == "POST" for m, _ in calls) and len([c for c in calls if c[0] == "GET"]) > 2
+            return (200, json.dumps({"verdict": "no specific threat"}).encode()) if done else (404, b"{}")
+        if url.endswith("/submit/file"):
+            assert b'name="environment_id"' in data
+            return 201, json.dumps({"job_id": "j", "sha256": t.sha256}).encode()
+        return 500, b""
+
+    clock = [0.0]
+    ha = HybridAnalysis("k", transport=transport, sleep=lambda s: clock.__setitem__(0, clock[0] + s),
+                        clock=lambda: clock[0])
+    ha.start(t)
+    assert calls == [("GET", f"/overview/{t.sha256}"), ("POST", "/submit/file")]
+    assert ha.check(t, deadline=600).status == "clean"
+    assert sum(1 for m, _ in calls if m == "POST") == 1
