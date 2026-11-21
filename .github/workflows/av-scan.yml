@@ -1,0 +1,91 @@
+# Scan the files of a release with VirusTotal, Kaspersky and Hybrid Analysis and
+# keep the results, with an explanation of any detection, in the release notes.
+#
+# Runs after every release (called by build.yml), every day for the latest
+# release, and on demand (Actions -> "Antivirus scan" -> Run workflow).
+# API keys are repository secrets (Settings -> Secrets and variables -> Actions):
+#   VT_API_KEY, HYBRID_ANALYSIS_API_KEY, KASPERSKY_OPENTIP_API_KEY (optional).
+# Without a key that service is skipped and the table links to its public report.
+name: Antivirus scan
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: ""
+      build_url:
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to scan (empty = the latest release)"
+        default: ""
+  schedule:
+    - cron: "41 4 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: av-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download the release
+        id: rel
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName)
+          echo "Scanning release $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          mkdir -p assets inner
+          gh release download "$TAG" --repo "$REPO" -D assets
+          gh release view "$TAG" --repo "$REPO" --json body -q .body > notes.md
+          BUILD_URL="${{ inputs.build_url }}"
+          if [ -z "$BUILD_URL" ]; then
+            SHA=$(gh api "repos/$REPO/commits/$TAG" -q .sha || true)
+            [ -z "$SHA" ] || BUILD_URL=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" \
+              --event push --limit 10 --json url,headBranch -q 'map(select(.headBranch=="main"))[0].url // ""' || true)
+          fi
+          echo "build_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+          # The Windows launchers inside the zip are what antivirus programs judge.
+          INNER=()
+          for z in assets/*windows-x64.zip; do
+            [ -f "$z" ] || continue
+            unzip -j -o "$z" 'RealHiRes/RealHiRes.exe' 'RealHiRes/realhires-cli.exe' -d inner
+            for e in RealHiRes.exe realhires-cli.exe; do INNER+=(--inner "$e=$(basename "$z")"); done
+          done
+          : > inner-args.txt
+          [ ${#INNER[@]} -eq 0 ] || printf '%s\n' "${INNER[@]}" > inner-args.txt
+          ls -la assets inner
+      - name: Scan
+        shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
+          KASPERSKY_OPENTIP_API_KEY: ${{ secrets.KASPERSKY_OPENTIP_API_KEY }}
+        run: |
+          shopt -s nullglob
+          mapfile -t INNER < inner-args.txt
+          python3 packaging/av_scan.py --tag "${{ steps.rel.outputs.tag }}" \
+            --notes-in notes.md --notes-out notes-new.md --json av-results.json \
+            --build-url "${{ steps.rel.outputs.build_url }}" "${INNER[@]}" inner/*.exe assets/*
+          cat notes-new.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Update the release notes
+        run: gh release edit "${{ steps.rel.outputs.tag }}" --repo "$REPO" --notes-file notes-new.md
+      - uses: actions/upload-artifact@v5
+        with:
+          name: av-results-${{ steps.rel.outputs.tag }}
+          path: av-results.json
+          overwrite: true

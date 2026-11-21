@@ -6,15 +6,15 @@ Real-Hi-Res is a desktop app and command-line tool that scans your music library
 
 ## Download and run (no installation needed)
 
-Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it.
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.8.1-windows-x64.zip`; `<version>` in the table below stands for it.
 
 | System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
-| Windows 10/11, 64-bit | `RealHiRes-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
-| macOS 12 Monterey or later, Apple Silicon (M1 and later) | `RealHiRes-macos-arm64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
-| macOS 10.15 Catalina or later, Intel | `RealHiRes-macos-x86_64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
-| Linux, x86-64 (PC) | `RealHiRes-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
-| Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+| Windows 10/11, 64-bit | `RealHiRes-<version>-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
+| macOS 12 Monterey or later, Apple Silicon (M1 and later) | `RealHiRes-<version>-macos-arm64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
+| macOS 10.15 Catalina or later, Intel | `RealHiRes-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
+| Linux, x86-64 (PC) | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+| Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
 
 If you are not sure which Mac you have, open the Apple menu and choose **About This Mac**. "Chip: Apple M…" means Apple Silicon, and "Processor: Intel…" means Intel. On Linux, `uname -m` prints `x86_64` for the x64 package or `aarch64` for the ARM64 package.
 
@@ -31,7 +31,7 @@ xattr -dr com.apple.quarantine /Applications/RealHiRes.app
 The Linux packages are built on glibc 2.28. They therefore run on practically every distribution from 2018 onwards, including Ubuntu 18.10+, Debian 10+, Linux Mint 20+, Fedora 29+, RHEL/Rocky/AlmaLinux 8+, openSUSE Leap 15.3+, Arch and Manjaro. The app needs a graphical desktop (X11, or Wayland with XWayland, which every mainstream desktop provides). The command-line tool runs anywhere, including on servers. Unpack the archive wherever you like to keep the app:
 
 ```bash
-tar -xzf RealHiRes-linux-x64.tar.gz
+tar -xzf RealHiRes-*-linux-x64.tar.gz
 ```
 
 Then optionally add Real-Hi-Res to your application menu and put `realhires-cli` on your `PATH` (in `~/.local/bin`). This installs for your user only and needs no root:
@@ -47,6 +47,8 @@ The app keeps running from the unpacked folder, so run `install.sh` again if you
 Unzip the archive and double-click `RealHiRes.exe`. The app is not code-signed, so SmartScreen may show "Windows protected your PC" the first time. Continue with **More info → Run anyway**. Keep the whole `RealHiRes` folder together: `RealHiRes.exe` and `realhires-cli.exe` are small launchers, and the program itself is in `RealHiRes.pkg`, `realhires-cli.pkg` and the `_internal` folder next to them.
 
 A few antivirus engines have flagged earlier Windows builds as a trojan (for example 1 of 25 engines on Hybrid Analysis, with names such as "Malware_60.0" or "Trojan.Stealer.Win64"). These are false positives. Programs packaged with PyInstaller, like this one, share a prebuilt launcher with every other PyInstaller program, malware included, and carry their compressed code inside the `.exe`, which heuristics mistake for a packed trojan. Since version 1.8.1 the Windows build compiles its own launcher, keeps the compressed code in the separate `.pkg` files, and gives both executables proper version information and uncompressed icons, which removes the traits those engines reacted to. If your antivirus still quarantines a file, restore it and report the false positive to that vendor. The full source and the build log of every release are public on GitHub, so you can check exactly what the package contains.
+
+Every release page has an **Antivirus scan results** section. It lists each download, and the two Windows launchers inside the Windows zip, with its SHA-256 and its current result on VirusTotal (70+ engines), Kaspersky and the Hybrid Analysis sandbox, each linked to the full report. The files are scanned when the release is published and again every day, and any detection is explained right below the table: which engines flag the file and with which name, whether that looks like the usual PyInstaller false positive (a few engines, no major vendor, generic heuristic names) or needs a closer look.
 
 ## Desktop app (GUI)
 
@@ -305,6 +307,10 @@ git tag v1.1.0
 ```bash
 git push origin v1.1.0
 ```
+
+The release files are named with their version, for example `RealHiRes-1.8.1-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
+
+After publishing, the release job calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml), which also runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag). It downloads the release, unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's verdict from its VirusTotal engine row (and from Kaspersky OpenTIP if a key is set), sends the two Windows launchers to Hybrid Analysis (quick scan plus a sandbox run), and rewrites the "Antivirus scan results" section of the release notes. The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes.
 
 To build a package on your own machine, install the build tools and run the same script with the name of the archive you want. The result appears in `out/`.
 

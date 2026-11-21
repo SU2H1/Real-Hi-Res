@@ -1,5 +1,7 @@
 ## What's new in 1.8.1
 
+The download files now carry the version in their names, for example `RealHiRes-<version>-windows-x64.zip`. The **Antivirus scan results** section below lists every file with its current VirusTotal, Kaspersky and Hybrid Analysis result; it is updated every day and explains any detection.
+
 The Windows package no longer looks like a packed trojan to antivirus heuristics, which made a few engines flag earlier builds as false positives. Its launcher is now compiled on the build machine instead of being PyInstaller's widely shared prebuilt one, the compressed program sits in separate `.pkg` files next to the small `.exe` launchers, and both executables carry version information and uncompressed icons. Keep the `.pkg` files and the `_internal` folder next to the `.exe` files.
 
 ## What's new in 1.8.0
@@ -16,11 +18,11 @@ Pick the package for your computer, unpack it and run it. Python, NumPy and FFmp
 
 | System | Download | Start the app |
 | --- | --- | --- |
-| Windows 10/11, 64-bit | `RealHiRes-windows-x64.zip` | `RealHiRes\RealHiRes.exe` |
-| macOS 12+ on Apple Silicon (M1 and later) | `RealHiRes-macos-arm64.dmg` | drag `RealHiRes` to Applications |
-| macOS 10.15+ on Intel | `RealHiRes-macos-x86_64.dmg` | drag `RealHiRes` to Applications |
-| Linux x86-64 | `RealHiRes-linux-x64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh` adds a menu entry) |
-| Linux ARM64 (e.g. Raspberry Pi 4/5 with 64-bit OS) | `RealHiRes-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh`) |
+| Windows 10/11, 64-bit | `RealHiRes-<version>-windows-x64.zip` | `RealHiRes\RealHiRes.exe` |
+| macOS 12+ on Apple Silicon (M1 and later) | `RealHiRes-<version>-macos-arm64.dmg` | drag `RealHiRes` to Applications |
+| macOS 10.15+ on Intel | `RealHiRes-<version>-macos-x86_64.dmg` | drag `RealHiRes` to Applications |
+| Linux x86-64 | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh` adds a menu entry) |
+| Linux ARM64 (e.g. Raspberry Pi 4/5 with 64-bit OS) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh`) |
 
 The `.zip` files for macOS contain the same app as the `.dmg` files. The Linux packages need glibc 2.28 or newer (any distribution from 2018 onwards), and every package also contains the command-line tool `realhires-cli`.
 

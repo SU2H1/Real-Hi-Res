@@ -127,6 +127,9 @@ jobs:
       (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     needs: [windows, macos, linux]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      publish: ${{ steps.tag.outputs.publish }}
     steps:
       - uses: actions/checkout@v5
       - name: Decide the release tag
@@ -150,6 +153,9 @@ jobs:
             fi
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # The release notes name the downloads with a <version> placeholder.
+          sed "s/<version>/$VERSION/g" packaging/RELEASE_NOTES.md > release-notes.md
           echo "Release tag: $TAG"
       - uses: actions/download-artifact@v6
         if: steps.tag.outputs.publish == 'true'
@@ -165,7 +171,18 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Real-Hi-Res ${{ steps.tag.outputs.tag }}
-          body_path: packaging/RELEASE_NOTES.md
+          body_path: release-notes.md
           generate_release_notes: true
           make_latest: "true"
           files: assets/*
+
+  # Releases created with GITHUB_TOKEN start no other workflows, so the scan is
+  # called from here; av-scan.yml also runs daily and on demand.
+  av-scan:
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    uses: ./.github/workflows/av-scan.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    secrets: inherit

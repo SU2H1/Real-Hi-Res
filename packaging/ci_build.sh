@@ -5,16 +5,24 @@
 #   ASSET=RealHiRes-linux-x64 bash packaging/ci_build.sh
 #
 # Environment:
-#   ASSET          name of the archive to produce (required)
+#   ASSET          name of the archive to produce (required); the version from
+#                  realhires/__init__.py is inserted after "RealHiRes-", so
+#                  RealHiRes-windows-x64 becomes RealHiRes-1.8.1-windows-x64
 #   PYTHON         python to use (default: python)
 #   MACOS_MIN      macOS only: minimum macOS the package must support (default 12.0)
 #   MAX_GLIBC      Linux only: newest glibc the package may require (default 2.28)
 #   SKIP_FETCH=1   use an FFmpeg already in build/ffmpeg (or none)
 #   SKIP_TESTS=1   skip pytest
-# Output: out/<ASSET>.{zip,dmg,tar.gz}
+# Output: out/<ASSET>.{zip,dmg,tar.gz}, e.g. out/RealHiRes-1.8.1-linux-x64.tar.gz
 set -euo pipefail
 : "${ASSET:?set ASSET}"
 PY="${PYTHON:-python}"
+VERSION="$("$PY" -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('realhires/__init__.py').read()).group(1))")"
+case "$ASSET" in
+  RealHiRes-"$VERSION"-*) ;;
+  RealHiRes-*) ASSET="RealHiRes-$VERSION-${ASSET#RealHiRes-}" ;;
+esac
+echo "Building $ASSET (version $VERSION)"
 export REALHIRES_MACOS_MIN="${MACOS_MIN:-12.0}"
 MAX_GLIBC="${MAX_GLIBC:-2.28}"
 OS="$(uname -s)"
