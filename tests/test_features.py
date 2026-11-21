@@ -336,10 +336,15 @@ def test_fix_restores_16_bit_master_bit_exactly(library, tmp_path):
         tags = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format_tags=title", "-of", "json",
                                out.output], capture_output=True, text=True, encoding="utf-8").stdout
         assert "曲名" in tags
-    # A soxr upsample does not keep the master: it is resampled as before.
-    plan, _ = plan_fix(analyze_file(library["fake_up_48_to_96"]), cfg)
+    # A volume change after the upsample leaves no untouched sample: the phase check
+    # must refuse it and the file is resampled as before (on every FFmpeg build).
+    scaled = tmp_path / "scaled_96.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(master), "-af", "aresample=96000,volume=0.9",
+                    "-c:a", "flac", "-sample_fmt", "s32", str(scaled)], check=True)
+    plan, _ = plan_fix(analyze_file(str(scaled)), cfg)
+    assert plan.exact_ratio == 2
     out = run_fix(plan, cfg)
-    assert out.ok and "bit-exactly" not in out.message
+    assert out.ok and "bit-exactly" not in out.message, out.message
 
 
 @needs_ffmpeg
