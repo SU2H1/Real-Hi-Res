@@ -184,3 +184,21 @@ def test_hybrid_analysis_submits_unknown_file_once(tmp_path):
     assert calls == [("GET", f"/overview/{t.sha256}"), ("POST", "/submit/file")]
     assert ha.check(t, deadline=600).status == "clean"
     assert sum(1 for m, _ in calls if m == "POST") == 1
+
+
+def test_hybrid_analysis_does_not_wait_for_a_refused_submission(tmp_path):
+    t = _target(tmp_path)
+    calls = []
+
+    def transport(method, url, headers=None, data=None, timeout=0):
+        calls.append(method)
+        if url.endswith("/submit/file"):  # what Hybrid Analysis answered on 2026-11-21
+            return 404, json.dumps({"message": "Requested URI - Not Found"}).encode()
+        return 404, json.dumps({"message": "Not Found"}).encode()
+
+    slept = []
+    ha = HybridAnalysis("k", transport=transport, sleep=slept.append, clock=lambda: 0.0)
+    ha.start(t)
+    r = ha.check(t, deadline=3600)
+    assert r.status == "pending" and not slept, "polled a report that can never appear"
+    assert r.summary == "no report: not submitted (HTTP 404: Requested URI - Not Found)"

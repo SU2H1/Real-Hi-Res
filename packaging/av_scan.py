@@ -278,6 +278,8 @@ class OpenTIP:
             return Result("suspicious", f"{zone} zone", self.gui(t.sha256), [("Kaspersky OpenTIP", f"{zone} zone")], 1)
         if zone.lower() == "green":
             return Result("clean", "Green zone", self.gui(t.sha256), [], 1)
+        if zone.lower() == "grey":
+            return Result("pending", "Grey zone (not categorized yet)", self.gui(t.sha256))
         return Result("pending", f"{zone or 'no'} verdict", self.gui(t.sha256))
 
 
@@ -292,6 +294,7 @@ class HybridAnalysis:
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.time):
         self.key, self.transport, self.environment = key, transport, environment
         self.sleep, self.clock = sleep, clock
+        self.state: Dict[str, str] = {}   # sha256 -> "known" | "submitted" | why it was not submitted
 
     @staticmethod
     def gui(sha: str) -> str:
@@ -316,20 +319,37 @@ class HybridAnalysis:
         file when Hybrid Analysis has never seen it), so it runs while the
         other services are queried."""
         status, _ = self.call("GET", f"/overview/{t.sha256}")
-        if status == 404:
-            with open(t.path, "rb") as f:
-                blob = f.read()
-            self.call("POST", "/submit/file", {"environment_id": str(self.environment)},
-                      {"file": (t.name, blob)}, timeout=1800)
+        if status == 200:
+            self.state[t.sha256] = "known"
+            return
+        if status != 404:
+            self.state[t.sha256] = f"no report (HTTP {status})"
+            return
+        with open(t.path, "rb") as f:
+            blob = f.read()
+        status, js = self.call("POST", "/submit/file", {"environment_id": str(self.environment)},
+                               {"file": (t.name, blob)}, timeout=1800)
+        if 200 <= status < 300:
+            self.state[t.sha256] = "submitted"
+        else:
+            msg = (js or {}).get("message") if isinstance(js, dict) else None
+            self.state[t.sha256] = f"not submitted (HTTP {status}{': ' + str(msg) if msg else ''})"
 
     def check(self, t: Target, deadline: float) -> Result:
-        """The report's verdict, waiting for a running analysis until `deadline`."""
+        """The report's verdict, waiting for a running analysis until `deadline`
+        (only when the file is known or was accepted: nothing else will appear)."""
+        state = self.state.get(t.sha256, "known")
         while True:
             status, ov = self.call("GET", f"/overview/{t.sha256}")
             res = self.parse(t, ov if status == 200 else None)
             if res.status != "pending" or self.clock() >= deadline:
-                return res
+                break
+            if state not in ("known", "submitted"):
+                break
             self.sleep(60)
+        if res.status == "pending" and state not in ("known", "submitted"):
+            res.summary = f"no report: {state}"
+        return res
 
     @staticmethod
     def parse(t: Target, ov) -> Result:
@@ -482,6 +502,8 @@ def main(argv=None) -> int:
     ap.add_argument("--inner", action="append", default=[],
                     help="NAME=ARCHIVE: mark a file as unpacked from a release archive")
     ap.add_argument("--minutes", type=float, default=45.0, help="time budget for waiting on analyses")
+    ap.add_argument("--sandbox-minutes", type=float, default=20.0,
+                    help="at most this long (from the start) for Hybrid Analysis sandbox reports")
     ap.add_argument("--require-results", action="store_true",
                     help="exit 1 unless VirusTotal has a finished result for every file (used before a release)")
     args = ap.parse_args(argv)
@@ -492,7 +514,8 @@ def main(argv=None) -> int:
         name = os.path.basename(p)
         targets.append(Target(p, name, sha256_of(p), os.path.getsize(p),
                               f"inside `{inner[name]}`" if name in inner else ""))
-    deadline = time.time() + args.minutes * 60
+    started = time.time()
+    deadline = started + args.minutes * 60
     table: Dict[str, Dict[str, Result]] = {t.sha256: {} for t in targets}
     configured = {}
 
@@ -547,7 +570,7 @@ def main(argv=None) -> int:
             table[t.sha256]["Hybrid Analysis"] = Result("not-configured", "open report", HybridAnalysis.gui(t.sha256))
             continue
         try:
-            table[t.sha256]["Hybrid Analysis"] = ha.check(t, deadline)
+            table[t.sha256]["Hybrid Analysis"] = ha.check(t, min(deadline, started + args.sandbox_minutes * 60))
         except Exception as exc:  # noqa: BLE001
             table[t.sha256]["Hybrid Analysis"] = Result("error", f"error: {exc}", HybridAnalysis.gui(t.sha256))
 
