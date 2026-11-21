@@ -118,3 +118,26 @@ def test_main_without_keys_links_public_reports(tmp_path, monkeypatch):
     assert f"https://hybrid-analysis.com/sample/{t.sha256}" in out
     assert "inside `RealHiRes-1-windows-x64.zip`" in out
     assert "no automatic scan results yet" in out and "No engine reports" not in out
+
+
+def test_require_results_holds_the_release_back(tmp_path, monkeypatch):
+    for k in ("VT_API_KEY", "KASPERSKY_OPENTIP_API_KEY", "HYBRID_ANALYSIS_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    t = _target(tmp_path)
+    notes_in, notes_out = tmp_path / "in.md", tmp_path / "out.md"
+    notes_in.write_text("notes\n", encoding="utf-8")
+    args = [t.path, "--tag", "v1", "--notes-in", str(notes_in), "--notes-out", str(notes_out)]
+    # Without a VirusTotal key nothing is scanned, so a release must not go out.
+    assert av_scan.main(args + ["--require-results"]) == 1
+    assert notes_out.exists()               # the notes are still written for the log
+    assert av_scan.main(args) == 0          # the daily refresh does not gate anything
+
+    configured = {"VirusTotal": True}
+    vt, kas = VirusTotal.parse(t, _report(t.sha256))
+    assert av_scan.missing_results([t], {t.sha256: {"VirusTotal": vt}}, configured) == []
+    pending, _ = VirusTotal.parse(t, None)
+    missing = av_scan.missing_results([t], {t.sha256: {"VirusTotal": pending}}, configured)
+    assert missing == ["RealHiRes.exe (VirusTotal: not analysed yet)"]
+    # A detection is a finished result: it is explained in the notes, not a reason to hold back.
+    det, _ = VirusTotal.parse(t, _report(t.sha256, flagged=[("Zillya", "Trojan.Stealer.Win64.2764")]))
+    assert av_scan.missing_results([t], {t.sha256: {"VirusTotal": det}}, configured) == []

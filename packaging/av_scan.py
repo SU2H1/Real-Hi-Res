@@ -4,9 +4,11 @@ the results (with an explanation of any detection) into the release notes.
     python packaging/av_scan.py --tag v1.8.1 --notes-in body.md --notes-out new.md \\
         --json results.json [--build-url URL] FILE...
 
-Run by .github/workflows/av-scan.yml after every release and once a day, so
-the results on the release page stay current as vendors change their
-signatures.  Only the Python standard library is used.
+Run by .github/workflows/av-scan.yml before every release (on the packages
+the release will publish; with --require-results it fails unless VirusTotal
+has finished every file, which holds the release back) and once a day for the
+latest release, so the results on the release page stay current as vendors
+change their signatures.  Only the Python standard library is used.
 
 Keys come from the environment (GitHub repository secrets); a service without
 a key is skipped and its column links to the public report instead:
@@ -411,7 +413,7 @@ def render(tag: str, targets: List[Target], table: Dict[str, Dict[str, Result]],
     configured = configured or {}
     lines = [START, "## Antivirus scan results", "",
              f"Last checked {now:%Y-%m-%d %H:%M} UTC. The files of this release are scanned with VirusTotal "
-             "(70+ engines), Kaspersky and the Hybrid Analysis sandbox after it is published and again every "
+             "(70+ engines), Kaspersky and the Hybrid Analysis sandbox before it is published and again every "
              "day, because vendors keep changing their signatures. Click a result for the full report.", "",
              "| File | SHA-256 | VirusTotal | Kaspersky | Hybrid Analysis |",
              "| --- | --- | --- | --- | --- |"]
@@ -459,6 +461,8 @@ def main(argv=None) -> int:
     ap.add_argument("--inner", action="append", default=[],
                     help="NAME=ARCHIVE: mark a file as unpacked from a release archive")
     ap.add_argument("--minutes", type=float, default=45.0, help="time budget for waiting on analyses")
+    ap.add_argument("--require-results", action="store_true",
+                    help="exit 1 unless VirusTotal has a finished result for every file (used before a release)")
     args = ap.parse_args(argv)
 
     inner = dict(x.split("=", 1) for x in args.inner)
@@ -493,7 +497,11 @@ def main(argv=None) -> int:
     if kas_key:
         tip = OpenTIP(kas_key)
         for t in targets:
-            r = tip.check(t, upload=t.is_exe)
+            try:
+                r = tip.check(t, upload=t.is_exe)
+            except Exception as exc:  # noqa: BLE001 - one service must not break the report
+                print(f"OpenTIP {t.name}: {exc!r}")
+                r = Result("error", "no result", OpenTIP.gui(t.sha256))
             via_vt = table[t.sha256].get("Kaspersky")
             if r.status in ("clean", "detected", "suspicious") or via_vt is None or via_vt.status == "n/a":
                 table[t.sha256]["Kaspersky"] = r
@@ -530,7 +538,24 @@ def main(argv=None) -> int:
     flagged = [t.name for t in targets if any(r.detections for r in table[t.sha256].values())]
     if flagged:
         print("::warning::Antivirus detections for " + ", ".join(flagged))
+    if args.require_results:
+        missing = missing_results(targets, table, configured)
+        if missing:
+            print("::error::No finished antivirus result yet, so the release is held back: " + "; ".join(missing)
+                  + ". Re-run the failed job to scan again.")
+            return 1
     return 0
+
+
+def missing_results(targets: List[Target], table: Dict[str, Dict[str, Result]],
+                    configured: Dict[str, bool]) -> List[str]:
+    """What keeps a release from being published: VirusTotal must be set up
+    and must have a finished verdict for every file."""
+    if not configured.get("VirusTotal"):
+        return ["VT_API_KEY is not set"]
+    done = ("clean", "detected", "suspicious")
+    return [f"{t.name} (VirusTotal: {table[t.sha256].get('VirusTotal').summary})" for t in targets
+            if getattr(table[t.sha256].get("VirusTotal"), "status", "") not in done]
 
 
 if __name__ == "__main__":

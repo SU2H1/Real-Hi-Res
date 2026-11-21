@@ -3,8 +3,12 @@ name: Test, build and release
 # * Every push / pull request: run the test suite and build all packages
 #   (downloadable from the run's "Artifacts" section).
 # * Pushing a tag such as v1.2.0, or pushing to main with a __version__ that
-#   has not been released yet: additionally publish a GitHub Release with the
-#   packages attached (see the release job).
+#   has not been released yet: additionally scan the packages with VirusTotal,
+#   Kaspersky and Hybrid Analysis (av-scan job) and then publish a GitHub
+#   Release with the packages and those scan results (release job).  A release
+#   is never published before its antivirus results are in its notes.
+# * Run workflow (workflow_dispatch) with "av_scan": build and scan without
+#   publishing, to try the scan on a branch.
 #
 # Every job runs packaging/ci_build.sh, which fetches FFmpeg, runs pytest with
 # it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
@@ -15,6 +19,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      av_scan:
+        description: "Also run the pre-release antivirus scan on the packages (nothing is published)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # needed by the release job to create the release
@@ -117,19 +126,16 @@ jobs:
           path: out/*
           if-no-files-found: error
 
-  # Publishes a GitHub Release when either
+  # Decides whether this run publishes a release: when either
   #  * a tag vX.Y.Z is pushed (it must match realhires/__init__.py), or
   #  * main receives a commit whose __version__ has no release yet
   #    (so merging a version bump into main releases it automatically).
-  release:
-    if: >-
-      github.event_name == 'push' &&
-      (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-    needs: [windows, macos, linux]
+  prepare:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       publish: ${{ steps.tag.outputs.publish }}
+      scan: ${{ steps.tag.outputs.scan }}
     steps:
       - uses: actions/checkout@v5
       - name: Decide the release tag
@@ -137,52 +143,65 @@ jobs:
         shell: bash
         run: |
           VERSION=$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('realhires/__init__.py').read()).group(1))")
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="$GITHUB_REF_NAME"
-            if [ "$TAG" != "v$VERSION" ]; then
-              echo "::error::Tag $TAG does not match __version__ $VERSION"; exit 1
+          TAG="v$VERSION"
+          PUBLISH=false
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match __version__ $VERSION"; exit 1
             fi
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            TAG="v$VERSION"
+            PUBLISH=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
             if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
               echo "$TAG already exists - nothing to release."
-              echo "publish=false" >> "$GITHUB_OUTPUT"
             else
-              echo "publish=true" >> "$GITHUB_OUTPUT"
+              PUBLISH=true
             fi
           fi
+          SCAN=$PUBLISH
+          [ "${{ github.event_name == 'workflow_dispatch' && inputs.av_scan }}" != true ] || SCAN=true
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # The release notes name the downloads with a <version> placeholder.
-          sed "s/<version>/$VERSION/g" packaging/RELEASE_NOTES.md > release-notes.md
-          echo "Release tag: $TAG"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "scan=$SCAN" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG, publish: $PUBLISH, antivirus scan: $SCAN"
+
+  # Scans this run's packages before anything is published, and writes the
+  # release notes with the "Antivirus scan results" section.  It fails, and so
+  # holds the release back, when VirusTotal has no finished result for every
+  # file (re-run the failed job to try again).  Releases created with
+  # GITHUB_TOKEN start no other workflows, so av-scan.yml is called from here;
+  # it also refreshes the latest release every day and runs on demand.
+  av-scan:
+    needs: [prepare, windows, macos, linux]
+    if: needs.prepare.outputs.scan == 'true'
+    uses: ./.github/workflows/av-scan.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      prerelease: true
+    secrets: inherit
+
+  release:
+    needs: [prepare, av-scan]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/download-artifact@v6
-        if: steps.tag.outputs.publish == 'true'
         with:
+          pattern: RealHiRes-*
           path: assets
           merge-multiple: true
-      - if: steps.tag.outputs.publish == 'true'
-        run: ls -la assets
+      - uses: actions/download-artifact@v6
+        with:
+          name: release-notes
+          path: notes
+      - run: ls -la assets notes
       - name: Publish GitHub Release
-        if: steps.tag.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Real-Hi-Res ${{ steps.tag.outputs.tag }}
-          body_path: release-notes.md
+          name: Real-Hi-Res ${{ needs.prepare.outputs.tag }}
+          body_path: notes/release-notes.md
           generate_release_notes: true
           make_latest: "true"
           files: assets/*
-
-  # Releases created with GITHUB_TOKEN start no other workflows, so the scan is
-  # called from here; av-scan.yml also runs daily and on demand.
-  av-scan:
-    needs: release
-    if: needs.release.outputs.publish == 'true'
-    uses: ./.github/workflows/av-scan.yml
-    with:
-      tag: ${{ needs.release.outputs.tag }}
-      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    secrets: inherit
