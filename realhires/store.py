@@ -164,6 +164,13 @@ class ResultStore:
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        try:
+            return self._setup(db)
+        except BaseException:
+            db.close()  # Windows cannot rename the damaged file while it is open
+            raise
+
+    def _setup(self, db: sqlite3.Connection) -> sqlite3.Connection:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA auto_vacuum=INCREMENTAL")  # only takes effect on a new file
         try:
@@ -174,7 +181,6 @@ class ResultStore:
         db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
         row = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row and int(row[0]) > SCHEMA_VERSION:
-            db.close()
             raise StoreError(f"{self.path} was written by a newer Real-Hi-Res; it is left untouched")
         db.execute("""CREATE TABLE IF NOT EXISTS results (
             path TEXT NOT NULL, skey TEXT NOT NULL, fp TEXT NOT NULL,
