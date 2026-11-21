@@ -13,7 +13,7 @@ from typing import Iterable, List, Optional, TextIO
 
 import numpy as np
 
-from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
+from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult, saved_note,
                       verdict_breakdown)
 
 _COLORS = {REAL: "32", FAKE: "31", FAKE_LOSSLESS: "1;31", SUSPECT: "33", NOT_HIRES: "36",
@@ -95,6 +95,8 @@ def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = 
         if r.grid_step:
             line += (f"{pad}· Value grid: step {r.grid_step:.1f} (24-bit LSBs), "
                      f"{r.grid_bits}-bit master, gain {r.grid_gain_db:+.1f} dB")
+        if r.saved:
+            line += f"{pad}· {saved_note(r)}"
     return line
 
 

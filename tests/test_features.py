@@ -126,6 +126,7 @@ def test_gui_scan_summary_and_settings(library, tmp_path):
 import sys
 sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
 def run():
+    import time
     import tkinter as tk
     from realhires import gui, settings
     root = tk.Tk()
@@ -184,8 +185,59 @@ def run():
         new = settings.Settings(); new.colormap = "gray"
         app.apply_settings(new)
         assert settings.load().colormap == "gray"
-        print("OK", len(dialogs), len(listed))
+        state["dialogs"], state["listed"] = len(dialogs), len(listed)
+        state["errors"] = {{p for p, r in app.results.items() if r.verdict == "ERROR"}}
+        # saved results: listing the folder again shows every result without a scan
+        app.clear(); app._add_source(folder)
+        root.after(100, saved)
+    def saved():
+        if app.listing or app.lookup_busy:
+            return root.after(100, saved)
+        missing = {{f for f in app.all_files() if f not in app.results}}
+        assert missing == state["errors"], ("not reused", sorted(missing)[:3])
+        assert all(r.saved and not r.saved["outdated"] for r in app.results.values())
+        assert "checked before" in app.status_var.get(), app.status_var.get()
+        app.set_filters(["FAKE HI-RES"]); root.update()
+        p = app.tree.get_children()[0]
+        app.tree.selection_set(p); root.update()
+        assert app.cache.get(p)["spectrogram"], "saved graphs not used"
+        assert "Saved result from" in app.text.get("1.0", "end")
+        # graphs that were not saved are drawn on demand
+        from realhires.store import ResultStore
+        with ResultStore() as st:
+            st.db.execute("UPDATE results SET graphs=NULL, spectro=NULL, gbytes=0")
+        app.cache.clear(); app.show_details()
+        assert app.spectrogram.waiting, "no on-demand graphs"
+        state["path"] = p
+        root.after(200, drawn)
+    def drawn():
+        p = state["path"]
+        if app.cache.get(p) is None:
+            return root.after(200, drawn)
+        assert app.cache.get(p)["spectrogram"] and not app.spectrogram.waiting
+        app.rescan_selected()
+        assert app.scanning
+        root.after(200, rescanned)
+    def rescanned():
+        if app.scanning:
+            return root.after(200, rescanned)
+        p = state["path"]
+        assert app.results[p].saved is None, "re-scan reused the saved result"
+        assert sum(1 for r in app.results.values() if r.saved) == len(app.results) - 1
+        # a full scan now analyses nothing: every file has a saved result
+        state["t"] = time.time()
+        app.start_scan()
+        root.after(100, full)
+    def full():
+        if app.scanning:
+            return root.after(100, full)
+        n = len(app.all_files()) - len(state["errors"])
+        assert sum(1 for r in app.results.values() if r.saved) == n, "scan did not reuse saved results"
+        assert app.done == len(app.all_files()) and not app.scan_order
+        assert "from saved results" in app.status_var.get(), app.status_var.get()
+        print("OK", state["dialogs"], state["listed"])
         app.quit_app()
+    state = {{}}
     root.after(300, listed)
     root.mainloop()
 if __name__ == "__main__":

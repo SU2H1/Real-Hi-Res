@@ -6,7 +6,7 @@ Real-Hi-Res is a desktop app and command-line tool that scans your music library
 
 ## Download and run (no installation needed)
 
-Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.8.1-windows-x64.zip`; `<version>` in the table below stands for it.
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.9.0-windows-x64.zip`; `<version>` in the table below stands for it.
 
 | System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
@@ -57,6 +57,12 @@ Click **Add Folder…** (or **Add Files…**). Each folder or file you add appea
 ![Sources panel listing an added folder with 10 audio files and an empty folder in red; the files are listed as "Not scanned"](docs/gui-sources.png)
 
 Large folders are listed progressively while they are being searched ("1500 so far…"), so you see files appear immediately instead of waiting.
+
+**Results are saved, so nothing is scanned twice.** Every result is saved on your computer, and a file is only analysed again if it has changed. That holds on the next scan, after restarting the app, and after updating Real-Hi-Res to a new version. When you add a folder you have checked before, its files show their verdicts straight away, before you press Scan, and the status line says how many were checked before ("6 of 9 files were checked before and have not changed: their saved results are shown. Press Scan to analyse the other 3."). **Scan** then only analyses new and changed files, so a library of thousands of files that gained one new album takes as long as that album. A file you moved or renamed keeps its result too. The **Details** of a reused result say so ("Saved result from 2026-11-21, made by Real-Hi-Res 1.9.0; the file has not changed since…").
+
+![A folder checked before: six saved results are shown at once without scanning, three new files wait for Scan](docs/gui-saved.png)
+
+A saved result is reused when the file has the same size and modification time as when it was analysed, the **Detection** settings are the same (changing one of them analyses the files again on the next scan, because the result could differ), and it covers as much of the file as the scan asks for (a full-file result also answers a quick scan, but not the other way round). Errors are not saved, so a file that could not be read is tried again. When an update improves the detection rules, results saved by the older rules are still shown and not analysed again, but a note in the status bar counts them, with a **Re-scan them** button; you can also turn on **Re-scan results of older detection rules** in Settings to do this automatically. **Re-scan** in the right-click menu (or **Edit → Re-scan selected files**) analyses chosen files again whatever is saved. Each file's graphs (spectrogram and spectrum, about 30–90 KB) are saved too, up to 500 MB in total by default; beyond that the graphs viewed longest ago are dropped and drawn again in the background when you select the file. The results live in one database file in your user folder, outside the program: `%LOCALAPPDATA%\RealHiRes\results.sqlite` on Windows, `~/Library/Application Support/RealHiRes/results.sqlite` on macOS and `~/.local/share/realhires/results.sqlite` on Linux (`REALHIRES_RESULTS` points elsewhere). **File → Delete all saved results…** or the button in Settings → Saved results empties it, and the command-line tool uses the same results.
 
 Press **Scan** when the list looks right. Everything updates live while the scan runs. The files being worked on right now are marked **Analysing…** in blue, and every finished file shows its verdict and reason in place straight away. The progress bar and status line count along ("Scanning (8 at a time): 120/500 files"), and the Sources panel shows the number of fake or suspicious files per source. If the selected file finishes, the dashboard updates with it. All rows stay visible during the scan, and the verdict filters are applied once it has finished.
 
@@ -114,16 +120,17 @@ Before fixing a large library, keep in mind what cannot be avoided. A resampled 
 
 ![Fix to real resolution dialog after fixing six files in place; originals moved to the backup folder](docs/gui-fix.png)
 
-**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with four tabs, and pointing at any setting shows an explanation of what it does:
+**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with five tabs, and pointing at any setting shows an explanation of what it does:
 
 - **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the narrow and deep upsampling cliffs, the resampler mid-point ratio, the lossy cut-off drop and search range, the expected ultrasonic content, the converter noise floor, the value-grid strength, the bit-usage threshold and more.
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
+- **Saved results** turns saving and reusing results on or off, re-scans results of older detection rules automatically if you want, and sets the space for saved graphs. It also shows where the results are kept and how big they are, with a button to delete them.
 - **Display** sets the view at start-up (Files, By album or By artist), what the album/artist rings show, the card order, which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
 - **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check.
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
-![Settings window](docs/gui-settings.png)
+![Settings window on the Saved results tab](docs/gui-settings.png)
 
 ## Running from source
 
@@ -202,6 +209,10 @@ Scanned 9 file(s): 1 fake lossless (11.1%), 4 fake hi-res (44.4%), 2 real hi-res
 | `--list-settings` | Print every setting with its current value and description. |
 | `--settings FILE` / `--no-settings` | Use a different settings file, or ignore the saved settings and use the defaults. |
 | `--no-color` | Disable coloured output. Setting the `NO_COLOR` environment variable does the same. |
+| `--rescan` | Analyse every file again, even files with a saved result from an earlier scan (the saved results are updated). Without it, files that have not changed since an earlier scan, in the app or on the command line, are not analysed again; see "Results are saved" under [Desktop app](#desktop-app-gui). |
+| `--rescan-outdated` | Analyse again only the files whose saved result was made by older detection rules (after an update). |
+| `--no-cache` | Neither use nor save saved results in this run. |
+| `--forget-results` | Delete all saved results and exit. |
 
 For example, the following commands first show what would be fixed and then fix all fake files in a library in place, with the originals kept in backup folders:
 
@@ -308,7 +319,7 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-The release files are named with their version, for example `RealHiRes-1.8.1-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
+The release files are named with their version, for example `RealHiRes-1.9.0-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
 
 Before anything is published, the `av-scan` job of the build workflow calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml) on the packages that the run has just built, and the `release` job publishes only after that scan has finished, using the release notes it wrote. The scan job fails, and so holds the release back, unless VirusTotal has a finished result for every file; re-running the failed job scans again and then publishes. The same workflow runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag), and the build workflow can be started by hand with **av_scan** ticked to try the pre-release scan on a branch without publishing anything. It takes the packages (or downloads the release), unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's verdict from its VirusTotal engine row (and from Kaspersky OpenTIP if a key is set), sends the two Windows launchers to the Hybrid Analysis sandbox (whose report also carries its antivirus multiscan), and writes the "Antivirus scan results" section of the release notes (into the new notes before a release, with `gh release edit` afterwards). The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes, which is how much later than the builds a release now appears.
 

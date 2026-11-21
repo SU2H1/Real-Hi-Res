@@ -20,7 +20,7 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-GROUPS = ("Detection", "Scanning", "Display", "Fixing")
+GROUPS = ("Detection", "Scanning", "Saved results", "Display", "Fixing")
 SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
@@ -121,6 +121,23 @@ class Settings:
     extensions: str = _f(
         DEFAULT_EXTENSIONS, "Scanning", "File extensions",
         "Space- or comma-separated list of file extensions to scan.", kind="str")
+
+    # ---- Saved results --------------------------------------------------
+    save_results: bool = _f(
+        True, "Saved results", "Save results and reuse them",
+        "Remember the result of every scanned file, so a file that has not changed since is not "
+        "analysed again: on the next scan, after restarting and after updating Real-Hi-Res. "
+        "Changing a Detection setting analyses the files again.", kind="bool")
+    rescan_outdated: bool = _f(
+        False, "Saved results", "Re-scan results of older detection rules",
+        "When an update of Real-Hi-Res improves the detection rules, results saved by the older "
+        "rules are kept and marked. Turn this on to analyse those files again automatically "
+        "during the next scan; otherwise use 'Re-scan files checked by older rules'.", kind="bool")
+    saved_graphs_mb: int = _f(
+        500, "Saved results", "Space for saved graphs (MB, 0 = none)",
+        "Each file's spectrogram and spectrum take about 30-90 KB. Above this size the graphs "
+        "viewed longest ago are dropped (their results stay) and drawn again when the file is "
+        "selected.", 0, 100000, kind="int")
 
     # ---- Display --------------------------------------------------------
     shown_verdicts: List[str] = _f(

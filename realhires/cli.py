@@ -17,6 +17,7 @@ from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, require_tools
 from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
                      write_json, write_svg)
+from .store import ResultStore, StoreError, open_store, settings_key
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
                       analyze_file)
 
@@ -117,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
                                                      "copies into DIR")
     p.add_argument("--fix-replace", action="store_true", help=argparse.SUPPRESS)  # 1.4.0 name, now default
     p.add_argument("--dry-run", action="store_true", help="with --fix: only show what would be changed")
+    p.add_argument("--rescan", action="store_true",
+                   help="analyse every file again, even files with a saved result from an earlier scan "
+                        "(the saved results are updated)")
+    p.add_argument("--rescan-outdated", action="store_true",
+                   help="analyse again the files whose saved result was made by older detection rules "
+                        "(after an update of Real-Hi-Res)")
+    p.add_argument("--no-cache", action="store_true",
+                   help="neither use nor save saved results in this run")
+    p.add_argument("--forget-results", action="store_true",
+                   help="delete all saved results and exit")
     p.add_argument("--settings", metavar="FILE", help="use this settings file instead of the saved one")
     p.add_argument("--no-settings", action="store_true", help="ignore saved settings; use defaults")
     p.add_argument("--set", metavar="NAME=VALUE", action="append", default=[],
@@ -173,6 +184,15 @@ def main(argv=None) -> int:
         for info in settings_mod.Settings.field_info():
             print(f"{info['name']:<22} = {getattr(cfg, info['name'])!r:<28} # {info['label']}")
         return 0
+    if args.forget_results:
+        try:
+            with ResultStore() as st:
+                n = st.forget()
+                print(f"Deleted {n} saved result(s) from {st.path}.")
+        except StoreError as exc:
+            eprint(f"error: {exc}")
+            return 2
+        return 0
     if not args.paths:
         build_parser().error("no files or folders given")
     try:
@@ -207,10 +227,32 @@ def main(argv=None) -> int:
     if args.fix_backup_dir:
         cfg.fix_backup_folder = os.path.abspath(args.fix_backup_dir)
 
+    # Saved results of files that have not changed since an earlier scan are used
+    # as they are; only the other files are analysed (and then saved).
+    store = None if args.no_cache else open_store(cfg)
+    skey = settings_key(cfg)
+    ready = {}
+    if store is not None and not args.rescan and not args.plot:  # SVG plots need the full spectrum
+        again_outdated = args.rescan_outdated or cfg.rescan_outdated
+        for i, f in enumerate(files):
+            r = store.lookup(f, skey, max_seconds)
+            if r is None or (r.saved["outdated"] and again_outdated):
+                continue
+            if args.spectrogram:
+                r.plot = store.get_plot(r.path, skey)
+                if not (r.plot or {}).get("spectrogram"):
+                    continue  # no saved spectrogram: analyse to draw one
+            ready[i] = r
+
     results: List[FileResult] = []
     print(header())
     jobs = effective_jobs(args.jobs if args.jobs is not None else cfg.jobs)
     show_progress = sys.stderr.isatty()
+
+    def save(r: FileResult) -> FileResult:
+        if store is not None and r.saved is None:
+            store.put(r, skey, max_seconds, plot=r.plot)
+        return r
 
     def handle(i: int, r: FileResult) -> None:
         if show_progress:
@@ -227,20 +269,29 @@ def main(argv=None) -> int:
         if show_progress and i < len(files):
             eprint(f"[{i}/{len(files)}] analysing…", end="", flush=True)
 
-    if jobs == 1 or len(files) == 1:
-        for i, f in enumerate(files, 1):
-            handle(i, work(f))
+    todo = [i for i in range(len(files)) if i not in ready]
+    if jobs == 1 or len(todo) <= 1:
+        for i, f in enumerate(files):
+            handle(i + 1, ready[i] if i in ready else save(work(f)))
     else:
-        with MultiProcessPool(min(jobs, len(files))) as ex:
-            futures = [ex.submit(work, f) for f in files]
-            for i, fut in enumerate(futures, 1):
-                handle(i, fut.result())
+        with MultiProcessPool(min(jobs, len(todo))) as ex:
+            futures = {i: ex.submit(work, files[i]) for i in todo}
+            for i in range(len(files)):
+                handle(i + 1, ready[i] if i in ready else save(futures[i].result()))
     if show_progress:
         eprint("\r\033[K", end="")
 
     print()
     print(summary(results, color))
     print(summary_bars(results, color))
+    if store is not None:
+        reused = [r for r in results if r.saved]
+        print(f"Saved results: {len(reused)} file(s) unchanged since an earlier scan were not analysed "
+              f"again, {len(results) - len(reused)} analysed. (--rescan analyses everything again.)")
+        old = sum(1 for r in reused if r.saved["outdated"])
+        if old:
+            print(f"{old} of them were checked by older detection rules; --rescan-outdated analyses them "
+                  "with the current rules.")
     if args.json:
         write_json(results, args.json)
         print(f"JSON written to {args.json}")
@@ -251,12 +302,17 @@ def main(argv=None) -> int:
         print(f"Spectrum plots written to {args.plot}/")
     if args.spectrogram:
         print(f"Spectrograms written to {args.spectrogram}/")
-    if args.fix:
-        return run_fixes(results, cfg, jobs, args.dry_run)
-    return 0
+    try:
+        if args.fix:
+            return run_fixes(results, cfg, jobs, args.dry_run, store=store)
+        return 0
+    finally:
+        if store is not None:
+            store.close()
 
 
-def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) -> int:
+def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False,
+              store: Optional[ResultStore] = None) -> int:
     from .fix import plan_fix, prepare_gapless, run_fix
 
     plans = []
@@ -288,6 +344,8 @@ def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False) 
         for out in ex.map(lambda p: run_fix(p, cfg), plans):
             mark = "OK  " if out.ok else "FAIL"
             failed += not out.ok
+            if store is not None and out.new_result is not None:
+                store.put(out.new_result, settings_key(cfg))  # the fixed file is known from now on
             print(f"  {mark} {out.plan.source}\n       {out.message}")
     print(f"Fix: {len(plans) - failed} fixed, {failed} failed.")
     return 1 if failed else 0

@@ -33,6 +33,13 @@ LOSSY = "LOSSY FORMAT"            # MP3, AAC, ... files themselves
 ERROR = "ERROR"
 
 VERDICT_ORDER = [FAKE_LOSSLESS, FAKE, SUSPECT, REAL, NOT_HIRES, LOSSY, ERROR]
+
+# Version of the detection rules.  Bump it whenever a change can give a different
+# verdict, flag, estimated resolution or measurement for the same file and
+# settings, so results saved by older versions are marked "outdated" (see
+# store.py).  Pure wording changes of reasons or summaries need no bump.
+#   1: Real-Hi-Res 1.7.0 to 1.9.0
+DETECTOR_VERSION = 1
 PROBLEM_VERDICTS = (FAKE_LOSSLESS, FAKE, SUSPECT)
 
 # Short machine-readable flags (JSON/CSV "flags" column).
@@ -92,6 +99,7 @@ class FileResult:
     elapsed: float = 0.0
     spectrum: Optional[SpectrumStats] = None  # full arrays, for SVG plots; not serialised
     plot: Optional[dict] = None               # compact spectrum + spectrogram for the GUI; not serialised
+    saved: Optional[dict] = None              # set when the result was loaded from the saved results
 
     @property
     def claimed(self) -> str:
@@ -117,7 +125,7 @@ class FileResult:
         return self.verdict in PROBLEM_VERDICTS
 
     def to_dict(self) -> dict:
-        d = {k: v for k, v in self.__dict__.items() if k not in ("spectrum", "plot")}
+        d = {k: v for k, v in self.__dict__.items() if k not in ("spectrum", "plot", "saved")}
         d["claimed"] = self.claimed
         d["estimated_real"] = self.estimated
         for k, v in list(d.items()):
@@ -388,6 +396,19 @@ def analyze_file(path: str, max_seconds: Optional[float] = None, keep_spectrum: 
         res.elapsed = time.time() - t0
         res.path = os.path.abspath(path)
     return res
+
+
+def saved_note(r: FileResult) -> str:
+    """One sentence on where a reused result comes from ("" for a fresh one)."""
+    if not r.saved:
+        return ""
+    when = time.strftime("%Y-%m-%d", time.localtime(r.saved.get("time") or 0))
+    by = f"Real-Hi-Res {r.saved.get('version') or '?'}"
+    moved = " (when it had another name or folder)" if r.saved.get("moved_from") else ""
+    if r.saved.get("outdated"):
+        return (f"Saved result from {when}{moved}, made by {by} with older detection rules; the file has not "
+                "changed since, but the current rules may judge it differently. Re-scan it to check.")
+    return f"Saved result from {when}{moved}, made by {by}; the file has not changed since, so it was not analysed again."
 
 
 def verdict_breakdown(results) -> List[tuple]:

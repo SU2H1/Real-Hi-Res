@@ -38,6 +38,14 @@ hi-res", press Ctrl/Cmd+A, then "Fix to real resolution..." to fix them all.
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 
+Results are saved: a file that has not changed is never analysed again, not
+on the next scan, after restarting, or after updating Real-Hi-Res.  A folder
+you checked before shows its verdicts as soon as you add it, and "Scan" only
+analyses new or changed files.  Right-click > "Re-scan" analyses a file again.
+The results are kept in your user folder (Settings > Saved results shows where
+and can delete them); the command-line tool uses them too (--rescan,
+--no-cache, --forget-results).
+
 Command line
 ------------
   Windows : realhires-cli.exe "D:\Music"

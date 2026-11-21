@@ -1,8 +1,10 @@
-"""Smoke-test a built release: run the frozen CLI on two generated WAV files.
+"""Smoke-test a built release: run the frozen CLI on three generated WAV files.
 
 Usage: python packaging/smoke_test.py PATH/TO/realhires-cli[.exe]
 
-The CLI is run with an empty PATH so it must use its bundled FFmpeg.
+The CLI is run with an empty PATH so it must use its bundled FFmpeg, and it is
+run twice: the second run must reuse the saved results of the first, which
+proves that SQLite is bundled too.
 """
 
 import json
@@ -48,22 +50,29 @@ def main() -> int:
     env = dict(os.environ, PATH="")
     env.pop("PYTHONIOENCODING", None)
     env.pop("PYTHONUTF8", None)
+    # saved results (SQLite) go to a temporary database, not the runner's home
+    env["REALHIRES_RESULTS"] = os.path.join(tmp, "saved", "results.sqlite")
     if os.name == "nt":
         env["PATH"] = os.environ.get("SystemRoot", r"C:\Windows") + r"\System32"
-    proc = subprocess.run([cli, tmp, "--no-color", "-j", "2", "--json", out_json],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          env=env, timeout=600)
-    print(proc.stdout)
-    print(proc.stderr, file=sys.stderr)
-    if proc.returncode != 0:
-        print(f"CLI exited with {proc.returncode}", file=sys.stderr)
-        return 1
-    got = {os.path.basename(r["path"]): r["verdict"] for r in json.load(open(out_json, encoding="utf-8"))}
     want = {"padded_24_96.wav": "FAKE HI-RES", "real_24_96.wav": "REAL HI-RES", "cd_16_44 テスト曲 é.wav": "NOT HI-RES"}
-    if got != want:
-        print(f"Unexpected verdicts: {got}", file=sys.stderr)
-        return 1
-    print("Smoke test passed:", got)
+    # The second run must reuse the saved results of the first one.
+    for run, expect in (("first", "0 file(s) unchanged"), ("second", "3 file(s) unchanged")):
+        proc = subprocess.run([cli, tmp, "--no-color", "-j", "2", "--json", out_json],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              env=env, timeout=600)
+        print(proc.stdout)
+        print(proc.stderr, file=sys.stderr)
+        if proc.returncode != 0:
+            print(f"CLI exited with {proc.returncode} ({run} run)", file=sys.stderr)
+            return 1
+        got = {os.path.basename(r["path"]): r["verdict"] for r in json.load(open(out_json, encoding="utf-8"))}
+        if got != want:
+            print(f"Unexpected verdicts ({run} run): {got}", file=sys.stderr)
+            return 1
+        if expect not in proc.stdout:
+            print(f"Saved results were not used as expected ({run} run): no '{expect}'", file=sys.stderr)
+            return 1
+    print("Smoke test passed (saved results reused on the second run):", got)
     return 0
 
 

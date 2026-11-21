@@ -49,8 +49,10 @@ from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
 from .report import write_csv, write_json
+from .store import StoreError, open_store, settings_key
+from .store import default_path as store_default_path
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, PROBLEM_VERDICTS, REAL, SUSPECT,
-                      VERDICT_ORDER, FileResult, analyze_file, verdict_breakdown)
+                      VERDICT_ORDER, FileResult, analyze_file, saved_note, verdict_breakdown)
 
 VERDICT_STYLE = {
     FAKE_LOSSLESS: ("Fake lossless", "#a3122a", "Lossless file (FLAC/WAV/ALAC...) made from an MP3/AAC"),
@@ -101,39 +103,95 @@ def fmt_duration(sec: Optional[float]) -> str:
 
 
 class Scanner(threading.Thread):
-    """Background thread: fans the listed files out to worker processes and
-    posts ("total"|"result"|"done"|"error", payload) messages to a queue."""
+    """Background thread: posts the saved results of files that have not
+    changed, fans the other files out to worker processes, saves their results
+    and posts ("total"|"result"|"done"|"error", payload) messages to a queue.
+    `force` analyses every file again, ignoring saved results."""
 
-    def __init__(self, files: List[str], cfg, max_seconds: Optional[float], out: queue.Queue):
+    def __init__(self, files: List[str], cfg, max_seconds: Optional[float], out: queue.Queue,
+                 force: bool = False):
         super().__init__(daemon=True)
         self.files, self.cfg, self.max_seconds, self.out = files, cfg, max_seconds, out
+        self.force = force
         self.stop_event = threading.Event()
 
     def run(self) -> None:
+        store = None
         try:
             files = list(self.files)
             self.out.put(("total", len(files)))
-            if not files:
-                self.out.put(("done", None))
+            store = open_store(self.cfg)
+            skey = settings_key(self.cfg)
+            todo = files
+            if store is not None and not self.force:
+                todo = []
+                for f in files:
+                    if self.stop_event.is_set():
+                        break
+                    r = store.lookup(f, skey, self.max_seconds)
+                    if r is None or (r.saved["outdated"] and self.cfg.rescan_outdated):
+                        todo.append(f)
+                    else:
+                        self.out.put(("result", r))
+            if not todo or self.stop_event.is_set():
+                self.out.put(("done", "stopped" if self.stop_event.is_set() else None))
                 return
+            self.out.put(("analysing", todo))
             ctx = multiprocessing.get_context("spawn")  # safe with a GUI thread running
-            workers = min(effective_jobs(self.cfg.jobs), len(files))
+            workers = min(effective_jobs(self.cfg.jobs), len(todo))
             with MultiProcessPool(workers, mp_context=ctx) as ex:
-                futures = {ex.submit(_work, f, self.max_seconds, self.cfg): f for f in files}
+                futures = {ex.submit(_work, f, self.max_seconds, self.cfg): f for f in todo}
                 for fut in as_completed(futures):
                     if self.stop_event.is_set():
                         for other in futures:
                             other.cancel()
                         break
                     try:
-                        self.out.put(("result", fut.result()))
+                        r = fut.result()
                     except Exception as exc:  # noqa: BLE001 - e.g. a crashed worker
-                        self.out.put(("result", FileResult(
-                            path=os.path.abspath(futures[fut]), verdict=ERROR, reasons=[str(exc)],
-                            summary=f"Could not analyse: {exc}")))
+                        r = FileResult(path=os.path.abspath(futures[fut]), verdict=ERROR, reasons=[str(exc)],
+                                       summary=f"Could not analyse: {exc}")
+                    if store is not None:
+                        store.put(r, skey, self.max_seconds, plot=r.plot)
+                    self.out.put(("result", r))
             self.out.put(("done", "stopped" if self.stop_event.is_set() else None))
         except Exception as exc:  # noqa: BLE001
             self.out.put(("error", str(exc)))
+        finally:
+            if store is not None:
+                store.close()
+
+
+def lookup_saved(requests: queue.Queue, out: queue.Queue) -> None:
+    """Background thread: looks up saved results for files as soon as they are
+    listed, so files checked before show their verdict without a scan.
+    Requests are (generation, cfg, wanted_seconds, paths); answers are
+    ("saved", generation, [FileResult]) and ("saved_done", generation, None)."""
+    store, store_key = None, None
+    while True:
+        gen, cfg, wanted, paths = requests.get()
+        if paths is None:
+            break
+        key = (getattr(cfg, "save_results", True), getattr(cfg, "saved_graphs_mb", 0))
+        if store is None or key != store_key:
+            if store is not None:
+                store.close()
+            store, store_key = open_store(cfg), key
+        found = []
+        if store is not None:
+            skey = settings_key(cfg)
+            for path in paths:
+                r = store.lookup(path, skey, wanted)
+                if r is not None:
+                    found.append(r)
+                if len(found) >= 200:
+                    out.put(("saved", gen, found))
+                    found = []
+        if found:
+            out.put(("saved", gen, found))
+        out.put(("saved_done", gen, None))
+    if store is not None:
+        store.close()
 
 
 class PlotCache:
@@ -179,10 +237,11 @@ class _PlotBase(tk.Canvas):
         super().__init__(master, background="#ffffff", highlightthickness=0, **kw)
         self.result: Optional[FileResult] = None
         self.plot: Optional[dict] = None
+        self.waiting = False  # graphs of a saved result are being drawn
         self.bind("<Configure>", lambda e: self.redraw())
 
-    def show(self, result: Optional[FileResult], plot: Optional[dict]) -> None:
-        self.result, self.plot = result, plot
+    def show(self, result: Optional[FileResult], plot: Optional[dict], waiting: bool = False) -> None:
+        self.result, self.plot, self.waiting = result, plot, waiting and not plot
         self.redraw()
 
     def _message(self, text: str) -> None:
@@ -220,7 +279,9 @@ class SpectrogramCanvas(_PlotBase):
             self.create_text(w / 2, h / 2, text="Select a scanned file to see its spectrogram", fill="#aaa")
             return
         if not sg:
-            self.create_text(w / 2, h / 2, text="No spectrogram (silent or unreadable file)", fill="#aaa")
+            self.create_text(w / 2, h / 2, fill="#aaa",
+                             text="Drawing the spectrogram…" if self.waiting else
+                             "No spectrogram (silent or unreadable file)")
             return
         L, R, T, B = self.L, self.R, self.T, self.B
         pw, ph = w - L - R, h - T - B
@@ -271,7 +332,7 @@ class SpectrumCanvas(_PlotBase):
         p = self.plot
         if self.result is None or not p or not p.get("freqs"):
             self._message("Select a scanned file to see its spectrum" if self.result is None
-                          else "No spectrum available")
+                          else "Drawing the spectrum…" if self.waiting else "No spectrum available")
             return
         L, R, T, B = self.L, self.R, self.T, self.B
         pw, ph = w - L - R, h - T - B
@@ -480,6 +541,14 @@ class SettingsDialog(tk.Toplevel):
                     wdg.bind("<Enter>", lambda e, h=info["help"]: self.help_var.set(h))
                     wdg.bind("<FocusIn>", lambda e, h=info["help"]: self.help_var.set(h), add="+")
                 row += 1
+            if group == "Saved results":
+                st = app.store.stats() if app.store is not None else None
+                where = (f"{st['files']} file(s), {st['disk_bytes'] / 1e6:.1f} MB, in {st['path']}" if st
+                         else f"Saving is turned off. Results are kept in {store_default_path()}")
+                ttk.Label(tab, text=where, foreground="#666", wraplength=520, justify="left").grid(
+                    row=row, column=0, columnspan=2, sticky="w", pady=(12, 4))
+                ttk.Button(tab, text="Delete all saved results…", command=app.forget_saved).grid(
+                    row=row + 1, column=0, sticky="w")
         ttk.Label(outer, textvariable=self.help_var, wraplength=520, foreground="#444",
                   justify="left").grid(row=1, column=0, sticky="ew", pady=(8, 4))
         ttk.Label(outer, text=f"Saved in {settings_mod.default_path()}", foreground="#888",
@@ -1031,7 +1100,16 @@ class App(ttk.Frame):
         self.scan_when_listed = False
         self.results: Dict[str, FileResult] = {}
         self.cache = PlotCache()
+        self.store = open_store(self.cfg)            # saved results (main thread's connection)
+        self.lookup_gen = 0                         # bumped whenever listed files' results are dropped
+        self.lookup_requests: queue.Queue = queue.Queue()
+        self.lookup_busy = 0                        # lookups not answered yet
+        self.graph_pool = None                      # one worker that draws graphs of saved results
+        self.graph_busy: Optional[str] = None
+        self.graph_next: Optional[str] = None
+        self.graph_failed: set = set()
         self.queue: queue.Queue = queue.Queue()
+        threading.Thread(target=lookup_saved, args=(self.lookup_requests, self.queue), daemon=True).start()
         self.scanner: Optional[Scanner] = None
         self.total = self.done = 0
         self.scanning = False
@@ -1077,6 +1155,8 @@ class App(ttk.Frame):
         f.add_command(label="Export listed files as CSV…", command=lambda: self.export("csv"))
         f.add_command(label="Export listed files as JSON…", command=lambda: self.export("json"))
         f.add_separator()
+        f.add_command(label="Delete all saved results…", command=self.forget_saved)
+        f.add_separator()
         f.add_command(label="Quit", accelerator=f"{acc}+Q", command=self.quit_app)
         m.add_cascade(label="File", menu=f)
         e = tk.Menu(m, tearoff=False)
@@ -1090,6 +1170,9 @@ class App(ttk.Frame):
         e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+Shift+F",
                       command=self.fix_selected)
         e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
+        e.add_separator()
+        e.add_command(label="Re-scan selected files", command=self.rescan_selected)
+        e.add_command(label="Re-scan files checked by older rules", command=self.rescan_outdated)
         e.add_separator()
         e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
         m.add_cascade(label="Edit", menu=e)
@@ -1325,6 +1408,9 @@ class App(ttk.Frame):
         self.progress = ttk.Progressbar(status, length=220, mode="determinate")
         self.progress.grid(row=0, column=0, padx=(0, 8))
         ttk.Label(status, textvariable=self.status_var).grid(row=0, column=1, sticky="w")
+        self.outdated_var = tk.StringVar(value="")
+        self.outdated_label = ttk.Label(status, textvariable=self.outdated_var, foreground="#8a5a00")
+        self.outdated_btn = ttk.Button(status, text="Re-scan them", command=self.rescan_outdated)
 
         self.menu = tk.Menu(self.root, tearoff=False)
         self.menu.add_command(label="Open file location", command=self.reveal)
@@ -1332,6 +1418,7 @@ class App(ttk.Frame):
         self.menu.add_command(label="Copy path", command=self.copy_path)
         self.menu.add_separator()
         self.menu.add_command(label="Fix to real resolution…", command=self.fix_selected)
+        self.menu.add_command(label="Re-scan", command=self.rescan_selected)
 
     def _update_quick_label(self) -> None:
         self.quick_cb.configure(text=f"Quick scan (first {self.cfg.quick_scan_seconds:g} s)")
@@ -1349,18 +1436,35 @@ class App(ttk.Frame):
     def apply_settings(self, new) -> None:
         old_shown = set(self.cfg.shown_verdicts)
         relist = (new.extension_set() != self.cfg.extension_set() or new.recursive != self.cfg.recursive)
+        detection = settings_key(new) != settings_key(self.cfg)
+        store_changed = (new.save_results, new.saved_graphs_mb) != (self.cfg.save_results, self.cfg.saved_graphs_mb)
         self.cfg = new
+        if store_changed:
+            if self.store is not None:
+                self.store.close()
+            self.store = open_store(new)
         if relist and not self.scanning:  # file list depends on these: list the sources again
             sources = list(self.sources)
             self.clear()
             for src in sources:
                 self._add_source(src)
+        elif detection and not self.scanning and self.results:
+            # the results on screen were made with other detection settings: show the
+            # results saved for the new ones, the other files wait for a scan
+            self.results.clear()
+            self.cache.clear()
+            self.lookup_gen += 1
+            self.refresh()
+            self.show_details()
+            self._update_source_counts()
+            self._request_lookup(self.all_files())
         self.save_settings()
         if set(new.shown_verdicts) != old_shown:
             self.set_filters(new.shown_verdicts)
         self._update_quick_label()
         self.spectrogram.redraw()
-        self.status_var.set("Settings saved. Detection changes apply to the next scan.")
+        self.status_var.set("Settings saved. Files without a result for the new detection settings are "
+                            "analysed when you press Scan." if detection else "Settings saved.")
 
     # ---------- sources --------------------------------------------------
     def _add_source(self, path: str) -> None:
@@ -1400,6 +1504,7 @@ class App(ttk.Frame):
         for path in batch:
             if path not in known and not self.tree.exists(path) and self._search_ok(path):
                 self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
+        self._request_lookup([p for p in batch if p not in known])
         self.status_var.set(f"Looking for audio files… {len(known) + len(batch)} found so far")
 
     def _on_listed(self, source: str, files: Optional[List[str]] = None) -> None:
@@ -1408,6 +1513,7 @@ class App(ttk.Frame):
             return
         if files is not None:
             self.source_files[source] = files
+            self._request_lookup(files)
         files = self.source_files.get(source, [])
         if self.src_tree.exists(source):
             n = len(files)
@@ -1421,17 +1527,143 @@ class App(ttk.Frame):
                                    tags=("empty",))
         self.refresh()
         if not self.listing:
-            total = len(self.all_files())
-            empty = [s for s in self.sources if not self.source_files.get(s)]
-            msg = (f"{total} audio file{'s' if total != 1 else ''} ready in {len(self.sources)} "
-                   f"source{'s' if len(self.sources) != 1 else ''}. Press Scan.")
-            if empty:
-                msg += f"  ({len(empty)} source(s) contain no audio files.)"
             if not self.scanning:
-                self.status_var.set(msg)
+                self.status_var.set(self._ready_message())
             if self.scan_when_listed:
                 self.scan_when_listed = False
                 self.start_scan()
+
+    def _ready_message(self) -> str:
+        files = self.all_files()
+        total = len(files)
+        empty = [s for s in self.sources if not self.source_files.get(s)]
+        saved = sum(1 for f in files if f in self.results)
+        if self.lookup_busy:
+            msg = (f"{total} audio file{'s' if total != 1 else ''} found; looking up saved results "
+                   f"({saved} so far)…")
+        elif saved:
+            rest = total - saved
+            msg = (f"{saved} of {total} files were checked before and have not changed: their saved results "
+                   "are shown. " + (f"Press Scan to analyse the other {rest}." if rest else
+                                    "Nothing new to scan."))
+        else:
+            msg = (f"{total} audio file{'s' if total != 1 else ''} ready in {len(self.sources)} "
+                   f"source{'s' if len(self.sources) != 1 else ''}. Press Scan.")
+        if empty:
+            msg += f"  ({len(empty)} source(s) contain no audio files.)"
+        return msg
+
+    # ---------- saved results --------------------------------------------
+    def _wanted(self) -> Optional[float]:
+        return self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
+
+    def _request_lookup(self, paths) -> None:
+        """Show saved results for these newly listed files (background lookup)."""
+        if paths and self.cfg.save_results:
+            self.lookup_busy += 1
+            self.lookup_requests.put((self.lookup_gen, self.cfg, self._wanted(), list(paths)))
+
+    def _on_saved(self, gen: int, results: List[FileResult]) -> bool:
+        if gen != self.lookup_gen or self.scanning:
+            return False
+        listed = set(self.all_files())
+        added = False
+        for r in results:
+            if r.path in listed and r.path not in self.results:
+                self.results[r.path] = r
+                self._insert(r)
+                added = True
+        return added
+
+    def _on_saved_done(self, gen: int) -> None:
+        self.lookup_busy = max(0, self.lookup_busy - 1)
+        if gen == self.lookup_gen and not self.lookup_busy and not self.listing and not self.scanning:
+            self._update_filter_counts()
+            self._update_source_counts()
+            self._update_outdated_notice()
+            self.status_var.set(self._ready_message())
+            if self.results and not self.tree.selection():
+                kids = self.tree.get_children()
+                if kids:
+                    self.tree.selection_set(kids[0])
+                    self.tree.focus(kids[0])
+
+    def _update_outdated_notice(self) -> None:
+        n = sum(1 for r in self.results.values() if r.saved and r.saved.get("outdated"))
+        if n and not self.scanning:
+            self.outdated_var.set(f"{n} saved result{'s were' if n != 1 else ' was'} made by older detection rules.")
+            self.outdated_label.grid(row=0, column=2, sticky="e", padx=(8, 4))
+            self.outdated_btn.grid(row=0, column=3, sticky="e")
+        else:
+            self.outdated_label.grid_remove()
+            self.outdated_btn.grid_remove()
+
+    def rescan_selected(self) -> None:
+        paths = [p for p in self.tree.selection() if p in set(self.all_files())]
+        if not paths:
+            self.status_var.set("Select the files to analyse again.")
+            return
+        self.start_scan(files=paths, force=True)
+
+    def rescan_outdated(self) -> None:
+        paths = [p for p, r in self.results.items() if r.saved and r.saved.get("outdated")]
+        if not paths:
+            self.status_var.set("No saved results from older detection rules are listed.")
+            return
+        self.start_scan(files=paths, force=True)
+
+    def forget_saved(self) -> None:
+        if self.store is None:
+            messagebox.showinfo("Saved results", "Saving results is turned off (Settings → Saved results).")
+            return
+        st = self.store.stats()
+        if not messagebox.askyesno(
+                "Delete all saved results",
+                f"Delete the saved results of {st['files']} file(s) ({st['disk_bytes'] / 1e6:.0f} MB in "
+                f"{st['path']})?\n\nThe files themselves are not touched; they are simply analysed again "
+                "the next time they are scanned.", icon="warning"):
+            return
+        try:
+            n = self.store.forget()
+        except StoreError as exc:
+            messagebox.showerror("Saved results", f"Could not delete the saved results: {exc}")
+            return
+        for r in self.results.values():
+            r.saved = None
+        self._update_outdated_notice()
+        self.status_var.set(f"Deleted {n} saved result(s). The results on screen stay until you scan again.")
+
+    def _want_graphs(self, r: FileResult) -> bool:
+        """Draw the graphs of a saved result whose graphs were not saved (one at
+        a time, in a separate process; only the latest request waits)."""
+        if r.path in self.graph_failed or not os.path.exists(r.path):
+            return False
+        if self.graph_busy is not None:
+            if self.graph_busy != r.path:
+                self.graph_next = r.path
+            return True
+        if self.graph_pool is None:
+            self.graph_pool = MultiProcessPool(1, mp_context=multiprocessing.get_context("spawn"))
+        self.graph_busy = r.path
+        partial_scan = r.duration and r.analysed_seconds < r.duration - 1
+        fut = self.graph_pool.submit(_work, r.path, r.analysed_seconds if partial_scan else None, self.cfg)
+        fut.add_done_callback(lambda f, path=r.path: self.queue.put(
+            ("graphs", path, f.result().plot if not f.cancelled() and f.exception() is None else None)))
+        return True
+
+    def _on_graphs(self, path: str, plot: Optional[dict]) -> None:
+        self.graph_busy = None
+        if plot:
+            self.cache.put(path, plot)
+            if self.store is not None:
+                self.store.put_plot(path, settings_key(self.cfg), plot)
+        else:
+            self.graph_failed.add(path)
+        if self._current_path() == path:
+            self.show_details()
+        nxt, self.graph_next = self.graph_next, None
+        if nxt and nxt == self._current_path() and nxt in self.results and self.cache.get(nxt) is None:
+            self._want_graphs(self.results[nxt])
 
     def all_files(self) -> List[str]:
         seen, out = set(), []
@@ -1499,6 +1731,8 @@ class App(ttk.Frame):
         self.listing.clear()
         self.results.clear()
         self.cache.clear()
+        self.lookup_gen += 1
+        self._update_outdated_notice()
         self.src_tree.delete(*self.src_tree.get_children())
         self.src_hint.grid()
         self.refresh()
@@ -1509,7 +1743,10 @@ class App(ttk.Frame):
         self.status_var.set("Add a folder or files, then press Scan.")
 
     # ---------- scanning -------------------------------------------------
-    def start_scan(self) -> None:
+    def start_scan(self, files: Optional[List[str]] = None, force: bool = False) -> None:
+        """Scan the listed files: saved results of unchanged files are shown at
+        once, the others are analysed.  `files` (with `force`) analyses just
+        these files again, keeping the other results."""
         if self.scanning:
             return
         if not self.sources:
@@ -1519,7 +1756,8 @@ class App(ttk.Frame):
             self.scan_when_listed = True
             self.status_var.set("Still looking for audio files… the scan starts as soon as the list is complete.")
             return
-        files = self.all_files()
+        subset = files is not None
+        files = list(files) if subset else self.all_files()
         if not files:
             messagebox.showinfo("Real-Hi-Res", "The added folders/files contain no audio files.\n\n"
                                 "Check the file extensions under Settings → Scanning.")
@@ -1529,12 +1767,18 @@ class App(ttk.Frame):
         except ToolMissingError as exc:
             messagebox.showerror("FFmpeg not found", str(exc))
             return
-        self.results.clear()
-        self.cache.clear()
+        if subset:
+            for f in files:
+                self.results.pop(f, None)
+        else:
+            self.results.clear()
+            self.cache.clear()
+        self.lookup_gen += 1  # answers of lookups still running are no longer wanted
         self.total, self.done = len(files), 0
-        self.scan_order, self.scan_ptr = list(files), 0
+        self.scan_order, self.scan_ptr = [], 0  # set when the scanner says which files it analyses
         self.scan_workers = min(effective_jobs(self.cfg.jobs), len(files))
         self.scanning = True
+        self._update_outdated_notice()
         self.refresh()
         self.show_details()
         self._update_source_counts()
@@ -1544,9 +1788,8 @@ class App(ttk.Frame):
         self.scan_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         max_seconds = self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
-        self.scanner = Scanner(files, self.cfg, max_seconds, self.queue)
+        self.scanner = Scanner(files, self.cfg, max_seconds, self.queue, force=force)
         self.scanner.start()
-        self._mark_running()
 
     def _mark_running(self) -> None:
         """Show which files are being analysed right now.  The pools hand out
@@ -1588,6 +1831,16 @@ class App(ttk.Frame):
                     self._on_listing(payload, rest[0])
                 elif kind == "listed":
                     self._on_listed(payload, rest[0])
+                elif kind == "saved":
+                    dirty = self._on_saved(payload, rest[0]) or dirty
+                elif kind == "saved_done":
+                    self._on_saved_done(payload)
+                elif kind == "graphs":
+                    self._on_graphs(payload, rest[0])
+                elif kind == "analysing":
+                    self.scan_order, self.scan_ptr = list(payload), 0
+                    self.scan_workers = min(effective_jobs(self.cfg.jobs), len(payload))
+                    self._mark_running()
                 elif kind == "result":
                     self.done += 1
                     self.cache.put(payload.path, payload.plot)
@@ -1623,6 +1876,7 @@ class App(ttk.Frame):
         self._update_status(final=True, stopped=stopped)
         self.refresh()
         self._update_source_counts()
+        self._update_outdated_notice()
         kids = self.tree.get_children()
         if kids and not self.tree.selection():
             self.tree.selection_set(kids[0])
@@ -1642,18 +1896,28 @@ class App(ttk.Frame):
             c[r.verdict] = c.get(r.verdict, 0) + 1
         return c
 
-    def _update_status(self, final: bool = False, stopped: bool = False) -> None:
+    def _update_filter_counts(self) -> Dict[str, int]:
         c = self._counts()
         for v, cb in self.filter_checks.items():
             cb.configure(text=f"{VERDICT_STYLE[v][0]} ({c[v]})")
+        return c
+
+    def _update_status(self, final: bool = False, stopped: bool = False) -> None:
+        c = self._update_filter_counts()
         fakes = c[FAKE] + c[FAKE_LOSSLESS]
         n = max(len(self.results), 1)
         tail = f"{fakes} fake ({100 * fakes / n:.0f} %), {c[SUSPECT]} suspicious, {c[REAL]} real hi-res"
+        reused = sum(1 for r in self.results.values() if r.saved)
         if final:
-            head = "Stopped" if stopped else "Finished"
-            self.status_var.set(f"{head}: {len(self.results)} files  ·  {tail}")
+            head = "Stopped" if stopped else "Finished" if self.last_elapsed is not None else "Saved results"
+            extra = (f" ({reused} unchanged, from saved results)"
+                     if reused and self.last_elapsed is not None else "")
+            self.status_var.set(f"{head}: {len(self.results)} files{extra}  ·  {tail}")
         else:
-            self.status_var.set(f"Scanning ({self.scan_workers} at a time): {self.done}/{self.total} files  ·  {tail}")
+            busy = (f"analysing {len(self.scan_order)} ({self.scan_workers} at a time)" if self.scan_order
+                    else "looking up saved results")
+            self.status_var.set(f"Scanning: {self.done}/{self.total} files, {reused} from saved results, "
+                                f"{busy}  ·  {tail}")
 
     # ---------- views: files / by album / by artist ----------------------
     def set_view(self, mode: str) -> None:
@@ -2008,6 +2272,8 @@ class App(ttk.Frame):
         self.fact_vars["Format"].set(f"{r.codec}, {r.channels} ch" if r.codec else "–")
         self.fact_vars["Duration"].set(fmt_duration(r.duration) if r.duration else "?")
         parts = [f"• {x}\n" for x in r.reasons] + [f"• {x}\n" for x in r.notes]
+        if r.saved:
+            parts.insert(0, f"• {saved_note(r)}\n")
         if r.cliffs_db:
             deep = r.deep_cliffs_db or {}
             parts.append("• Drop at source Nyquists (narrow/deep): " + ", ".join(
@@ -2021,8 +2287,13 @@ class App(ttk.Frame):
         parts.append(f"\n{r.path}\n")
         self._set_text(parts)
         plot = self.cache.get(r.path)
-        self.spectrogram.show(r, plot)
-        self.spectrum.show(r, plot)
+        if plot is None and r.saved and self.store is not None:
+            plot = self.store.get_plot(r.path, settings_key(self.cfg))
+            if plot:
+                self.cache.put(r.path, plot)
+        waiting = plot is None and r.verdict != ERROR and self._want_graphs(r)
+        self.spectrogram.show(r, plot, waiting)
+        self.spectrum.show(r, plot, waiting)
 
     def select_all(self, event=None):
         """Ctrl/Cmd+A: select every file in the list, as it is filtered now, so that
@@ -2083,6 +2354,8 @@ class App(ttk.Frame):
         if r.path in self.results and self.tree.exists(r.path):
             self.tree.delete(r.path)
         self.results[r.path] = r
+        if self.store is not None:
+            self.store.put(r, settings_key(self.cfg))
         self.refresh()
         self._update_source_counts()
 
@@ -2147,6 +2420,11 @@ class App(ttk.Frame):
         if self.scanner and self.scanning:
             self.scanner.stop_event.set()
         self.cache.close()
+        self.lookup_requests.put((0, None, None, None))
+        if self.graph_pool is not None:
+            self.graph_pool.shutdown(wait=False, cancel_futures=True)
+        if self.store is not None:
+            self.store.close()
         self.root.destroy()
 
 

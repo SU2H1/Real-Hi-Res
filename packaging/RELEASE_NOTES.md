@@ -1,3 +1,9 @@
+## What's new in 1.9.0
+
+Scan results are saved, so your library is never analysed twice. A file that has not changed since it was checked is not analysed again: not on the next scan, not after restarting the app, and not after updating Real-Hi-Res to this or any later version. Add a folder you checked before and its verdicts appear immediately, before you even press Scan; Scan then analyses only new and changed files. Moved or renamed files keep their results, and the spectrogram is saved too. If a future update improves the detection rules, your saved results stay and are marked, and **Re-scan them** analyses those files with the new rules whenever you want. Right-click → **Re-scan** analyses any file again. The results are kept in your user folder; **Settings → Saved results** shows where, how big they are, and can delete them. The command-line tool shares them (`--rescan`, `--rescan-outdated`, `--no-cache`, `--forget-results`).
+
+Releases are now scanned with VirusTotal, Kaspersky and Hybrid Analysis before they are published, so the **Antivirus scan results** below are there from the first minute.
+
 ## What's new in 1.8.1
 
 The download files now carry the version in their names, for example `RealHiRes-<version>-windows-x64.zip`. The **Antivirus scan results** section below lists every file with its current VirusTotal, Kaspersky and Hybrid Analysis result; it is updated every day and explains any detection.

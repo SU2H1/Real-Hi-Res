@@ -7,6 +7,12 @@ import numpy as np
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _saved_results_in_tmp(tmp_path, monkeypatch):
+    """Never touch the user's saved results (store.py); subprocesses inherit it."""
+    monkeypatch.setenv("REALHIRES_RESULTS", str(tmp_path / "results.sqlite"))
+
+
 def music_like(fs: int, seconds: float = 6.0, top_hz: float = None, seed: int = 0,
                order: int = 2) -> np.ndarray:
     """Stereo pink-ish noise with a smooth roll-off, standing in for music.
