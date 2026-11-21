@@ -294,7 +294,9 @@ class HybridAnalysis:
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.time):
         self.key, self.transport, self.environment = key, transport, environment
         self.sleep, self.clock = sleep, clock
-        self.state: Dict[str, str] = {}   # sha256 -> "known" | "submitted" | why it was not submitted
+        self.state: Dict[str, str] = {}   # sha256 -> "known" | "submitted" | "quick" | why not submitted
+        self.quick: Dict[str, str] = {}   # sha256 -> quick-scan id
+        self._scan_type: Optional[str] = None
 
     @staticmethod
     def gui(sha: str) -> str:
@@ -331,30 +333,65 @@ class HybridAnalysis:
                                {"file": (t.name, blob)}, timeout=1800)
         if 200 <= status < 300:
             self.state[t.sha256] = "submitted"
+            return
+        # Free keys may not submit to the sandbox (the official client says file
+        # submission needs a premium key); the antivirus quick scan may still work.
+        qid = self._quick_scan(t, blob)
+        if qid:
+            self.state[t.sha256], self.quick[t.sha256] = "quick", qid
         else:
-            msg = (js or {}).get("message") if isinstance(js, dict) else None
-            self.state[t.sha256] = f"not submitted (HTTP {status}{': ' + str(msg) if msg else ''})"
+            self.state[t.sha256] = "not in Hybrid Analysis yet (uploading needs a premium API key)"
+
+    def _quick_scan(self, t: Target, blob: bytes) -> Optional[str]:
+        if self._scan_type is None:
+            status, js = self.call("GET", "/quick-scan/state")
+            self._scan_type = self.pick_scan_type(js) or ""
+        if not self._scan_type:
+            return None
+        status, js = self.call("POST", "/quick-scan/file", {"scan_type": self._scan_type}, {"file": (t.name, blob)})
+        return str(js.get("id")) if 200 <= status < 300 and isinstance(js, dict) and js.get("id") else None
+
+    @staticmethod
+    def pick_scan_type(js) -> Optional[str]:
+        """A scan type from /quick-scan/state: "all" when offered, else the first
+        available one.  The reply is read defensively (list or {"scanners": [...]})."""
+        items = ((js.get("scanners") or js.get("available_scanners") or []) if isinstance(js, dict)
+                 else (js or []))
+        ids = []
+        for it in items if isinstance(items, list) else []:
+            if isinstance(it, str):
+                ids.append(it)
+            elif isinstance(it, dict) and it.get("available", True) is not False:
+                ident = it.get("id") or it.get("name")
+                if ident:
+                    ids.append(str(ident))
+        return next((i for i in ids if i.lower() == "all"), ids[0] if ids else None)
 
     def check(self, t: Target, deadline: float) -> Result:
         """The report's verdict, waiting for a running analysis until `deadline`
         (only when the file is known or was accepted: nothing else will appear)."""
         state = self.state.get(t.sha256, "known")
         while True:
-            status, ov = self.call("GET", f"/overview/{t.sha256}")
-            res = self.parse(t, ov if status == 200 else None)
+            if state == "quick":
+                status, ov = self.call("GET", f"/quick-scan/{self.quick[t.sha256]}")
+                done = isinstance(ov, dict) and ov.get("finished")
+                res = self.parse(t, ov if status == 200 and done else None, quick=True)
+            else:
+                status, ov = self.call("GET", f"/overview/{t.sha256}")
+                res = self.parse(t, ov if status == 200 else None)
             if res.status != "pending" or self.clock() >= deadline:
                 break
-            if state not in ("known", "submitted"):
+            if state not in ("known", "submitted", "quick"):
                 break
-            self.sleep(60)
-        if res.status == "pending" and state not in ("known", "submitted"):
-            res.summary = f"no report: {state}"
+            self.sleep(30 if state == "quick" else 60)
+        if res.status == "pending" and state not in ("known", "submitted", "quick"):
+            res.summary = state
         return res
 
     @staticmethod
-    def parse(t: Target, ov) -> Result:
-        """Result from an /overview reply: the sandbox verdict plus the
-        antivirus multiscan in its "scanners" list."""
+    def parse(t: Target, ov, quick: bool = False) -> Result:
+        """Result from an /overview reply (the sandbox verdict plus the
+        antivirus multiscan in its "scanners" list) or a finished quick scan."""
         link = HybridAnalysis.gui(t.sha256)
         if not isinstance(ov, dict):
             return Result("pending", "sandbox report pending", link)
@@ -379,7 +416,7 @@ class HybridAnalysis:
                 dets.append((f"{sc.get('name') or 'scanner'} (Hybrid Analysis)",
                              state if state and not p else f"{p}/{n} engines"))
         parts = [verdict, f"threat score {score}/100" if score is not None else "",
-                 f"AV {positives}/{total}" if total else ""]
+                 (f"AV {positives}/{total}" + (" (quick scan)" if quick else "")) if total else ""]
         text = ", ".join(x for x in parts if x) or "sandbox report pending"
         v = verdict.lower()
         if v == "malicious" or dets:
@@ -387,7 +424,7 @@ class HybridAnalysis:
                           dets or [("Hybrid Analysis sandbox", verdict)], total)
         if v == "suspicious":
             return Result("suspicious", text, link, [("Hybrid Analysis sandbox", "suspicious")], total)
-        if v in ("no specific threat", "whitelisted"):
+        if v in ("no specific threat", "whitelisted") or (quick and total):
             return Result("clean", text, link, [], total)
         return Result("pending", text, link)
 

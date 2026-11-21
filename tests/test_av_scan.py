@@ -201,4 +201,35 @@ def test_hybrid_analysis_does_not_wait_for_a_refused_submission(tmp_path):
     ha.start(t)
     r = ha.check(t, deadline=3600)
     assert r.status == "pending" and not slept, "polled a report that can never appear"
-    assert r.summary == "no report: not submitted (HTTP 404: Requested URI - Not Found)"
+    assert r.summary == "not in Hybrid Analysis yet (uploading needs a premium API key)"
+
+
+def test_hybrid_analysis_falls_back_to_the_quick_scan(tmp_path):
+    t = _target(tmp_path)
+    polls = []
+
+    def transport(method, url, headers=None, data=None, timeout=0):
+        path = url.split("/api/v2")[1]
+        if path.startswith("/overview/"):
+            return 404, b'{"message": "Not Found"}'
+        if path == "/submit/file":
+            return 404, b'{"message": "Requested URI - Not Found"}'
+        if path == "/quick-scan/state":
+            return 200, json.dumps([{"id": "lnk", "available": True}, {"id": "all", "available": True}]).encode()
+        if path == "/quick-scan/file":
+            assert b'name="scan_type"\r\n\r\nall' in data
+            return 200, json.dumps({"id": "q1", "finished": False}).encode()
+        if path == "/quick-scan/q1":
+            polls.append(1)
+            done = len(polls) > 1
+            return 200, json.dumps({"id": "q1", "finished": done, "scanners": [
+                {"name": "Metadefender", "status": "clean", "positives": 0, "total": 21}] if done else []}).encode()
+        return 500, b""
+
+    clock = [0.0]
+    ha = HybridAnalysis("k", transport=transport, sleep=lambda s: clock.__setitem__(0, clock[0] + s),
+                        clock=lambda: clock[0])
+    ha.start(t)
+    r = ha.check(t, deadline=600)
+    assert r.status == "clean" and r.summary == "AV 0/21 (quick scan)"
+    assert HybridAnalysis.pick_scan_type({"scanners": [{"name": "Lnk", "available": False}, {"id": "x"}]}) == "x"
