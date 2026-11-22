@@ -6,7 +6,7 @@ Real-Hi-Res is a desktop app and command-line tool that scans your music library
 
 ## Download and run (no installation needed)
 
-Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.9.0-windows-x64.zip`; `<version>` in the table below stands for it.
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.10.0-windows-x64.zip`; `<version>` in the table below stands for it.
 
 | System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
@@ -68,7 +68,7 @@ Press **Scan** when the list looks right. Everything updates live while the scan
 
 ![Live scan: finished files show their verdict, the files being worked on are marked "Analysing…", the rest wait in the queue](docs/gui-live.png)
 
-By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
+By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason; it filters once you pause typing, so even a list of tens of thousands of files does not stutter while you type or delete. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
 
 **Views: Files, By album, By artist.** The **View** switch above the list changes how results are shown. **Files** is the file list. **By album** and **By artist** show your library like a music player, as a grid of cards. Each card shows the cover art, the album (or artist) name, and a **ring** that shows how much of it is fake. Red stands for fake, orange for suspicious and green for fine, and the centre of the ring reads the percentage (for example "25%") or the songs ("1/4"), your choice under **Rings show**. A line such as "1 fake of 4 songs" or "All 3 songs fine" sits under each card. The cards with the most fakes come first; use **Sort** to switch to alphabetical order. **Click a card** to list that album's or artist's songs in track order, with their verdicts. **◀ Back to albums** returns to the grid.
 
@@ -116,9 +116,19 @@ The dialog shows "claimed → real" for every file before you start, then each f
 
 Files made from an MP3/AAC can be fixed too, but this only removes their fake hi-res part, because they remain lossy-sourced and stay marked as fake lossless.
 
+**Why some fake files are not fixed.** The Fix window can list fewer files to fix than were flagged as fake, because some flagged files have nothing that a conversion could change. It says how many and why, under the options, and lists those files last, in grey, with the reason for each. There are three reasons:
+
+- **Made from MP3/AAC but already at CD resolution.** This is usually most of them. A "fake FLAC" of 16-bit/44.1 kHz made from an MP3 is already at the resolution it really has, and the MP3 damage cannot be undone, so there is nothing to convert. It stays marked as fake lossless so you know it is MP3-quality; the only real fix is getting a genuine lossless copy.
+- **Upsampled, but the source rate is too uncertain to cut safely.** Fix never lowers the sample rate unless the spectrum clearly collapses at the lower rate, so a doubtful estimate keeps the file's own rate. If all its bits are used too, nothing would change.
+- **The real resolution could not be determined.**
+
+The command-line tool prints the same summary with `--fix`.
+
+**Fix automatically after a scan.** **Settings → Fixing → After a scan** can **Ask whether to fix them** once each scan has finished, or **Fix them automatically**: the Fix window then opens with the fake files of that scan and starts at once, with your Fixing options (originals still go to the backup folder, and if you chose to delete originals you are still asked first). The default is **Do nothing**. Only the desktop app does this; on the command line, `--fix` does the same.
+
 Before fixing a large library, keep in mind what cannot be avoided. A resampled file is not bit-identical to its original master (only padded, only-dithered and whole-number-ratio FFmpeg upsamples are), although the difference is far below hearing. Rewritten files no longer match their checksums, so torrent seeding, rip verification and a store's re-download or library sync treat them as different files. Fake lossless files stay lossy-sourced, because nothing can bring back what MP3/AAC removed. Keep the backups until you have listened to a few results.
 
-![Fix to real resolution dialog after fixing six files in place; originals moved to the backup folder](docs/gui-fix.png)
+![Fix to real resolution window after an automatic fix: four upsampled files fixed in place with their originals in the backup folder; two MP3-sourced files at 16/44.1 left unchanged, with the reason](docs/gui-fix.png)
 
 **Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with five tabs, and pointing at any setting shows an explanation of what it does:
 
@@ -126,7 +136,7 @@ Before fixing a large library, keep in mind what cannot be avoided. A resampled 
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
 - **Saved results** turns saving and reusing results on or off, re-scans results of older detection rules automatically if you want, and sets the space for saved graphs. It also shows where the results are kept and how big they are, with a button to delete them.
 - **Display** sets the view at start-up (Files, By album or By artist), what the album/artist rings show, the card order, which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
-- **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check.
+- **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check, plus what happens **after a scan** (nothing, ask, or fix automatically).
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
@@ -319,7 +329,7 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-The release files are named with their version, for example `RealHiRes-1.9.0-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
+The release files are named with their version, for example `RealHiRes-1.10.0-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
 
 Before anything is published, the `av-scan` job of the build workflow calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml) on the packages that the run has just built, and the `release` job publishes only after that scan has finished, using the release notes it wrote. The scan job fails, and so holds the release back, unless VirusTotal has a finished result for every file; re-running the failed job scans again and then publishes. The same workflow runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag), and the build workflow can be started by hand with **av_scan** ticked to try the pre-release scan on a branch without publishing anything. It takes the packages (or downloads the release), unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's verdict from its VirusTotal engine row (and from Kaspersky OpenTIP if a key is set), sends the two Windows launchers to the Hybrid Analysis sandbox (whose report also carries its antivirus multiscan), and writes the "Antivirus scan results" section of the release notes (into the new notes before a release, with `gh release edit` afterwards). The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. A free Hybrid Analysis key can only read reports: uploading a file (to the sandbox or to its antivirus quick scan) needs a premium key. For the Windows programs of a new release, the Hybrid Analysis column therefore says "not in Hybrid Analysis yet" until someone uploads them on hybrid-analysis.com; the next daily refresh then shows the report. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes, which is how much later than the builds a release now appears.
 

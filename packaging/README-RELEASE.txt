@@ -35,6 +35,9 @@ properties show the real resolution (e.g. a fake 24/96 becomes 16/44.1), keeping
 name, tags and cover art; originals go to a "Real-Hi-Res backups" folder.
 Ctrl/Cmd+A selects every listed file: tick only "Fake lossless" and "Fake
 hi-res", press Ctrl/Cmd+A, then "Fix to real resolution..." to fix them all.
+Settings > Fixing > "After a scan" can ask, or fix the fake files on its own,
+when a scan finishes.  Fake FLACs made from an MP3 that are already 16/44.1
+cannot be improved; the Fix window lists them last and says why.
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 

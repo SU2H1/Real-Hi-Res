@@ -201,9 +201,13 @@ def plan_fix(r: FileResult, cfg) -> tuple:
     if r.is_float:
         cur_bits = 32
     if rate == r.sample_rate and bits >= cur_bits:
-        return None, (f"Already at its real resolution ({_fmt(bits, rate)}); "
-                      "a lossy source cannot be repaired." if r.verdict == FAKE_LOSSLESS
-                      else f"Already at its real resolution ({_fmt(bits, rate)}).")
+        if r.verdict == FAKE_LOSSLESS:
+            return None, (f"Already {_fmt(bits, rate)}, the resolution it really has: there is nothing to "
+                          "convert, and the damage of the lossy source cannot be repaired.")
+        kept = [n for n in notes if n.startswith("Kept")]
+        if kept:
+            return None, f"{kept[0]} All its {bits} bits are used, so nothing would change."
+        return None, f"Already at its real resolution ({_fmt(bits, rate)})."
     ext = os.path.splitext(r.path)[1].lower()
     fmt = _FLAC if getattr(cfg, "fix_format", "") == "FLAC" else _SAME_FORMAT.get(ext, _FLAC)
     out_ext, c16, c24, f16, f24 = fmt
@@ -248,6 +252,56 @@ def plan_fix(r: FileResult, cfg) -> tuple:
                    channels=r.channels or 2, source_rate=r.sample_rate,
                    exact_ratio=exact if exact >= 2 else 0)
     return plan, None
+
+
+SKIP_GROUPS = {
+    "lossy": "made from MP3/AAC but already at CD resolution: nothing to convert, and the lossy "
+             "damage cannot be repaired",
+    "uncertain": "upsampled, but the source rate is too uncertain to cut without risking real content, "
+                 "and all bits are used",
+    "already": "already at the resolution they really have",
+    "unknown": "real resolution could not be determined",
+    "not-fake": "not fake",
+}
+
+
+def skip_group(r: FileResult, why: str) -> str:
+    """Key into SKIP_GROUPS for a file plan_fix() did not plan."""
+    if r.verdict not in FIXABLE_VERDICTS:
+        return "not-fake"
+    if "could not be determined" in why:
+        return "unknown"
+    if r.verdict == FAKE_LOSSLESS:
+        return "lossy"
+    return "uncertain" if why.startswith("Kept") else "already"
+
+
+def skip_summary(skipped) -> str:
+    """'268 are not changed: 251 made from MP3/AAC but ..., 17 ...' for
+    [(result, reason)] from plan_fix(); '' when nothing was skipped."""
+    if not skipped:
+        return ""
+    counts: dict = {}
+    for r, why in skipped:
+        k = skip_group(r, why)
+        counts[k] = counts.get(k, 0) + 1
+    parts = [f"{n} {SKIP_GROUPS[k]}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
+    return f"{len(skipped)} file(s) are not changed: " + "; ".join(parts) + "."
+
+
+def plan_fixes(results, cfg):
+    """(plans, [(result, reason)]) for the fake files among `results`; used
+    after a scan, when Fix runs on its own (Settings → Fixing → After a scan)."""
+    plans, skipped = [], []
+    for r in results:
+        if r.verdict not in FIXABLE_VERDICTS:
+            continue
+        plan, why = plan_fix(r, cfg)
+        if plan:
+            plans.append(plan)
+        else:
+            skipped.append((r, why))
+    return plans, skipped
 
 
 def _has_soxr() -> bool:

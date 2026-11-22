@@ -206,6 +206,14 @@ class Settings:
         "'Song [16-44.1].flac'. Only used for copies; a replaced file keeps its name.", kind="str")
     fix_verify: bool = _f(True, "Fixing", "Re-check fixed files",
                           "Analyse every fixed file again and show its new verdict.", kind="bool")
+    fix_after_scan: str = _f(
+        "Do nothing", "Fixing", "After a scan",
+        "What happens when a scan finds fake hi-res or fake lossless files that can be fixed. "
+        "'Ask whether to fix them' asks once after the scan; 'Fix them automatically' opens the Fix "
+        "window and starts at once, with the options above (originals still go to the backup folder; "
+        "if you chose to delete originals, you are still asked first). Only the desktop app does "
+        "this; the command-line tool fixes with --fix.",
+        choices=["Do nothing", "Ask whether to fix them", "Fix them automatically"], kind="choice")
 
     # ------------------------------------------------------------------
     def extension_set(self) -> set:

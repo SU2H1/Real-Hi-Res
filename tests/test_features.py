@@ -130,6 +130,11 @@ def run():
     import tkinter as tk
     from realhires import gui, settings
     root = tk.Tk()
+    def fail(exc, val, tb):  # an assertion in a Tk callback must end the test, not hang it
+        import traceback, os
+        traceback.print_exception(exc, val, tb)
+        os._exit(1)
+    root.report_callback_exception = fail
     folder = {str(Path(library['real_24_96']).parent)!r}
     app = gui.App(root)
     app._add_source(folder)
@@ -144,15 +149,30 @@ def run():
         assert all(app.tree.set(i, "verdict") == "Not scanned" for i in rows)
         assert app.src_tree.set(folder, "files") == f"{{n}} files"
         assert "ready" in app.status_var.get()
+        # Settings -> Fixing -> After a scan; copies into a temp folder keep the test files intact
+        app.cfg.fix_after_scan = "Fix them automatically"
+        app.cfg.fix_output = "Saving a copy into a folder"
+        app.cfg.fix_folder = {str(tmp_path / "fixed")!r}
         app.start_scan()
         root.after(200, check)
     def check():
         if app.scanning or not app.results:
             return root.after(200, check)
+        fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
+        if not (fixers and fixers[0].running):  # the automatic fix starts shortly after the scan
+            state["waits"] = state.get("waits", 0) + 1
+            assert state["waits"] < 100, "no automatic fix after the scan"
+            return root.after(100, check)
         root.after(600, verify)
     def verify():
         root.update()
         dialogs = [w for w in root.winfo_children() if isinstance(w, gui.SummaryDialog)]
+        fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
+        assert len(fixers) == 1 and fixers[0].plans and fixers[0].running, "no automatic fix after the scan"
+        assert all(p.output.startswith({str(tmp_path / "fixed")!r}) for p in fixers[0].plans)
+        if any(r.verdict == "FAKE LOSSLESS" and r.sample_rate == 44100 for r in fixers[0].results):
+            assert "made from MP3/AAC but already at CD resolution" in fixers[0].note.cget("text")
+        app.cfg.fix_after_scan = "Do nothing"
         listed = app.tree.get_children()
         assert listed, "nothing listed"
         assert all(app.results[i].is_problem for i in listed), "default filter shows non-problems"
@@ -176,6 +196,14 @@ def run():
         app.find_step(1); root.update()
         assert app.find_count.cget("text") == f"{{min(2, n) if n > 1 else 1}} of {{n}}"
         app.close_find()
+        # the Search box waits for typing to pause instead of refreshing on every key
+        shown = len(app.tree.get_children())
+        app.search_var.set("zzzz-no-such-file")
+        assert app._search_job is not None and len(app.tree.get_children()) == shown, "search ran on a key"
+        app._run_search(); root.update()
+        assert not app.tree.get_children(), "search did not filter"
+        app.search_var.set(""); app._run_search(); root.update()
+        assert len(app.tree.get_children()) == shown
         # "Fake lossless + Fake hi-res, Ctrl/Cmd+A, Fix": select-all takes every listed file
         app.set_filters(["FAKE LOSSLESS", "FAKE HI-RES"]); root.update()
         fakes = app.tree.get_children()
@@ -566,3 +594,21 @@ def test_fix_default_is_replace_even_for_old_saved_settings():
     assert settings.Settings.from_dict(old).fix_output == "Replace the file"
     new = dict(old, _version=settings.SETTINGS_VERSION)  # a deliberate choice after 1.6.0 stays
     assert settings.Settings.from_dict(new).fix_output == "Saving a copy next to it"
+
+
+def test_fix_explains_files_it_leaves_alone():
+    from realhires.fix import plan_fix, plan_fixes, skip_group, skip_summary
+
+    cfg = settings.Settings()
+    lossy = FileResult(path="/m/a.flac", verdict="FAKE LOSSLESS", codec="flac", sample_rate=44100,
+                       claimed_bits=16, effective_bits=16, lossy_cutoff_hz=16000.0)
+    plan, why = plan_fix(lossy, cfg)
+    assert plan is None and "nothing to convert" in why and skip_group(lossy, why) == "lossy"
+    padded = FileResult(path="/m/b.flac", verdict="FAKE HI-RES", codec="flac", sample_rate=96000,
+                        claimed_bits=24, effective_bits=16)
+    plans, skipped = plan_fixes([lossy, padded, FileResult(path="/m/c.flac", verdict="REAL HI-RES")], cfg)
+    assert [p.source for p in plans] == ["/m/b.flac"] and [r.path for r, _ in skipped] == ["/m/a.flac"]
+    text = skip_summary(skipped + [(lossy, why)])
+    assert text.startswith("2 file(s) are not changed: 2 made from MP3/AAC but already at CD resolution")
+    assert skip_group(padded, "Kept 96 kHz instead of the estimated 48 kHz: ...") == "uncertain"
+    assert skip_summary([]) == ""

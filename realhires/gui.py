@@ -45,6 +45,7 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 
 from . import __version__
 from . import settings as settings_mod
+from .fix import FIXABLE_VERDICTS
 from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
@@ -67,6 +68,7 @@ PENDING = "PENDING"  # GUI-only state of a listed file that has not been scanned
 PENDING_STYLE = ("Not scanned", "#808080")
 RUNNING = "RUNNING"  # GUI-only: being analysed right now
 RUNNING_STYLE = ("Analysing…", "#0b62c4")
+SEARCH_DELAY_MS = 200  # the list is filtered once typing pauses, not on every key
 
 
 def _work(path: str, max_seconds: Optional[float], cfg) -> FileResult:
@@ -635,7 +637,7 @@ class SettingsDialog(tk.Toplevel):
 class FixDialog(tk.Toplevel):
     """Convert fake files to the resolution they really have (realhires.fix)."""
 
-    def __init__(self, app: "App", results: List[FileResult]):
+    def __init__(self, app: "App", results: List[FileResult], autostart: bool = False):
         super().__init__(app.root)
         self.app = app
         self.title("Fix to real resolution")
@@ -740,6 +742,8 @@ class FixDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self._close())
         self._replan()
         self.after(100, self._poll)
+        if autostart and self.plans:  # Settings → Fixing → After a scan
+            self.after(400, self._start)
 
     def _cfg(self):
         c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
@@ -749,7 +753,7 @@ class FixDialog(tk.Toplevel):
         return c
 
     def _replan(self) -> None:
-        from .fix import plan_fix
+        from .fix import plan_fix, skip_summary
 
         if self.running:
             return
@@ -764,9 +768,13 @@ class FixDialog(tk.Toplevel):
         self.tv.delete(*self.tv.get_children())
         self.plans = []
         notes = set()
+        skipped = []
         for r in self.results:
             plan, why = plan_fix(r, cfg)
             name = os.path.basename(r.path)
+            if not plan:
+                skipped.append((r, why))
+                continue
             if plan:
                 self.plans.append(plan)
                 notes.update(plan.notes)
@@ -778,17 +786,19 @@ class FixDialog(tk.Toplevel):
                 else:
                     out = plan.output if into else f"Copy: {os.path.basename(plan.output)}"
                 self.tv.insert("", "end", iid=r.path, text=name, values=(plan.description, "Ready", out))
-            else:
-                self.tv.insert("", "end", iid=r.path, text=name, values=(r.claimed, why, ""), tags=("skip",))
+        # files that are not changed come last, in grey, with their reason
+        for r, why in skipped:
+            self.tv.insert("", "end", iid=r.path, text=os.path.basename(r.path), values=(r.claimed, why, ""),
+                           tags=("skip",))
         n = len(self.plans)
         verb = "Fix" if replace else "Save corrected copies of"
         self.head.configure(text=f"{verb} {n} file{'s' if n != 1 else ''}: real resolution"
                             if n else "Nothing to fix")
-        self.note.configure(text="\n".join(sorted(notes)))
+        why_not = skip_summary(skipped) + (" They are listed last, in grey." if skipped else "")
+        self.note.configure(text="\n".join([why_not] * bool(why_not) + sorted(notes)))
         self.start_btn.configure(state="normal" if n else "disabled")
         self.pb.configure(maximum=max(n, 1), value=0)
-        skipped = len(self.results) - n
-        self.status.configure(text=f"{skipped} selected file(s) need no fixing." if skipped else "")
+        self.status.configure(text="")
 
     def _browse(self, var, title) -> None:
         d = filedialog.askdirectory(title=title, parent=self)
@@ -1095,6 +1105,7 @@ class App(ttk.Frame):
         self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
         self.listing: Dict[str, threading.Event] = {}  # sources still being listed -> cancel flag
         self.scan_order: List[str] = []
+        self.last_scan_files: List[str] = []
         self.scan_ptr = 0
         self.scan_workers = 1
         self.scan_when_listed = False
@@ -1127,6 +1138,8 @@ class App(ttk.Frame):
         self._regroup_pending = False
         self.show_vars = {v: tk.BooleanVar(value=v in self.cfg.shown_verdicts) for v in VERDICT_ORDER}
         self.search_var = tk.StringVar()
+        self._search_job: Optional[str] = None
+        self._values_cache: Dict[str, tuple] = {}  # path -> (result, row values)
         self.quick_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Add a folder or files, then press Scan.")
         self._build_menu()
@@ -1279,7 +1292,7 @@ class App(ttk.Frame):
         entry = ttk.Entry(filt, textvariable=self.search_var, width=24)
         entry.pack(side="right")
         ttk.Label(filt, text="Search:").pack(side="right", padx=(0, 4))
-        self.search_var.trace_add("write", lambda *a: self.refresh())
+        self.search_var.trace_add("write", lambda *a: self._search_changed())
 
         # browser-style find bar (Ctrl/Cmd+F)
         self.find_frame = ttk.Frame(self, padding=(4, 3))
@@ -1501,8 +1514,9 @@ class App(ttk.Frame):
         n = len(self.source_files[source])
         if self.src_tree.exists(source):
             self.src_tree.set(source, "files", f"{n} so far…")
+        q = self._filter_state()[1]
         for path in batch:
-            if path not in known and not self.tree.exists(path) and self._search_ok(path):
+            if path not in known and not self.tree.exists(path) and (not q or q in path.lower()):
                 self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
         self._request_lookup([p for p in batch if p not in known])
         self.status_var.set(f"Looking for audio files… {len(known) + len(batch)} found so far")
@@ -1758,6 +1772,7 @@ class App(ttk.Frame):
             return
         subset = files is not None
         files = list(files) if subset else self.all_files()
+        self.last_scan_files = list(files)
         if not files:
             messagebox.showinfo("Real-Hi-Res", "The added folders/files contain no audio files.\n\n"
                                 "Check the file extensions under Settings → Scanning.")
@@ -1883,6 +1898,28 @@ class App(ttk.Frame):
             self.tree.focus(kids[0])
         if self.results and self.cfg.show_summary_popup:
             self.after(150, self.show_summary)
+        if not stopped:
+            self.after(400, self._fix_after_scan)
+
+    def _fix_after_scan(self) -> None:
+        """Settings → Fixing → After a scan: ask, or fix the scanned fake files."""
+        from .fix import plan_fixes
+
+        mode = self.cfg.fix_after_scan
+        if mode == "Do nothing" or self.scanning:
+            return
+        scanned = [self.results[f] for f in self.last_scan_files if f in self.results]
+        plans, skipped = plan_fixes(scanned, self.cfg)
+        if not plans:
+            return
+        if mode.startswith("Ask"):
+            extra = f"\n\n{len(skipped)} other fake file(s) cannot be changed; the Fix window says why." if skipped else ""
+            if not messagebox.askyesno(
+                    "Fix to real resolution",
+                    f"{len(plans)} fake file(s) can be fixed to the resolution they really have. Fix them now?"
+                    f"{extra}\n\n(Settings → Fixing → After a scan)"):
+                return
+        FixDialog(self, [r for r in scanned if r.verdict in FIXABLE_VERDICTS], autostart=True)
 
     def show_summary(self) -> None:
         if not self.results:
@@ -2122,18 +2159,44 @@ class App(ttk.Frame):
     def _in_group(self, path: str) -> bool:
         return self.group_filter is None or path in self.group_filter["paths"]
 
-    def _matches(self, r: FileResult) -> bool:
+    def _search_changed(self) -> None:
+        """Filter once typing pauses: refreshing a big list on every key
+        (and again on every deleted key) made the window stutter."""
+        if self._search_job is not None:
+            self.after_cancel(self._search_job)
+        self._search_job = self.after(SEARCH_DELAY_MS, self._run_search)
+
+    def _run_search(self) -> None:
+        self.refresh()  # refresh() also clears the pending search job
+
+    def _filter_state(self):
+        """The verdict boxes and search text, read once (each Tk variable read
+        is a call into Tcl, far too slow to repeat for every row)."""
+        shown = {v for v, var in self.show_vars.items() if var.get()}
+        return shown, self.search_var.get().strip().lower()
+
+    def _matches(self, r: FileResult, state=None) -> bool:
         if not self._in_group(r.path):
             return False
-        if not self.show_vars.get(r.verdict, tk.BooleanVar(value=True)).get():
+        shown, q = state or self._filter_state()
+        if r.verdict not in shown and r.verdict in self.show_vars:
             return False
-        q = self.search_var.get().strip().lower()
         return not q or q in r.path.lower() or q in r.summary.lower()
 
     def _values(self, r: FileResult):
+        cached = self._values_cache.get(r.path)
+        if cached is not None and cached[0] is r:
+            return cached[1]
         bw = f"{r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "-"
-        return (VERDICT_STYLE[r.verdict][0], r.summary, r.claimed, r.estimated, bw,
-                os.path.basename(r.path), os.path.dirname(r.path))
+        values = (VERDICT_STYLE[r.verdict][0], r.summary, r.claimed, r.estimated, bw,
+                  os.path.basename(r.path), os.path.dirname(r.path))
+        self._values_cache[r.path] = (r, values)
+        return values
+
+    def _add_row(self, iid: str, values: tuple, tag: str) -> None:
+        """Treeview.insert, without ttk's slow Python-side option formatting:
+        tuples go to Tcl as lists directly."""
+        self.tree.tk.call(self.tree._w, "insert", "", "end", "-id", iid, "-values", values, "-tags", (tag,))
 
     def _pending_values(self, path: str):
         why = "Waiting in the scan queue…" if self.scanning else "Not scanned yet: press Scan"
@@ -2185,18 +2248,28 @@ class App(ttk.Frame):
         self.refresh()
 
     def refresh(self) -> None:
+        if self._search_job is not None:  # a refresh now covers the pending search
+            self.after_cancel(self._search_job)
+            self._search_job = None
         selected = set(self.tree.selection())
         self.tree.delete(*self.tree.get_children())
-        rows = sorted((r for r in self.results.values() if self._matches(r)),
+        state = self._filter_state()
+        rows = sorted((r for r in self.results.values() if self._matches(r, state)),
                       key=self._sort_key, reverse=self.sort_rev)
+        shown = set()
         for r in rows:
-            self.tree.insert("", "end", iid=r.path, values=self._values(r), tags=(r.verdict,))
+            self._add_row(r.path, self._values(r), r.verdict)
+            shown.add(r.path)
         # Listed files that have not been scanned yet are always shown, so the
         # user can see what was added.
+        q = state[1]
+        pending = None
         for path in self.all_files():
-            if (path not in self.results and self._search_ok(path) and self._in_group(path)
-                    and not self.tree.exists(path)):
-                self.tree.insert("", "end", iid=path, values=self._pending_values(path), tags=(PENDING,))
+            if (path not in self.results and path not in shown and (not q or q in path.lower())
+                    and self._in_group(path)):
+                pending = pending or self._pending_values(path)[:2]
+                self._add_row(path, pending + ("", "", "", os.path.basename(path), os.path.dirname(path)), PENDING)
+                shown.add(path)
         keep = [i for i in selected if self.tree.exists(i)]
         if keep:
             self.tree.selection_set(keep)

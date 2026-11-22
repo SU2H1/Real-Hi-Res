@@ -313,14 +313,12 @@ def main(argv=None) -> int:
 
 def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False,
               store: Optional[ResultStore] = None) -> int:
-    from .fix import plan_fix, prepare_gapless, run_fix
+    from .fix import plan_fixes, prepare_gapless, run_fix, skip_summary
 
-    plans = []
-    for r in results:
-        plan, why = plan_fix(r, cfg)
-        if plan:
-            plans.append(plan)
+    plans, skipped = plan_fixes(results, cfg)
     print()
+    if skipped:
+        print(f"Fix: {skip_summary(skipped)}")
     if not plans:
         print("Fix: nothing to convert (no fake hi-res / fake lossless files that can be reduced).")
         return 0
