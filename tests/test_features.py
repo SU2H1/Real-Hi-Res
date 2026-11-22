@@ -282,6 +282,12 @@ def run():
         # a full scan now analyses nothing: every file has a saved result
         state["t"] = time.time()
         app.start_scan()
+        # the summary still due from the re-scan must not pop up now: a "Nothing scanned yet"
+        # box here blocked the whole window on macOS (seen in CI)
+        summaries = lambda: sum(isinstance(w, gui.SummaryDialog) for w in root.winfo_children())  # noqa: E731
+        shown = summaries()
+        app._summary_after_scan()
+        assert summaries() == shown, "summary pop-up during a new scan"
         root.after(100, full)
     def full():
         if app.scanning:

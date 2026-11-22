@@ -1897,7 +1897,7 @@ class App(ttk.Frame):
             self.tree.selection_set(kids[0])
             self.tree.focus(kids[0])
         if self.results and self.cfg.show_summary_popup:
-            self.after(150, self.show_summary)
+            self.after(150, self._summary_after_scan)
         if not stopped:
             self.after(400, self._fix_after_scan)
 
@@ -1920,6 +1920,13 @@ class App(ttk.Frame):
                     f"{extra}\n\n(Settings → Fixing → After a scan)"):
                 return
         FixDialog(self, [r for r in scanned if r.verdict in FIXABLE_VERDICTS], autostart=True)
+
+    def _summary_after_scan(self) -> None:
+        """The pop-up after a scan.  It is shown 150 ms later, so another scan may have
+        started (and emptied the list) meanwhile: then it is skipped silently, rather
+        than showing "Nothing scanned yet", a modal box that blocked the window."""
+        if not self.scanning and self.results:
+            SummaryDialog(self, list(self.results.values()), self.last_elapsed)
 
     def show_summary(self) -> None:
         if not self.results:

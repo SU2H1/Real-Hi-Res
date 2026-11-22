@@ -6,6 +6,8 @@ Typing in the Search box no longer freezes the window. The list used to be rebui
 
 The Fix window now explains why it lists fewer files than were flagged as fake: under the options it counts the files it leaves unchanged by reason, and lists them last, in grey. Most are "fake FLACs" made from an MP3 that are already 16-bit/44.1 kHz: there is nothing to convert, and MP3 damage cannot be undone. The command-line `--fix` prints the same summary.
 
+Fixed: starting a new scan right after one had finished could show a stray "Nothing scanned yet" message, which on macOS froze the window until it was closed.
+
 ## What's new in 1.9.0
 
 Scan results are saved, so your library is never analysed twice. A file that has not changed since it was checked is not analysed again: not on the next scan, not after restarting the app, and not after updating Real-Hi-Res to this or any later version. Add a folder you checked before and its verdicts appear immediately, before you even press Scan; Scan then analyses only new and changed files. Moved or renamed files keep their results, and the spectrogram is saved too. If a future update improves the detection rules, your saved results stay and are marked, and **Re-scan them** analyses those files with the new rules whenever you want. Right-click → **Re-scan** analyses any file again. The results are kept in your user folder; **Settings → Saved results** shows where, how big they are, and can delete them. The command-line tool shares them (`--rescan`, `--rescan-outdated`, `--no-cache`, `--forget-results`).
