@@ -126,7 +126,8 @@ def test_gui_scan_summary_and_settings(library, tmp_path):
 import sys
 sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
 def run():
-    import time
+    import faulthandler, time
+    faulthandler.dump_traceback_later(200, exit=True)  # a hang prints every thread's stack
     import tkinter as tk
     from realhires import gui, settings
     root = tk.Tk()
@@ -159,20 +160,29 @@ def run():
         if app.scanning or not app.results:
             return root.after(200, check)
         fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
-        if not (fixers and fixers[0].running):  # the automatic fix starts shortly after the scan
+        if not (fixers and (fixers[0].running or fixers[0].done_paths)):  # starts shortly after the scan
             state["waits"] = state.get("waits", 0) + 1
             assert state["waits"] < 100, "no automatic fix after the scan"
             return root.after(100, check)
-        root.after(600, verify)
+        print("auto-fix started", flush=True)
+        root.after(200, fix_done)
+    def fix_done():
+        # let the automatic fix finish before the next scans, so they do not compete for the CPU
+        fixer = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)][0]
+        if fixer.running:
+            return root.after(200, fix_done)
+        print("auto-fix finished", flush=True)
+        root.after(300, verify)
     def verify():
         root.update()
         dialogs = [w for w in root.winfo_children() if isinstance(w, gui.SummaryDialog)]
         fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
-        assert len(fixers) == 1 and fixers[0].plans and fixers[0].running, "no automatic fix after the scan"
+        assert len(fixers) == 1 and fixers[0].plans and fixers[0].done_paths, "no automatic fix after the scan"
         assert all(p.output.startswith({str(tmp_path / "fixed")!r}) for p in fixers[0].plans)
         if any(r.verdict == "FAKE LOSSLESS" and r.sample_rate == 44100 for r in fixers[0].results):
             assert "made from MP3/AAC but already at CD resolution" in fixers[0].note.cget("text")
         app.cfg.fix_after_scan = "Do nothing"
+        fixers[0].destroy()
         listed = app.tree.get_children()
         assert listed, "nothing listed"
         assert all(app.results[i].is_problem for i in listed), "default filter shows non-problems"
@@ -216,6 +226,7 @@ def run():
         state["dialogs"], state["listed"] = len(dialogs), len(listed)
         state["errors"] = {{p for p, r in app.results.items() if r.verdict == "ERROR"}}
         # saved results: listing the folder again shows every result without a scan
+        print("relisting", flush=True)
         app.clear(); app._add_source(folder)
         root.after(100, saved)
     def saved():
@@ -243,6 +254,7 @@ def run():
         if app.cache.get(p) is None:
             return root.after(200, drawn)
         assert app.cache.get(p)["spectrogram"] and not app.spectrogram.waiting
+        print("re-scan", flush=True)
         app.rescan_selected()
         assert app.scanning
         root.after(200, rescanned)
@@ -273,9 +285,9 @@ if __name__ == "__main__":
 """)
     env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "gui-settings.json"))
     proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                          timeout=180, env=env)
-    assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.startswith("OK 1 ")  # one summary pop-up was shown
+                          timeout=240, env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.splitlines()[-1].startswith("OK 1 "), proc.stdout  # one summary pop-up was shown
 
 
 # ---------------------------------------------------------- console output ---
