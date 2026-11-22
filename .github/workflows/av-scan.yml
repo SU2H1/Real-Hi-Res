@@ -103,7 +103,11 @@ jobs:
           shopt -s nullglob
           mapfile -t INNER < inner-args.txt
           EXTRA=()
-          [ "${{ inputs.prerelease }}" != true ] || EXTRA=(--require-results)
+          if [ "${{ inputs.prerelease }}" = true ]; then
+            EXTRA=(--require-results)        # a release waits for VirusTotal on every file
+          else
+            EXTRA=(--opentip-upload-all)     # refreshes have time to send the archives to Kaspersky too
+          fi
           python3 packaging/av_scan.py --tag "${{ steps.rel.outputs.tag }}" \
             --notes-in notes.md --notes-out release-notes.md --json av-results.json \
             --build-url "${{ steps.rel.outputs.build_url }}" "${EXTRA[@]}" "${INNER[@]}" inner/*.exe assets/*

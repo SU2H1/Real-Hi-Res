@@ -224,13 +224,15 @@ class VirusTotal:
             kres = Result("n/a", "not in this VirusTotal report", link)
         else:
             cat, label = kas[1].get("category"), kas[1].get("result")
+            # Kaspersky's engine inside VirusTotal: the cell says so, because its link
+            # leads to VirusTotal; Kaspersky's own page replaces it once OpenTIP has judged the file.
             if cat in ("malicious", "suspicious"):
-                kres = Result("detected" if cat == "malicious" else "suspicious", f"detected: `{label or cat}`",
+                kres = Result("detected" if cat == "malicious" else "suspicious", f"`{label or cat}`, on VirusTotal",
                               link, [("Kaspersky", label or cat)], 1)
             elif cat in ("undetected", "harmless"):
-                kres = Result("clean", "clean", link, [], 1)
+                kres = Result("clean", "on VirusTotal", link, [], 1)
             else:
-                kres = Result("pending", cat or "no verdict", link)
+                kres = Result("pending", f"{cat or 'no verdict'} on VirusTotal", link)
         return vt, kres
 
 
@@ -569,6 +571,9 @@ def main(argv=None) -> int:
     ap.add_argument("--minutes", type=float, default=45.0, help="time budget for waiting on analyses")
     ap.add_argument("--sandbox-minutes", type=float, default=20.0,
                     help="at most this long (from the start) for Hybrid Analysis sandbox reports")
+    ap.add_argument("--opentip-upload-all", action="store_true",
+                    help="also upload the release archives to Kaspersky OpenTIP when it does not know them "
+                         "(slow, so only the daily refresh does it; the .exe files are always uploaded)")
     ap.add_argument("--require-results", action="store_true",
                     help="exit 1 unless VirusTotal has a finished result for every file (used before a release)")
     args = ap.parse_args(argv)
@@ -619,7 +624,7 @@ def main(argv=None) -> int:
         tip = OpenTIP(kas_key)
         for t in targets:
             try:
-                r = tip.check(t, upload=t.is_exe)
+                r = tip.check(t, upload=t.is_exe or args.opentip_upload_all)
             except Exception as exc:  # noqa: BLE001 - one service must not break the report
                 print(f"OpenTIP {t.name}: {exc!r}")
                 r = Result("error", "no result", OpenTIP.gui(t.sha256))

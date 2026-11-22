@@ -253,3 +253,11 @@ def test_maintainer_review_replaces_the_warning_until_new_engines_flag(tmp_path)
 def test_shipped_reviews_file_is_valid():
     reviews = av_scan.load_reviews()
     assert reviews and all(len(k) == 64 and v["engines"] and v["note"] for k, v in reviews.items())
+
+
+def test_kaspersky_cell_says_when_its_verdict_comes_from_virustotal(tmp_path):
+    t = _target(tmp_path)
+    _, kas = VirusTotal.parse(t, _report(t.sha256))
+    assert av_scan.cell(kas) == f"[Clean (on VirusTotal)]({VirusTotal.gui(t.sha256)})"
+    _, kas = VirusTotal.parse(t, _report(t.sha256, kaspersky="malicious"))
+    assert av_scan.cell(kas).startswith("[**Detected**: `HEUR:Trojan.Win32.Generic`, on VirusTotal](")
