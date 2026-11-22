@@ -123,11 +123,26 @@ def _gui_available():
 def test_gui_scan_summary_and_settings(library, tmp_path):
     script = tmp_path / "drive.py"
     script.write_text(f"""
-import sys
+import faulthandler, os, signal, sys, threading, time
 sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})
+# Module level, so the spawned worker processes (which import this file) can dump their stacks too.
+if hasattr(signal, "SIGUSR1"):
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
+def watchdog():
+    import multiprocessing
+    print("WATCHDOG: the GUI test hangs; stacks of every process follow", file=sys.stderr, flush=True)
+    for child in multiprocessing.active_children():
+        print(f"--- worker process {{child.pid}} ---", file=sys.stderr, flush=True)
+        if hasattr(signal, "SIGUSR1"):
+            os.kill(child.pid, signal.SIGUSR1)
+    time.sleep(3)
+    print("--- GUI process ---", file=sys.stderr, flush=True)
+    faulthandler.dump_traceback(all_threads=True)
+    os._exit(3)
 def run():
-    import faulthandler, time
-    faulthandler.dump_traceback_later(200, exit=True)  # a hang prints every thread's stack
+    dog = threading.Timer(180, watchdog)
+    dog.daemon = True  # must not keep a finished test alive
+    dog.start()
     import tkinter as tk
     from realhires import gui, settings
     root = tk.Tk()
@@ -141,7 +156,7 @@ def run():
     app._add_source(folder)
     app._add_source(folder)  # adding twice must not duplicate
     def listed():
-        if app.listing:
+        if app.listing or app.lookup_busy:  # the status says "ready" once saved results were looked up
             return root.after(100, listed)
         rows = app.tree.get_children()
         n = len(app.all_files())
@@ -284,10 +299,19 @@ if __name__ == "__main__":
     run()
 """)
     env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "gui-settings.json"))
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                          timeout=240, env=env)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert proc.stdout.splitlines()[-1].startswith("OK 1 "), proc.stdout  # one summary pop-up was shown
+    # Output goes to files, not pipes: worker processes that outlive a crash would keep pipes
+    # open and hide the watchdog's stack dumps until the timeout.
+    out, err = tmp_path / "gui.out", tmp_path / "gui.err"
+    with open(out, "w") as fo, open(err, "w") as fe:
+        proc = subprocess.Popen([sys.executable, str(script)], stdout=fo, stderr=fe, env=env)
+        try:
+            rc = proc.wait(timeout=240)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            rc = "killed after 240 s"
+    log = out.read_text(errors="replace") + err.read_text(errors="replace")
+    assert rc == 0, log
+    assert out.read_text().splitlines()[-1].startswith("OK 1 "), log  # one summary pop-up was shown
 
 
 # ---------------------------------------------------------- console output ---
