@@ -2,6 +2,8 @@
 
 While a scan runs, the status line now estimates how long it will take to finish ("Scanning: 120/500 files, ... about 6 min left"). The estimate appears after the first few files and is based on how much audio has been analysed so far, so libraries that mix short and long tracks, or CD-quality and 24/192 files, are estimated fairly, and files whose saved result is reused are left out of it. The command-line tool shows the same estimate on its progress line.
 
+Genuine 24-bit files at 44.1 or 48 kHz now say why they count as hi-res: their **Why** reads "Genuine 24-bit at standard 44.1 kHz: hi-res by bit depth only", and the details explain that their sample rate is a standard one, so only the bit depth goes beyond CD quality. Results saved by earlier versions show the new text too, without a re-scan.
+
 On the release page, the Kaspersky column now says "on VirusTotal" when its result is Kaspersky's verdict as reported by VirusTotal, because its link then leads to VirusTotal rather than to Kaspersky's own site. The daily antivirus refresh also sends the downloads to Kaspersky's Threat Intelligence Portal, so Kaspersky's own page soon has a verdict for every file.
 
 ## What's new in 1.10.0

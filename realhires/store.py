@@ -44,7 +44,7 @@ from dataclasses import fields
 from typing import Optional
 
 from . import __version__
-from .verdict import DETECTOR_VERSION, ERROR, FileResult
+from .verdict import DETECTOR_VERSION, ERROR, FileResult, update_wording
 
 SCHEMA_VERSION = 1
 DB_NAME = "results.sqlite"
@@ -97,7 +97,7 @@ def result_from_json(text: str, path: str) -> FileResult:
         if isinstance(d.get(k), dict):
             d[k] = {int(key): v for key, v in d[k].items()}
     d["path"] = path
-    return FileResult(**d)
+    return update_wording(FileResult(**d))
 
 
 def plot_to_blobs(plot: dict):

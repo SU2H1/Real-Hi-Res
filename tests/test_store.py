@@ -9,7 +9,7 @@ from conftest import ffmpeg_write, music_like
 
 from realhires import cli, settings, store
 from realhires.store import ResultStore, settings_key
-from realhires.verdict import ERROR, FileResult, analyze_file
+from realhires.verdict import ERROR, REAL, FileResult, analyze_file
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
@@ -134,3 +134,22 @@ def test_cli_reuses_saved_results(tmp_path, capsys, monkeypatch):
     assert "4 of them were checked by older detection rules" in out
     assert "0 file(s) unchanged" in run("--rescan-outdated")
     assert "Deleted 4 saved result(s)" in (cli.main(["--forget-results"]), capsys.readouterr().out)[1]
+
+
+def test_saved_results_get_the_current_wording(tmp_path):
+    # Results saved by 1.10.0 said only "Genuine 24-bit audio" for a 24/44.1 file; loading them
+    # must give the newer texts without analysing the file again.
+    path = str(tmp_path / "old.flac")
+    with open(path, "wb") as f:
+        f.write(b"x" * 100)
+    old = FileResult(path=path, verdict=REAL, sample_rate=44100, claimed_bits=24, effective_bits=24,
+                     summary="Genuine 24-bit audio", reasons=["Passed spectral and bit-depth checks."],
+                     notes=["Bandwidth 21.6 kHz."])
+    key = settings_key()
+    with ResultStore() as st:
+        assert st.put(old, key, None)
+        got = st.lookup(path, key)
+    assert got.summary == "Genuine 24-bit at standard 44.1 kHz: hi-res by bit depth only"
+    assert got.reasons[0] == "Passed spectral and bit-depth checks."
+    assert got.reasons[1].startswith("Hi-res by bit depth only: 44.1 kHz")
+    assert got.notes == ["Bandwidth 21.6 kHz."] and not got.saved["outdated"]

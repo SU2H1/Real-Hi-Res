@@ -64,6 +64,32 @@ def fmt_res(bits, rate, is_float: bool = False) -> str:
     return f"{b}/{fmt_rate(rate)}"
 
 
+PASSED = "Passed spectral and bit-depth checks."
+
+
+def bit_depth_only_summary(bits, rate) -> str:
+    """Why text of a genuine file whose sample rate is not a hi-res one (48 kHz or less)."""
+    std = "standard " if rate in (44100, 48000) else ""
+    return f"Genuine {bits}-bit at {std}{fmt_rate(rate)} kHz: hi-res by bit depth only"
+
+
+def bit_depth_only_reason(rate) -> str:
+    return (f"Hi-res by bit depth only: {fmt_rate(rate)} kHz is not a hi-res sample rate, and the file "
+            "does not claim one, so there is no higher sample rate that could have been faked. Only its "
+            "bit depth goes beyond CD quality, and that bit depth is genuine.")
+
+
+def update_wording(r: "FileResult") -> "FileResult":
+    """Bring the texts of a result saved by an older version up to date (wording only)."""
+    if (r.verdict == REAL and r.sample_rate and r.sample_rate <= 48000
+            and r.summary.startswith("Genuine ") and r.summary.endswith("-bit audio")):
+        bits = r.summary[len("Genuine "):-len("-bit audio")]
+        r.summary = bit_depth_only_summary(bits, r.sample_rate)
+        if PASSED in r.reasons and not any(x.startswith("Hi-res by bit depth only") for x in r.reasons):
+            r.reasons.insert(r.reasons.index(PASSED) + 1, bit_depth_only_reason(r.sample_rate))
+    return r
+
+
 @dataclass
 class FileResult:
     path: str
@@ -315,7 +341,7 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
         res.verdict, res.reasons = SUSPECT, suspect
     else:
         res.verdict = REAL
-        res.reasons = ["Passed spectral and bit-depth checks."]
+        res.reasons = [PASSED]
         real_bits = min(eff, 24) if (eff and info.is_float) else eff
         if FLAG_CONVERTER_FLOOR in res.flags:
             short = [f"Genuine: dull recording (content up to {bw_k:.1f} kHz), converter noise to "
@@ -323,7 +349,8 @@ def _judge(info: AudioInfo, spec: SpectrumStats, bits: BitDepthAccumulator, res:
         elif info.sample_rate > 48000:
             short = [f"Genuine: content up to {bw_k:.1f} kHz, {real_bits} bits used"]
         else:
-            short = [f"Genuine {real_bits}-bit audio"]
+            short = [bit_depth_only_summary(real_bits, info.sample_rate)]
+            res.reasons.append(bit_depth_only_reason(info.sample_rate))
     res.summary = "; ".join(short)
 
 

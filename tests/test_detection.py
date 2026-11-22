@@ -23,6 +23,16 @@ def test_real_hires(library, name):
     assert r.grid_step is None
 
 
+def test_hires_by_bit_depth_only_says_so(library):
+    # A genuine 24-bit file at 48 kHz is hi-res only because of its bit depth; the Why text and
+    # the details must say so instead of implying a hi-res sample rate.
+    r = analyze_file(library["real_24_48"])
+    assert r.verdict == REAL
+    assert r.summary == "Genuine 24-bit at standard 48 kHz: hi-res by bit depth only"
+    assert any(x.startswith("Hi-res by bit depth only: 48 kHz") for x in r.reasons)
+    assert "bit depth only" not in analyze_file(library["real_24_96"]).summary
+
+
 @pytest.mark.parametrize("name,source", [
     ("fake_up_44_to_96", 44100),
     ("fake_up_48_to_96", 48000),
