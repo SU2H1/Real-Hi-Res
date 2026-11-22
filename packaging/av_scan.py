@@ -436,7 +436,23 @@ def classify(detections: List[Tuple[str, str]], total: int) -> str:
     return "isolated" if len(engines) <= 3 and not major else "serious"
 
 
-def explain(t: Target, rows: Dict[str, Result], build_url: str) -> Optional[str]:
+REVIEWS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "av_reviews.json")
+
+
+def load_reviews(path: str = REVIEWS_PATH) -> Dict[str, dict]:
+    """The maintainer's checks of detections: {sha256: {"date", "engines", "note"}}.
+    A missing or broken file means no reviews."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {k.lower(): v for k, v in data.items()
+            if isinstance(data, dict) and isinstance(v, dict) and v.get("note") and v.get("engines")}
+
+
+def explain(t: Target, rows: Dict[str, Result], build_url: str,
+            reviews: Optional[Dict[str, dict]] = None) -> Optional[str]:
     dets: List[Tuple[str, str]] = []
     for service, r in rows.items():
         for e, label in r.detections:
@@ -454,6 +470,16 @@ def explain(t: Target, rows: Dict[str, Result], build_url: str) -> Optional[str]
     built = f"[GitHub Actions]({build_url})" if build_url else "GitHub Actions"
     text = [f"**`{t.name}`**{(' ' + t.note) if t.note else ''} is flagged by {names}"
             + (f", out of {total} VirusTotal engines." if total else ".")]
+    review = (reviews or {}).get(t.sha256)
+    if review:
+        covered = {str(e).lower() for e in review["engines"]}
+        new = sorted({e for e, _ in uniq if e.split(" (")[0].lower() not in covered})
+        if not new:  # every current detection was looked at by the maintainer
+            text.append(f"Checked by the maintainer on {review.get('date', '?')}: {review['note']}")
+            return "\n\n".join(text)
+        text.append(f"The maintainer checked the detection by {', '.join(review['engines'])} on "
+                    f"{review.get('date', '?')}, but {', '.join(new)} flagged the file since, which that "
+                    "check does not cover:")
     if classify(uniq, total) == "isolated":
         text.append(
             "Only a few engines flag it, none of them a major vendor, and the names are heuristic or "
@@ -486,7 +512,8 @@ def cell(r: Optional[Result]) -> str:
 
 
 def render(tag: str, targets: List[Target], table: Dict[str, Dict[str, Result]], build_url: str,
-           now: Optional[dt.datetime] = None, configured: Optional[Dict[str, bool]] = None) -> str:
+           now: Optional[dt.datetime] = None, configured: Optional[Dict[str, bool]] = None,
+           reviews: Optional[Dict[str, dict]] = None) -> str:
     now = now or dt.datetime.now(dt.timezone.utc)
     configured = configured or {}
     lines = [START, "## Antivirus scan results", "",
@@ -504,7 +531,8 @@ def render(tag: str, targets: List[Target], table: Dict[str, Dict[str, Result]],
     if missing:
         lines += ["", f"Not scanned automatically yet: {', '.join(missing)} (no API key configured); the links "
                   "open the public report for each file's SHA-256, if anyone has submitted it."]
-    notes = [n for n in (explain(t, table.get(t.sha256, {}), build_url) for t in targets) if n]
+    reviews = load_reviews() if reviews is None else reviews
+    notes = [n for n in (explain(t, table.get(t.sha256, {}), build_url, reviews) for t in targets) if n]
     scanned = any(r.status in ("clean", "detected", "suspicious") for row in table.values() for r in row.values())
     lines += ["", "### Detections explained", ""]
     if notes:

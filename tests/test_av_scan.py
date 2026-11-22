@@ -233,3 +233,23 @@ def test_hybrid_analysis_falls_back_to_the_quick_scan(tmp_path):
     r = ha.check(t, deadline=600)
     assert r.status == "clean" and r.summary == "AV 0/21 (quick scan)"
     assert HybridAnalysis.pick_scan_type({"scanners": [{"name": "Lnk", "available": False}, {"id": "x"}]}) == "x"
+
+
+def test_maintainer_review_replaces_the_warning_until_new_engines_flag(tmp_path):
+    t = _target(tmp_path, "RealHiRes-1.10.0-macos-arm64.dmg", b"dmg" * 50)
+    flagged = [("Microsoft", "Trojan:Script/Wacatac.C!ml")]
+    reviews = {t.sha256: {"date": "2026-11-22", "engines": ["Microsoft"], "note": "same files as the clean zip."}}
+    vt, kas = VirusTotal.parse(t, _report(t.sha256, flagged=flagged))
+    rows = {"VirusTotal": vt, "Kaspersky": kas}
+    assert "manual check" in av_scan.explain(t, rows, "")            # unreviewed: a major vendor needs a check
+    text = av_scan.explain(t, rows, "", reviews)
+    assert "Checked by the maintainer on 2026-11-22: same files as the clean zip." in text
+    assert "manual check" not in text and "Wacatac" in text
+    vt, kas = VirusTotal.parse(t, _report(t.sha256, flagged=flagged + [("ESET-NOD32", "Generik.ABC")]))
+    text = av_scan.explain(t, {"VirusTotal": vt, "Kaspersky": kas}, "", reviews)
+    assert "ESET-NOD32 flagged the file since" in text and "manual check" in text
+
+
+def test_shipped_reviews_file_is_valid():
+    reviews = av_scan.load_reviews()
+    assert reviews and all(len(k) == 64 and v["engines"] and v["note"] for k, v in reviews.items())
