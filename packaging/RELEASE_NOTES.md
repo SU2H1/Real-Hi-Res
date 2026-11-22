@@ -1,3 +1,9 @@
+## What's new in 1.11.0
+
+While a scan runs, the status line now estimates how long it will take to finish ("Scanning: 120/500 files, ... about 6 min left"). The estimate appears after the first few files and is based on how much audio has been analysed so far, so libraries that mix short and long tracks, or CD-quality and 24/192 files, are estimated fairly, and files whose saved result is reused are left out of it. The command-line tool shows the same estimate on its progress line.
+
+On the release page, the Kaspersky column now says "on VirusTotal" when its result is Kaspersky's verdict as reported by VirusTotal, because its link then leads to VirusTotal rather than to Kaspersky's own site. The daily antivirus refresh also sends the downloads to Kaspersky's Threat Intelligence Portal, so Kaspersky's own page soon has a verdict for every file.
+
 ## What's new in 1.10.0
 
 Typing in the Search box no longer freezes the window. The list used to be rebuilt on every key you typed or deleted, which made big libraries stutter; it is now filtered once you pause typing, and the rebuild itself is about three times faster.

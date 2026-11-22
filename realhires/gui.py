@@ -45,6 +45,7 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 
 from . import __version__
 from . import settings as settings_mod
+from .eta import ScanEta, file_sizes
 from .fix import FIXABLE_VERDICTS
 from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
@@ -138,7 +139,7 @@ class Scanner(threading.Thread):
             if not todo or self.stop_event.is_set():
                 self.out.put(("done", "stopped" if self.stop_event.is_set() else None))
                 return
-            self.out.put(("analysing", todo))
+            self.out.put(("analysing", todo, file_sizes(todo)))
             ctx = multiprocessing.get_context("spawn")  # safe with a GUI thread running
             workers = min(effective_jobs(self.cfg.jobs), len(todo))
             with MultiProcessPool(workers, mp_context=ctx) as ex:
@@ -1106,6 +1107,8 @@ class App(ttk.Frame):
         self.listing: Dict[str, threading.Event] = {}  # sources still being listed -> cancel flag
         self.scan_order: List[str] = []
         self.last_scan_files: List[str] = []
+        self.eta: Optional[ScanEta] = None          # time left for the files being analysed
+        self._status_time = 0.0
         self.scan_ptr = 0
         self.scan_workers = 1
         self.scan_when_listed = False
@@ -1791,6 +1794,7 @@ class App(ttk.Frame):
         self.lookup_gen += 1  # answers of lookups still running are no longer wanted
         self.total, self.done = len(files), 0
         self.scan_order, self.scan_ptr = [], 0  # set when the scanner says which files it analyses
+        self.eta = None
         self.scan_workers = min(effective_jobs(self.cfg.jobs), len(files))
         self.scanning = True
         self._update_outdated_notice()
@@ -1854,10 +1858,13 @@ class App(ttk.Frame):
                     self._on_graphs(payload, rest[0])
                 elif kind == "analysing":
                     self.scan_order, self.scan_ptr = list(payload), 0
+                    self.eta = ScanEta(rest[0])
                     self.scan_workers = min(effective_jobs(self.cfg.jobs), len(payload))
                     self._mark_running()
                 elif kind == "result":
                     self.done += 1
+                    if self.eta is not None and payload.saved is None:
+                        self.eta.add(payload.path)
                     self.cache.put(payload.path, payload.plot)
                     payload.plot = None
                     self.results[payload.path] = payload
@@ -1879,6 +1886,8 @@ class App(ttk.Frame):
             self._update_status()
             self._update_source_counts()
             self._mark_running()
+        elif self.scanning and self.eta is not None and time.time() - self._status_time > 1.0:
+            self._update_status()  # the time left keeps counting down between results
         self.after(100, self._poll)
 
     def _finish(self, stopped: bool) -> None:
@@ -1960,6 +1969,9 @@ class App(ttk.Frame):
         else:
             busy = (f"analysing {len(self.scan_order)} ({self.scan_workers} at a time)" if self.scan_order
                     else "looking up saved results")
+            if self.eta is not None:
+                busy += f", {self.eta.text()}"
+            self._status_time = time.time()
             self.status_var.set(f"Scanning: {self.done}/{self.total} files, {reused} from saved results, "
                                 f"{busy}  ·  {tail}")
 

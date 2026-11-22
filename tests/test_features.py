@@ -172,8 +172,11 @@ def run():
         app.start_scan()
         root.after(200, check)
     def check():
+        if app.scanning:
+            state.setdefault("statuses", []).append(app.status_var.get())
         if app.scanning or not app.results:
             return root.after(200, check)
+        assert any(" left" in s for s in state.get("statuses", [])), ("no time left shown", state.get("statuses"))
         fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
         if not (fixers and (fixers[0].running or fixers[0].done_paths)):  # starts shortly after the scan
             state["waits"] = state.get("waits", 0) + 1
@@ -654,3 +657,17 @@ def test_fix_explains_files_it_leaves_alone():
     assert text.startswith("2 file(s) are not changed: 2 made from MP3/AAC but already at CD resolution")
     assert skip_group(padded, "Kept 96 kHz instead of the estimated 48 kHz: ...") == "uncertain"
     assert skip_summary([]) == ""
+
+
+def test_scan_eta_counts_bytes_not_files():
+    from realhires.eta import ScanEta, fmt_left
+
+    clock = [0.0]
+    eta = ScanEta({"a": 100, "b": 100, "c": 100, "long": 700}, clock=lambda: clock[0])
+    assert eta.seconds_left() is None and eta.text() == "estimating the time left"
+    clock[0] = 10.0
+    for p in ("a", "b", "c", "c", "unknown"):  # repeats and unknown paths are ignored
+        eta.add(p)
+    assert eta.seconds_left() == pytest.approx(700 * 10 / 300)  # the long file still to come
+    assert fmt_left(20) == "less than a minute left" and fmt_left(359) == "about 6 min left"
+    assert fmt_left(4800) == "about 1 h 20 min left" and fmt_left(3600) == "about 1 h left"

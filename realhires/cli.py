@@ -17,6 +17,7 @@ from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, require_tools
 from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
                      write_json, write_svg)
+from .eta import ScanEta, file_sizes
 from .store import ResultStore, StoreError, open_store, settings_key
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
                       analyze_file)
@@ -263,13 +264,16 @@ def main(argv=None) -> int:
             write_spectrogram_png(r, args.spectrogram, cfg)
         r.spectrum = None  # free memory
         r.plot = None
+        if eta is not None and r.saved is None:
+            eta.add(r.path)
         results.append(r)
         if wanted is None or r.verdict in wanted:
             print(row(r, color, base=base, verbose=args.verbose), flush=True)
         if show_progress and i < len(files):
-            eprint(f"[{i}/{len(files)}] analysing…", end="", flush=True)
+            eprint(f"[{i}/{len(files)}] analysing… {eta.text() if eta else ''}", end="", flush=True)
 
     todo = [i for i in range(len(files)) if i not in ready]
+    eta = ScanEta(file_sizes(os.path.abspath(files[i]) for i in todo)) if show_progress else None
     if jobs == 1 or len(todo) <= 1:
         for i, f in enumerate(files):
             handle(i + 1, ready[i] if i in ready else save(work(f)))

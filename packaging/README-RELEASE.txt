@@ -18,7 +18,8 @@ Start the app
 Click "Add Folder..." (or "Add Files...").  Every folder/file you add appears
 in the "Sources to scan" panel with the number of audio files found (red if
 none), and the files are listed right away as "Not scanned".  Then press
-"Scan".  After the scan the list shows the problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
+"Scan".  While it runs, the status line counts the files and, after the
+first few, estimates the time left ("about 6 min left").  After the scan the list shows the problem files: FAKE LOSSLESS ("fake FLAC" made from an MP3/AAC), FAKE HI-RES
 (upsampled or 16-bit padded) and SUSPICIOUS, each with a one-line reason; tick
 the other boxes to see everything.  After the scan a summary window shows the
 percentage of files per verdict as a pie chart (click a slice to list
