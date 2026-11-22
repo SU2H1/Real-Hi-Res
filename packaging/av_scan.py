@@ -19,9 +19,10 @@ a key is skipped and its column links to the public report instead:
                               650 MB via upload_url); known files are
                               re-analysed when their last analysis is older
                               than a day.
-* KASPERSKY_OPENTIP_API_KEY   optional: Kaspersky OpenTIP hash lookup / file
-                              scan.  Kaspersky's own verdict is also read from
-                              its engine row in the VirusTotal report.
+* KASPERSKY_OPENTIP_API_KEY   Kaspersky OpenTIP hash lookup / file scan.  The
+                              Kaspersky column shows only this, Kaspersky's own
+                              verdict; it never borrows Kaspersky's engine row
+                              from the VirusTotal report.
 * HYBRID_ANALYSIS_API_KEY     Hybrid Analysis API v2: the Windows .exe files
                               are submitted to the sandbox (when it has not
                               seen them) before anything else, and the
@@ -31,6 +32,12 @@ a key is skipped and its column links to the public report instead:
 The Hybrid Analysis and OpenTIP response formats are read defensively (several
 field names are accepted) and their raw replies are printed to the log, so a
 format change shows up there instead of breaking the release page.
+
+A release page describes only the changes of its own version: the "What's new
+in X" sections of other versions are dropped from the notes, and with
+--whats-new packaging/RELEASE_NOTES.md this version's section is taken from
+that file, so a correction made there reaches the published page on the next
+refresh.  --notes-only does just that, without scanning anything.
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -200,12 +208,12 @@ class VirusTotal:
                 self.sleep(30)
 
     @staticmethod
-    def parse(t: Target, js) -> Tuple[Result, Result]:
-        """(VirusTotal result, Kaspersky-engine result) from a file report."""
+    def parse(t: Target, js) -> Result:
+        """The VirusTotal result of a file report.  Kaspersky's engine row in it is
+        only part of this result: the Kaspersky column shows Kaspersky's own verdict."""
         link = VirusTotal.gui(t.sha256)
         if not js or "error" in js:
-            r = Result("pending", "not analysed yet", link)
-            return r, Result("pending", "not analysed yet", link)
+            return Result("pending", "not analysed yet", link)
         attrs = js.get("data", {}).get("attributes", {}) or {}
         stats = attrs.get("last_analysis_stats") or {}
         results = attrs.get("last_analysis_results") or {}
@@ -216,24 +224,7 @@ class VirusTotal:
         mal, sus = int(stats.get("malicious", 0)), int(stats.get("suspicious", 0))
         status = "detected" if mal else "suspicious" if sus else "clean"
         summary = f"{mal + sus} / {total}" if total else "no verdicts yet"
-        vt = Result(status if total else "pending", summary, link, dets, total)
-        kas = next(((k, v) for k, v in results.items()
-                    if k.lower().startswith("kaspersky") or str(v.get("engine_name", "")).lower().startswith("kaspersky")),
-                   None)
-        if kas is None:
-            kres = Result("n/a", "not in this VirusTotal report", link)
-        else:
-            cat, label = kas[1].get("category"), kas[1].get("result")
-            # Kaspersky's engine inside VirusTotal: the cell says so, because its link
-            # leads to VirusTotal; Kaspersky's own page replaces it once OpenTIP has judged the file.
-            if cat in ("malicious", "suspicious"):
-                kres = Result("detected" if cat == "malicious" else "suspicious", f"`{label or cat}`, on VirusTotal",
-                              link, [("Kaspersky", label or cat)], 1)
-            elif cat in ("undetected", "harmless"):
-                kres = Result("clean", "on VirusTotal", link, [], 1)
-            else:
-                kres = Result("pending", f"{cat or 'no verdict'} on VirusTotal", link)
-        return vt, kres
+        return Result(status if total else "pending", summary, link, dets, total)
 
 
 # --------------------------------------------------------------- OpenTIP ---
@@ -281,7 +272,7 @@ class OpenTIP:
         if zone.lower() == "green":
             return Result("clean", "Green zone", self.gui(t.sha256), [], 1)
         if zone.lower() == "grey":
-            return Result("pending", "Grey zone (not categorized yet)", self.gui(t.sha256))
+            return Result("pending", "not categorized by Kaspersky yet (Grey zone)", self.gui(t.sha256))
         return Result("pending", f"{zone or 'no'} verdict", self.gui(t.sha256))
 
 
@@ -548,6 +539,50 @@ def render(tag: str, targets: List[Target], table: Dict[str, Dict[str, Result]],
     return "\n".join(lines)
 
 
+WHATS_NEW = re.compile(r"^## What's new in (\S+)[ \t]*$", re.M)
+HEADING = re.compile(r"^## ", re.M)
+
+
+def _whats_new_sections(text: str) -> List[Tuple[str, int, int]]:
+    """(version, start, end) of every "What's new in X" section; one ends at the
+    next level-2 heading or at the antivirus section."""
+    out = []
+    for m in WHATS_NEW.finditer(text):
+        nxt = HEADING.search(text, m.end())
+        end = nxt.start() if nxt else len(text)
+        mark = text.find(START, m.end())
+        if mark != -1:
+            end = min(end, mark)
+        out.append((m.group(1), m.start(), end))
+    return out
+
+
+def whats_new_section(text: str, version: str) -> Optional[str]:
+    """This version's "What's new" section of `text`, or None."""
+    for v, a, b in _whats_new_sections(text):
+        if v == version:
+            return text[a:b].rstrip() + "\n\n"
+    return None
+
+
+def only_this_version(body: str, version: str, current: Optional[str] = None) -> str:
+    """Release notes that describe only `version`: the "What's new" sections of
+    other versions are dropped, and `current` (this version's section from
+    RELEASE_NOTES.md) replaces this version's own, or goes first if it has none."""
+    parts, pos, found = [], 0, False
+    for v, a, b in _whats_new_sections(body):
+        parts.append(body[pos:a])
+        if v == version:
+            parts.append(current if current is not None else body[a:b])
+            found = True
+        pos = b
+    parts.append(body[pos:])
+    out = "".join(parts)
+    if current is not None and not found:
+        out = current + out.lstrip("\n")
+    return out
+
+
 def merge_notes(body: str, section: str) -> str:
     """Replace the scan section of the release notes, or append it."""
     if START in body and END in body:
@@ -560,7 +595,7 @@ def merge_notes(body: str, section: str) -> str:
 # ------------------------------------------------------------------- main ---
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--notes-in", required=True)
     ap.add_argument("--notes-out", required=True)
@@ -574,9 +609,30 @@ def main(argv=None) -> int:
     ap.add_argument("--opentip-upload-all", action="store_true",
                     help="also upload the release archives to Kaspersky OpenTIP when it does not know them "
                          "(slow, so only the daily refresh does it; the .exe files are always uploaded)")
+    ap.add_argument("--whats-new", help="RELEASE_NOTES.md: this version's \"What's new\" section is taken from it")
+    ap.add_argument("--notes-only", action="store_true",
+                    help="only make the notes describe this version alone; scan nothing, keep the antivirus section")
     ap.add_argument("--require-results", action="store_true",
                     help="exit 1 unless VirusTotal has a finished result for every file (used before a release)")
     args = ap.parse_args(argv)
+    version = args.tag[1:] if args.tag.startswith("v") else args.tag
+    current = None
+    if args.whats_new:
+        with open(args.whats_new, encoding="utf-8") as f:
+            current = whats_new_section(f.read().replace("<version>", version), version)
+    if args.whats_new and current is None and args.require_results:
+        print(f"::error::{args.whats_new} has no \"What's new in {version}\" section, so the release page "
+              "would not describe this version.")
+        return 1
+    with open(args.notes_in, encoding="utf-8") as f:
+        body = only_this_version(f.read(), version, current)
+    if args.notes_only:
+        with open(args.notes_out, "w", encoding="utf-8") as f:
+            f.write(body)
+        print(body)
+        return 0
+    if not args.files:
+        ap.error("no files to scan")
 
     inner = dict(x.split("=", 1) for x in args.inner)
     targets = []
@@ -614,7 +670,7 @@ def main(argv=None) -> int:
         vt.wait(ids, deadline)
         for t in targets:
             js = vt.report(t.sha256) if t.sha256 in ids or not known[t.sha256] else known[t.sha256]
-            table[t.sha256]["VirusTotal"], table[t.sha256]["Kaspersky"] = VirusTotal.parse(t, js)
+            table[t.sha256]["VirusTotal"] = VirusTotal.parse(t, js)
     else:
         for t in targets:
             table[t.sha256]["VirusTotal"] = Result("not-configured", "open report", VirusTotal.gui(t.sha256))
@@ -628,10 +684,8 @@ def main(argv=None) -> int:
             except Exception as exc:  # noqa: BLE001 - one service must not break the report
                 print(f"OpenTIP {t.name}: {exc!r}")
                 r = Result("error", "no result", OpenTIP.gui(t.sha256))
-            via_vt = table[t.sha256].get("Kaspersky")
-            if r.status in ("clean", "detected", "suspicious") or via_vt is None or via_vt.status == "n/a":
-                table[t.sha256]["Kaspersky"] = r
-    configured["Kaspersky"] = bool(kas_key or vt_key)
+            table[t.sha256]["Kaspersky"] = r
+    configured["Kaspersky"] = bool(kas_key)
     for t in targets:
         table[t.sha256].setdefault("Kaspersky", Result("not-configured", "open report", OpenTIP.gui(t.sha256)))
 
@@ -645,8 +699,6 @@ def main(argv=None) -> int:
             table[t.sha256]["Hybrid Analysis"] = Result("error", f"error: {exc}", HybridAnalysis.gui(t.sha256))
 
     section = render(args.tag, targets, table, args.build_url, configured=configured)
-    with open(args.notes_in, encoding="utf-8") as f:
-        body = f.read()
     with open(args.notes_out, "w", encoding="utf-8") as f:
         f.write(merge_notes(body, section))
     if args.json:

@@ -8,6 +8,9 @@
 # * Every day for the latest release, and on demand (Actions -> "Antivirus
 #   scan" -> Run workflow): scans the published files again and replaces the
 #   section in the release notes.
+# * On demand with notes_only: only makes the release page describe its own
+#   version (drops the "What's new" sections of other versions and takes this
+#   version's from packaging/RELEASE_NOTES.md); nothing is scanned.
 #
 # API keys are repository secrets (Settings -> Secrets and variables -> Actions):
 #   VT_API_KEY, HYBRID_ANALYSIS_API_KEY, KASPERSKY_OPENTIP_API_KEY (optional).
@@ -31,6 +34,10 @@ on:
       tag:
         description: "Release tag to scan (empty = the latest release)"
         default: ""
+      notes_only:
+        description: "Only clean up the release notes (no scan)"
+        type: boolean
+        default: false
   schedule:
     - cron: "41 4 * * *"
 
@@ -42,9 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # Refreshes of published releases queue behind each other; a pre-release
-    # scan never waits for (or is replaced by) one of them.
+    # scan or a notes-only clean-up never waits for (or is replaced by) one of them.
     concurrency:
-      group: ${{ inputs.prerelease && format('av-scan-prerelease-{0}', github.run_id) || 'av-scan' }}
+      group: ${{ (inputs.prerelease || inputs.notes_only) && format('av-scan-{0}', github.run_id) || 'av-scan' }}
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
@@ -71,8 +78,8 @@ jobs:
             sed "s/<version>/${TAG#v}/g" packaging/RELEASE_NOTES.md > notes.md
           else
             [ -n "$TAG" ] || TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName)
-            echo "Scanning release $TAG"
-            gh release download "$TAG" --repo "$REPO" -D assets
+            echo "Release $TAG"
+            [ "${{ inputs.notes_only }}" = true ] || gh release download "$TAG" --repo "$REPO" -D assets
             gh release view "$TAG" --repo "$REPO" --json body -q .body > notes.md
             if [ -z "$BUILD_URL" ]; then
               SHA=$(gh api "repos/$REPO/commits/$TAG" -q .sha || true)
@@ -102,14 +109,20 @@ jobs:
         run: |
           shopt -s nullglob
           mapfile -t INNER < inner-args.txt
+          # The page describes only this version; its section comes from RELEASE_NOTES.md.
+          NOTES=(--tag "${{ steps.rel.outputs.tag }}" --notes-in notes.md --notes-out release-notes.md
+                 --whats-new packaging/RELEASE_NOTES.md)
+          if [ "${{ inputs.notes_only }}" = true ]; then
+            python3 packaging/av_scan.py "${NOTES[@]}" --notes-only
+            exit 0
+          fi
           EXTRA=()
           if [ "${{ inputs.prerelease }}" = true ]; then
             EXTRA=(--require-results)        # a release waits for VirusTotal on every file
           else
             EXTRA=(--opentip-upload-all)     # refreshes have time to send the archives to Kaspersky too
           fi
-          python3 packaging/av_scan.py --tag "${{ steps.rel.outputs.tag }}" \
-            --notes-in notes.md --notes-out release-notes.md --json av-results.json \
+          python3 packaging/av_scan.py "${NOTES[@]}" --json av-results.json \
             --build-url "${{ steps.rel.outputs.build_url }}" "${EXTRA[@]}" "${INNER[@]}" inner/*.exe assets/*
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
       - name: Update the release notes
