@@ -34,5 +34,14 @@
     ],
     "detection": "Trojan:Script/Wacatac.B!ml",
     "note": "this disk image holds exactly the same 427 files as `RealHiRes-1.12.0-macos-x86_64.zip` (every file has the same SHA-256) and the same 25 internal links, plus the usual shortcut to the Applications folder, and no engine flags that .zip. Only Microsoft's machine-learning heuristic (the `!ml` in the name) flags the disk image itself, and no other engine does, so this is a false positive on the .dmg container, not on the program; the same happened to the 1.10.0 and 1.11.0 disk images. If you prefer, download the .zip, which holds the same app."
+  },
+  "631d94e4b8839ea5ca601df7da91d07a398fdd3d7abd1a91d0d1c16ad581c3c0": {
+    "file": "RealHiRes-Rust-1.12.1-macos-arm64.dmg",
+    "date": "2026-11-24",
+    "engines": [
+      "Microsoft"
+    ],
+    "detection": "Trojan:Script/Wacatac.B!ml",
+    "note": "this disk image holds exactly the same 9 files as `RealHiRes-Rust-1.12.1-macos-arm64.zip` (every file has the same SHA-256), plus the usual shortcut to the Applications folder, and no engine flags that .zip. Only Microsoft's machine-learning heuristic (the `!ml` in the name) flags the disk image itself, and no other engine does, so this is a false positive on the .dmg container, not on the program; the same happened to the 1.10.0, 1.11.0 and 1.12.0 disk images. If you prefer, download the .zip, which holds the same app."
   }
 }
