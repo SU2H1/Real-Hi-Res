@@ -91,8 +91,8 @@ and fixing preferences; they are saved and also used by the command-line tool.
 Language (2.1): Settings > Appearance > Language switches the app between
 English and Japanese (日本語); the app asks to restart.  The command-line tool
 always writes English.
-Song information (2.1): "Get info from MusicBrainz..." (a song's menu) and
-"Get album info from MusicBrainz..." (an album page) look songs up on
+Song information (2.1): "Acquire Metadata..." (in the right-click menu of
+songs and albums, and on an album page) looks songs up on
 MusicBrainz (musicbrainz.org) and show what would change before saving.
 Settings > Library > "Add song information from MusicBrainz automatically"
 (off by default) fills in missing information of new songs by itself, only

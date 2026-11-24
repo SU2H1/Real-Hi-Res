@@ -121,7 +121,8 @@
   "Larger lyrics": "歌詞を大きく",
   "Smaller lyrics": "歌詞を小さく",
   "Bit-perfect playback is on: set the volume on your amplifier or DAC": "ビットパーフェクト再生がオンです。音量はアンプまたはDACで調整してください。",
-  "Change": "変更"
+  "Change": "変更",
+  "Acquire Metadata…": "メタデータを取得…"
  },
  "patterns": {}
 }

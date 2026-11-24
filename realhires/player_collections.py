@@ -13,8 +13,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from . import i18n, musiclib, stats
 from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
-from .player_pages import (Page, album_order, frame, label, library_groups, plural, song_table, track_sort,
-                           track_value)
+from .player_pages import (Page, album_menu, album_order, frame, label, library_groups, plural, song_table,
+                           track_sort, track_value)
 from .player_theme import IconButton, PillButton, draw_icon, fit_text, mix, round_rect
 from .player_widgets import (AlbumGrid, Column, SongList, bind_wheel, draw_cover, draw_mosaic,
                              show_scrollbar)
@@ -102,12 +102,15 @@ class LibraryPage(Page):
         self.area.pack(fill="both", expand=True)
         self.c = self.area.c
         self.hits: List[Tuple[tuple, Callable[[], None]]] = []
+        self.album_hits: List[Tuple[tuple, dict]] = []  # the Recently Added cards (their right-click menu)
         self.hover: Optional[tuple] = None
         self.counts: Dict[str, str] = {}
         self.newest: List[dict] = []
         self.year_minutes = 0
         self._fit: dict = {}
         self.c.bind("<Button-1>", self._click)
+        self.c.bind("<Button-3>", self._context)
+        self.c.bind("<Button-2>", self._context)  # macOS right click
         self.c.bind("<Motion>", self._motion)
         app.covers.listeners.append(lambda key, size: size == self.CARD and self.winfo_exists()
                                     and self.area.redraw())
@@ -149,6 +152,7 @@ class LibraryPage(Page):
         t, c = self.theme, self.c
         W = c.winfo_width()
         self.hits = []
+        self.album_hits = []
         m = self.MARGIN
         c.create_text(m, 40, text=tr("Library"), anchor="w", fill=t.c("text"), font=t.f("title"))
         cols = max(1, int((W - 2 * m + self.GAP) // (self.TILE_W + self.GAP)))
@@ -192,6 +196,7 @@ class LibraryPage(Page):
                                                                    self._fit), anchor="w", fill=t.c("text2"),
                               font=t.f("card_sub"))
                 self.hits.append(((x, y, x + self.CARD, y + self.CARD + 40), lambda a=a: self.app.open_album(a)))
+                self.album_hits.append(((x, y, x + self.CARD, y + self.CARD + 40), a))
             y += self.CARD + 56
         if self.year_minutes:
             box = (m, y, W - m, y + 84)
@@ -218,6 +223,19 @@ class LibraryPage(Page):
         hit = self._hit(e)
         if hit:
             hit[1]()
+
+    def album_at(self, x: float, y: float) -> Optional[dict]:
+        """The Recently Added album whose card is at (x, y) on the canvas, if any."""
+        for box, a in self.album_hits:
+            if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                return a
+        return None
+
+    def _context(self, e) -> None:
+        """Right click on a Recently Added card: the album menu (2.2), as on the album grids."""
+        a = self.album_at(self.c.canvasx(e.x), self.c.canvasy(e.y))
+        if a is not None:
+            album_menu(self.app, a).tk_popup(e.x_root, e.y_root)
 
     def _motion(self, e) -> None:
         hit = self._hit(e)

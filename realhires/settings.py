@@ -68,8 +68,8 @@ class Settings:
         "When new songs come into the library, look those that miss some information (artist, album, album "
         "artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a "
         "certain match is used, and information already in a tag is never replaced. Each song is looked up once, "
-        "one request per second, as MusicBrainz asks. Off: use Get info from MusicBrainz… in a song's or an "
-        "album's menu.", kind="bool")
+        "one request per second, as MusicBrainz asks. Off: use Acquire Metadata… in a song's or an album's "
+        "right-click menu.", kind="bool")
     musicbrainz_server: str = _f(
         "https://musicbrainz.org", "Library", "MusicBrainz server",
         "Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your "

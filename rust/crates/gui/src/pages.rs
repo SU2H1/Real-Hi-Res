@@ -433,6 +433,48 @@ impl Player {
                 self.go(Page::Album(key));
             }
         }
+        resp.context_menu(|ui| self.album_menu(ui, album));
+    }
+
+    /// The right-click menu of an album card (every album grid): Play, Shuffle,
+    /// Play Next, Add to Queue, Acquire Metadata… (the MusicBrainz window for the
+    /// album) and Album Properties…, as the album page's buttons do.
+    pub fn album_menu(&mut self, ui: &mut Ui, album: usize) {
+        let Some(a) = self.lib.albums.get(album) else {
+            ui.close();
+            return;
+        };
+        let title = a.title.clone();
+        let paths: Vec<String> = a.tracks.iter().map(|t| t.path.clone()).collect();
+        if ui.button(tr!("Play")).clicked() {
+            if let Some(first) = paths.first().cloned() {
+                self.play_list(paths.clone(), Some(&first), &title);
+            }
+            ui.close();
+        }
+        if ui.button(tr!("Shuffle")).clicked() {
+            self.shuffle_list(paths.clone(), &title);
+            ui.close();
+        }
+        if ui.button(tr!("Play Next")).clicked() {
+            self.queue_songs(&paths, true);
+            ui.close();
+        }
+        if ui.button(tr!("Add to Queue")).clicked() {
+            self.queue_songs(&paths, false);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…"))).clicked() {
+            let a = self.lib.albums[album].clone();
+            self.musicbrainz_album(&a);
+            ui.close();
+        }
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Album Properties…"))).clicked() {
+            let a = self.lib.albums[album].clone();
+            self.edit_album_info(&a);
+            ui.close();
+        }
     }
 
     fn album_grid(&mut self, ui: &mut Ui, pal: &Palette, albums: &[usize]) {
@@ -524,7 +566,7 @@ impl Player {
                         self.edit_album_info(&a);
                     }
                     if ui
-                        .add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Get album info from MusicBrainz…")))
+                        .add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…")))
                         .clicked()
                     {
                         self.musicbrainz_album(&a);
@@ -613,7 +655,8 @@ impl Player {
             self.edit_song_info(path);
             ui.close();
         }
-        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Get info from MusicBrainz…"))).clicked() {
+        // song tables select one song at a time, so this is always the right-clicked song
+        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…"))).clicked() {
             self.musicbrainz_song(path);
             ui.close();
         }

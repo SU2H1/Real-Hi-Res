@@ -15,6 +15,7 @@
   "1 year": "1年分",
   "A music player (formerly Real-Hi-Res) that also finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.": "音声そのものを解析して、偽ハイレゾ（アップサンプリングまたは16ビットのパディング）のファイルや偽ロスレス（MP3/AACから作られたFLAC/WAV/ALAC）のファイルも見つける音楽プレーヤーです（旧Real-Hi-Res）。",
   "About {app}": "{app}について",
+  "Acquire Metadata…": "メタデータを取得…",
   "Add band": "バンドを追加",
   "Add folder…": "フォルダを追加…",
   "Add Music Folder…": "音楽フォルダを追加…",

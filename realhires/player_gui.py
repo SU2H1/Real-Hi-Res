@@ -1208,7 +1208,9 @@ class PlayerApp:
         if os.path.exists(path):
             m.add_command(label=tr("Get lyrics…"), command=lambda: self.get_lyrics([path]))
             m.add_command(label=tr("Properties…"), command=lambda: self.edit_info([track]))
-            m.add_command(label=tr("Get info from MusicBrainz…"), command=lambda: self.musicbrainz([track]))
+            # 2.2: "Acquire Metadata…" (was "Get info from MusicBrainz…"): the MusicBrainz window
+            # for this song (song lists select one song at a time)
+            m.add_command(label=tr("Acquire Metadata…"), command=lambda: self.musicbrainz([track]))
             m.add_command(label=tr("Cover…"), command=lambda: self.open_cover_window(path))
             m.add_command(label=tr("Show in folder"), command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:

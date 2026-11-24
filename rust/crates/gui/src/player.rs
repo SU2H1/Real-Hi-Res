@@ -3694,6 +3694,92 @@ mod tests {
         frame_with(ctx, p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
     }
 
+    /// A click that leaves the pointer where it is and draws no frame after the release,
+    /// so a window it opens can be given a test client before it searches.
+    fn click_only(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        }
+    }
+
+    /// A right click (press, then the release in a later frame), which opens a context menu.
+    fn right_click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        }
+    }
+
+    /// Every text the last of a few frames drew and where, in drawing order (menus and
+    /// windows come after the page).
+    fn placed_texts(ctx: &egui::Context, p: &mut Player) -> Vec<(String, Rect)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.visual_bounding_rect())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        for _ in 0..3 {
+            frame(ctx, p);
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| p.ui(ui));
+        let mut out = vec![];
+        output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        output.drop_without_applying_deltas();
+        out
+    }
+
+    /// Where the last text `text` was drawn (a menu's item comes after the page's own).
+    fn last_text(texts: &[(String, Rect)], text: &str) -> egui::Pos2 {
+        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
+        texts.iter().rev().find(|(t, _)| t == text).unwrap_or_else(|| panic!("no {text:?} in {names:?}")).1.center()
+    }
+
+    /// The texts of `after` that `before` did not have: what a menu opened in between shows.
+    fn new_texts(before: &[(String, Rect)], after: &[(String, Rect)]) -> Vec<String> {
+        let mut rest: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
+        let mut out = vec![];
+        for (t, _) in after {
+            match rest.iter().position(|b| b == t) {
+                Some(i) => {
+                    rest.remove(i);
+                }
+                None => out.push(t.clone()),
+            }
+        }
+        out
+    }
+
+    /// Right-click an album card (found by its title) and open its menu; the menu's items
+    /// and the texts drawn with it open.
+    fn album_card_menu(ctx: &egui::Context, p: &mut Player, title: &str) -> (Vec<String>, Vec<(String, Rect)>) {
+        p.go(Page::Albums);
+        let before = placed_texts(ctx, p);
+        let names: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
+        // the lowest of the texts: the playback bar above may show the album's name too
+        let card = before
+            .iter()
+            .filter(|(t, _)| t == title)
+            .map(|(_, r)| *r)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("no card {title:?} in {names:?}"));
+        // on the cover, above the title
+        let at = pos2(card.left() + 60.0, card.top() - 80.0);
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        let before = placed_texts(ctx, p);
+        right_click(ctx, p, at);
+        let after = placed_texts(ctx, p);
+        (new_texts(&before, &after), after)
+    }
+
     /// The mouse wheel over `at` (a negative `dy` moves the content up: scrolls down).
     fn wheel(ctx: &egui::Context, p: &mut Player, at: egui::Pos2, dy: f32) {
         frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
@@ -4235,10 +4321,68 @@ mod tests {
         // the switch is off by default: a library update asks MusicBrainz nothing
         assert!(!p.scanner.cfg.musicbrainz_auto);
         assert!(!p.lookup_library(false) && !p.musicbrainz_busy());
+        // never musicbrainz.org: each window gets the test client right after the click
+        // that opens it, and this server (nothing listens there) would only fail
+        p.scanner.cfg.musicbrainz_server = "http://127.0.0.1:9".into();
         let album = p.lib.albums.iter().find(|a| a.title == "Night Drive").cloned().unwrap();
-        p.go(Page::Album(album.key.clone()));
+        let album_paths: Vec<String> = album.tracks.iter().map(|t| t.path.clone()).collect();
+        assert_eq!(album_paths, paths, "in track order");
+
+        // 2.2: an album card's right-click menu, as the user asked ("right click songs/album
+        // and press acquire metadata")
+        let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Acquire Metadata…", "Album Properties…"]);
+        click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
+        p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
+        {
+            let w = p.mb_win.as_ref().unwrap();
+            assert!(w.album, "for the album");
+            assert_eq!((w.paths.clone(), w.heading.as_str()), (paths.clone(), "Night Drive"));
+        }
+        run_until(&ctx, &mut p, "the release from the card", |p| p.mb_win.as_ref().is_some_and(|w| w.detail.is_some() && !w.busy));
+        assert_eq!(p.mb_win.as_ref().unwrap().query_title, "Night Drive");
+        assert_eq!(p.mb_win.as_ref().unwrap().detail.as_ref().unwrap().release.id, "rel-night-2001");
+        p.mb_win = None;
         frame(&ctx, &mut p);
+        // Album Properties… opens Properties for all of the album's songs
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Album Properties…"));
+        {
+            let e = p.edit_info.as_ref().expect("Album Properties… opens Properties");
+            assert_eq!((e.paths.clone(), e.heading.as_str()), (paths.clone(), "Night Drive"));
+        }
+        p.edit_info = None;
+        frame(&ctx, &mut p);
+
+        // a song's right-click menu: Acquire Metadata… for that song (song tables select one song)
+        p.go(Page::Album(album.key.clone()));
+        let before = placed_texts(&ctx, &mut p);
+        let row = before.iter().find(|(t, _)| t == "Harbour Lights").expect("the song's row").1.center();
+        right_click(&ctx, &mut p, row);
+        let after = placed_texts(&ctx, &mut p);
+        let items = new_texts(&before, &after);
+        assert!(items.contains(&"Acquire Metadata…".to_string()) && items.contains(&"Properties…".to_string()), "{items:?}");
+        assert!(!items.iter().any(|t| t.contains("MusicBrainz")), "the old label is gone: {items:?}");
+        let pos = items.iter().position(|t| t == "Acquire Metadata…").unwrap();
+        assert_eq!(items[pos - 1], "Properties…", "after Properties…");
+        click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
+        p.mb_win.as_mut().expect("the song's MusicBrainz window").set_client(crate::mbwin::test_client());
+        {
+            let w = p.mb_win.as_ref().unwrap();
+            assert!(!w.album, "for one song");
+            assert_eq!((w.paths.clone(), w.heading.as_str()), (vec![paths[2].clone()], "Harbour Lights"));
+        }
+        // one MusicBrainz window at a time
         p.musicbrainz_album(&album);
+        assert!(!p.mb_win.as_ref().unwrap().album, "still the song's window");
+        p.mb_win = None;
+        frame(&ctx, &mut p);
+
+        // the album page's button, Acquire Metadata… (as "Get album info from MusicBrainz…" did)
+        p.go(Page::Album(album.key.clone()));
+        let shown = placed_texts(&ctx, &mut p);
+        assert!(!shown.iter().any(|(t, _)| t.contains("MusicBrainz")), "the old label is gone");
+        click_only(&ctx, &mut p, last_text(&shown, "Acquire Metadata…"));
         p.mb_win.as_mut().expect("the MusicBrainz window").set_client(crate::mbwin::test_client());
         run_until(&ctx, &mut p, "the release", |p| p.mb_win.as_ref().is_some_and(|w| w.detail.is_some() && !w.busy));
         {
@@ -4257,6 +4401,22 @@ mod tests {
         assert_eq!((tag("album_artist").as_str(), tag("date").as_str(), tag("genre").as_str()), ("The Example Band", "1999-05-28", "Pop"));
         let t = p.lib.track(&paths[2]).unwrap();
         assert_eq!((t.album_artist.as_str(), t.year.as_str()), ("The Example Band", "1999"));
+
+        // the card menu's Play, Add to Queue and Play Next: the album's songs in track order
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Play"));
+        assert_eq!(p.now.as_ref().map(|n| n.path.clone()), Some(paths[0].clone()), "Play starts with the first song");
+        assert_eq!(p.queue_name, "Night Drive");
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Add to Queue"));
+        assert_eq!(p.queue.as_ref().unwrap().queued, paths);
+        p.queue.as_mut().unwrap().queued = vec![paths[3].clone()];
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Play Next"));
+        let want: Vec<String> = paths.iter().chain([&paths[3]]).cloned().collect();
+        assert_eq!(p.queue.as_ref().unwrap().queued, want, "Play Next comes before the songs queued earlier");
+        p.engine.stop();
+        frame(&ctx, &mut p);
         p.on_exit();
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4308,7 +4468,7 @@ mod tests {
             (Page::Folders(None), vec!["Music", "再生"]),
             (Page::Folders(Some(music_dir.clone())), vec!["Paper Lanterns", "2曲"]),
             (Page::Albums, vec!["アルバム", "Harbour Lights"]),
-            (Page::Album(key.clone()), vec!["戻る", "アルバムのプロパティ…", "MusicBrainzからアルバムの情報を取得…", "2曲、"]),
+            (Page::Album(key.clone()), vec!["戻る", "アルバムのプロパティ…", "メタデータを取得…", "2曲、"]),
             (Page::Artists, vec!["アーティスト", "Mira Calloway"]),
             (Page::AlbumArtists, vec!["アルバムアーティスト"]),
             (Page::Genres, vec!["ジャンル", "Jazz"]),
@@ -4328,6 +4488,13 @@ mod tests {
             let t = texts(&ctx, &mut p);
             has(&t, &want, &format!("{page:?}"));
         }
+        // 2.2: an album card's right-click menu
+        let (items, _) = album_card_menu(&ctx, &mut p, "Harbour Lights");
+        for w in ["再生", "シャッフル", "キューに追加", "メタデータを取得…", "アルバムのプロパティ…"] {
+            assert!(items.iter().any(|t| t == w), "no {w:?} in the album menu: {items:?}");
+        }
+        egui::Popup::close_all(&ctx);
+        frame(&ctx, &mut p);
 
         // playing: the playback bar, Now Playing, Up Next and the play history
         p.go(Page::Album(key.clone()));

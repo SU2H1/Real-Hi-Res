@@ -289,6 +289,34 @@ def track_tip(t: Track, key: str) -> str:
 
 
 # --------------------------------------------------------------- albums ---
+def album_menu(app, album: dict) -> tk.Menu:
+    """The menu of an album card (right click, 2.2): Play, Shuffle, Play Next, Add to
+    Queue, then Acquire Metadata… (the MusicBrainz window for the album, as the album
+    page's button) and Album Properties… (the Properties window for its songs)."""
+    m = tk.Menu(app.root, tearoff=False)
+    name = tr_name(album["title"])  # "Playing from …", as the album page
+    paths = [t.path for t in album["tracks"]]  # in track order
+    m.add_command(label=tr("Play"), command=lambda: app.play_list(album["tracks"], 0, name))
+    m.add_command(label=tr("Shuffle"), command=lambda: app.play_list(album["tracks"], 0, name, shuffle=True))
+    m.add_command(label=tr("Play Next"), command=lambda: app.queue_songs(paths, first=True))
+    m.add_command(label=tr("Add to Queue"), command=lambda: app.queue_songs(paths, first=False))
+    m.add_separator()
+    m.add_command(label=tr("Acquire Metadata…"), command=lambda: app.album_musicbrainz(album))
+    m.add_command(label=tr("Album Properties…"), command=lambda: app.edit_album_info(album))
+    app.theme_menu(m)
+    app.last_menu = m
+    return m
+
+
+def album_context(app, grid: Callable[[], AlbumGrid]) -> Callable[[int, Any], None]:
+    """An AlbumGrid's on_context: the album menu of the card right-clicked."""
+    def context(i: int, e) -> None:
+        albums = grid().albums
+        if 0 <= i < len(albums) and not albums[i].get("new") and "mosaic" not in albums[i]:
+            album_menu(app, albums[i]).tk_popup(e.x_root, e.y_root)
+    return context
+
+
 class AlbumsPage(Page):
     """Album cards: all albums by title, or (Recently Added) the newest first."""
 
@@ -306,7 +334,8 @@ class AlbumsPage(Page):
         self.empty_sub.pack(pady=(0, 14))
         self.choose = PillButton(self.empty, t, tr("Choose a music folder…"), command=app.choose_music_folder)
         self.choose.pack()
-        self.grid_w = AlbumGrid(self, t, app.covers, app.open_album)
+        self.grid_w = AlbumGrid(self, t, app.covers, app.open_album,
+                                on_context=album_context(app, lambda: self.grid_w))
         self.albums: List[dict] = []
         self.refresh()
 
@@ -372,7 +401,7 @@ class AlbumPage(Page):
                                                                                                   padx=(10, 0))
         self.edit_b = PillButton(btns, t, tr("Album Properties…"), kind="plain", command=self.edit_info)
         self.edit_b.pack(side="left", padx=(10, 0))
-        self.mb_b = PillButton(btns, t, tr("Get album info from MusicBrainz…"), kind="plain",
+        self.mb_b = PillButton(btns, t, tr("Acquire Metadata…"), kind="plain",
                                command=self.musicbrainz)
         self.mb_b.pack(side="left", padx=(10, 0))
         # the columns the user chose for album pages (the track number first by default),
@@ -405,7 +434,8 @@ class AlbumPage(Page):
         return None
 
     def musicbrainz(self):
-        """Get album info from MusicBrainz… (2.1): the MusicBrainz window for the album."""
+        """Acquire Metadata… (2.1 "Get album info from MusicBrainz…"): the MusicBrainz
+        window for the album."""
         if self.album is not None:
             return self.app.album_musicbrainz(self.album)
         return None
@@ -634,7 +664,8 @@ class GroupItemPage(Page):
         self.more_b = IconButton(top, t, "dots", command=self._more, size=32, icon_size=18,
                                  tooltip=lambda: tr("More"))
         self.more_b.pack(side="right", padx=(0, 10))
-        self.grid_w = AlbumGrid(self, t, app.covers, app.open_album)
+        self.grid_w = AlbumGrid(self, t, app.covers, app.open_album,
+                                on_context=album_context(app, lambda: self.grid_w))
         self.table = song_table(self, self, kind="songs",
                                 on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
 
@@ -915,7 +946,8 @@ class SearchPage(Page):
         self.grid_box = frame(self, t, height=AlbumGrid.COVER + 84)  # one row of cards
         self.grid_box.pack(fill="x")
         self.grid_box.pack_propagate(False)
-        self.grid_w = AlbumGrid(self.grid_box, t, app.covers, app.open_album)
+        self.grid_w = AlbumGrid(self.grid_box, t, app.covers, app.open_album,
+                                on_context=album_context(app, lambda: self.grid_w))
         self.grid_w.pack(fill="both", expand=True)
         self.song_head = label(self, t, tr("Songs"), "h2")
         self.song_head.pack(anchor="w", padx=28, pady=(4, 2))
@@ -2149,4 +2181,5 @@ class SettingsPage(Page):
 
 
 __all__ = ["Page", "AlbumsPage", "AlbumPage", "GroupPage", "SongsPage", "SearchPage",
-           "NowPlayingPage", "SettingsPage", "LyricsView", "track_value", "track_sort", "album_order"]
+           "NowPlayingPage", "SettingsPage", "LyricsView", "track_value", "track_sort", "album_order",
+           "album_menu", "album_context"]

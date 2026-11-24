@@ -229,8 +229,8 @@ settings! {
         s("When new songs come into the library, look those that miss some information (artist, album, album \
            artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a \
            certain match is used, and information already in a tag is never replaced. Each song is looked up once, \
-           one request per second, as MusicBrainz asks. Off: use Get info from MusicBrainz… in a song's or an \
-           album's menu."), Bool, None, None, NUMS;
+           one request per second, as MusicBrainz asks. Off: use Acquire Metadata… in a song's or an album's \
+           right-click menu."), Bool, None, None, NUMS;
     musicbrainz_server: String = s("https://musicbrainz.org"), "Library", "MusicBrainz server",
         s("Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your \
            own."), Str, None, None, NUMS;

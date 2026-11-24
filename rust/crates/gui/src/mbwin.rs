@@ -1,6 +1,7 @@
 //! The MusicBrainz window (2.1, `docs/player-spec.md` → "Song information from
-//! MusicBrainz"), the port of `realhires/player_mb.py`: "Get info from
-//! MusicBrainz…" for a song and "Get album info from MusicBrainz…" for an album.
+//! MusicBrainz"), the port of `realhires/player_mb.py`: "Acquire Metadata…" in a
+//! song's right-click menu for that song, and on the album page and in an album
+//! card's right-click menu for the whole album (2.2).
 //! The songs' tags are read in a thread, MusicBrainz is searched with them, the
 //! chosen release's track list is read and matched to the songs, the changes
 //! are shown song by song, and Save writes each song's own changes with

@@ -662,3 +662,16 @@ format and where it comes from ("Inside 01 Song.flac", "cover.jpg in the album's
 The core lives with the tag editor: `tagedit.set_cover(paths, image_bytes, mime, cfg)` / `remove_cover(...)`, and
 `covers.cover_source(paths)` (where the shown cover comes from), in both versions, with the native FLAC/MP3/Ogg
 results byte-identical between them (parity vectors) and tests on real files.
+
+### Acquire Metadata (asked for later on 2026-11-24, after 2.1.0 was released)
+
+The user asked: "User should be able to right click songs/album and press aquire meta deta to add metadata for
+song/album via musisbrainz".
+
+- The MusicBrainz items of 2.1 are named **Acquire Metadata…** (Japanese: メタデータを取得…) in both apps: in every
+  song's right-click menu (and the playback bar's "…"), where "Get info from MusicBrainz…" was, and on the album page,
+  where "Get album info from MusicBrainz…" was. They open the same MusicBrainz window as before, one at a time.
+- A song's Acquire Metadata… looks up that song (song lists select one song at a time in both apps).
+- Every album cover card (Albums, Recently Added, an artist's albums, search results) has a right-click menu:
+  **Play**, **Shuffle**, **Play Next**, **Add to Queue**, then **Acquire Metadata…** (the MusicBrainz window for the
+  whole album, as from the album page) and **Album Properties…** (the Properties window for all its songs).

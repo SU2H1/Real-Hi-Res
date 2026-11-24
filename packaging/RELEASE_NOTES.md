@@ -14,6 +14,7 @@
 
 **Your library**
 - **Play Next** and **Add to Queue** in every song's menu.
+- **Acquire Metadata…** in the right-click menu of songs and of albums fills in their information from MusicBrainz; albums' covers have a right-click menu everywhere now (Play, Shuffle, Play Next, Add to Queue, Acquire Metadata…, Album Properties…).
 - Artists, Album Artists, Genres, Years and Composers are **card grids** like Albums.
 - **Several artists in one field** ("Mariah Carey, Michael Bublé") are separate artists, each with a page of its own and a link of its own; band names such as "Earth, Wind & Fire" stay whole.
 - **Rename** genres, composers and years, and **merge** genres (several at once, too); only the songs' tags change.

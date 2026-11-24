@@ -394,6 +394,72 @@ def lyrics_ok():
     assert [t.display_title for t in app.up_next.list.rows] == ["Umbrella Weather", "Midnight Sun", "Polar Drift"]
     assert app._auto_next() == umbrella and app.queue.queued == [umbrella]
     app.queue.queued.clear(); app._update_next(); app.up_next.refresh()
+    # 2.2: an album card's right-click menu; Play Next / Add to Queue queue the whole album in
+    # track order, Play and Shuffle play it (recorded here: the song playing must stay)
+    from realhires import player_pages
+    small = next(a for a in app.albums if a["title"] == "Small Hours")
+    rain = next(a for a in app.albums if a["title"] == "City Rain")
+    am = player_pages.album_menu(app, small)
+    def entries(m):
+        return [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
+    ALBUM_MENU = ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Acquire Metadata…", "Album Properties…"]
+    assert entries(am) == ALBUM_MENU, entries(am)
+    assert app.last_menu is am
+    am.invoke(ALBUM_MENU.index("Add to Queue")); root.update()
+    assert [t.display_title for t in app.up_next.list.rows] == ["Blue Kettle", "Porch Lamp", "Midnight Sun",
+                                                                "Polar Drift"]
+    player_pages.album_menu(app, rain).invoke(ALBUM_MENU.index("Play Next")); root.update()
+    assert [t.display_title for t in app.up_next.list.rows] == ["Umbrella Weather", "Taxi Lights", "Last Train Home",
+                                                                "Blue Kettle", "Porch Lamp", "Midnight Sun",
+                                                                "Polar Drift"]
+    app.queue.queued.clear(); app._update_next(); app.up_next.refresh()
+    played = []
+    app.play_list = lambda *a, **k: played.append((a, k))
+    am.invoke(ALBUM_MENU.index("Play"))
+    am.invoke(ALBUM_MENU.index("Shuffle"))
+    del app.play_list
+    assert played == [((small["tracks"], 0, "Small Hours"), dict()),
+                      ((small["tracks"], 0, "Small Hours"), dict(shuffle=True))], played
+    assert app.current == glacier
+    # every grid of album cards gives its cards this menu: Albums, Recently Added, an
+    # artist's albums, search results, and the Library page's Recently Added row
+    gp = app.page("group")
+    gp.show(kind="artists", group="June Harbor")
+    sp = app.page("search")
+    sp.show(text="rain")
+    grids = [(app.page("albums").grid_w, "Small Hours"), (app.page("recent").grid_w, "Small Hours"),
+             (gp.grid_w, "Small Hours"), (sp.grid_w, "City Rain")]
+    lp = app.page("library")
+    lp.area.redraw()
+    box, newest = lp.album_hits[0]
+    assert lp.album_at((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) is newest
+    assert lp.album_at(box[0] - 5, box[1] - 5) is None
+    class Ev:
+        x_root = y_root = 300
+        x = (box[0] + box[2]) / 2 - lp.c.canvasx(0)
+        y = (box[1] + box[3]) / 2 - lp.c.canvasy(0)
+    for grid, title in grids:
+        assert grid.on_context is not None
+        assert title in [a["title"] for a in grid.albums], (title, grid.albums)
+    if sys.platform.startswith("linux"):  # native pop-up menus (Windows, macOS) wait until closed
+        for grid, title in grids:
+            app.last_menu = None
+            grid.on_context([a["title"] for a in grid.albums].index(title), Ev()); root.update()
+            m = app.last_menu
+            m.unpost()
+            assert entries(m) == ALBUM_MENU, entries(m)
+            m.invoke(ALBUM_MENU.index("Add to Queue"))
+            assert app.queue.queued == [t.path for t in next(a for a in app.albums if a["title"] == title)["tracks"]]
+            app.queue.queued.clear()
+        app.last_menu = None
+        lp._context(Ev()); root.update()
+        m = app.last_menu
+        m.unpost()
+        assert entries(m) == ALBUM_MENU, entries(m)
+        m.invoke(ALBUM_MENU.index("Add to Queue"))
+        assert app.queue.queued == [t.path for t in newest["tracks"]]
+        app.queue.queued.clear()
+    app._update_next(); app.up_next.refresh()
     # the like button of the bar
     app.toggle_like_current()
     assert app.bar.heart.filled and glacier in playerstate.load().liked
@@ -964,12 +1030,20 @@ def bad_ready():
     assert os.stat(S["Blue Kettle"]).st_mtime_ns == state["before"]
     w.cancel()
     assert app.edit_window is None
-    # Album Properties…: every song of the album
+    # Album Properties…: every song of the album, from an album card's right-click menu (2.2)
+    # and from the album page's button (the same window: one at a time)
     album = next(a for a in app.albums if a["title"] == "Small Hours")
+    from realhires import player_pages
+    m = player_pages.album_menu(app, album)
+    m.invoke(next(i for i in range(m.index("end") + 1)
+                  if m.type(i) == "command" and m.entrycget(i, "label") == "Album Properties…"))
+    w = app.edit_window
+    assert w is not None and w.paths == [t.path for t in album["tracks"]], w and w.paths
     app.open_album(album)
     root.update()
     assert app.page("album").edit_b.text == "Album Properties…"
-    w = app.page("album").edit_info()
+    assert app.page("album").mb_b.text == "Acquire Metadata…"
+    assert app.page("album").edit_info() is w
     state["w"] = w
     wait(lambda: w.ready, album_ready, what="album tags read")
 
@@ -1112,8 +1186,13 @@ def loaded():
     m = app.song_menu(app.track(S["Taxi Lights"]))
     labels = menu_labels(m)
     for needed in ("プレイリストに追加", "お気に入り", "次に再生", "キューに追加", "歌詞を取得…", "プロパティ…",
-                   "MusicBrainzから情報を取得…", "アートワーク…"):
+                   "メタデータを取得…", "アートワーク…"):
         assert needed in labels, (needed, labels)
+    # an album card's menu (2.2) and the album page's buttons
+    am = player_pages.album_menu(app, album)
+    assert menu_labels(am) == [tr("Play"), tr("Shuffle"), "次に再生", "キューに追加", "メタデータを取得…",
+                               "アルバムのプロパティ…"], menu_labels(am)
+    assert app.page("album").mb_b.text == "メタデータを取得…" and app.page("album").edit_b.text == "アルバムのプロパティ…"
     # a name dialog: a new playlist
     def answer(tries=0):
         d = app.name_dialog
@@ -1129,8 +1208,10 @@ def loaded():
     assert "プレイリストの名前" in dtexts and "キャンセル" in dtexts, dtexts
     assert app.state.playlist(pid)["name"] == "ドライブ" and app.page_name == "playlist"
     app.delete_playlist(pid)
-    # play a song for more than a second: Recently Played says "今日 hh:mm"
-    app.play_list(album["tracks"], 0, album["title"])
+    # play a song for more than a second: Recently Played says "今日 hh:mm" (Play in the album
+    # card's menu plays the album from its first song)
+    am.invoke(0)
+    assert app.current == album["tracks"][0].path and app.context_name == "Northern Lights", app.context_name
     wait(lambda: app.engine.position() > 1.3, heard, what="first song")
 
 def heard():
