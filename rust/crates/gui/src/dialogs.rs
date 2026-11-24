@@ -7,16 +7,18 @@ use std::time::Instant;
 
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, Pos2, RichText, Sense, Vec2};
 use realhires::fix::{done_summary, plan_fix, skip_summary, Backup, FixOutcome, FixPlan, FIXABLE_VERDICTS};
+use realhires::i18n::{self, tr_text};
 use realhires::paths::{abspath, file_name};
 use realhires::pyfmt::{f, pct};
 use realhires::settings::{Kind, SValue, Settings, GROUPS};
 use realhires::verdict::{verdict_breakdown, FileResult, Verdict, PROBLEM_VERDICTS, VERDICT_ORDER};
+use realhires::{n_, tr};
 
 use crate::app::{arc, App};
 use crate::look::{self, Palette};
 use crate::style::{
-    error_color, flat_button, heading_text, hex, ok_color, on_page, pal, panel_button, plural, primary_button,
-    progress, reveal_in_file_manager, secondary, verdict_style, verdict_text, warn_color, window_heading,
+    count, error_color, flat_button, heading_text, hex, ok_color, on_page, pal, panel_button, primary_button,
+    progress, reveal_in_file_manager, secondary, verdict_label, verdict_style, verdict_text, warn_color, window_heading,
 };
 
 pub enum ConfirmAction {
@@ -71,10 +73,10 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
             ui.add_space(12.0);
             crate::style::buttons_right(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                if primary_button(ui, "Yes", true).clicked() {
+                if primary_button(ui, tr!("Yes"), true).clicked() {
                     answer = Some(true);
                 }
-                if flat_button(ui, "No", true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if flat_button(ui, tr!("No"), true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     answer = Some(false);
                 }
             });
@@ -111,7 +113,7 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
             ui.add(egui::Label::new(RichText::new(&text).color(pal.text)).wrap());
             ui.add_space(12.0);
             crate::style::buttons_right(ui, |ui| {
-                if primary_button(ui, "OK", true).clicked()
+                if primary_button(ui, tr!("OK"), true).clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
                 {
                     close = true;
@@ -149,7 +151,8 @@ impl SummaryWindow {
     fn show(&mut self, app: &mut App, ctx: &egui::Context) -> bool {
         let mut open = true;
         let mut close: Option<Option<Vec<Verdict>>> = None;
-        egui::Window::new("Scan summary")
+        egui::Window::new(tr!("Scan summary"))
+            .id(egui::Id::unique("scan-summary"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -157,23 +160,29 @@ impl SummaryWindow {
             .show(ctx, |ui| {
                 let pal = pal(ui);
                 let n = self.total;
-                let mut head = format!("Scanned {}", plural(n, "file"));
-                if let Some(e) = self.elapsed {
-                    head += &format!(" in {} s", f(e, 1));
-                }
+                let head = match (self.elapsed, n == 1) {
+                    (Some(e), true) => tr!("Scanned 1 file in {seconds} s", seconds = f(e, 1)),
+                    (Some(e), false) => tr!("Scanned {n} files in {seconds} s", n = n, seconds = f(e, 1)),
+                    (None, true) => tr!("Scanned 1 file").to_string(),
+                    (None, false) => tr!("Scanned {n} files", n = n),
+                };
                 ui.label(window_heading(&head, &pal));
                 let pct_problems = if n > 0 { 100.0 * self.problems as f64 / n as f64 } else { 0.0 };
                 if self.problems > 0 {
                     ui.label(
-                        RichText::new(format!(
-                            "{} ({} %) are fake or suspicious.",
-                            plural(self.problems, "file"),
-                            f(pct_problems, 1)
-                        ))
+                        RichText::new(if self.problems == 1 {
+                            tr!("1 file ({pct} %) is fake or suspicious.", pct = f(pct_problems, 1))
+                        } else {
+                            tr!(
+                                "{n} files ({pct} %) are fake or suspicious.",
+                                n = self.problems,
+                                pct = f(pct_problems, 1)
+                            )
+                        })
                         .color(on_page(hex(0xa3122a), &pal)),
                     );
                 } else {
-                    ui.label(RichText::new("No fake or suspicious files found.").color(ok_color(&pal)));
+                    ui.label(RichText::new(tr!("No fake or suspicious files found.")).color(ok_color(&pal)));
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -182,8 +191,9 @@ impl SummaryWindow {
                     }
                     ui.add_space(14.0);
                     egui::Grid::new("legend").num_columns(4).spacing([8.0, 2.0]).show(ui, |ui| {
-                        for (v, count, p) in &self.breakdown {
-                            let (label, color, desc) = verdict_style(*v);
+                        for (v, files, p) in &self.breakdown {
+                            let (_, color, desc) = verdict_style(*v);
+                            let (label, desc) = (verdict_label(*v), i18n::tr(desc));
                             let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 5.5, color);
                             let name = ui.add(
@@ -199,7 +209,7 @@ impl SummaryWindow {
                             ui.label(
                                 RichText::new(format!("{:>5} %", f(*p, 1))).font(look::title(13.0)).color(pal.text),
                             );
-                            ui.label(secondary(plural(*count, "file"), &pal));
+                            ui.label(secondary(count(*files, n_!("1 file"), n_!("{n} files")), &pal));
                             ui.end_row();
                             ui.label("");
                             ui.label(RichText::new(desc).font(look::text(11.5)).color(pal.secondary));
@@ -208,25 +218,25 @@ impl SummaryWindow {
                     });
                 });
                 ui.label(
-                    RichText::new("Click a slice or a name to list only those files.")
+                    RichText::new(tr!("Click a slice or a name to list only those files."))
                         .font(look::text(11.5))
                         .color(pal.secondary),
                 );
-                ui.checkbox(&mut self.again, "Show this summary after every scan");
+                ui.checkbox(&mut self.again, tr!("Show this summary after every scan"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if flat_button(ui, "Show problem files", true).clicked() {
+                    if flat_button(ui, tr!("Show problem files"), true).clicked() {
                         close = Some(Some(PROBLEM_VERDICTS.to_vec()));
                     }
-                    if flat_button(ui, "Show all files", true).clicked() {
+                    if flat_button(ui, tr!("Show all files"), true).clicked() {
                         close = Some(Some(VERDICT_ORDER.to_vec()));
                     }
-                    if flat_button(ui, "Export CSV…", true).clicked() {
+                    if flat_button(ui, tr!("Export CSV…"), true).clicked() {
                         app.export(false, true);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if primary_button(ui, "Close", true).clicked() {
+                        if primary_button(ui, tr!("Close"), true).clicked() {
                             close = Some(None);
                         }
                     });
@@ -285,7 +295,7 @@ impl SummaryWindow {
             look::title(26.0),
             color,
         );
-        p.text(c + Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, "fake or suspicious", look::text(11.0), pal.secondary);
+        p.text(c + Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, tr!("fake or suspicious"), look::text(11.0), pal.secondary);
         let hit = |pos: Pos2| -> Option<Verdict> {
             let d = pos - c;
             let r = d.length();
@@ -311,7 +321,8 @@ impl SummaryWindow {
 
 pub struct SettingsWindow {
     draft: Settings,
-    tab: usize,
+    /// the shown group, an index into `settings::GROUPS`
+    pub tab: usize,
     error: Option<String>,
 }
 
@@ -323,7 +334,8 @@ impl SettingsWindow {
     fn show(&mut self, app: &mut App, ctx: &egui::Context) -> bool {
         let mut open = true;
         let mut result: Option<bool> = None;
-        egui::Window::new("Settings")
+        egui::Window::new(tr!("Settings"))
+            .id(egui::Id::unique("scanner-settings"))
             .open(&mut open)
             .collapsible(false)
             .default_width(780.0)
@@ -348,7 +360,7 @@ impl SettingsWindow {
                             ui.painter().text(
                                 pos2(rect.left() + 10.0, rect.center().y),
                                 Align2::LEFT_CENTER,
-                                *g,
+                                i18n::tr(g),
                                 look::text(13.0),
                                 color,
                             );
@@ -360,7 +372,7 @@ impl SettingsWindow {
                     ui.add_space(14.0);
                     ui.vertical(|ui| {
                         let group = GROUPS[self.tab];
-                        ui.label(RichText::new(group).font(look::title(18.0)).color(pal.text));
+                        ui.label(RichText::new(i18n::tr(group)).font(look::title(18.0)).color(pal.text));
                         ui.add_space(6.0);
                         egui::ScrollArea::vertical().max_height(430.0).show(ui, |ui| {
                             egui::Grid::new("settings").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
@@ -375,22 +387,22 @@ impl SettingsWindow {
                                 let text = match &app.store {
                                     Some(st) => {
                                         let s = st.stats();
-                                        format!(
-                                            "{} saved for {} in {} ({} MB, of which graphs {} MB).",
-                                            plural(s.results as usize, "result"),
-                                            plural(s.files as usize, "file"),
-                                            s.path.display(),
-                                            f(s.disk_bytes as f64 / 1e6, 1),
-                                            f(s.graph_bytes as f64 / 1e6, 1)
+                                        tr!(
+                                            "{results} saved for {files} in {path} ({mb} MB, of which graphs {graphs} MB).",
+                                            results = count(s.results as usize, n_!("1 result"), n_!("{n} results")),
+                                            files = count(s.files as usize, n_!("1 file"), n_!("{n} files")),
+                                            path = s.path.display(),
+                                            mb = f(s.disk_bytes as f64 / 1e6, 1),
+                                            graphs = f(s.graph_bytes as f64 / 1e6, 1)
                                         )
                                     }
                                     None => {
-                                        "Saving results is turned off, or the saved results cannot be opened.".into()
+                                        tr!("Saving results is turned off, or the saved results cannot be opened.").into()
                                     }
                                 };
                                 ui.add(egui::Label::new(secondary(text, &pal)).wrap());
                                 ui.add_space(4.0);
-                                if flat_button(ui, "Delete all saved results…", true).clicked() {
+                                if flat_button(ui, tr!("Delete all saved results…"), true).clicked() {
                                     app.forget_saved_ask();
                                 }
                             }
@@ -403,14 +415,14 @@ impl SettingsWindow {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if flat_button(ui, "Restore defaults", true).clicked() {
+                    if flat_button(ui, tr!("Restore defaults"), true).clicked() {
                         self.draft = Settings::default();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if primary_button(ui, "Save", true).clicked() {
+                        if primary_button(ui, tr!("Save"), true).clicked() {
                             result = Some(true);
                         }
-                        if flat_button(ui, "Cancel", true).clicked() {
+                        if flat_button(ui, tr!("Cancel"), true).clicked() {
                             result = Some(false);
                         }
                     });
@@ -431,13 +443,24 @@ impl SettingsWindow {
 /// Settings window and the player's Settings page (2.0).  `choices` holds the
 /// menus that depend on the computer (installed fonts, output devices), each
 /// with "" (the default) first.  Returns an error message for a bad value.
+/// Labels, help texts and choices are shown in the language in use; the
+/// values stored stay English (the `language` choices show their own names).
 pub fn setting_row(
     ui: &mut egui::Ui,
     info: &realhires::settings::FieldInfo,
     draft: &mut Settings,
     choices: &std::collections::HashMap<&'static str, Vec<String>>,
 ) -> Option<String> {
-    ui.label(info.label).on_hover_text(&info.help);
+    let help = i18n::tr_text(&info.help);
+    ui.label(i18n::tr(info.label)).on_hover_text(help.clone());
+    // a choice as shown: translated, except the languages and the user's own names
+    let shown = |c: &str| -> String {
+        if info.name == "language" {
+            c.to_string()
+        } else {
+            i18n::tr(c).to_string()
+        }
+    };
     let cur = draft.get(info.name).unwrap();
     let mut new = cur.clone();
     let resp = match &mut new {
@@ -452,13 +475,14 @@ pub fn setting_row(
         }
         SValue::Bool(b) => ui.checkbox(b, ""),
         SValue::Str(s) if info.kind == Kind::Choice => {
-            let width = choice_width(ui, info.choices.iter().copied());
+            let shown_choices: Vec<String> = info.choices.iter().map(|c| shown(c)).collect();
+            let width = choice_width(ui, shown_choices.iter().map(String::as_str));
             egui::ComboBox::from_id_salt(info.name)
-                .selected_text(s.clone())
+                .selected_text(shown(s))
                 .width(width)
                 .show_ui(ui, |ui| {
-                    for c in info.choices {
-                        ui.selectable_value(s, c.to_string(), *c);
+                    for (c, label) in info.choices.iter().zip(&shown_choices) {
+                        ui.selectable_value(s, c.to_string(), label.as_str());
                     }
                 })
                 .response
@@ -467,14 +491,23 @@ pub fn setting_row(
             let list = &choices[info.name];
             let label = |v: &str| -> String {
                 if !v.is_empty() {
-                    v.to_string()
+                    // the built-in themes have English names; the user's own themes keep theirs
+                    let builtin = info.name == "theme"
+                        && (v == realhires::themes::SYSTEM || realhires::themes::builtin(v).is_some());
+                    if builtin {
+                        i18n::tr(v).to_string()
+                    } else {
+                        v.to_string()
+                    }
                 } else if info.name == "font_family" {
                     "SF Pro (macOS) / Inter".to_string()
                 } else {
-                    "System default".to_string()
+                    tr!("System default").to_string()
                 }
             };
-            let width = choice_width(ui, list.iter().map(|v| v.as_str()).chain(["SF Pro (macOS) / Inter"])).min(360.0);
+            let labels: Vec<String> = list.iter().map(|v| label(v)).collect();
+            let width =
+                choice_width(ui, labels.iter().map(|v| v.as_str()).chain(["SF Pro (macOS) / Inter"])).min(360.0);
             egui::ComboBox::from_id_salt(info.name)
                 .selected_text(label(s))
                 .width(width)
@@ -496,7 +529,7 @@ pub fn setting_row(
                 let mut remove = None;
                 for (i, folder) in l.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if ui.small_button("Remove").clicked() {
+                        if ui.small_button(tr!("Remove")).clicked() {
                             remove = Some(i);
                         }
                         ui.scope(|ui| {
@@ -506,12 +539,12 @@ pub fn setting_row(
                     });
                 }
                 if l.is_empty() {
-                    ui.weak("No folder yet.");
+                    ui.weak(tr!("No folder yet."));
                 }
                 if let Some(i) = remove {
                     l.remove(i);
                 }
-                if ui.button("Add folder…").clicked() {
+                if ui.button(tr!("Add folder…")).clicked() {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         let d = dir.to_string_lossy().into_owned();
                         if !l.contains(&d) {
@@ -526,7 +559,7 @@ pub fn setting_row(
             ui.vertical(|ui| {
                 for c in info.choices {
                     let mut on = l.iter().any(|x| x == c);
-                    if ui.checkbox(&mut on, *c).changed() {
+                    if ui.checkbox(&mut on, shown(c)).changed() {
                         if on {
                             l.push(c.to_string());
                         } else {
@@ -538,11 +571,11 @@ pub fn setting_row(
             .response
         }
     };
-    resp.on_hover_text(&info.help);
+    resp.on_hover_text(help);
     let mut error = None;
     if new != cur {
         if let Err(e) = draft.set(info.name, new) {
-            error = Some(e);
+            error = Some(tr_text(&e));
         }
     }
     ui.end_row();
@@ -673,27 +706,26 @@ impl FixWindow {
                     }
                     let out = if plan.replace_original {
                         let same = abspath(&plan.output) == abspath(&plan.source);
-                        let mut o = if same {
-                            "Same file".to_string()
+                        let o = if same {
+                            tr!("Same file").to_string()
                         } else {
-                            format!("Replaced by {}", file_name(&plan.output))
+                            tr!("Replaced by {name}", name = file_name(&plan.output))
                         };
-                        o += match plan.backup {
-                            Backup::Folder => " (original → backup folder)",
-                            Backup::Bak => " (original → .bak)",
-                            Backup::None => " (original deleted)",
-                        };
-                        o
+                        match plan.backup {
+                            Backup::Folder => tr!("{result} (original → backup folder)", result = o),
+                            Backup::Bak => tr!("{result} (original → .bak)", result = o),
+                            Backup::None => tr!("{result} (original deleted)", result = o),
+                        }
                     } else if into {
                         plan.output.clone()
                     } else {
-                        format!("Copy: {}", file_name(&plan.output))
+                        tr!("Copy: {name}", name = file_name(&plan.output))
                     };
                     self.rows.push(FixRow {
                         path: r.path.clone(),
                         name: file_name(&r.path),
-                        change: plan.description.clone(),
-                        status: "Ready".into(),
+                        change: tr_text(&plan.description),
+                        status: tr!("Ready").into(),
                         output: out,
                         kind: RowKind::Ready,
                     });
@@ -707,7 +739,7 @@ impl FixWindow {
                 path: r.path.clone(),
                 name: file_name(&r.path),
                 change: r.claimed(),
-                status: why.clone(),
+                status: tr_text(why),
                 output: String::new(),
                 kind: RowKind::Skip,
             });
@@ -715,18 +747,22 @@ impl FixWindow {
         notes.sort();
         self.skipped = skipped.len();
         let n = self.plans.len();
-        let verb = if replace { "Fix" } else { "Save corrected copies of" };
-        self.head =
-            if n > 0 { format!("{verb} {}: real resolution", plural(n, "file")) } else { "Nothing to fix".into() };
-        let mut why_not = skip_summary(&skipped);
+        self.head = match (n, replace) {
+            (0, _) => tr!("Nothing to fix").into(),
+            (1, true) => tr!("Fix 1 file: real resolution").into(),
+            (_, true) => tr!("Fix {n} files: real resolution", n = n),
+            (1, false) => tr!("Save corrected copies of 1 file: real resolution").into(),
+            (_, false) => tr!("Save corrected copies of {n} files: real resolution", n = n),
+        };
+        let mut why_not = tr_text(&skip_summary(&skipped));
         if !skipped.is_empty() {
-            why_not += " They are listed last, in grey.";
+            why_not = tr!("{summary} They are listed last, in grey.", summary = why_not);
         }
         let mut lines = vec![];
         if !why_not.is_empty() {
             lines.push(why_not);
         }
-        lines.extend(notes);
+        lines.extend(notes.iter().map(|n| tr_text(n)));
         self.note = lines.join("\n");
     }
 
@@ -748,11 +784,23 @@ impl FixWindow {
         self.outcomes.push(o.clone());
         let src = o.plan.source.clone();
         if o.ok {
-            let mut txt = if o.plan.replace_original { "Fixed".to_string() } else { "Copy saved".to_string() };
-            if let Some(n) = &o.new_result {
-                txt += &format!(": now {} ({})", n.claimed(), verdict_style(n.verdict).0);
-            }
-            txt += &format!(", {} of the size", pct(o.bytes_after as f64 / o.bytes_before.max(1) as f64, 0));
+            let size = pct(o.bytes_after as f64 / o.bytes_before.max(1) as f64, 0);
+            let txt = match (&o.new_result, o.plan.replace_original) {
+                (Some(n), true) => tr!(
+                    "Fixed: now {claimed} ({verdict}), {size} of the size",
+                    claimed = n.claimed(),
+                    verdict = verdict_label(n.verdict),
+                    size = size
+                ),
+                (Some(n), false) => tr!(
+                    "Copy saved: now {claimed} ({verdict}), {size} of the size",
+                    claimed = n.claimed(),
+                    verdict = verdict_label(n.verdict),
+                    size = size
+                ),
+                (None, true) => tr!("Fixed, {size} of the size", size = size),
+                (None, false) => tr!("Copy saved, {size} of the size", size = size),
+            };
             if let (false, Some(out)) = (o.plan.replace_original, &o.output) {
                 if let Some(r) = self.rows.iter_mut().find(|r| r.path == src) {
                     r.output = out.clone();
@@ -763,7 +811,7 @@ impl FixWindow {
             }
             self.set_status(&src, txt, Some(RowKind::Ok));
         } else {
-            self.set_status(&src, o.message.clone(), Some(RowKind::Fail));
+            self.set_status(&src, tr_text(&o.message), Some(RowKind::Fail));
         }
     }
 
@@ -771,7 +819,11 @@ impl FixWindow {
         self.running = false;
         let ok = self.rows.iter().filter(|r| r.kind == RowKind::Ok).count();
         let bad = self.rows.iter().filter(|r| r.kind == RowKind::Fail).count();
-        self.status = format!("{ok} fixed{}.", if bad > 0 { format!(", {bad} failed") } else { String::new() });
+        self.status = if bad > 0 {
+            tr!("{ok} fixed, {bad} failed.", ok = ok, bad = bad)
+        } else {
+            tr!("{ok} fixed.", ok = ok)
+        };
     }
 
     fn ask_start(&mut self, app: &mut App) {
@@ -780,10 +832,10 @@ impl FixWindow {
         }
         if self.output.starts_with("Replace") && self.backup.starts_with("Delete") {
             app.confirm = Some(Confirm {
-                title: "Delete originals?".into(),
-                text: format!(
-                    "Replace {} file(s) and delete the originals?\n\nThere will be no backup. The converted files contain everything the originals really had, but the originals cannot be restored.",
-                    self.plans.len()
+                title: tr!("Delete originals?").into(),
+                text: tr!(
+                    "Replace {n} file(s) and delete the originals?\n\nThere will be no backup. The converted files contain everything the originals really had, but the originals cannot be restored.",
+                    n = self.plans.len()
                 ),
                 action: ConfirmAction::FixDeleteOriginals,
             });
@@ -808,10 +860,10 @@ impl FixWindow {
         self.running = true;
         self.started = true;
         self.outcomes.clear();
-        self.status = "Fixing…".into();
+        self.status = tr!("Fixing…").into();
         let paths: Vec<String> = self.plans.iter().map(|p| p.source.clone()).collect();
         for p in paths {
-            self.set_status(&p, "Waiting…".into(), None);
+            self.set_status(&p, tr!("Waiting…").into(), None);
         }
         let mut seen = HashSet::new();
         let mut everything: Vec<FileResult> = vec![];
@@ -849,18 +901,18 @@ impl FixWindow {
             self.format.clone(),
             self.bits.clone(),
         );
-        egui::Window::new("Fix to real resolution").open(&mut open).collapsible(false).default_width(900.0).resizable(true).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+        egui::Window::new(tr!("Fix to real resolution")).id(egui::Id::unique("fix-window")).open(&mut open).collapsible(false).default_width(900.0).resizable(true).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
             let pal = pal(ui);
             ui.label(window_heading(&self.head, &pal));
             ui.add_space(2.0);
             ui.add(egui::Label::new(secondary(
-                "Each file is rewritten at the sample rate and bit depth it really contains, so its properties show the actual values (e.g. a fake 24/96 upsampled from a CD becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing audible is lost and it gets smaller. (Only editing the numbers in the file would make it play at the wrong speed, so the audio itself is converted.)",
+                tr!("Each file is rewritten at the sample rate and bit depth it really contains, so its properties show the actual values (e.g. a fake 24/96 upsampled from a CD becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing audible is lost and it gets smaller. (Only editing the numbers in the file would make it play at the wrong speed, so the audio itself is converted.)"),
                 &pal,
             )).wrap());
             ui.add_space(8.0);
             egui::ScrollArea::vertical().max_height(220.0).id_salt("fixrows").show(ui, |ui| {
                 egui::Grid::new("fixgrid").num_columns(4).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
-                    for h in ["File", "Claimed → real", "Status", "Result"] {
+                    for h in [tr!("File"), tr!("Claimed → real"), tr!("Status"), tr!("Result")] {
                         ui.label(heading_text(h, &pal));
                     }
                     ui.end_row();
@@ -890,22 +942,23 @@ impl FixWindow {
                     egui::Grid::new("fixopts").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         let combo = |ui: &mut egui::Ui, label: &str, id: &str, v: &mut String| {
                             ui.label(label);
-                            egui::ComboBox::from_id_salt(id).selected_text(v.clone()).width(330.0).show_ui(ui, |ui| {
+                            // the values stay English; the menu shows them translated
+                            egui::ComboBox::from_id_salt(id).selected_text(i18n::tr(v)).width(330.0).show_ui(ui, |ui| {
                                 for c in choices(id) {
-                                    ui.selectable_value(v, c.to_string(), *c);
+                                    ui.selectable_value(v, c.to_string(), i18n::tr(c));
                                 }
                             });
                             ui.end_row();
                         };
-                        combo(ui, "Fix files by:", "fix_output", &mut self.output);
-                        combo(ui, "Original file:", "fix_backup", &mut self.backup);
+                        combo(ui, tr!("Fix files by:"), "fix_output", &mut self.output);
+                        combo(ui, tr!("Original file:"), "fix_backup", &mut self.backup);
                         let backup_folder = self.output.starts_with("Replace") && self.backup.starts_with("Move");
-                        ui.label("Backup folder:");
+                        ui.label(tr!("Backup folder:"));
                         ui.add_enabled_ui(backup_folder, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut self.backup_dir).desired_width(300.0));
-                                if panel_button(ui, "Browse…", backup_folder).clicked() {
-                                    if let Some(d) = rfd::FileDialog::new().set_title("Folder for backups of originals").pick_folder() {
+                                if panel_button(ui, tr!("Browse…"), backup_folder).clicked() {
+                                    if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for backups of originals")).pick_folder() {
                                         self.backup_dir = d.to_string_lossy().into_owned();
                                     }
                                 }
@@ -913,25 +966,25 @@ impl FixWindow {
                         });
                         ui.end_row();
                         let into = self.output.ends_with("into a folder");
-                        ui.label("Copies folder:");
+                        ui.label(tr!("Copies folder:"));
                         ui.add_enabled_ui(into, |ui| {
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut self.folder).desired_width(300.0));
-                                if panel_button(ui, "Browse…", into).clicked() {
-                                    if let Some(d) = rfd::FileDialog::new().set_title("Folder for corrected copies").pick_folder() {
+                                if panel_button(ui, tr!("Browse…"), into).clicked() {
+                                    if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for corrected copies")).pick_folder() {
                                         self.folder = d.to_string_lossy().into_owned();
                                     }
                                 }
                             });
                         });
                         ui.end_row();
-                        combo(ui, "Output format:", "fix_format", &mut self.format);
-                        combo(ui, "Target bit depth:", "fix_bits", &mut self.bits);
+                        combo(ui, tr!("Output format:"), "fix_format", &mut self.format);
+                        combo(ui, tr!("Target bit depth:"), "fix_bits", &mut self.bits);
                         ui.label("");
-                        ui.checkbox(&mut self.verify, "Re-check each fixed file");
+                        ui.checkbox(&mut self.verify, tr!("Re-check each fixed file"));
                         ui.end_row();
                         ui.label("");
-                        ui.label(RichText::new("Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never scanned).").font(look::text(11.5)).color(pal.secondary));
+                        ui.label(RichText::new(tr!("Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never scanned).")).font(look::text(11.5)).color(pal.secondary));
                         ui.end_row();
                     });
                 });
@@ -947,13 +1000,13 @@ impl FixWindow {
                 ui.label(RichText::new(&self.status).color(pal.text));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if flat_button(ui, "Close", true).clicked() {
+                    if flat_button(ui, tr!("Close"), true).clicked() {
                         close = true;
                     }
-                    if primary_button(ui, "Fix files", !self.plans.is_empty() && !self.started).clicked() {
+                    if primary_button(ui, tr!("Fix files"), !self.plans.is_empty() && !self.started).clicked() {
                         self.ask_start(app);
                     }
-                    if flat_button(ui, "Show in folder", !self.done_paths.is_empty()).clicked() {
+                    if flat_button(ui, tr!("Show in folder"), !self.done_paths.is_empty()).clicked() {
                         reveal_in_file_manager(&self.done_paths[0]);
                     }
                 });
@@ -974,11 +1027,12 @@ impl FixWindow {
         if !open || close {
             if self.running {
                 app.confirm = Some(Confirm {
-                    title: "Conversion running".into(),
-                    text:
+                    title: tr!("Conversion running").into(),
+                    text: tr!(
                         "Conversions are still running. Close anyway? The files are finished in the background, and a \
-                           pop-up tells you when they are done."
-                            .into(),
+                         pop-up tells you when they are done."
+                    )
+                    .into(),
                     action: ConfirmAction::CloseFix,
                 });
                 return true;
@@ -1005,6 +1059,7 @@ pub struct FixDoneWindow {
 
 impl FixDoneWindow {
     pub fn new(outcomes: &[FixOutcome], skipped: usize) -> FixDoneWindow {
+        // English, as the core's sentence needs; the sentences are translated when shown
         let label = |v: Verdict| {
             let name = verdict_style(v).0;
             let mut c = name.chars();
@@ -1025,7 +1080,8 @@ impl FixDoneWindow {
     pub fn show(&mut self, ctx: &egui::Context) -> bool {
         let mut open = true;
         let mut close = false;
-        egui::Window::new("Fixing finished")
+        egui::Window::new(tr!("Fixing finished"))
+            .id(egui::Id::unique("fixing-finished"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1035,18 +1091,19 @@ impl FixDoneWindow {
                 ui.set_max_width(460.0);
                 let color =
                     if self.failed || self.outputs.is_empty() { on_page(hex(0xa3122a), &pal) } else { ok_color(&pal) };
-                ui.label(RichText::new(&self.headline).font(look::title(16.0)).color(color));
+                // fix::done_summary()'s texts in the language in use
+                ui.label(RichText::new(tr_text(&self.headline)).font(look::title(16.0)).color(color));
                 for (i, line) in self.lines.iter().enumerate() {
                     ui.add_space(if i == 0 { 8.0 } else { 4.0 });
-                    ui.add(egui::Label::new(RichText::new(line).color(pal.text)).wrap());
+                    ui.add(egui::Label::new(RichText::new(tr_text(line)).color(pal.text)).wrap());
                 }
                 ui.add_space(14.0);
                 crate::style::buttons_right(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    if primary_button(ui, "Close", true).clicked() {
+                    if primary_button(ui, tr!("Close"), true).clicked() {
                         close = true;
                     }
-                    if flat_button(ui, "Show in folder", !self.outputs.is_empty()).clicked() {
+                    if flat_button(ui, tr!("Show in folder"), !self.outputs.is_empty()).clicked() {
                         reveal_in_file_manager(&self.outputs[0]);
                     }
                 });

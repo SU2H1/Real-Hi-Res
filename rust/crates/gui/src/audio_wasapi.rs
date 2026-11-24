@@ -58,7 +58,8 @@ impl WasapiError {
     fn from_win(e: &windows::core::Error, device: &str) -> WasapiError {
         let code = e.code();
         let message = if code == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED {
-            "Windows does not allow programs to take exclusive control of it".to_string()
+            // English, as the core's sentence around it (shown with `tr_text()`)
+            realhires::n_!("Windows does not allow programs to take exclusive control of it").to_string()
         } else {
             format!("WASAPI: {}", e.message().trim())
         };
@@ -186,7 +187,7 @@ pub fn probe(name: &str) -> Result<(String, Vec<Mode>), WasapiError> {
                 return Err(WasapiError {
                     busy: false,
                     device: label,
-                    message: "it takes no stereo format in exclusive mode".into(),
+                    message: realhires::n_!("it takes no stereo format in exclusive mode").into(),
                 });
             }
             Ok((label, modes))
@@ -328,9 +329,9 @@ pub fn open(name: &str, rate: u32, format: Format, channels: u32, shared: Arc<Sh
                         continue;
                     }
                     if let Err(e) = fill(&stream, &mut st, &mut tmp) {
-                        shared.events.lock().unwrap().push(Event::OutputError(format!(
-                            "The audio output failed: {}.",
-                            e.message().trim().trim_end_matches('.')
+                        shared.events.lock().unwrap().push(Event::OutputError(realhires::tr!(
+                            "The audio output failed: {e}.",
+                            e = e.message().trim().trim_end_matches('.')
                         )));
                         break;
                     }

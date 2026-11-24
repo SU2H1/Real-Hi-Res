@@ -7,6 +7,7 @@ use egui::{
 };
 use realhires::analysis::Plot;
 use realhires::pyfmt::{f, g};
+use realhires::tr;
 use realhires::verdict::FileResult;
 
 use crate::look::{self, mix, Palette};
@@ -66,15 +67,15 @@ pub fn spectrogram(
     let light = hex(0xaaaaaa);
     let (r, plot) = match (r, state) {
         (None, _) | (_, State::Nothing) => {
-            return message(ui, rect, "Select a scanned file to see its spectrogram", light)
+            return message(ui, rect, tr!("Select a scanned file to see its spectrogram"), light)
         }
-        (_, State::Pending) => return message(ui, rect, "Select a scanned file to see its spectrogram", light),
-        (_, State::Waiting) => return message(ui, rect, "Drawing the spectrogram…", light),
-        (_, State::Missing) => return message(ui, rect, "No spectrogram (silent or unreadable file)", light),
+        (_, State::Pending) => return message(ui, rect, tr!("Select a scanned file to see its spectrogram"), light),
+        (_, State::Waiting) => return message(ui, rect, tr!("Drawing the spectrogram…"), light),
+        (_, State::Missing) => return message(ui, rect, tr!("No spectrogram (silent or unreadable file)"), light),
         (Some(r), State::Shown(plot)) => (r, plot),
     };
     let Some(sg) = plot.spectrogram.as_ref() else {
-        return message(ui, rect, "No spectrogram (silent or unreadable file)", light);
+        return message(ui, rect, tr!("No spectrogram (silent or unreadable file)"), light);
     };
     let (pw, ph) = (rect.width() - L - R, rect.height() - T - B);
     if pw < 20.0 || ph < 20.0 {
@@ -123,11 +124,11 @@ pub fn spectrogram(
         marks.push((
             u as f64 / 2.0,
             hex(0x4fc3f7),
-            format!("{} kHz: limit of a {} kHz master", g(u as f64 / 2000.0), g(u as f64 / 1000.0)),
+            tr!("{khz} kHz: limit of a {rate} kHz master", khz = g(u as f64 / 2000.0), rate = g(u as f64 / 1000.0)),
         ));
     }
     if let Some(l) = r.lossy_cutoff_hz {
-        marks.push((l, hex(0xff6e6e), format!("{} kHz: lossy encoder cut-off", f(l / 1000.0, 1))));
+        marks.push((l, hex(0xff6e6e), tr!("{khz} kHz: lossy encoder cut-off", khz = f(l / 1000.0, 1))));
     }
     for (hz, color, label) in marks {
         if 0.0 < hz && hz < nyq {
@@ -144,7 +145,7 @@ pub fn spectrogram(
     p.text(
         rect.min + Vec2::new(L, 12.0),
         Align2::LEFT_CENTER,
-        "Spectrogram (time →, frequency ↑)",
+        tr!("Spectrogram (time →, frequency ↑)"),
         look::title(12.0),
         hex(0xeeeeee),
     );
@@ -159,10 +160,10 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State, pal: &Palette
     let (r, plot) = match (r, state) {
         (Some(r), State::Shown(plot)) if !plot.freqs.is_empty() => (r, plot),
         (None, _) | (_, State::Nothing) | (_, State::Pending) => {
-            return message(ui, rect, "Select a scanned file to see its spectrum", pal.secondary)
+            return message(ui, rect, tr!("Select a scanned file to see its spectrum"), pal.secondary)
         }
-        (_, State::Waiting) => return message(ui, rect, "Drawing the spectrum…", pal.secondary),
-        _ => return message(ui, rect, "No spectrum available", pal.secondary),
+        (_, State::Waiting) => return message(ui, rect, tr!("Drawing the spectrum…"), pal.secondary),
+        _ => return message(ui, rect, tr!("No spectrum available"), pal.secondary),
     };
     let (pw, ph) = (rect.width() - L - R, rect.height() - T - B);
     if pw < 20.0 || ph < 20.0 {
@@ -232,7 +233,7 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State, pal: &Palette
         p.text(
             Pos2::new(x + dx, area.top() + 10.0),
             align,
-            format!("bandwidth {} kHz", f(plot.bandwidth_hz / 1000.0, 1)),
+            tr!("bandwidth {khz} kHz", khz = f(plot.bandwidth_hz / 1000.0, 1)),
             look::text(12.0),
             color,
         );
@@ -253,7 +254,7 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State, pal: &Palette
     p.text(
         rect.min + Vec2::new(L, 12.0),
         Align2::LEFT_CENTER,
-        "Average spectrum (dB per bin)",
+        tr!("Average spectrum (dB per bin)"),
         look::title(12.0),
         pal.text,
     );

@@ -10,7 +10,8 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import musiclib, stats
+from . import i18n, musiclib, stats
+from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
 from .player_pages import (Page, album_order, frame, label, library_groups, plural, song_table, track_sort,
                            track_value)
@@ -29,11 +30,16 @@ def fmt_played(ts: float, now: Optional[float] = None) -> str:
     now = time.time() if now is None else now
     t, n = time.localtime(ts), time.localtime(now)
     if (t.tm_year, t.tm_yday) == (n.tm_year, n.tm_yday):
-        return f"Today {t.tm_hour:02d}:{t.tm_min:02d}"
+        return tr("Today {time}", time=f"{t.tm_hour:02d}:{t.tm_min:02d}")
     y = time.localtime(now - 86400)
     if (t.tm_year, t.tm_yday) == (y.tm_year, y.tm_yday):
-        return "Yesterday"
-    return stats.day_label(f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d}")
+        return tr("Yesterday")
+    return tr_text(stats.day_label(f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d}"))
+
+
+# the weekdays under the bars of Your Stats → Details and above the calendar (stats.WEEKDAYS cut
+# to three letters), Monday first
+WEEKDAYS_SHORT = [N_("Mon"), N_("Tue"), N_("Wed"), N_("Thu"), N_("Fri"), N_("Sat"), N_("Sun")]
 
 
 def missing_track(path: str) -> Track:
@@ -72,12 +78,13 @@ class ScrollCanvas(tk.Frame):
 
 
 # ------------------------------------------------------------------ library ---
-TILES = [  # page, name, icon
-    ("songs", "All Songs", "note"), ("folders", "Folders", "folder"), ("albums", "Albums", "album"),
-    ("artists", "Artists", "artist"), ("album_artists", "Album Artists", "mic"), ("genres", "Genres", "genre"),
-    ("years", "Years", "calendar"), ("composers", "Composers", "piano"), ("playlists", "Playlists", "playlist"),
-    ("liked", "Liked Songs", "heart"), ("disliked", "Disliked Songs", "thumbs_down"),
-    ("played", "Recently Played", "history"), ("recent", "Recently Added", "clock"), ("stats", "Your Stats", "stats"),
+TILES = [  # page, name (English: shown as tr(name)), icon
+    ("songs", N_("All Songs"), "note"), ("folders", N_("Folders"), "folder"), ("albums", N_("Albums"), "album"),
+    ("artists", N_("Artists"), "artist"), ("album_artists", N_("Album Artists"), "mic"),
+    ("genres", N_("Genres"), "genre"), ("years", N_("Years"), "calendar"), ("composers", N_("Composers"), "piano"),
+    ("playlists", N_("Playlists"), "playlist"), ("liked", N_("Liked Songs"), "heart"),
+    ("disliked", N_("Disliked Songs"), "thumbs_down"), ("played", N_("Recently Played"), "history"),
+    ("recent", N_("Recently Added"), "clock"), ("stats", N_("Your Stats"), "stats"),
 ]
 
 
@@ -85,7 +92,7 @@ class LibraryPage(Page):
     """The start page: the fourteen entries as tiles, the newest albums, and a
     Your Stats banner when there are plays this year."""
 
-    list_name = "Library"
+    list_name = N_("Library")
     TILE_W, TILE_H, GAP, MARGIN = 180, 66, 14, 28  # TILE_W: the narrowest a tile may be
     CARD = 150
 
@@ -107,7 +114,7 @@ class LibraryPage(Page):
         self.refresh()
 
     def refresh(self) -> None:
-        app, tr = self.app, self.app.tracks
+        app, tracks = self.app, self.app.tracks
         n = len
 
         def count(k: int, word: str) -> str:
@@ -118,8 +125,8 @@ class LibraryPage(Page):
         secs = sum(p.seconds for p in app.plays(start, None))
         self.year_minutes = int(secs / 60 + 0.5)
         self.counts = {
-            "songs": count(n(tr), "song"),
-            "folders": count(n({os.path.dirname(t.path) for t in tr}), "folder"),
+            "songs": count(n(tracks), "song"),
+            "folders": count(n({os.path.dirname(t.path) for t in tracks}), "folder"),
             "albums": count(n(app.albums), "album"),
             "artists": count(n(library_groups(app, "artists")), "artist"),  # grouped once per library
             "album_artists": count(n(library_groups(app, "album_artists")), "album artist"),
@@ -131,7 +138,8 @@ class LibraryPage(Page):
             "disliked": count(n(app.state.disliked), "song"),
             "played": count(n(played), "song"),
             "recent": count(n(app.albums), "album"),
-            "stats": f"{self.year_minutes:,} minutes this year" if self.year_minutes else "No plays yet",
+            "stats": (tr("{n} minutes this year", n=f"{self.year_minutes:,}") if self.year_minutes
+                      else tr("No plays yet")),
         }
         self.newest = sorted(app.albums, key=lambda a: max((x.mtime_ns for x in a["tracks"]), default=0),
                              reverse=True)[:12]
@@ -142,8 +150,12 @@ class LibraryPage(Page):
         W = c.winfo_width()
         self.hits = []
         m = self.MARGIN
-        c.create_text(m, 40, text="Library", anchor="w", fill=t.c("text"), font=t.f("title"))
+        c.create_text(m, 40, text=tr("Library"), anchor="w", fill=t.c("text"), font=t.f("title"))
         cols = max(1, int((W - 2 * m + self.GAP) // (self.TILE_W + self.GAP)))
+        if i18n.language() != "en":  # fewer, wider tiles rather than cut names (Japanese names are longer)
+            widest = max(t.f("tile").measure(tr(name)) for _, name, _ in TILES)
+            while cols > 1 and (W - 2 * m - (cols - 1) * self.GAP) / cols - 66 < widest:
+                cols -= 1
         tw = (W - 2 * m - (cols - 1) * self.GAP) / cols
         y0 = 78
         for i, (key, name, icon) in enumerate(TILES):
@@ -154,15 +166,16 @@ class LibraryPage(Page):
             hov = self.hover == box
             round_rect(c, *box, 10, fill=t.c("hover" if hov else "lcd"), outline="")
             draw_icon(c, icon, x + 30, y + self.TILE_H / 2, 22, t.c("accent"), filled=icon in ("heart",))
-            c.create_text(x + 56, y + 24, text=fit_text(t.f("tile"), name, int(tw - 66), self._fit), anchor="w",
+            c.create_text(x + 56, y + 24, text=fit_text(t.f("tile"), tr(name), int(tw - 66), self._fit), anchor="w",
                           fill=t.c("text"), font=t.f("tile"))
             c.create_text(x + 56, y + 44, text=fit_text(t.f("small"), self.counts.get(key, ""), int(tw - 66),
                                                         self._fit), anchor="w", fill=t.c("text2"), font=t.f("small"))
             self.hits.append((box, lambda key=key: self.app.show_page(key)))
         y = y0 + ((len(TILES) + cols - 1) // cols) * (self.TILE_H + self.GAP) + 20
         if self.newest:
-            c.create_text(m, y + 12, text="Recently Added", anchor="w", fill=t.c("text"), font=t.f("h2"))
-            more = c.create_text(W - m, y + 12, text="See All", anchor="e", fill=t.c("accent"), font=t.f("body_b"))
+            c.create_text(m, y + 12, text=tr("Recently Added"), anchor="w", fill=t.c("text"), font=t.f("h2"))
+            more = c.create_text(W - m, y + 12, text=tr("See All"), anchor="e", fill=t.c("accent"),
+                                 font=t.f("body_b"))
             bb = c.bbox(more)
             self.hits.append(((bb[0], bb[1], bb[2], bb[3]), lambda: self.app.show_page("recent")))
             y += 32
@@ -172,10 +185,10 @@ class LibraryPage(Page):
                 x = m + i * (self.CARD + gap)
                 img = self.app.covers.get(a["key"], [tr.path for tr in a["tracks"]], self.CARD)
                 draw_cover(c, t, img, x, y, self.CARD)
-                c.create_text(x, y + self.CARD + 15, text=fit_text(t.f("card_title"), a["title"], self.CARD,
+                c.create_text(x, y + self.CARD + 15, text=fit_text(t.f("card_title"), tr_name(a["title"]), self.CARD,
                                                                    self._fit), anchor="w", fill=t.c("text"),
                               font=t.f("card_title"))
-                c.create_text(x, y + self.CARD + 32, text=fit_text(t.f("card_sub"), a["artist"], self.CARD,
+                c.create_text(x, y + self.CARD + 32, text=fit_text(t.f("card_sub"), tr_name(a["artist"]), self.CARD,
                                                                    self._fit), anchor="w", fill=t.c("text2"),
                               font=t.f("card_sub"))
                 self.hits.append(((x, y, x + self.CARD, y + self.CARD + 40), lambda a=a: self.app.open_album(a)))
@@ -185,8 +198,9 @@ class LibraryPage(Page):
             accent = t.c("accent")
             round_rect(c, *box, 14, fill=mix(accent, "#000000", 0.1) if self.hover == box else accent, outline="")
             draw_icon(c, "stats", m + 40, y + 42, 30, t.c("on_accent"))
-            c.create_text(m + 76, y + 30, text="Your Stats", anchor="w", fill=t.c("on_accent"), font=t.f("h2"))
-            c.create_text(m + 76, y + 56, text=f"You listened to {self.year_minutes:,} minutes of music this year.",
+            c.create_text(m + 76, y + 30, text=tr("Your Stats"), anchor="w", fill=t.c("on_accent"), font=t.f("h2"))
+            c.create_text(m + 76, y + 56, text=tr("You listened to {n} minutes of music this year.",
+                                                  n=f"{self.year_minutes:,}"),
                           anchor="w", fill=t.c("on_accent"), font=t.f("body"))
             draw_icon(c, "chevron", W - m - 28, y + 42, 18, t.c("on_accent"))
             self.hits.append((box, lambda: self.app.show_page("stats")))
@@ -222,7 +236,7 @@ class FoldersPage(Page):
     """The library folders as the roots; a folder shows its subfolders above its songs,
     with a breadcrumb whose parts can be clicked."""
 
-    list_name = "Folders"
+    list_name = N_("Folders")
 
     def __init__(self, app):
         super().__init__(app)
@@ -232,8 +246,9 @@ class FoldersPage(Page):
         top.pack(fill="x", padx=28, pady=(22, 8))
         self.crumbs = frame(top, t)
         self.crumbs.pack(side="left", fill="x", expand=True)
-        PillButton(top, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="right")
-        PillButton(top, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="right", padx=(0, 10))
+        PillButton(top, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True)).pack(side="right")
+        PillButton(top, t, tr("Play"), icon="play", command=lambda: self._play(False)).pack(side="right",
+                                                                                            padx=(0, 10))
         self.sub = label(self, t, "", "body", fg="text2")
         self.sub.pack(anchor="w", padx=28, pady=(0, 6))
         self.dirs = SongList(self, t, [Column("icon", "", 30, kind="icon"), Column("name", "", 300, True),
@@ -276,8 +291,8 @@ class FoldersPage(Page):
         self.dirs.selected = None
         self.table.set_rows(songs)
         below = self._below()
-        self.sub.configure(text=f"{plural(len(subs), 'folder')}, {plural(len(below), 'song')}" if (subs or below)
-                           else "No songs in this folder.")
+        self.sub.configure(text=tr("{a}, {b}", a=plural(len(subs), "folder"), b=plural(len(below), "song"))
+                           if (subs or below) else tr("No songs in this folder."))
         self.dirs.pack_forget()
         self.table.pack_forget()
         if subs:
@@ -285,7 +300,7 @@ class FoldersPage(Page):
             self.dirs.pack(fill="x" if songs else "both", expand=not songs, padx=12, pady=(0, 8))
         if songs:
             self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-        self.list_name = self.parts[-1][0] if self.parts else "Folders"
+        self.list_name = self.parts[-1][0] if self.parts else tr("Folders")
 
     def _crumbs(self, roots: List[str]) -> None:
         """'Music › Jazz › 1999': every part opens its folder."""
@@ -295,7 +310,7 @@ class FoldersPage(Page):
         t.prune()
         parts: List[Tuple[str, Optional[str]]] = []
         if len(roots) != 1:
-            parts.append(("Folders", None))
+            parts.append((tr("Folders"), None))
         if self.folder is not None:
             root = next(r for r in roots if self.folder == r or self.folder.startswith(r.rstrip(os.sep) + os.sep))
             parts.append((os.path.basename(root.rstrip(os.sep)) or root, root))
@@ -335,7 +350,7 @@ class FoldersPage(Page):
 
 # ---------------------------------------------------------------- playlists ---
 class PlaylistsPage(Page):
-    list_name = "Playlists"
+    list_name = N_("Playlists")
 
     def __init__(self, app):
         super().__init__(app)
@@ -344,10 +359,10 @@ class PlaylistsPage(Page):
         top.pack(fill="x", padx=28, pady=(22, 8))
         box = frame(top, t)
         box.pack(side="left", fill="x", expand=True)
-        label(box, t, "Playlists", "title").pack(anchor="w")
+        label(box, t, tr("Playlists"), "title").pack(anchor="w")
         self.sub = label(box, t, "", "body", fg="text2")
         self.sub.pack(anchor="w")
-        PillButton(top, t, "New Playlist…", icon="plus", command=lambda: app.new_playlist()).pack(side="right")
+        PillButton(top, t, tr("New Playlist…"), icon="plus", command=lambda: app.new_playlist()).pack(side="right")
         self.grid_w = AlbumGrid(self, t, app.covers, self._open)
         self.grid_w.pack(fill="both", expand=True)
         self.refresh()
@@ -358,7 +373,7 @@ class PlaylistsPage(Page):
         for p in app.state.playlists:
             items.append({"key": p["id"], "title": p["name"], "artist": plural(len(p["songs"]), "song"),
                           "mosaic": app.playlist_mosaic(p), "tracks": []})
-        items.append({"key": "__new__", "title": "New Playlist…", "artist": "", "new": True, "tracks": []})
+        items.append({"key": "__new__", "title": tr("New Playlist…"), "artist": "", "new": True, "tracks": []})
         self.sub.configure(text=plural(len(app.state.playlists), "playlist"))
         self.grid_w.set_albums(items, keep=True)
 
@@ -385,25 +400,25 @@ class PlaylistPage(Page):
         top = frame(self, t)
         top.pack(fill="x", padx=28, pady=(18, 10))
         IconButton(top, t, "back", command=app.go_back, size=30, icon_size=16,
-                   tooltip=lambda: "Back").pack(side="left", anchor="n", padx=(0, 6))
+                   tooltip=lambda: tr("Back")).pack(side="left", anchor="n", padx=(0, 6))
         self.cover = tk.Canvas(top, width=self.COVER, height=self.COVER, highlightthickness=0, bd=0)
         t.reg(self.cover, bg="bg")
         self.cover.pack(side="left")
         info = frame(top, t)
         info.pack(side="left", fill="both", expand=True, padx=(24, 0))
-        label(info, t, "Playlist", "small_b", fg="text2").pack(anchor="w", pady=(58, 0))
+        label(info, t, tr("Playlist"), "small_b", fg="text2").pack(anchor="w", pady=(58, 0))
         self.title_l = label(info, t, "", "big", wraplength=600, justify="left")
         self.title_l.pack(anchor="w", pady=(0, 2))
         self.meta_l = label(info, t, "", "body", fg="text2")
         self.meta_l.pack(anchor="w", pady=(2, 14))
         btns = frame(info, t)
         btns.pack(anchor="w")
-        PillButton(btns, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="left")
-        PillButton(btns, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="left",
-                                                                                              padx=(10, 0))
-        PillButton(btns, t, "Rename…", kind="plain", command=lambda: self.pid and app.rename_playlist(self.pid)
+        PillButton(btns, t, tr("Play"), icon="play", command=lambda: self._play(False)).pack(side="left")
+        PillButton(btns, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True)).pack(side="left",
+                                                                                                  padx=(10, 0))
+        PillButton(btns, t, tr("Rename…"), kind="plain", command=lambda: self.pid and app.rename_playlist(self.pid)
                    ).pack(side="left", padx=(18, 0))
-        PillButton(btns, t, "Delete…", kind="plain", command=lambda: self.pid and app.delete_playlist(self.pid)
+        PillButton(btns, t, tr("Delete…"), kind="plain", command=lambda: self.pid and app.delete_playlist(self.pid)
                    ).pack(side="left", padx=(8, 0))
         self.pos: Dict[int, int] = {}
         # the playlist position, then the columns the user chose for song lists (not sortable: the
@@ -411,8 +426,8 @@ class PlaylistPage(Page):
         self.table = song_table(self, self, value=self._value, extra_menu=self._extra, sortable=False,
                                 kind="songs", prefix=[Column("pos", "", 34, anchor="e", kind="num")],
                                 on_activate=lambda i: self.app.play_list(self.table.rows, i, self.list_name),
-                                empty_text="This playlist is empty. Add songs with “Add to playlist” in a song's "
-                                           "menu (right click).")
+                                empty_text=tr("This playlist is empty. Add songs with “Add to playlist” in a "
+                                              "song's menu (right click)."))
         self.table.pack(fill="both", expand=True, padx=(16, 16))
         app.covers.listeners.append(lambda key, size: size in (self.COVER, self.COVER // 2 - 1) and self.winfo_exists()
                                     and self._draw_cover())
@@ -426,9 +441,9 @@ class PlaylistPage(Page):
     def _extra(self, i: int):
         row = self.table.rows[i]
         pid = self.pid
-        return [("Remove from this playlist", lambda: self.app.playlist_remove(pid, row.path)),
-                ("Move up", lambda: self.app.playlist_move(pid, row.path, -1)),
-                ("Move down", lambda: self.app.playlist_move(pid, row.path, 1))]
+        return [(tr("Remove from this playlist"), lambda: self.app.playlist_remove(pid, row.path)),
+                (tr("Move up"), lambda: self.app.playlist_move(pid, row.path, -1)),
+                (tr("Move down"), lambda: self.app.playlist_move(pid, row.path, 1))]
 
     def show(self, pid: Optional[str] = None, **kw) -> None:
         if pid is not None:
@@ -446,7 +461,7 @@ class PlaylistPage(Page):
         self.pos = {id(r): i + 1 for i, r in enumerate(rows)}
         self.title_l.configure(text=p["name"])
         minutes = int(round(sum(r.duration for r in rows) / 60))
-        self.meta_l.configure(text=f"{plural(len(rows), 'song')}, {plural(minutes, 'minute')}")
+        self.meta_l.configure(text=tr("{a}, {b}", a=plural(len(rows), "song"), b=plural(minutes, "minute")))
         self.table.set_rows(rows, keep=True)
         self._draw_cover()
 
@@ -468,22 +483,22 @@ class PlaylistPage(Page):
 
 # ----------------------------------------------------------- recently played ---
 class RecentlyPlayedPage(Page):
-    list_name = "Recently Played"
+    list_name = N_("Recently Played")
 
     def __init__(self, app):
         super().__init__(app)
         t = self.theme
-        head, self.title_l, self.sub = self.heading(self, "Recently Played")
+        head, self.title_l, self.sub = self.heading(self, tr("Recently Played"))
         head.pack(fill="x", padx=28, pady=(22, 8))
-        PillButton(head, t, "Clear history…", kind="plain", command=app.clear_history).pack(side="right",
-                                                                                            padx=(0, 10))
+        PillButton(head, t, tr("Clear history…"), kind="plain", command=app.clear_history).pack(side="right",
+                                                                                                padx=(0, 10))
         self.when: Dict[str, float] = {}
-        cols = [Column("title", "Title", 300, True), Column("artist", "Artist", 200, True),
-                Column("album", "Album", 200, True), Column("played", "Played", 120),
-                Column("time", "Time", 52, anchor="e"), Column("like", "", 30, kind="heart")]
+        cols = [Column("title", N_("Title"), 300, True), Column("artist", N_("Artist"), 200, True),
+                Column("album", N_("Album"), 200, True), Column("played", N_("Played"), 120),
+                Column("time", N_("Time"), 52, anchor="e"), Column("like", "", 30, kind="heart")]
         self.table = song_table(self, self, cols, value=self._value, sort_value=self._sort,
                                 on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name),
-                                empty_text="Songs you play appear here.")
+                                empty_text=tr("Songs you play appear here."))
         self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.refresh()
 
@@ -528,7 +543,7 @@ class StatsPage(Page):
     a song plays it), then the summary cards of the period chosen in the menu
     (stats.cards()), each in its own colour."""
 
-    list_name = "Your Stats"
+    list_name = N_("Your Stats")
     CELL_W, CELL_H, ROW_H = 62, 44, 30
     TINTS = (0.0, 0.25, 0.45, 0.7, 1.0)  # the share of the accent colour for stats.month_levels() 0..4
 
@@ -539,13 +554,14 @@ class StatsPage(Page):
         top.pack(fill="x", padx=28, pady=(22, 8))
         box = frame(top, t)
         box.pack(side="left", fill="x", expand=True)
-        label(box, t, "Your Stats", "title").pack(anchor="w")
+        label(box, t, tr("Your Stats"), "title").pack(anchor="w")
         self.sub = label(box, t, "", "body", fg="text2")
         self.sub.pack(anchor="w")
-        PillButton(top, t, "Details", icon="stats", command=lambda: app.show_page("stats_details")).pack(side="right")
-        self.period = tk.StringVar(value=app.stats_period)
-        cb = ttk.Combobox(top, textvariable=self.period, values=stats.PERIODS, state="readonly", width=14,
-                          style="P.TCombobox", font=t.f("body"))
+        PillButton(top, t, tr("Details"), icon="stats", command=lambda: app.show_page("stats_details")).pack(
+            side="right")
+        self.period = tk.StringVar(value=tr(app.stats_period))  # the period shown; app.stats_period is English
+        self.period_box = cb = ttk.Combobox(top, textvariable=self.period, values=[tr(p) for p in stats.PERIODS],
+                                            state="readonly", width=14, style="P.TCombobox", font=t.f("body"))
         cb.pack(side="right", padx=(0, 12))
         cb.bind("<<ComboboxSelected>>", lambda e: self._period())
         self.area = ScrollCanvas(self, self, self._draw)
@@ -566,18 +582,22 @@ class StatsPage(Page):
         c.bind("<Leave>", lambda e: self._set_hover(None))
 
     def _period(self) -> None:
-        self.app.stats_period = self.period.get()
+        i = self.period_box.current()
+        if 0 <= i < len(stats.PERIODS):
+            self.app.stats_period = stats.PERIODS[i]
         self.refresh()
 
     def show(self, **kw) -> None:
-        self.period.set(self.app.stats_period)
+        self.period.set(tr(self.app.stats_period))
         self.refresh()
 
     def refresh(self) -> None:
         self.st = self.app.compute_stats()
         st = self.st
-        self.sub.configure(text=(f"{self.app.stats_period}: {plural(int(st['seconds'] / 60 + 0.5), 'minute')}, "
-                                 f"{plural(st['plays'], 'play')}") if st["logged"] else self.app.stats_period)
+        period = tr(self.app.stats_period)
+        self.sub.configure(text=tr("{period}: {minutes}, {plays}", period=period,
+                                   minutes=plural(int(st["seconds"] / 60 + 0.5), "minute"),
+                                   plays=plural(st["plays"], "play")) if st["logged"] else period)
         self._load_calendar()
         self.area.redraw()
 
@@ -612,12 +632,12 @@ class StatsPage(Page):
         """A click on a song of the day's list: play the day's songs (each once) from it."""
         tracks: List[Track] = []
         for r in self.day_rows:
-            tr = self.app.by_path.get(r["path"])
-            if tr is not None and tr not in tracks:
-                tracks.append(tr)
-        tr = self.app.by_path.get(self.day_rows[i]["path"]) if 0 <= i < len(self.day_rows) else None
-        if tr is not None:
-            self.app.play_list(tracks, tracks.index(tr), self.list_name)
+            trk = self.app.by_path.get(r["path"])
+            if trk is not None and trk not in tracks:
+                tracks.append(trk)
+        trk = self.app.by_path.get(self.day_rows[i]["path"]) if 0 <= i < len(self.day_rows) else None
+        if trk is not None:
+            self.app.play_list(tracks, tracks.index(trk), self.list_name)
 
     def _hit(self, e) -> Optional[tuple]:
         x, y = self.area.c.canvasx(e.x), self.area.c.canvasy(e.y)
@@ -648,7 +668,7 @@ class StatsPage(Page):
         cw, ch = max(30.0, min(self.CELL_W, (W - 2 * m) / 7)), self.CELL_H
         right = m + 7 * cw
         year, month = self.month
-        title = c.create_text(m, y + 16, text=stats.month_title(year, month), anchor="w", fill=t.c("text"),
+        title = c.create_text(m, y + 16, text=tr_text(stats.month_title(year, month)), anchor="w", fill=t.c("text"),
                               font=t.f("h2"))
         total = int(sum(self.minutes) + 0.5)
         if total:
@@ -663,8 +683,8 @@ class StatsPage(Page):
             if on:
                 self.hits.append((box, lambda d=delta: self.step_month(d)))
         y += 42
-        for k, name in enumerate(stats.WEEKDAYS):
-            c.create_text(m + k * cw + cw / 2, y + 8, text=name[:3], fill=t.c("text2"), font=t.f("small_b"))
+        for k, name in enumerate(WEEKDAYS_SHORT):
+            c.create_text(m + k * cw + cw / 2, y + 8, text=tr(name), fill=t.c("text2"), font=t.f("small_b"))
         y += 22
         now = time.localtime()
         today = (now.tm_year, now.tm_mon, now.tm_mday)
@@ -693,11 +713,12 @@ class StatsPage(Page):
         W = c.winfo_width()
         m = 28
         if self.day is None:
-            c.create_text(m, y + 10, text="Click a day to see the songs you played on it.", anchor="w",
+            c.create_text(m, y + 10, text=tr("Click a day to see the songs you played on it."), anchor="w",
                           fill=t.c("text2"), font=t.f("body"))
             return y + 40
-        c.create_text(m, y + 12, text=stats.day_title(*self.day), anchor="w", fill=t.c("text"), font=t.f("h2"))
-        c.create_text(m, y + 36, text=stats.day_summary(self.day_rows), anchor="w", fill=t.c("text2"),
+        c.create_text(m, y + 12, text=tr_text(stats.day_title(*self.day)), anchor="w", fill=t.c("text"),
+                      font=t.f("h2"))
+        c.create_text(m, y + 36, text=tr_text(stats.day_summary(self.day_rows)), anchor="w", fill=t.c("text2"),
                       font=t.f("body"))
         y += 56
         rest = W - 2 * m - 70 - 90
@@ -716,9 +737,10 @@ class StatsPage(Page):
             c.create_text(m + 12, mid, text=r["time"], anchor="w", fill=t.c("text2"), font=t.f("body"))
             c.create_text(m + 70, mid, text=fit_text(font, r["title"], int(tw), self._fit), anchor="w",
                           fill=t.c("accent") if playing else t.c("text") if playable else t.c("text2"), font=font)
-            c.create_text(m + 70 + tw + 16, mid, text=fit_text(t.f("body"), r["artist"], int(aw), self._fit),
+            c.create_text(m + 70 + tw + 16, mid, text=fit_text(t.f("body"), tr_name(r["artist"]), int(aw), self._fit),
                           anchor="w", fill=t.c("text2"), font=t.f("body"))
-            c.create_text(W - m - 12, mid, text=r["minutes"], anchor="e", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(W - m - 12, mid, text=tr_text(r["minutes"]), anchor="e", fill=t.c("text2"),
+                          font=t.f("body"))
             if playable:
                 self.hits.append((box, lambda i=i: self.play_row(i)))
             y += self.ROW_H
@@ -732,13 +754,18 @@ class StatsPage(Page):
         y0 = self._draw_day(self._draw_calendar(8))
         cards = stats.cards(self.st) if self.st else []
         if not cards:
-            c.create_text(W / 2, y0 + 40, text="No listening yet in this period. Play some music and come back.",
+            c.create_text(W / 2, y0 + 40, text=tr("No listening yet in this period. Play some music and come back."),
                           fill=t.c("text2"), font=t.f("h2"), width=W - 80)
             return y0 + 100
         cols = 3 if W >= 760 else 2 if W >= 480 else 1
         cw = (W - 2 * m - (cols - 1) * gap) / cols
         ch = 150
         for i, (lab, big, detail) in enumerate(cards):
+            # stats.cards() gives English texts: the label and the detail are the core's sentences, the
+            # big text a name from the library (top song, artist...) or a value such as "3 PM"
+            big = tr_name(big) if lab in ("Your top song", "Your top artist", "Your top album",
+                                          "Your top genre") else tr_text(big)
+            lab, detail = tr_text(lab), tr_text(detail)
             r, k = divmod(i, cols)
             x, y = m + k * (cw + gap), y0 + r * (ch + gap)
             color = CARD_COLORS[i % len(CARD_COLORS)]
@@ -757,7 +784,7 @@ class StatsDetailsPage(Page):
     """The totals, listening by hour, weekday and month, the top 50 lists and what
     the library holds."""
 
-    list_name = "Your Stats"
+    list_name = N_("Your Stats")
 
     def __init__(self, app):
         super().__init__(app)
@@ -765,10 +792,10 @@ class StatsDetailsPage(Page):
         top = frame(self, t)
         top.pack(fill="x", padx=28, pady=(18, 8))
         IconButton(top, t, "back", command=app.go_back, size=30, icon_size=16,
-                   tooltip=lambda: "Back").pack(side="left", padx=(0, 6))
+                   tooltip=lambda: tr("Back")).pack(side="left", padx=(0, 6))
         box = frame(top, t)
         box.pack(side="left", fill="x", expand=True)
-        label(box, t, "Details", "title").pack(anchor="w")
+        label(box, t, tr("Details"), "title").pack(anchor="w")
         self.sub = label(box, t, "", "body", fg="text2")
         self.sub.pack(anchor="w")
         self.area = ScrollCanvas(self, self, self._draw)
@@ -783,7 +810,7 @@ class StatsDetailsPage(Page):
     def refresh(self) -> None:
         self.st = self.app.compute_stats()
         self.lib = stats.library_stats(self.app.tracks)
-        self.sub.configure(text=f"{self.app.stats_period} · Your Stats")
+        self.sub.configure(text=tr("{period} · Your Stats", period=tr(self.app.stats_period)))
         self.area.redraw()
 
     # ---- drawing helpers ------------------------------------------------
@@ -816,14 +843,15 @@ class StatsDetailsPage(Page):
         c.create_text(x, y + 12, text=title, anchor="w", fill=t.c("text"), font=t.f("h2"))
         y += 34
         if not rows:
-            c.create_text(x, y + 10, text="Nothing yet.", anchor="w", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(x, y + 10, text=tr("Nothing yet."), anchor="w", fill=t.c("text2"), font=t.f("body"))
             return y + 30
         for i, r in enumerate(rows[:50], start=1):
-            right = f"{plural(r['plays'], 'play')} · {int(r['seconds'] / 60 + 0.5):,} min"
+            right = tr("{plays} · {minutes} min", plays=plural(r["plays"], "play"),
+                       minutes=f"{int(r['seconds'] / 60 + 0.5):,}")
             rid = c.create_text(x + width, y + 10, text=right, anchor="e", fill=t.c("text2"), font=t.f("small"))
             rw = c.bbox(rid)[2] - c.bbox(rid)[0]
             c.create_text(x, y + 10, text=f"{i}", anchor="w", fill=t.c("text2"), font=t.f("small_b"))
-            name = r["name"] + (f" — {r['artist']}" if with_artist and r.get("artist") else "")
+            name = tr_name(r["name"]) + (f" — {tr_name(r['artist'])}" if with_artist and r.get("artist") else "")
             c.create_text(x + 30, y + 10, text=fit_text(t.f("body"), name, int(width - rw - 44), self._fit),
                           anchor="w", fill=t.c("text"), font=t.f("body"))
             y += 24
@@ -849,14 +877,15 @@ class StatsDetailsPage(Page):
         if st is None or lib is None:
             return 100
         if not st["logged"]:
-            c.create_text(28, y + 14, text="No listening yet in this period. Play some music and come back.",
+            c.create_text(28, y + 14, text=tr("No listening yet in this period. Play some music and come back."),
                           anchor="w", fill=t.c("text2"), font=t.f("body"))
             y += 50
         else:
-            totals = [(f"{int(st['seconds'] / 60 + 0.5):,}", "minutes"), (f"{st['plays']:,}", "plays"),
-                      (f"{st['songs']:,}", "songs"), (f"{st['artists']:,}", "artists"),
-                      (f"{st['albums']:,}", "albums"), (f"{st['genres']:,}", "genres"),
-                      (f"{st['days']:,}", "days with music"), (f"{st['streak']:,}", "longest streak (days)")]
+            totals = [(f"{int(st['seconds'] / 60 + 0.5):,}", tr("minutes")), (f"{st['plays']:,}", tr("plays")),
+                      (f"{st['songs']:,}", tr("songs")), (f"{st['artists']:,}", tr("artists")),
+                      (f"{st['albums']:,}", tr("albums")), (f"{st['genres']:,}", tr("genres")),
+                      (f"{st['days']:,}", tr("days with music")),
+                      (f"{st['streak']:,}", tr("longest streak (days)"))]
             cols = 4
             bw = (W - 56 - (cols - 1) * 12) / cols
             for i, (big, lab) in enumerate(totals):
@@ -867,32 +896,34 @@ class StatsDetailsPage(Page):
                 c.create_text(x + 16, yy + 54, text=lab, anchor="w", fill=t.c("text2"), font=t.f("small"))
             y += 2 * 84 + 14
             hours = [s / 60 for s in st["by_hour"]]
-            y = self._heading(y, "Listening by hour of the day (minutes)")
-            y = self._bars(y, hours, [stats.hour_label(h) for h in range(24)], every=3)
-            y = self._heading(y, "By weekday")
-            y = self._bars(y, [s / 60 for s in st["by_weekday"]], [d[:3] for d in stats.WEEKDAYS])
+            y = self._heading(y, tr("Listening by hour of the day (minutes)"))
+            y = self._bars(y, hours, [tr_text(stats.hour_label(h)) for h in range(24)], every=3)
+            y = self._heading(y, tr("By weekday"))
+            y = self._bars(y, [s / 60 for s in st["by_weekday"]], [tr(d) for d in WEEKDAYS_SHORT])
             months = st["by_month"]
             years = {m[:4] for m, _ in months}
-            labels = [stats.MONTHS[int(m[5:7]) - 1] + ("" if len(years) == 1 else f" {m[2:4]}") for m, _ in months]
-            y = self._heading(y, "By month")
+            labels = [tr(stats.MONTHS[int(m[5:7]) - 1]) if len(years) == 1 else
+                      tr("{month} {year}", month=tr(stats.MONTHS[int(m[5:7]) - 1]), year=m[2:4]) for m, _ in months]
+            y = self._heading(y, tr("By month"))
             y = self._bars(y, [s / 60 for _, s in months], labels, every=max(1, len(months) // 12 + 1))
             half = (W - 56 - 32) / 2
-            y1 = self._top(28, y, half, "Top songs", st["top_songs"], True)
-            y2 = self._top(28 + half + 32, y, half, "Top artists", st["top_artists"], False)
+            y1 = self._top(28, y, half, tr("Top songs"), st["top_songs"], True)
+            y2 = self._top(28 + half + 32, y, half, tr("Top artists"), st["top_artists"], False)
             y = max(y1, y2)
-            y1 = self._top(28, y, half, "Top albums", st["top_albums"], True)
-            y2 = self._top(28 + half + 32, y, half, "Top genres", st["top_genres"], False)
+            y1 = self._top(28, y, half, tr("Top albums"), st["top_albums"], True)
+            y2 = self._top(28 + half + 32, y, half, tr("Top genres"), st["top_genres"], False)
             y = max(y1, y2)
-        y = self._heading(y, "Your library")
+        y = self._heading(y, tr("Your library"))
         hours = lib["seconds"] / 3600.0
-        length = f"{hours:,.1f} hours" if hours < 48 else f"{hours / 24:,.1f} days"
-        pairs = [("Songs", f"{lib['songs']:,}"), ("Albums", f"{lib['albums']:,}"),
-                 ("Artists", f"{lib['artists']:,}"), ("Total length", length),
-                 ("Size", fmt_bytes(lib["bytes"]) if lib["bytes"] else "—"),
-                 ("Formats", ", ".join(f"{k} {v:,}" for k, v in lib["formats"]) or "—"),
-                 ("Quality", ", ".join(f"{k} {v:,}" for k, v in lib["qualities"])),
-                 ("Sample rates", ", ".join(f"{fmt_khz(k)} {v:,}" for k, v in lib["rates"]) or "—"),
-                 ("Bit depths", ", ".join(f"{k} {v:,}" for k, v in lib["bits"]) or "—")]
+        length = (tr("{n} hours", n=f"{hours:,.1f}") if hours < 48 else tr("{n} days", n=f"{hours / 24:,.1f}"))
+        sep = tr(", ")
+        pairs = [(tr("Songs"), f"{lib['songs']:,}"), (tr("Albums"), f"{lib['albums']:,}"),
+                 (tr("Artists"), f"{lib['artists']:,}"), (tr("Total length"), length),
+                 (tr("Size"), fmt_bytes(lib["bytes"]) if lib["bytes"] else "—"),
+                 (tr("Formats"), sep.join(f"{k} {v:,}" for k, v in lib["formats"]) or "—"),
+                 (tr("Quality"), sep.join(f"{tr_text(k)} {v:,}" for k, v in lib["qualities"])),
+                 (tr("Sample rates"), sep.join(f"{tr_text(fmt_khz(k))} {v:,}" for k, v in lib["rates"]) or "—"),
+                 (tr("Bit depths"), sep.join(f"{tr_text(k)} {v:,}" for k, v in lib["bits"]) or "—")]
         return self._pairs(y, pairs) + 20
 
 

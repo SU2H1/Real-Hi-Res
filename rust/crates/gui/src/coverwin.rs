@@ -11,10 +11,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, Rect, RichText, Sense};
 use realhires::covers::{self, CoverSource};
+use realhires::i18n::{tr_name, tr_text};
 use realhires::musiclib::{Album, Track};
 use realhires::settings::Settings;
 use realhires::stats::thousands;
 use realhires::tagedit::{self, TagOutcome};
+use realhires::tr;
 
 use crate::look::Palette;
 
@@ -81,8 +83,9 @@ impl CoverWin {
         let n = album_paths.len();
         let (heading, subheading) = match (album, track) {
             (Some(a), _) => {
-                let count = format!("{} song{}", thousands(n as i64), if n == 1 { "" } else { "s" });
-                (a.title.clone(), [a.artist.as_str(), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · "))
+                let count = crate::player::plural(n, "song");
+                let artist = tr_name(&a.artist);
+                (tr_name(&a.title).to_string(), [artist, count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · "))
             }
             (None, Some(t)) => (
                 t.display_title(),
@@ -104,7 +107,7 @@ impl CoverWin {
             removing: false,
             progress: None,
             summary: String::new(),
-            status: "Reading the cover…".into(),
+            status: tr!("Reading the cover…").into(),
             confirm_remove: false,
             outcomes: vec![],
             tex: None,
@@ -160,8 +163,13 @@ impl CoverWin {
         self.progress = None;
         let paths = self.target_paths();
         let n = paths.len();
-        let verb = if image.is_none() { "Removing the cover" } else { "Changing the cover" };
-        self.status = if n > 1 { format!("{verb} of {} songs…", thousands(n as i64)) } else { format!("{verb}…") };
+        let k = thousands(n as i64);
+        self.status = match (image.is_none(), n > 1) {
+            (true, true) => tr!("Removing the cover of {n} songs…", n = k),
+            (true, false) => tr!("Removing the cover…").to_string(),
+            (false, true) => tr!("Changing the cover of {n} songs…", n = k),
+            (false, false) => tr!("Changing the cover…").to_string(),
+        };
         let (tx, ctx, cfg, folder, also) = (self.tx.clone(), self.ctx.clone(), self.cfg.clone(), self.folder(), self.also_folder);
         let _ = std::thread::Builder::new().name("cover-save".into()).spawn(move || {
             let progress = {
@@ -205,12 +213,12 @@ impl CoverWin {
         let data = match std::fs::read(image_path) {
             Ok(d) => d,
             Err(e) => {
-                self.summary = format!("{name} cannot be used: {e}");
+                self.summary = tr!("{file} cannot be used: {error}", file = &name, error = tr_text(&e.to_string()));
                 return false;
             }
         };
         if let Err(e) = tagedit::check_picture(&data, "") {
-            self.summary = format!("{name} cannot be used: {e}");
+            self.summary = tr!("{file} cannot be used: {error}", file = &name, error = tr_text(&e.to_string()));
             return false;
         }
         self.start(Some(data));
@@ -233,11 +241,11 @@ impl CoverWin {
         match std::fs::write(path, &src.data) {
             Ok(()) => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                self.status = format!("Saved the picture as {name}.");
+                self.status = tr!("Saved the picture as {file}.", file = name);
                 true
             }
             Err(e) => {
-                self.status = format!("Could not save the picture: {e}");
+                self.status = tr!("Could not save the picture: {error}", error = e);
                 false
             }
         }
@@ -264,8 +272,9 @@ impl CoverWin {
                     self.busy = false;
                     self.progress = None;
                     self.status.clear();
+                    // `tagedit::cover_summary()`'s English texts, in the language in use
                     let (head, lines) = tagedit::cover_summary(&outcomes, removing, &notes);
-                    self.summary = std::iter::once(head).chain(lines).collect::<Vec<_>>().join("\n");
+                    self.summary = std::iter::once(head).chain(lines).map(|l| tr_text(&l)).collect::<Vec<_>>().join("\n");
                     self.outcomes = outcomes;
                     changed = true;
                     self.read();
@@ -284,7 +293,7 @@ impl CoverWin {
         let mut save = false;
         let n = self.album_paths.len();
         let mut open = true;
-        egui::Window::new("Cover")
+        egui::Window::new(tr!("Cover"))
             .id(egui::Id::new("player-cover"))
             .open(&mut open)
             .collapsible(false)
@@ -313,11 +322,11 @@ impl CoverWin {
                     }
                     (_, src) => {
                         let text = if self.reading {
-                            "Reading the cover…"
+                            tr!("Reading the cover…")
                         } else if src.is_some() {
-                            "The picture cannot be shown."
+                            tr!("The picture cannot be shown.")
                         } else {
-                            "No cover"
+                            tr!("No cover")
                         };
                         p.rect_filled(Rect::from_center_size(area.center(), vec2(side, side)), CornerRadius::same(6), pal.lcd);
                         p.text(area.center(), Align2::CENTER_CENTER, text, crate::look::title(16.0), pal.secondary);
@@ -326,30 +335,33 @@ impl CoverWin {
                 ui.add_space(8.0);
                 match &self.source {
                     Some(src) => {
-                        ui.label(RichText::new(src.details()).color(pal.text));
-                        ui.label(RichText::new(src.where_text()).color(pal.secondary));
+                        // the core's texts, in the language in use
+                        ui.label(RichText::new(tr_text(&src.details())).color(pal.text));
+                        ui.label(RichText::new(tr_text(&src.where_text())).color(pal.secondary));
                     }
                     None if !self.reading => {
-                        ui.label(RichText::new("No cover").color(pal.text));
-                        ui.label(RichText::new("Neither the songs nor the album's folder hold a picture.").color(pal.secondary));
+                        ui.label(RichText::new(tr!("No cover")).color(pal.text));
+                        ui.label(RichText::new(tr!("Neither the songs nor the album's folder hold a picture.")).color(pal.secondary));
                     }
                     None => {}
                 }
                 ui.add_space(6.0);
                 ui.add_enabled_ui(self.idle(), |ui| {
                     if n > 1 {
-                        ui.radio_value(&mut self.all_songs, true, format!("All {} songs of this album", thousands(n as i64)));
-                        ui.radio_value(&mut self.all_songs, false, "This song only");
+                        ui.radio_value(&mut self.all_songs, true, tr!("All {n} songs of this album", n = thousands(n as i64)));
+                        ui.radio_value(&mut self.all_songs, false, tr!("This song only"));
                     }
-                    ui.checkbox(&mut self.also_folder, "Also save it as cover.jpg in the album's folder");
+                    ui.checkbox(&mut self.also_folder, tr!("Also save it as cover.jpg in the album's folder"));
                 });
                 let status = match self.progress {
-                    Some((i, total)) if total > 1 => format!(
-                        "{} {} of {}…",
-                        if self.removing { "Removing the cover of" } else { "Changing the cover of" },
-                        thousands(i as i64 + 1),
-                        thousands(total as i64)
-                    ),
+                    Some((i, total)) if total > 1 => {
+                        let (i, n) = (thousands(i as i64 + 1), thousands(total as i64));
+                        if self.removing {
+                            tr!("Removing the cover of {i} of {n}…", i = i, n = n)
+                        } else {
+                            tr!("Changing the cover of {i} of {n}…", i = i, n = n)
+                        }
+                    }
                     _ => self.status.clone(),
                 };
                 if !status.is_empty() {
@@ -360,17 +372,21 @@ impl CoverWin {
                 }
                 ui.add_space(6.0);
                 if self.confirm_remove {
-                    let which = if self.target_paths().len() > 1 {
-                        format!("all {} songs of this album", thousands(self.target_paths().len() as i64))
+                    let k = self.target_paths().len();
+                    let question = if k > 1 {
+                        tr!(
+                            "Remove the cover inside all {n} songs of this album? A picture in the album's folder is not deleted.",
+                            n = thousands(k as i64)
+                        )
                     } else {
-                        "this song".to_string()
+                        tr!("Remove the cover inside this song? A picture in the album's folder is not deleted.").to_string()
                     };
-                    ui.label(format!("Remove the cover inside {which}? A picture in the album's folder is not deleted."));
+                    ui.label(question);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Remove").strong().color(pal.accent)).clicked() {
+                        if ui.button(RichText::new(tr!("Remove")).strong().color(pal.accent)).clicked() {
                             self.remove();
                         }
-                        if ui.button("Cancel").clicked() || (esc && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
+                        if ui.button(tr!("Cancel")).clicked() || (esc && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
                             self.confirm_remove = false;
                         }
                     });
@@ -378,20 +394,20 @@ impl CoverWin {
                 }
                 ui.horizontal(|ui| {
                     let idle = self.idle();
-                    if ui.add_enabled(idle, egui::Button::new(RichText::new("Change cover…").strong())).clicked() {
+                    if ui.add_enabled(idle, egui::Button::new(RichText::new(tr!("Change cover…")).strong())).clicked() {
                         pick = true;
                     }
-                    if ui.add_enabled(idle && self.source.is_some(), egui::Button::new("Save image as…")).clicked() {
+                    if ui.add_enabled(idle && self.source.is_some(), egui::Button::new(tr!("Save image as…"))).clicked() {
                         save = true;
                     }
-                    if ui.add_enabled(idle, egui::Button::new("Remove cover")).clicked() {
+                    if ui.add_enabled(idle, egui::Button::new(tr!("Remove cover"))).clicked() {
                         self.confirm_remove = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_enabled(!self.busy, egui::Button::new("Close")).clicked() {
+                        if ui.add_enabled(!self.busy, egui::Button::new(tr!("Close"))).clicked() {
                             close = true;
                         }
-                        if ui.add_enabled(!self.busy && self.album_key.is_some(), egui::Button::new("Show album")).clicked() {
+                        if ui.add_enabled(!self.busy && self.album_key.is_some(), egui::Button::new(tr!("Show album"))).clicked() {
                             show_album = true;
                         }
                     });
@@ -402,8 +418,8 @@ impl CoverWin {
             });
         if pick {
             let file = rfd::FileDialog::new()
-                .set_title("Choose the new cover")
-                .add_filter("JPEG or PNG images", &["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"])
+                .set_title(tr!("Choose the new cover"))
+                .add_filter(tr!("JPEG or PNG images"), &["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"])
                 .pick_file();
             if let Some(f) = file {
                 self.change_to(&f);
@@ -413,9 +429,12 @@ impl CoverWin {
             if let Some(src) = &self.source {
                 let ext = src.ext();
                 let file = rfd::FileDialog::new()
-                    .set_title("Save the cover as")
+                    .set_title(tr!("Save the cover as"))
                     .set_file_name(format!("cover{ext}"))
-                    .add_filter(if src.format.is_empty() { "Image" } else { src.format }, &[&ext[1..]])
+                    .add_filter(
+                        if src.format.is_empty() { tr!("Image").to_string() } else { tr!("{format} image", format = src.format) },
+                        &[&ext[1..]],
+                    )
                     .save_file();
                 if let Some(f) = file {
                     self.save_image_to(&f);

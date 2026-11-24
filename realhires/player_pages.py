@@ -8,13 +8,15 @@ import os
 import sys
 import time
 import tkinter as tk
+import unicodedata
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from . import APP_NAME, embed
+from . import APP_NAME, embed, i18n
 from . import lyrics as lyrics_mod
 from . import musiclib, playerstate, stats, tagedit
 from . import settings as settings_mod
+from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
 from .player_theme import DEFAULT_FONT_LABEL, IconButton, PillButton, Theme, fit_text, font_families, round_rect
 from .player_widgets import AlbumGrid, Column, SongList, bind_wheel, draw_cover, fmt_time, show_scrollbar
@@ -44,15 +46,15 @@ def track_value(t: Track, key: str) -> str:
     if key == "title":
         return t.display_title
     if key == "artist":
-        return "Not in the library" if getattr(t, "missing", False) else t.display_artist
+        return tr("Not in the library") if getattr(t, "missing", False) else tr_name(t.display_artist)
     if key == "album":
-        return t.display_album
+        return tr_name(t.display_album)
     if key == "genre":
         return t.genre
     if key == "time":
         return fmt_time(t.duration)
     if key == "quality":
-        return musiclib.quality(t)
+        return tr_text(musiclib.quality(t))
     if key == "num":
         return str(t.track) if t.track else ""
     if key == "year":
@@ -71,7 +73,7 @@ def track_value(t: Track, key: str) -> str:
         if not t.mtime_ns:
             return ""
         lt = time.localtime(t.mtime_ns / 1e9)
-        return stats.day_label(f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}")
+        return tr_text(stats.day_label(f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"))
     if key == "file":
         return os.path.basename(t.path)
     return ""
@@ -98,31 +100,50 @@ def album_order(tracks: List[Track]) -> List[Track]:
     return [t for a in musiclib.albums(tracks) for t in a["tracks"]]
 
 
+# the counts the pages show ("1 song", "12 songs"), as texts to translate
+COUNTS = {
+    "song": (N_("1 song"), N_("{n} songs")), "album": (N_("1 album"), N_("{n} albums")),
+    "minute": (N_("1 minute"), N_("{n} minutes")), "artist": (N_("1 artist"), N_("{n} artists")),
+    "album artist": (N_("1 album artist"), N_("{n} album artists")), "genre": (N_("1 genre"), N_("{n} genres")),
+    "year": (N_("1 year"), N_("{n} years")), "composer": (N_("1 composer"), N_("{n} composers")),
+    "folder": (N_("1 folder"), N_("{n} folders")), "playlist": (N_("1 playlist"), N_("{n} playlists")),
+    "play": (N_("1 play"), N_("{n} plays")),
+}
+
+
 def plural(n: int, one: str, many: str = "") -> str:
-    return f"{n:,} {one if n == 1 else (many or one + 's')}"
+    forms = COUNTS.get(one)
+    if forms is None:
+        return f"{n:,} {one if n == 1 else (many or one + 's')}"
+    return tr(forms[0]) if n == 1 else tr(forms[1], n=f"{n:,}")
 
 
 # The columns a song list can show (2.1: the user chooses them per kind of list,
 # playerstate.SONG_COLUMNS, kept in player.json), and their names in the menu.
 COLUMN_DEFS = {
     "num": Column("num", "#", 34, anchor="e", kind="num"),
-    "title": Column("title", "Title", 300, True),
-    "artist": Column("artist", "Artist", 200, True),
-    "album": Column("album", "Album", 200, True),
-    "album_artist": Column("album_artist", "Album Artist", 170, True),
-    "composer": Column("composer", "Composer", 150, True),
-    "genre": Column("genre", "Genre", 110),
-    "year": Column("year", "Year", 48, anchor="e"),
-    "disc": Column("disc", "Disc", 40, anchor="e"),
-    "time": Column("time", "Time", 52, anchor="e"),
-    "quality": Column("quality", "Quality", 118, tip=True),
-    "format": Column("format", "Format", 64),
-    "bit_rate": Column("bit_rate", "Bit rate", 86, anchor="e"),
-    "added": Column("added", "Date added", 100),
-    "file": Column("file", "File", 180, True),
+    "title": Column("title", N_("Title"), 300, True),
+    "artist": Column("artist", N_("Artist"), 200, True),
+    "album": Column("album", N_("Album"), 200, True),
+    "album_artist": Column("album_artist", N_("Album Artist"), 170, True),
+    "composer": Column("composer", N_("Composer"), 150, True),
+    "genre": Column("genre", N_("Genre"), 110),
+    "year": Column("year", N_("Year"), 48, anchor="e"),
+    "disc": Column("disc", N_("Disc"), 40, anchor="e"),
+    "time": Column("time", N_("Time"), 52, anchor="e"),
+    "quality": Column("quality", N_("Quality"), 118, tip=True),
+    "format": Column("format", N_("Format"), 64),
+    "bit_rate": Column("bit_rate", N_("Bit rate"), 86, anchor="e"),
+    "added": Column("added", N_("Date added"), 100),
+    "file": Column("file", N_("File"), 180, True),
     "like": Column("like", "", 30, kind="heart"),
 }
-COLUMN_LABELS = {"num": "# (track number)", "like": "Heart (like)"}
+COLUMN_LABELS = {"num": N_("# (track number)"), "like": N_("Heart (like)")}
+
+
+def text_width(text: str) -> int:
+    """The width of a text in average characters (ttk widths): a Japanese character counts twice."""
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
 
 
 def song_columns(names) -> List[Column]:
@@ -130,6 +151,8 @@ def song_columns(names) -> List[Column]:
 
 
 SONG_COLUMNS = song_columns(playerstate.DEFAULT_COLUMNS["songs"])
+
+
 class Page(tk.Frame):
     """One page of the content area."""
 
@@ -140,6 +163,8 @@ class Page(tk.Frame):
         super().__init__(app.content, bd=0, highlightthickness=0, width=400, height=300)
         self.app, self.theme = app, app.theme
         self.theme.reg(self, bg="bg")
+        if self.list_name:  # a class's list name (N_()) in the language in use ("Playing from …")
+            self.list_name = tr(self.list_name)
 
     def show(self, **kw) -> None:
         pass
@@ -163,7 +188,7 @@ class Page(tk.Frame):
         top = frame(parent, t)
         if back:
             IconButton(top, t, "back", command=self.app.go_back, size=30, icon_size=16,
-                       tooltip=lambda: "Back").pack(side="left", padx=(0, 6))
+                       tooltip=lambda: tr("Back")).pack(side="left", padx=(0, 6))
         box = frame(top, t)
         box.pack(side="left", fill="x", expand=True)
         title_l = label(box, t, title, "title")
@@ -171,9 +196,9 @@ class Page(tk.Frame):
         sub = label(box, t, "", "body", fg="text2")
         sub.pack(anchor="w")
         if buttons:
-            PillButton(top, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="right")
-            PillButton(top, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="right",
-                                                                                            padx=(0, 10))
+            PillButton(top, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True)).pack(side="right")
+            PillButton(top, t, tr("Play"), icon="play", command=lambda: self._play(False)).pack(side="right",
+                                                                                                padx=(0, 10))
         return top, title_l, sub
 
     def _play(self, shuffle: bool) -> None:
@@ -229,11 +254,11 @@ def columns_menu(app, kind: str) -> tk.Menu:
     for name in playerstate.SONG_COLUMNS:
         v = tk.BooleanVar(master=m, value=name in shown)
         m.vars.append(v)  # type: ignore[attr-defined]
-        m.add_checkbutton(label=COLUMN_LABELS.get(name, COLUMN_DEFS[name].title), variable=v,
+        m.add_checkbutton(label=tr(COLUMN_LABELS.get(name, COLUMN_DEFS[name].title)), variable=v,
                           state="disabled" if name == "title" else "normal",
                           command=lambda n=name: set_columns(app, kind, app.state.toggle_column(kind, n)))
     m.add_separator()
-    m.add_command(label="Reset columns", command=lambda: set_columns(app, kind, app.state.reset_columns(kind)))
+    m.add_command(label=tr("Reset columns"), command=lambda: set_columns(app, kind, app.state.reset_columns(kind)))
     app.theme_menu(m)
     app.last_menu = m
     return m
@@ -259,7 +284,7 @@ def set_columns(app, kind: str, names: List[str]) -> None:
 def track_tip(t: Track, key: str) -> str:
     """The tooltip of a cell: the Quality column's resolution ("24-bit/96 kHz")."""
     if key == "quality" and not getattr(t, "missing", False):
-        return musiclib.quality_detail(t)
+        return tr_text(musiclib.quality_detail(t))
     return ""
 
 
@@ -279,7 +304,7 @@ class AlbumsPage(Page):
         self.empty_sub = label(self.empty, t, "", "body", fg="text2", anchor="center", justify="center",
                                wraplength=460)
         self.empty_sub.pack(pady=(0, 14))
-        self.choose = PillButton(self.empty, t, "Choose a music folder…", command=app.choose_music_folder)
+        self.choose = PillButton(self.empty, t, tr("Choose a music folder…"), command=app.choose_music_folder)
         self.choose.pack()
         self.grid_w = AlbumGrid(self, t, app.covers, app.open_album)
         self.albums: List[dict] = []
@@ -300,15 +325,15 @@ class AlbumsPage(Page):
         self.grid_w.pack_forget()
         self.empty.pack(fill="both", expand=True)
         if not self.app.cfg.library_folders:
-            self.empty_text.configure(text="Add your music folder in Settings to start")
-            self.empty_sub.configure(text="Universal Music Player lists every song in your music folders, plays them, and "
-                                          "checks them for fake hi-res and fake lossless files.")
+            self.empty_text.configure(text=tr("Add your music folder in Settings to start"))
+            self.empty_sub.configure(text=tr("Universal Music Player lists every song in your music folders, plays "
+                                             "them, and checks them for fake hi-res and fake lossless files."))
             self.choose.pack()
         else:
             busy = self.app.library_busy()
-            self.empty_text.configure(text="Reading your music library…" if busy else "No songs found")
-            self.empty_sub.configure(text="" if busy else "Your music folders hold no audio files with the "
-                                                         "extensions set in Settings → Scanning.")
+            self.empty_text.configure(text=tr("Reading your music library…") if busy else tr("No songs found"))
+            self.empty_sub.configure(text="" if busy else tr("Your music folders hold no audio files with the "
+                                                            "extensions set in Settings → Scanning."))
             self.choose.pack_forget()
 
     def songs(self) -> List[Track]:
@@ -325,7 +350,7 @@ class AlbumPage(Page):
         top = frame(self, t)
         top.pack(fill="x", padx=28, pady=(18, 10))
         IconButton(top, t, "back", command=app.go_back, size=30, icon_size=16,
-                   tooltip=lambda: "Back").pack(side="left", anchor="n", padx=(0, 6))
+                   tooltip=lambda: tr("Back")).pack(side="left", anchor="n", padx=(0, 6))
         self.cover = tk.Canvas(top, width=self.COVER, height=self.COVER, highlightthickness=0, bd=0)
         t.reg(self.cover, bg="bg")
         self.cover.pack(side="left")
@@ -342,11 +367,14 @@ class AlbumPage(Page):
         self.meta_l.pack(anchor="w", pady=(2, 14))
         btns = frame(info, t)
         btns.pack(anchor="w")
-        PillButton(btns, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="left")
-        PillButton(btns, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="left",
-                                                                                              padx=(10, 0))
-        self.edit_b = PillButton(btns, t, "Album Properties…", kind="plain", command=self.edit_info)
+        PillButton(btns, t, tr("Play"), icon="play", command=lambda: self._play(False)).pack(side="left")
+        PillButton(btns, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True)).pack(side="left",
+                                                                                                  padx=(10, 0))
+        self.edit_b = PillButton(btns, t, tr("Album Properties…"), kind="plain", command=self.edit_info)
         self.edit_b.pack(side="left", padx=(10, 0))
+        self.mb_b = PillButton(btns, t, tr("Get album info from MusicBrainz…"), kind="plain",
+                               command=self.musicbrainz)
+        self.mb_b.pack(side="left", padx=(10, 0))
         # the columns the user chose for album pages (the track number first by default),
         # sortable; in track order at first
         self.table = song_table(self, self, kind="album",
@@ -376,6 +404,12 @@ class AlbumPage(Page):
             return self.app.edit_album_info(self.album)
         return None
 
+    def musicbrainz(self):
+        """Get album info from MusicBrainz… (2.1): the MusicBrainz window for the album."""
+        if self.album is not None:
+            return self.app.album_musicbrainz(self.album)
+        return None
+
     def _fill(self) -> None:
         a = self.album
         if a is None:
@@ -383,14 +417,14 @@ class AlbumPage(Page):
         if a["key"] != getattr(self, "_shown_key", None):  # another album: in track order again
             self._shown_key = a["key"]
             self.table.sort_key, self.table.sort_rev = None, False
-        self.list_name = a["title"]
-        self.title_l.configure(text=a["title"])
+        self.list_name = tr_name(a["title"])
+        self.title_l.configure(text=tr_name(a["title"]))
         self._artist_links(a["artist"])
         meta = " · ".join(x for x in (a["genre"], a["year"]) if x)
         self.meta_l.configure(text=meta)
         self.table.set_rows(a["tracks"])
         minutes = int(round(sum(tr.duration for tr in a["tracks"]) / 60))
-        self.table.footer = f"{plural(len(a['tracks']), 'song')}, {plural(minutes, 'minute')}"
+        self.table.footer = tr("{a}, {b}", a=plural(len(a["tracks"]), "song"), b=plural(minutes, "minute"))
         self.table.redraw()
         self._draw_cover()
 
@@ -405,7 +439,7 @@ class AlbumPage(Page):
         for i, name in enumerate(names):
             if i:
                 label(self.artist_box, t, ", ", "h2", fg="text2", padx=0).pack(side="left")
-            link = label(self.artist_box, t, name, "h2", fg="accent", cursor="hand2", padx=0)
+            link = label(self.artist_box, t, tr_name(name), "h2", fg="accent", cursor="hand2", padx=0)
             link.pack(side="left")
             link.bind("<Button-1>", lambda e, n=name: self.app.open_artist(n))
             self.artist_links.append(link)
@@ -435,14 +469,21 @@ class AlbumPage(Page):
 
 # ------------------------------------------------------------ groupings ---
 GROUPINGS = {  # page: (title, musiclib grouping, noun, what its page shows, icon of a card without covers)
-    "artists": ("Artists", musiclib.artists, "artist", "albums", "artist"),
-    "album_artists": ("Album Artists", musiclib.album_artists, "album artist", "albums", "mic"),
-    "genres": ("Genres", musiclib.genres, "genre", "songs", "genre"),
-    "years": ("Years", musiclib.years, "year", "songs", "calendar"),
-    "composers": ("Composers", musiclib.composers, "composer", "songs", "piano"),
+    "artists": (N_("Artists"), musiclib.artists, "artist", "albums", "artist"),
+    "album_artists": (N_("Album Artists"), musiclib.album_artists, "album artist", "albums", "mic"),
+    "genres": (N_("Genres"), musiclib.genres, "genre", "songs", "genre"),
+    "years": (N_("Years"), musiclib.years, "year", "songs", "calendar"),
+    "composers": (N_("Composers"), musiclib.composers, "composer", "songs", "piano"),
 }
 RENAMABLE = ("genres", "composers", "years")  # their menus have Rename… (Genres also Merge into…)
 UNKNOWN = {"genres": "Unknown Genre", "composers": "Unknown Composer", "years": "Unknown Year"}
+GROUP_TEXTS = {  # page: (its grid without cards, the word before a page's counts, its page with no songs left)
+    "artists": (N_("No artists yet."), N_("Artist"), ""),
+    "album_artists": (N_("No album artists yet."), N_("Album artist"), ""),
+    "genres": (N_("No genres yet."), N_("Genre"), N_("No songs have this genre any more.")),
+    "years": (N_("No years yet."), N_("Year"), N_("No songs have this year any more.")),
+    "composers": (N_("No composers yet."), N_("Composer"), N_("No songs have this composer any more.")),
+}
 MOD_NAME = "Cmd" if sys.platform == "darwin" else "Ctrl"
 
 
@@ -506,16 +547,17 @@ class GroupPage(Page):
         t = self.theme
         self.kind = kind
         self.title, self.group_fn, self.noun, self.shows, _icon = GROUPINGS[kind]
+        self.title = tr(self.title)
         self.list_name = self.title
         head, self.title_l, self.sub = self.heading(self, self.title, buttons=False)
         head.pack(fill="x", padx=28, pady=(22, 6))
-        self.merge_b = PillButton(head, t, "Merge genres…", command=lambda: self.merge_selected())
-        self.clear_b = PillButton(head, t, "Clear selection", kind="plain",
+        self.merge_b = PillButton(head, t, tr("Merge genres…"), command=lambda: self.merge_selected())
+        self.clear_b = PillButton(head, t, tr("Clear selection"), kind="plain",
                                   command=lambda: self.grid_w.clear_selection())
         self.items: List[dict] = []
         self.grid_w = AlbumGrid(self, t, app.covers, self._open, on_context=self._context,
                                 multi=kind == "genres", on_selection=self._selection,
-                                empty_text=f"No {self.noun}s yet.")
+                                empty_text=tr(GROUP_TEXTS[kind][0]))
         self.grid_w.pack(fill="both", expand=True)
         self.refresh()
 
@@ -528,10 +570,11 @@ class GroupPage(Page):
         n = len(self.grid_w.selected)
         text = plural(len(self.items), self.noun) if self.items else ""
         if self.kind == "genres" and self.items:
-            text += (f" · {n} selected" if n else f" · {MOD_NAME}-click genres to select several and merge them")
+            text += " · " + (tr("{n} selected", n=n) if n else
+                             tr("{mod}-click genres to select several and merge them", mod=MOD_NAME))
         self.sub.configure(text=text)
         if n >= 2:
-            self.merge_b.set(text=f"Merge {n} genres…")
+            self.merge_b.set(text=tr("Merge {n} genres…", n=n))
             if not self.merge_b.winfo_ismapped():
                 self.clear_b.pack(side="right")
                 self.merge_b.pack(side="right", padx=(0, 10))
@@ -560,8 +603,8 @@ class GroupPage(Page):
     def selection_menu(self) -> tk.Menu:
         m = tk.Menu(self.app.root, tearoff=False)
         n = len(self.grid_w.selected)
-        m.add_command(label=f"Merge {n} genres…", command=self.merge_selected)
-        m.add_command(label="Clear selection", command=self.grid_w.clear_selection)
+        m.add_command(label=tr("Merge {n} genres…", n=n), command=self.merge_selected)
+        m.add_command(label=tr("Clear selection"), command=self.grid_w.clear_selection)
         self.app.theme_menu(m)
         self.app.last_menu = m
         return m
@@ -589,7 +632,7 @@ class GroupItemPage(Page):
         top, self.title_l, self.sub = self.heading(self, "", back=True)
         top.pack(fill="x", padx=28, pady=(22, 6))
         self.more_b = IconButton(top, t, "dots", command=self._more, size=32, icon_size=18,
-                                 tooltip=lambda: "More")
+                                 tooltip=lambda: tr("More"))
         self.more_b.pack(side="right", padx=(0, 10))
         self.grid_w = AlbumGrid(self, t, app.covers, app.open_album)
         self.table = song_table(self, self, kind="songs",
@@ -608,23 +651,23 @@ class GroupItemPage(Page):
         g = find_group(self.app, self.kind, self.name) or (find_group(self.app, self.kind, self.old)
                                                             if self.old else None)
         self.item = g
-        noun = GROUPINGS[self.kind][2]
-        self.title_l.configure(text=g["name"] if g else self.name)
-        self.list_name = g["name"] if g else self.name
+        _empty, word, gone = GROUP_TEXTS[self.kind]
+        word = tr(word)
+        self.title_l.configure(text=tr_name(g["name"] if g else self.name))
+        self.list_name = tr_name(g["name"] if g else self.name)
         if self.kind in RENAMABLE:
             self.more_b.pack(side="right", padx=(0, 10))
         else:
             self.more_b.pack_forget()
         if GROUPINGS[self.kind][3] == "albums":
             albums = [self.app.album_by_key[k] for k in (g["albums"] if g else []) if k in self.app.album_by_key]
-            self.sub.configure(text=f"{noun.capitalize()} · {plural(len(albums), 'album')}, "
-                                    f"{plural(len(g['tracks']), 'song')}" if g else "")
+            self.sub.configure(text=f"{word} · " + tr("{a}, {b}", a=plural(len(albums), "album"),
+                                                       b=plural(len(g["tracks"]), "song")) if g else "")
             self.table.pack_forget()
             self.grid_w.pack(fill="both", expand=True)
             self.grid_w.set_albums(albums)
         else:
-            self.sub.configure(text=f"{noun.capitalize()} · {plural(len(g['tracks']), 'song')}" if g else
-                               f"No songs have this {noun} any more.")
+            self.sub.configure(text=f"{word} · {plural(len(g['tracks']), 'song')}" if g else tr(gone))
             self.grid_w.pack_forget()
             self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
             self.table.set_rows(g["tracks"] if g else [], keep=True)
@@ -653,23 +696,52 @@ def group_menu(app, kind: str, name: str, here: bool = False) -> tk.Menu:
     """The menu of a genre, year, composer or artist: Open, Play, Shuffle, and for
     genres, composers and years Rename… (genres also Merge into…)."""
     m = tk.Menu(app.root, tearoff=False)
-    noun = GROUPINGS[kind][2]
 
     def songs() -> List[Track]:
         g = find_group(app, kind, name)
         return album_order(g["tracks"]) if g else []
+    shown = tr_name(name)  # "Playing from …"
     if not here:
-        m.add_command(label="Open", command=lambda: app.show_page("group", kind=kind, group=name))
-    m.add_command(label="Play", command=lambda: songs() and app.play_list(songs(), 0, name))
-    m.add_command(label="Shuffle", command=lambda: songs() and app.play_list(songs(), 0, name, shuffle=True))
+        m.add_command(label=tr("Open"), command=lambda: app.show_page("group", kind=kind, group=name))
+    m.add_command(label=tr("Play"), command=lambda: songs() and app.play_list(songs(), 0, shown))
+    m.add_command(label=tr("Shuffle"), command=lambda: songs() and app.play_list(songs(), 0, shown, shuffle=True))
     if kind in RENAMABLE:
         m.add_separator()
-        m.add_command(label=f"Rename {noun}…", command=lambda: rename_group(app, kind, name))
+        m.add_command(label=tr(RENAME_TEXTS[kind]["menu"]), command=lambda: rename_group(app, kind, name))
         if kind == "genres":
-            m.add_command(label="Merge into…", command=lambda: merge_groups(app, kind, [name]))
+            m.add_command(label=tr("Merge into…"), command=lambda: merge_groups(app, kind, [name]))
     app.theme_menu(m)
     app.last_menu = m
     return m
+
+
+# The texts of Rename… for each grouping that has it, whole sentences for the translations
+RENAME_TEXTS = {
+    "genres": {
+        "menu": N_("Rename genre…"), "title": N_("Rename genre"),
+        "prompt_unknown": N_("Give the songs without a genre this genre:"),
+        "prompt": N_("New name of the genre “{name}”:"),
+        "ask_unknown": N_("Give {n} without a genre the genre “{new}”?"),
+        "ask": N_("Rename the genre “{name}” to “{new}”? The genre of {n} changes."),
+        "same": N_("Every song already has the genre “{new}”: nothing to change."),
+    },
+    "composers": {
+        "menu": N_("Rename composer…"), "title": N_("Rename composer"),
+        "prompt_unknown": N_("Give the songs without a composer this composer:"),
+        "prompt": N_("New name of the composer “{name}”:"),
+        "ask_unknown": N_("Give {n} without a composer the composer “{new}”?"),
+        "ask": N_("Rename the composer “{name}” to “{new}”? The composer of {n} changes."),
+        "same": N_("Every song already has the composer “{new}”: nothing to change."),
+    },
+    "years": {
+        "menu": N_("Rename year…"), "title": N_("Rename year"),
+        "prompt_unknown": N_("Give the songs without a year this year:"),
+        "prompt": N_("Change the year {name} of these songs to:"),
+        "ask_unknown": N_("Give {n} without a year the year “{new}”?"),
+        "ask": N_("Change the year {name} to {new}? The release date of {n} changes (only its year)."),
+        "same": N_("Every song already has the year “{new}”: nothing to change."),
+    },
+}
 
 
 def _value_of(kind: str, t: Track) -> str:
@@ -688,23 +760,23 @@ def _check(kind: str) -> Callable[[str], str]:
 def rename_group(app, kind: str, name: str, new: Optional[str] = None, confirm: bool = True):
     """Rename… a genre, composer or year: every song of it gets the new name (a year
     only replaces the year of the release date).  Returns the TagJobWindow, or None."""
-    noun = GROUPINGS[kind][2]
+    texts = RENAME_TEXTS[kind]
     g = find_group(app, kind, name)
     if g is None:
         return None
     unknown = g["name"] == UNKNOWN.get(kind)
     if new is None:
-        prompt = (f"Give the songs without a {noun} this {noun}:" if unknown else
-                  f"New name of the {noun} “{g['name']}”:" if kind != "years" else
-                  f"Change the year {g['name']} of these songs to:")
-        new = ask_name_dialog(app, f"Rename {noun}", prompt, "" if unknown else g["name"], _check(kind), "Rename")
+        prompt = tr(texts["prompt_unknown"]) if unknown else tr(texts["prompt"], name=g["name"])
+        new = ask_name_dialog(app, tr(texts["title"]), prompt, "" if unknown else g["name"], _check(kind),
+                              N_("Rename"))
     if not new:
         return None
     new = tagedit.check_group_name(kind, new)
-    what = (f"Give {{n}} without a {noun} the {noun} “{new}”?" if unknown else
-            f"Change the year {g['name']} to {new}? The release date of {{n}} changes (only its year)."
-            if kind == "years" else f"Rename the {noun} “{g['name']}” to “{new}”? The {noun} of {{n}} changes.")
-    return _retag(app, kind, [g], new, confirm, f"Rename {noun}", what)
+    old = g["name"]
+
+    def what(n: str) -> str:
+        return tr(texts["ask_unknown"], n=n, new=new) if unknown else tr(texts["ask"], name=old, new=new, n=n)
+    return _retag(app, kind, [g], new, confirm, tr(texts["title"]), what)
 
 
 def merge_groups(app, kind: str, names: List[str], target: Optional[str] = None, confirm: bool = True):
@@ -717,22 +789,30 @@ def merge_groups(app, kind: str, names: List[str], target: Optional[str] = None,
             mine = groups[0]["name"].strip().casefold()
             others = [g["name"] for g in library_groups(app, kind)
                       if g["name"].strip().casefold() != mine and g["name"] != UNKNOWN.get(kind)]
-            target = ask_name_dialog(app, "Merge into", f"Merge the genre “{groups[0]['name']}” into which genre? "
-                                     "Choose one, or type a new name.", "", _check(kind), "Merge", choices=others)
+            target = ask_name_dialog(app, tr("Merge into"),
+                                     tr("Merge the genre “{name}” into which genre? Choose one, or type a new name.",
+                                        name=tr_name(groups[0]["name"])), "", _check(kind), N_("Merge"),
+                                     choices=others)
         else:
             biggest = sorted(groups, key=lambda g: -len(g["tracks"]))
             names_ = [g["name"] for g in biggest if g["name"] != UNKNOWN.get(kind)]
-            target = ask_name_dialog(app, f"Merge {len(groups)} genres", f"Merge {len(groups)} genres into one. "
-                                     "Its name:", names_[0] if names_ else "", _check(kind), "Merge", choices=names_)
+            target = ask_name_dialog(app, tr("Merge {count} genres", count=len(groups)),
+                                     tr("Merge {count} genres into one. Its name:", count=len(groups)),
+                                     names_[0] if names_ else "", _check(kind), N_("Merge"), choices=names_)
     if not target:
         return None
     target = tagedit.check_group_name(kind, target)
-    if len(groups) == 1:
-        what = f"Merge the genre “{groups[0]['name']}” into “{target}”? The genre of {{n}} becomes “{target}”."
-    else:
-        listed = ", ".join(f"“{g['name']}”" for g in groups)
-        what = f"Merge {len(groups)} genres ({listed}) into “{target}”? The genre of {{n}} becomes “{target}”."
-    return _retag(app, kind, groups, target, confirm, "Merge genres", what)
+    first = tr_name(groups[0]["name"])
+    listed = tr(", ").join(tr("“{name}”", name=tr_name(g["name"])) for g in groups)
+    count = len(groups)
+
+    def what(n: str) -> str:
+        if count == 1:
+            return tr("Merge the genre “{name}” into “{target}”? The genre of {n} becomes “{target}”.",
+                      name=first, target=target, n=n)
+        return tr("Merge {count} genres ({listed}) into “{target}”? The genre of {n} becomes “{target}”.",
+                  count=count, listed=listed, target=target, n=n)
+    return _retag(app, kind, groups, target, confirm, tr("Merge genres"), what)
 
 
 def ask_name_dialog(app, title, prompt, initial, check, ok, choices=None) -> Optional[str]:
@@ -741,15 +821,17 @@ def ask_name_dialog(app, title, prompt, initial, check, ok, choices=None) -> Opt
     return ask_name(app, title, prompt, initial, check=check, ok=ok, choices=choices)
 
 
-def _retag(app, kind: str, groups: List[dict], new: str, confirm: bool, title: str, what: str):
-    """Confirm, then write the new name into the files that do not have it yet."""
+def _retag(app, kind: str, groups: List[dict], new: str, confirm: bool, title: str,
+           what: Callable[[str], str]):
+    """Confirm (`what(n)` is the question, n the number of songs), then write the new
+    name into the files that do not have it yet."""
     from tkinter import messagebox
 
     from .player_windows import TagJobWindow
 
     job = getattr(app, "tag_job", None)
     if job is not None and not job.done:
-        messagebox.showinfo(title, "Songs are still being changed; try again when that has finished.",
+        messagebox.showinfo(title, tr("Songs are still being changed; try again when that has finished."),
                             parent=app.root)
         return None
     seen, tracks = set(), []
@@ -758,14 +840,13 @@ def _retag(app, kind: str, groups: List[dict], new: str, confirm: bool, title: s
             if t.path not in seen and _value_of(kind, t) != new:
                 seen.add(t.path)
                 tracks.append(t)
-    noun = GROUPINGS[kind][2]
     if not tracks:
-        messagebox.showinfo(title, f"Every song already has the {noun} “{new}”: nothing to change.",
-                            parent=app.root)
+        messagebox.showinfo(title, tr(RENAME_TEXTS[kind]["same"], new=new), parent=app.root)
         return None
     n = plural(len(tracks), "song")
-    if confirm and not messagebox.askyesno(title, what.format(n=n) + " Only the information in the files is "
-                                           "changed; the music itself is not touched.", parent=app.root):
+    if confirm and not messagebox.askyesno(
+            title, tr("{question} Only the information in the files is changed; the music itself is not touched.",
+                      question=what(n)), parent=app.root):
         return None
     page = app.pages.get("group")
     if isinstance(page, GroupItemPage) and page.kind == kind and any(page.item is g for g in groups):
@@ -778,17 +859,17 @@ def _retag(app, kind: str, groups: List[dict], new: str, confirm: bool, title: s
 class SongsPage(Page):
     """All Songs, Liked Songs or Disliked Songs."""
 
-    EMPTY = {"all": "No songs yet. Add your music folder in Settings.",
-             "liked": "Songs you like appear here. Click the heart of a song to like it.",
-             "disliked": "Songs you dislike appear here, and shuffles leave them out. Use the thumbs-down "
-                         "button or a song's menu to dislike it."}
+    EMPTY = {"all": N_("No songs yet. Add your music folder in Settings."),
+             "liked": N_("Songs you like appear here. Click the heart of a song to like it."),
+             "disliked": N_("Songs you dislike appear here, and shuffles leave them out. Use the thumbs-down "
+                            "button or a song's menu to dislike it.")}
 
     def __init__(self, app, title: str, which: str = "all"):
         super().__init__(app)
         self.title, self.which, self.list_name = title, which, title
         head, self.title_l, self.sub = self.heading(self, title)
         head.pack(fill="x", padx=28, pady=(22, 8))
-        self.table = song_table(self, self, kind="songs", empty_text=self.EMPTY[which],
+        self.table = song_table(self, self, kind="songs", empty_text=tr(self.EMPTY[which]),
                                 on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
         self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.refresh()
@@ -804,7 +885,8 @@ class SongsPage(Page):
         rows = self.rows()
         self.table.set_rows(rows, keep=True)
         minutes = int(round(sum(t.duration for t in rows) / 60))
-        self.sub.configure(text=f"{plural(len(rows), 'song')}, {plural(minutes, 'minute')}" if rows else "")
+        self.sub.configure(text=tr("{a}, {b}", a=plural(len(rows), "song"), b=plural(minutes, "minute"))
+                           if rows else "")
 
     def songs(self) -> List[Track]:
         return list(self.table.rows)
@@ -821,21 +903,21 @@ class SongsPage(Page):
 
 # --------------------------------------------------------------- search ---
 class SearchPage(Page):
-    list_name = "Search results"
+    list_name = N_("Search results")
 
     def __init__(self, app):
         super().__init__(app)
         t = self.theme
-        head, self.title_l, self.sub = self.heading(self, "Search", buttons=False)
+        head, self.title_l, self.sub = self.heading(self, tr("Search"), buttons=False)
         head.pack(fill="x", padx=28, pady=(22, 4))
-        self.alb_head = label(self, t, "Albums", "h2")
+        self.alb_head = label(self, t, tr("Albums"), "h2")
         self.alb_head.pack(anchor="w", padx=28, pady=(6, 0))
         self.grid_box = frame(self, t, height=AlbumGrid.COVER + 84)  # one row of cards
         self.grid_box.pack(fill="x")
         self.grid_box.pack_propagate(False)
         self.grid_w = AlbumGrid(self.grid_box, t, app.covers, app.open_album)
         self.grid_w.pack(fill="both", expand=True)
-        self.song_head = label(self, t, "Songs", "h2")
+        self.song_head = label(self, t, tr("Songs"), "h2")
         self.song_head.pack(anchor="w", padx=28, pady=(4, 2))
         self.table = song_table(self, self, kind="songs",
                                 on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
@@ -852,9 +934,9 @@ class SearchPage(Page):
             t.display_title, t.artist, t.album_artist, t.display_album, t.genre))]
         albums = [a for a in self.app.albums if q and any(q in x.casefold() for x in (
             a["title"], a["artist"], a["genre"]))]
-        self.title_l.configure(text=f"Results for “{self.text.strip()}”")
-        self.sub.configure(text=f"{plural(len(albums), 'album')}, {plural(len(tracks), 'song')}" if (
-            albums or tracks) else "Nothing in your library matches this.")
+        self.title_l.configure(text=tr("Results for “{query}”", query=self.text.strip()))
+        self.sub.configure(text=tr("{a}, {b}", a=plural(len(albums), "album"), b=plural(len(tracks), "song")) if (
+            albums or tracks) else tr("Nothing in your library matches this."))
         self.grid_w.set_albums(albums)
         self.grid_box.configure(height=AlbumGrid.COVER + 84 if albums else 1)
         self.table.set_rows(musiclib.sort_songs(tracks))
@@ -870,7 +952,7 @@ class SearchPage(Page):
 
 
 # ---------------------------------------------------------- now playing ---
-NP_TABS = (("lyrics", "Lyrics"), ("upnext", "Up Next"), ("details", "Details"))
+NP_TABS = (("lyrics", N_("Lyrics")), ("upnext", N_("Up Next")), ("details", N_("Details")))  # shown as tr()
 
 
 def fit_pair(font, a: str, sep: str, b: str, width: int, cache: Optional[dict] = None) -> tuple:
@@ -895,20 +977,21 @@ def artist_line(font, artists: List[str], album_link: Optional[str], album: str,
     A name with no room left is dropped with its ", ", and the name before it ends with "…"
     ("June Harbor… — Album", never "June Harbor,  — Album")."""
     sep = " — "
-    joined, album_shown = fit_pair(font, ", ".join(artists), sep, album, width, cache)
+    shown = [tr_name(a) for a in artists]  # "Unknown Artist" in the language in use; the links keep the name
+    joined, album_shown = fit_pair(font, ", ".join(shown), sep, tr_name(album), width, cache)
     budget = font.measure(joined)
     pieces: List[tuple] = []
     used = 0
     for i, name in enumerate(artists):
         comma = font.measure(", ") if i else 0
-        w = font.measure(name)
+        w = font.measure(shown[i])
         if used + comma + w <= budget:
             if i:
                 pieces.append((", ", "", None))
-            pieces.append((name, "artist", name))
+            pieces.append((shown[i], "artist", name))
             used += comma + w
             continue
-        cut = fit_text(font, name, int(budget - used - comma), cache)
+        cut = fit_text(font, shown[i], int(budget - used - comma), cache)
         if cut:
             if i:
                 pieces.append((", ", "", None))
@@ -932,7 +1015,8 @@ def format_line(t: Track) -> str:
         if t.is_lossy or not t.bits:
             parts.append(khz)
         else:
-            parts.append(f"{t.bits}-bit{' float' if t.is_float else ''}/{khz}")
+            bits = tr("{n}-bit float", n=t.bits) if t.is_float else tr("{n}-bit", n=t.bits)
+            parts.append(f"{bits}/{khz}")
     if t.bit_rate:
         parts.append(f"{round(t.bit_rate / 1000):,} kbps")
     return " · ".join(parts) or "—"
@@ -942,25 +1026,27 @@ def song_details(t: Track, album_tracks: int, comment: str, verdict: Optional[tu
                  artists: Optional[List[str]] = None) -> List[tuple]:
     """Now Playing's Details: (label, value) rows.  `verdict` is (verdict label, summary)
     of a saved Quality check result, or None; `artists` the artists of the artist field
-    (`musiclib.split_artists()`), shown as ", "-joined links."""
+    (`musiclib.split_artists()`), shown as ", "-joined links.
+    The labels stay English (DetailsView shows them as tr(label)); the values are shown."""
     dash = "—"
     if t.track and album_tracks >= t.track and album_tracks > 1:
-        track_no = f"{t.track} of {album_tracks}"
+        track_no = tr("{n} of {total}", n=t.track, total=album_tracks)
     else:
         track_no = str(t.track) if t.track else dash
     artist = ", ".join(artists) if artists and t.artist else t.artist
-    rows = [("Title", t.display_title), ("Artist", artist or dash), ("Album", t.album or dash),
-            ("Album artist", t.album_artist or dash), ("Composer", t.composer or dash), ("Genre", t.genre or dash),
-            ("Year", t.year or dash), ("Track", track_no), ("Disc", str(t.disc) if t.disc else dash),
-            ("Duration", fmt_time(t.duration)), ("Format", format_line(t)), ("File", t.path)]
+    rows = [(N_("Title"), t.display_title), (N_("Artist"), artist or dash), (N_("Album"), t.album or dash),
+            (N_("Album artist"), t.album_artist or dash), (N_("Composer"), t.composer or dash),
+            (N_("Genre"), t.genre or dash), (N_("Year"), t.year or dash), (N_("Track"), track_no),
+            (N_("Disc"), str(t.disc) if t.disc else dash), (N_("Duration"), fmt_time(t.duration)),
+            (N_("Format"), format_line(t)), (N_("File"), t.path)]
     if comment.strip():
-        rows.append(("Comment", comment.strip()))
+        rows.append((N_("Comment"), comment.strip()))
     if verdict is None:
-        rows.append(("Quality check", "Not checked yet"))
+        rows.append((N_("Quality check"), tr("Not checked yet")))
     else:
-        rows.append(("Quality check", verdict[0]))
+        rows.append((N_("Quality check"), tr(verdict[0])))
         if verdict[1]:
-            rows.append(("Why", verdict[1]))
+            rows.append((N_("Why"), tr_text(verdict[1])))
     return rows
 
 
@@ -1030,7 +1116,7 @@ class Segmented(tk.Canvas):
     def redraw(self) -> None:
         t = self.theme
         font = t.f("body_b")
-        seg = max(font.measure(text) for _, text in self.options) + 30
+        seg = max(font.measure(tr(text)) for _, text in self.options) + 30
         w = seg * len(self.options) + 4
         self.configure(width=w)
         self.delete("all")
@@ -1043,7 +1129,7 @@ class Segmented(tk.Canvas):
                 round_rect(self, x0, 2, x1, self.H - 2, 7, fill=t.c("bg"), outline="")
             elif key == self.hover:
                 round_rect(self, x0, 2, x1, self.H - 2, 7, fill=t.c("hover"), outline="")
-            self.create_text((x0 + x1) / 2, self.H / 2, text=text, font=font,
+            self.create_text((x0 + x1) / 2, self.H / 2, text=tr(text), font=font,
                              fill=t.c("text") if key == self.value else t.c("text2"))
 
 
@@ -1124,7 +1210,7 @@ class LyricsView(tk.Canvas):
                 self.heights.append(h)
                 y += h + self.GAP
         else:
-            text = self.plain if self.kind == lyrics_mod.PLAIN else "This song is instrumental."
+            text = self.plain if self.kind == lyrics_mod.PLAIN else tr("This song is instrumental.")
             item = self.create_text(self.PAD, y, text=text, anchor="nw", width=width, font=t.f("plain"),
                                     fill=t.c("text") if self.kind == lyrics_mod.PLAIN else t.c("text2"))
             box = self.bbox(item)
@@ -1305,7 +1391,7 @@ class DetailsView(tk.Canvas):
         return y + line - top
 
     def text(self) -> str:
-        return "\n".join(f"{k}: {v}" for k, v in self.rows)
+        return "\n".join(f"{tr(k)}: {v}" for k, v in self.rows)
 
     def layout(self) -> None:
         t = self.theme
@@ -1314,11 +1400,11 @@ class DetailsView(tk.Canvas):
         if W <= 1:
             return
         lf, vf = t.f("body"), t.f("body")
-        lw = max([lf.measure(k) for k, _ in self.rows] or [80]) + 18
+        lw = max([lf.measure(tr(k)) for k, _ in self.rows] or [80]) + 18
         y = self.PAD / 2
         self.links, self.hover = [], None
         for k, v in self.rows:
-            self.create_text(self.PAD, y, text=k, anchor="nw", font=lf, fill=t.c("text2"))
+            self.create_text(self.PAD, y, text=tr(k), anchor="nw", font=lf, fill=t.c("text2"))
             if k == "Artist" and self.artists and v == ", ".join(self.artists):
                 h = self._artist_row(self.PAD + lw, y, W - self.PAD)
             else:
@@ -1379,20 +1465,21 @@ class NowPlayingPage(Page):
         self.head = head
         self.lyrics = LyricsView(self.lyrics_pane, app, on_away=self._away)
         self.lyrics.pack(side="top", fill="both", expand=True)
-        self.back_btn = PillButton(self.lyrics_pane, t, "Back to the current line", command=self.lyrics.back_to_line)
+        self.back_btn = PillButton(self.lyrics_pane, t, tr("Back to the current line"),
+                                   command=self.lyrics.back_to_line)
         self.empty = frame(self.lyrics_pane, t)  # no lyrics: a note and "Get lyrics"
-        self.empty_l = label(self.empty, t, "No lyrics for this song.", fg="text2", anchor="center")
+        self.empty_l = label(self.empty, t, tr("No lyrics for this song."), fg="text2", anchor="center")
         self.empty_l.pack(pady=(0, 10))
-        self.get_btn = PillButton(self.empty, t, "Get lyrics", icon="lyrics", command=app.get_lyrics_current)
+        self.get_btn = PillButton(self.empty, t, tr("Get lyrics"), icon="lyrics", command=app.get_lyrics_current)
         self.get_btn.pack()
         # Up Next
         self.upnext_pane = frame(self.body, t)
         self.source = label(self.upnext_pane, t, "", "small", fg="text2")
         self.source.pack(side="top", anchor="w", padx=24, pady=(4, 6))
         self.queue_list = SongList(self.upnext_pane, t, [Column("title", "", 200, True, kind="two", key2="artist")],
-                                   lambda r, k: r.display_title if k == "title" else r.display_artist,
+                                   lambda r, k: r.display_title if k == "title" else tr_name(r.display_artist),
                                    header=False, zebra=False, row_height=48, on_activate=app.jump_to,
-                                   empty_text="Nothing comes after this song.")
+                                   empty_text=tr("Nothing comes after this song."))
         self.queue_list.pack(side="top", fill="both", expand=True, padx=(12, 8))
         self.queue_paths: Optional[list] = None
         # Details
@@ -1431,8 +1518,8 @@ class NowPlayingPage(Page):
             self.lyrics.set_lyrics(kind, text)
             self.kind = self.lyrics.kind  # synced lyrics without a timed line show as plain
             self.label = lyrics_mod.shown_label(self.kind, self.path, file)
-        self.kind_l.configure(text=self.label[0])
-        self.source_l.configure(text=self.label[1])
+        self.kind_l.configure(text=tr(self.label[0]) if self.label[0] else "")
+        self.source_l.configure(text=tr(self.label[1]) if self.label[1] else "")
         self.size_changed()
         self._place()
         self.draw_art()
@@ -1503,20 +1590,21 @@ class NowPlayingPage(Page):
         if paths != self.queue_paths:
             self.queue_paths = paths
             self.queue_list.set_rows([app.by_path[p] for p in paths])
-        self.source.configure(text=f"Playing from {app.context_name}" if q is not None and app.context_name else "")
+        self.source.configure(text=tr("Playing from {name}", name=app.context_name)
+                              if q is not None and app.context_name else "")
 
     def refresh_details(self) -> None:
-        tr = self.app.track(self.path)
-        if tr is None:
+        trk = self.app.track(self.path)
+        if trk is None:
             self.details.set_rows([])
             return
-        album = self.app.album_of(tr)
-        extra = self.detail_extra.get(tr.path)
+        album = self.app.album_of(trk)
+        extra = self.detail_extra.get(trk.path)
         if extra is None:
-            self._read_details(tr.path)
+            self._read_details(trk.path)
             extra = ("", None)
-        artists = musiclib.split_artists(tr.artist, self.app.known_artists) if tr.artist else []
-        self.details.set_rows(song_details(tr, len(album["tracks"]) if album else 0, extra[0], extra[1], artists),
+        artists = musiclib.split_artists(trk.artist, self.app.known_artists) if trk.artist else []
+        self.details.set_rows(song_details(trk, len(album["tracks"]) if album else 0, extra[0], extra[1], artists),
                               artists)
 
     def _read_details(self, path: str) -> None:
@@ -1568,26 +1656,26 @@ class NowPlayingPage(Page):
         W, H = c.winfo_width(), c.winfo_height()
         if W <= 1:
             return
-        tr = self.app.track(self.path) if self.path else None
-        if tr is None:
-            c.create_text(W / 2, H / 2, text="Nothing is playing", fill=t.c("text2"), font=t.f("h2"))
+        trk = self.app.track(self.path) if self.path else None
+        if trk is None:
+            c.create_text(W / 2, H / 2, text=tr("Nothing is playing"), fill=t.c("text2"), font=t.f("h2"))
             return
         text_h = 80  # the title and "Artist — Album" under the cover, one block in the middle
         room = min(W - 80, H - 80 - text_h)
         size = max([s for s in self.SIZES if s <= room] or [self.SIZES[0]])
-        album = self.app.album_of(tr)
-        key = album["key"] if album else tr.path
-        paths = [x.path for x in album["tracks"]] if album else [tr.path]
+        album = self.app.album_of(trk)
+        key = album["key"] if album else trk.path
+        paths = [x.path for x in album["tracks"]] if album else [trk.path]
         img = self.app.covers.get(key, paths, size)
         x = (W - size) / 2
         y = (H - size - text_h) / 2
         draw_cover(c, t, img, x, y, size)
         self.links.append(("cover", x, y, x + size, y + size, None))  # the Cover window
         fit: dict = {}
-        c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), tr.display_title, W - 60, fit),
+        c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), trk.display_title, W - 60, fit),
                       fill=t.c("text"), font=t.f("h1"))
-        pieces = artist_line(t.f("body"), self.app.artists_of(tr), tr.display_album if album is not None else None,
-                             tr.display_album, W - 60, fit)
+        pieces = artist_line(t.f("body"), self.app.artists_of(trk), trk.display_album if album is not None else None,
+                             trk.display_album, W - 60, fit)
         font, h = t.f("body"), t.f("body").metrics("linespace")
         left, ty = W / 2 - sum(font.measure(p[0]) for p in pieces) / 2, y + size + 58
         for text, what, name in pieces:
@@ -1620,16 +1708,16 @@ class NowPlayingPage(Page):
 
     def _art_click(self, e) -> None:
         i = self._link_at(e.x, e.y)
-        tr = self.app.track(self.path) if self.path else None
-        if i is None or tr is None:
+        trk = self.app.track(self.path) if self.path else None
+        if i is None or trk is None:
             return
         what, *_, name = self.links[i]
         if what == "artist":
             self.app.open_artist(name)
         elif what == "cover":
-            self.app.open_cover_window(tr.path)
+            self.app.open_cover_window(trk.path)
         else:
-            album = self.app.album_of(tr)
+            album = self.app.album_of(trk)
             if album is not None:
                 self.app.open_album(album)
 
@@ -1646,6 +1734,14 @@ class NowPlayingPage(Page):
 
 
 # ------------------------------------------------------------- settings ---
+def theme_label(name: str) -> str:
+    """A theme's name as menus show it: the built-in themes and "Match the system"
+    translated, the user's own themes and theme files as they are named."""
+    from . import themes
+
+    return tr(name) if name in themes.BUILTIN or name == themes.SYSTEM else name
+
+
 class ThemeEditor(tk.Frame):
     """Settings → Appearance: New theme…, Export…, and for the user's own themes
     Rename…, Delete…, "Dark theme" and a colour button for each of the eight
@@ -1663,30 +1759,31 @@ class ThemeEditor(tk.Frame):
         own = app.is_custom_theme(theme["name"])
         self.name = theme["name"]
         self.file = "" if own else app.theme_file(theme["name"])
-        label(self, t, "Theme colours", "body_b").pack(anchor="w")
+        label(self, t, tr("Theme colours"), "body_b").pack(anchor="w")
+        shown = theme_label(theme["name"])
         if own:
-            note = f"“{theme['name']}” is your own theme: a click on a colour changes it, and the app at once."
+            note = tr("“{name}” is your own theme: a click on a colour changes it, and the app at once.", name=shown)
         elif self.file:
-            note = (f"“{theme['name']}” comes from the file {os.path.basename(self.file)} in the themes folder. "
-                    "Change that file, or make a copy you can change here with New theme…")
+            note = tr("“{name}” comes from the file {file} in the themes folder. Change that file, or make a copy "
+                      "you can change here with New theme…", name=shown, file=os.path.basename(self.file))
         else:
-            note = (f"“{theme['name']}” is a built-in theme and cannot be changed. “New theme…” makes a copy of "
-                    "it that you can change.")
+            note = tr("“{name}” is a built-in theme and cannot be changed. “New theme…” makes a copy of it that you "
+                      "can change.", name=shown)
         self.note_l = label(self, t, note, "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH, justify="left")
         self.note_l.pack(anchor="w", pady=(2, 8))
         btns = frame(self, t)
         btns.pack(anchor="w")
-        acts = [("New theme…", app.new_theme), ("Export…", lambda: app.export_theme_file(self.name))]
+        acts = [(N_("New theme…"), app.new_theme), (N_("Export…"), lambda: app.export_theme_file(self.name))]
         if own:
-            acts += [("Rename…", lambda: app.rename_theme(self.name)),
-                     ("Delete…", lambda: app.delete_theme(self.name))]
-        self.actions = [text for text, _ in acts]
+            acts += [(N_("Rename…"), lambda: app.rename_theme(self.name)),
+                     (N_("Delete…"), lambda: app.delete_theme(self.name))]
+        self.actions = [text for text, _ in acts]  # in English (the buttons show them translated)
         for i, (text, cmd) in enumerate(acts):
-            PillButton(btns, t, text, kind="accent" if i == 0 else "plain", command=cmd).pack(
+            PillButton(btns, t, tr(text), kind="accent" if i == 0 else "plain", command=cmd).pack(
                 side="left", padx=(0 if i == 0 else 8, 0))
         if own:
             self.v_dark = tk.BooleanVar(value=bool(theme["dark"]))
-            ttk.Checkbutton(self, text="Dark theme", variable=self.v_dark, style="P.TCheckbutton",
+            ttk.Checkbutton(self, text=tr("Dark theme"), variable=self.v_dark, style="P.TCheckbutton",
                             command=lambda: app.set_theme_dark(self.name, self.v_dark.get())).pack(anchor="w",
                                                                                                   pady=(10, 0))
         grid = frame(self, t)
@@ -1703,7 +1800,7 @@ class ThemeEditor(tk.Frame):
             sw.bind("<Button-1>", lambda e, k=key: self._pick(k))
             box = frame(cell, t)
             box.pack(side="left", padx=(10, 0))
-            label(box, t, themes.COLOR_LABELS[key], "body").pack(anchor="w")
+            label(box, t, tr(themes.COLOR_LABELS[key]), "body").pack(anchor="w")
             label(box, t, value, "small", fg="text2").pack(anchor="w")
             self.swatches[key] = sw
         self.own = own
@@ -1711,20 +1808,24 @@ class ThemeEditor(tk.Frame):
     def _pick(self, key: str) -> None:
         from tkinter import colorchooser, messagebox
 
+        from . import themes as themes_mod
+
         app = self.app
         if not self.own:
-            what = ("Themes from the themes folder are changed in their files." if self.file else
-                    "Built-in themes cannot be changed.")
-            if not messagebox.askyesno("Theme file" if self.file else "Built-in theme",
-                                       f"{what} Make a copy of “{self.name}” and change that?", parent=app.root):
+            what = (tr("Themes from the themes folder are changed in their files.") if self.file else
+                    tr("Built-in themes cannot be changed."))
+            if not messagebox.askyesno(tr("Theme file") if self.file else tr("Built-in theme"),
+                                       tr("{what} Make a copy of “{name}” and change that?", what=what,
+                                          name=theme_label(self.name)), parent=app.root):
                 return
             name = app.new_theme()
             if not name:
                 return
             self.name = name
         theme = app.current_theme()
+        color = key.capitalize() if i18n.language() == "en" else tr(themes_mod.COLOR_LABELS[key])
         got = colorchooser.askcolor(color=theme["colors"][key], parent=app.root,
-                                    title=f"{theme['name']}: {key.capitalize()}")
+                                    title=f"{theme_label(theme['name'])}: {color}")
         if got and got[1]:
             app.set_theme_color(self.name, key, got[1])
 
@@ -1741,18 +1842,18 @@ class SettingsPage(Page):
         self.group = settings_mod.GROUPS[0]
         head = frame(self, t)
         head.pack(fill="x", padx=28, pady=(22, 8))
-        label(head, t, "Settings", "title").pack(anchor="w")
-        label(head, t, f"Saved in {settings_mod.default_path()}", "small", fg="text2").pack(anchor="w")
+        label(head, t, tr("Settings"), "title").pack(anchor="w")
+        label(head, t, tr("Saved in {path}", path=settings_mod.default_path()), "small", fg="text2").pack(anchor="w")
         body = frame(self, t)
         body.pack(fill="both", expand=True)
         side = frame(body, t, width=210)
         side.pack(side="left", fill="y", padx=(12, 0))
         side.pack_propagate(False)
         # under the group list: About (there is no Help menu, docs/player-spec.md 2.1)
-        self.about_btn = PillButton(side, t, f"About {APP_NAME}", kind="plain", command=app.about)
+        self.about_btn = PillButton(side, t, tr("About {app}", app=APP_NAME), kind="plain", command=app.about)
         self.about_btn.pack(side="bottom", anchor="w", padx=(6, 0), pady=(8, 18))
         side.configure(width=max(210, int(self.about_btn.cget("width")) + 10))
-        self.sections = SongList(side, t, [Column("name", "", 160, True)], lambda r, k: r["name"], header=False,
+        self.sections = SongList(side, t, [Column("name", "", 160, True)], lambda r, k: tr(r["name"]), header=False,
                                  zebra=False, on_select=self._section, row_height=34)
         self.sections.pack(side="top", fill="both", expand=True)
         self.sections.set_rows([{"name": g} for g in settings_mod.GROUPS])
@@ -1773,6 +1874,8 @@ class SettingsPage(Page):
         bind_wheel(self.canvas, lambda n: self.canvas.yview_scroll(n, "units"))
         self.help_labels: Dict[str, tk.Label] = {}
         self.vars: Dict[str, Any] = {}
+        self.boxes: Dict[str, ttk.Combobox] = {}  # the choice menus, by setting
+        self.restart_note: Optional[tk.Frame] = None
         self.sections.selected = 0
         self.build()
 
@@ -1796,12 +1899,12 @@ class SettingsPage(Page):
         for w in self.inner.winfo_children():
             w.destroy()
         t.prune()
-        self.help_labels, self.vars = {}, {}
+        self.help_labels, self.vars, self.boxes, self.restart_note = {}, {}, {}, None
         box = frame(self.inner, t)
         box.pack(fill="both", expand=True, padx=28, pady=(6, 24))
-        label(box, t, self.group, "h1").pack(anchor="w", pady=(0, 10))
+        label(box, t, tr(self.group), "h1").pack(anchor="w", pady=(0, 10))
         if self.group == "Detection":
-            label(box, t, "Changes apply to the next scan on the Quality check page.", "body",
+            label(box, t, tr("Changes apply to the next scan on the Quality check page."), "body",
                   fg="text2").pack(anchor="w", pady=(0, 8))
         for info in settings_mod.Settings.field_info():
             if info["group"] == self.group:
@@ -1816,10 +1919,10 @@ class SettingsPage(Page):
         row.pack(fill="x", anchor="w", pady=(8, 2))
         if kind == "bool":
             var = tk.BooleanVar(value=bool(value))
-            ttk.Checkbutton(row, text=info["label"], variable=var, style="P.TCheckbutton",
+            ttk.Checkbutton(row, text=tr(info["label"]), variable=var, style="P.TCheckbutton",
                             command=lambda: self._set(name, var.get())).pack(anchor="w")
         else:
-            label(row, t, info["label"], "body_b").pack(anchor="w", pady=(0, 4))
+            label(row, t, tr(info["label"]), "body_b").pack(anchor="w", pady=(0, 4))
             if kind == "paths":
                 self._paths(row, name, value)
             elif name == "output_device":
@@ -1829,12 +1932,19 @@ class SettingsPage(Page):
             elif name == "theme":
                 self._theme(row, value)
             elif kind == "choice":
-                var = tk.StringVar(value=value)
-                width = max(18, max(len(c) for c in info["choices"]) + 2)
-                cb = ttk.Combobox(row, textvariable=var, values=info["choices"], state="readonly", width=width,
+                # the menu shows the choices translated (the languages in their own names) and the
+                # settings keep the English value
+                choices = list(info["choices"])
+                shown = choices if name == "language" else [tr(c) for c in choices]
+                var = tk.StringVar(value=shown[choices.index(value)] if value in choices else value)
+                self.vars[name] = var  # kept alive: Tk forgets a variable Python no longer holds
+                width = max(18, max(text_width(c) for c in shown) + 2)
+                cb = ttk.Combobox(row, textvariable=var, values=shown, state="readonly", width=width,
                                   style="P.TCombobox", font=t.f("body"))
                 cb.pack(anchor="w")
-                cb.bind("<<ComboboxSelected>>", lambda e: self._set(name, var.get()))
+                cb.bind("<<ComboboxSelected>>", lambda e, cb=cb: cb.current() >= 0 and self._set(
+                    name, choices[cb.current()]))
+                self.boxes[name] = cb
             elif kind == "multi":
                 from .gui import VERDICT_STYLE
 
@@ -1844,7 +1954,7 @@ class SettingsPage(Page):
                 for i, choice in enumerate(info["choices"]):
                     b = tk.BooleanVar(value=choice in value)
                     bools[choice] = b
-                    ttk.Checkbutton(sub, text=VERDICT_STYLE.get(choice, (choice,))[0], variable=b,
+                    ttk.Checkbutton(sub, text=tr(VERDICT_STYLE.get(choice, (choice,))[0]), variable=b,
                                     style="P.TCheckbutton",
                                     command=lambda: self._set(name, [c for c, v in bools.items() if v.get()])
                                     ).grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 14))
@@ -1863,37 +1973,58 @@ class SettingsPage(Page):
                 sp.pack(anchor="w")
                 for ev in ("<FocusOut>", "<Return>"):
                     sp.bind(ev, lambda _e: self._set_number(name, var, kind))
-        help_l = label(row, t, info["help"], "small", fg="text2", wraplength=self.HELP_WIDTH, justify="left")
+        help_l = label(row, t, tr_text(info["help"]), "small", fg="text2", wraplength=self.HELP_WIDTH, justify="left")
         help_l.pack(anchor="w", pady=(3, 0))
         self.help_labels[name] = help_l
+        if name == "language":
+            self._language_note(row, value)
         if name == "theme":
             files = frame(row, t)
             files.pack(anchor="w", fill="x", pady=(10, 0))
-            label(files, t, "Theme files (.json) put into the themes folder appear in this menu.", "small",
+            label(files, t, tr("Theme files (.json) put into the themes folder appear in this menu."), "small",
                   fg="text2").pack(side="left")
-            PillButton(files, t, "Import theme…", kind="plain", command=self.app.import_theme_file).pack(
+            PillButton(files, t, tr("Import theme…"), kind="plain", command=self.app.import_theme_file).pack(
                 side="left", padx=(12, 0))
-            PillButton(files, t, "Open themes folder", kind="plain", command=self.app.open_themes_folder).pack(
+            PillButton(files, t, tr("Open themes folder"), kind="plain", command=self.app.open_themes_folder).pack(
                 side="left", padx=(8, 0))
             self.theme_editor = ThemeEditor(row, self.app)
             self.theme_editor.pack(anchor="w", fill="x", pady=(12, 0))
 
+    def _language_note(self, parent, value: str) -> None:
+        """Another language than the one the app runs in was chosen: it is used after a
+        restart (the note is in the language in use)."""
+        if i18n.code_of(value) == i18n.language():
+            return
+        t = self.theme
+        note = frame(parent, t)
+        note.pack(anchor="w", fill="x", pady=(8, 0))
+        label(note, t, tr("The new language is used when the app starts again."), "body", fg="accent",
+              wraplength=self.HELP_WIDTH - 160, justify="left").pack(side="left")
+        PillButton(note, t, tr("Restart now"), command=self.app.restart).pack(side="left", padx=(12, 0))
+        self.restart_note = note
+
     def _theme(self, parent, value: str) -> None:
         t = self.theme
         names = self.app.theme_names()
-        var = tk.StringVar(value=value if value in names else names[0])
-        cb = ttk.Combobox(parent, textvariable=var, values=names, state="readonly",
-                          width=max(24, max(len(n) for n in names) + 2), style="P.TCombobox", font=t.f("body"),
-                          postcommand=self.theme_values)
+        self.theme_names = names
+        shown = [theme_label(n) for n in names]
+        var = tk.StringVar(value=theme_label(value if value in names else names[0]))
+        self.vars["theme"] = var  # kept alive: Tk forgets a variable Python no longer holds
+        cb = ttk.Combobox(parent, textvariable=var, values=shown, state="readonly",
+                          width=max(24, max(text_width(n) for n in shown) + 2), style="P.TCombobox",
+                          font=t.f("body"), postcommand=self.theme_values)
         cb.pack(anchor="w")
-        cb.bind("<<ComboboxSelected>>", lambda e: self.app.select_theme(var.get()))
+        cb.bind("<<ComboboxSelected>>", lambda e: cb.current() >= 0 and self.app.select_theme(
+            self.theme_names[cb.current()]))
         self.theme_box = cb
 
     def theme_values(self) -> List[str]:
         """The theme menu again, when it opens: theme files may have been put into the
-        themes folder or taken out of it."""
+        themes folder or taken out of it.  Returns the names (the menu shows them translated)."""
         names = self.app.theme_names()
-        self.theme_box.configure(values=names, width=max(24, max(len(n) for n in names) + 2))
+        self.theme_names = names
+        shown = [theme_label(n) for n in names]
+        self.theme_box.configure(values=shown, width=max(24, max(text_width(n) for n in shown) + 2))
         return names
 
     def _paths(self, parent, name: str, value: List[str]) -> None:
@@ -1905,12 +2036,12 @@ class SettingsPage(Page):
         for p in value:
             lb.insert("end", p)
         if not value:
-            lb.insert("end", "No music folder yet")
+            lb.insert("end", tr("No music folder yet"))
             lb.itemconfigure(0, foreground=t.c("text2"))
         lb.pack(anchor="w")
         btns = frame(parent, t)
         btns.pack(anchor="w", pady=(6, 0))
-        PillButton(btns, t, "Add folder…", kind="plain", command=self.app.choose_music_folder).pack(side="left")
+        PillButton(btns, t, tr("Add folder…"), kind="plain", command=self.app.choose_music_folder).pack(side="left")
 
         def remove():
             sel = [lb.get(i) for i in lb.curselection()]
@@ -1919,52 +2050,59 @@ class SettingsPage(Page):
                 self._set(name, keep)
                 self.build()
 
-        PillButton(btns, t, "Remove", kind="plain", command=remove).pack(side="left", padx=(8, 0))
+        PillButton(btns, t, tr("Remove"), kind="plain", command=remove).pack(side="left", padx=(8, 0))
 
     def _device(self, parent, value: str) -> None:
         t = self.theme
-        names = ["System default"] + [d.name for d in self.app.output_devices()]
+        default = tr("System default")
+        names = [""] + [d.name for d in self.app.output_devices()]  # "" = the system's default device
         if value and value not in names:
             names.append(value)
-        var = tk.StringVar(value=value or "System default")
-        cb = ttk.Combobox(parent, textvariable=var, values=names, state="readonly",
-                          width=max(30, max(len(n) for n in names) + 2), style="P.TCombobox", font=t.f("body"))
+        shown = [default] + names[1:]
+        var = tk.StringVar(value=value or default)
+        self.vars["output_device"] = var  # kept alive: Tk forgets a variable Python no longer holds
+        cb = ttk.Combobox(parent, textvariable=var, values=shown, state="readonly",
+                          width=max(30, max(text_width(n) for n in shown) + 2), style="P.TCombobox", font=t.f("body"))
         cb.pack(anchor="w")
         cb.bind("<<ComboboxSelected>>",
-                lambda e: self._set("output_device", "" if var.get() == "System default" else var.get()))
+                lambda e: cb.current() >= 0 and self._set("output_device", names[cb.current()]))
 
     def _font(self, parent, value: str) -> None:
         t = self.theme
-        names = [DEFAULT_FONT_LABEL] + font_families(self)
-        var = tk.StringVar(value=value or DEFAULT_FONT_LABEL)
-        cb = ttk.Combobox(parent, textvariable=var, values=names, state="readonly", width=36, style="P.TCombobox",
+        names = [""] + font_families(self)  # "" = the default font
+        shown = [tr(DEFAULT_FONT_LABEL)] + names[1:]
+        var = tk.StringVar(value=value or shown[0])
+        self.vars["font_family"] = var  # kept alive: Tk forgets a variable Python no longer holds
+        cb = ttk.Combobox(parent, textvariable=var, values=shown, state="readonly", width=36, style="P.TCombobox",
                           font=t.f("body"))
         cb.pack(anchor="w")
         cb.bind("<<ComboboxSelected>>",
-                lambda e: self._set("font_family", "" if var.get() == DEFAULT_FONT_LABEL else var.get()))
+                lambda e: cb.current() >= 0 and self._set("font_family", names[cb.current()]))
 
     def _actions(self, parent) -> None:
         t, app = self.theme, self.app
         acts = []
         if self.group == "Library":
-            acts = [("Update the library now", app.refresh_library),
-                    ("Scan library", lambda: app.check_library(switch=True)),
-                    ("Download lyrics for the whole library…", app.lyrics_for_library),
-                    ("Open the quality checker", lambda: app.show_page("quality")),
-                    ("Clear the play history…", app.clear_history)]
+            acts = [(tr("Update the library now"), app.refresh_library),
+                    (tr("Scan library"), lambda: app.check_library(switch=True)),
+                    (tr("Download lyrics for the whole library…"), app.lyrics_for_library),
+                    (tr("Look up the library on MusicBrainz now"), lambda: app.lookup_library(force=True)),
+                    (tr("Open the quality checker"), lambda: app.show_page("quality")),
+                    (tr("Clear the play history…"), app.clear_history)]
         elif self.group == "Playback":
-            acts = [("Equalizer…", app.open_eq)]
+            acts = [(tr("Equalizer…"), app.open_eq)]
         elif self.group == "Saved results":
-            acts = [("Delete all saved results…", app.qc.forget_saved)]
+            acts = [(tr("Delete all saved results…"), app.qc.forget_saved)]
             st = app.qc.store.stats() if app.qc.store is not None else None
             from .store import default_path as store_path
 
-            where = (f"{st['files']:,} file(s), {st['disk_bytes'] / 1e6:.1f} MB, in {st['path']}" if st
-                     else f"Saving is turned off. Results are kept in {store_path()}")
+            where = (tr("{files} file(s), {mb} MB, in {path}", files=f"{st['files']:,}",
+                        mb=f"{st['disk_bytes'] / 1e6:.1f}", path=st["path"]) if st
+                     else tr("Saving is turned off. Results are kept in {path}", path=store_path()))
             label(parent, t, where, "small", fg="text2", wraplength=self.HELP_WIDTH, justify="left").pack(
                 anchor="w", pady=(14, 0))
         elif self.group in ("Detection", "Scanning", "Display", "Fixing"):
-            acts = [("Open the quality checker", lambda: app.show_page("quality"))]
+            acts = [(tr("Open the quality checker"), lambda: app.show_page("quality"))]
         if acts:
             row = frame(parent, t)
             row.pack(anchor="w", pady=(18, 0))
@@ -1986,10 +2124,11 @@ class SettingsPage(Page):
     def _bad(self, name: str) -> None:
         info = next(i for i in settings_mod.Settings.field_info() if i["name"] == name)
         lo, hi = info.get("min"), info.get("max")
-        rng = f" from {lo:g} to {hi:g}" if lo is not None and hi is not None else ""
+        ask = (tr("Please enter a number from {low} to {high}.", low=f"{lo:g}", high=f"{hi:g}")
+               if lo is not None and hi is not None else tr("Please enter a number."))
         lab = self.help_labels.get(name)
         if lab is not None:
-            lab.configure(text=f"Please enter a number{rng}. {info['help']}", fg=self.theme.c("error"))
+            lab.configure(text=tr("{error} {help}", error=ask, help=tr_text(info["help"])), fg=self.theme.c("error"))
 
     def _set(self, name: str, value) -> None:
         cfg = self.app.cfg
@@ -2005,7 +2144,7 @@ class SettingsPage(Page):
         lab = self.help_labels.get(name)
         if lab is not None:
             info = next(i for i in settings_mod.Settings.field_info() if i["name"] == name)
-            lab.configure(text=info["help"], fg=self.theme.c("text2"))
+            lab.configure(text=tr_text(info["help"]), fg=self.theme.c("text2"))
         self.app.apply_settings(new)
 
 

@@ -17,6 +17,7 @@ from tkinter import ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .covers import CACHE_PATHS, trim_cache
+from .i18n import tr, tr_name
 from .player_theme import Theme, draw_icon, fit_text, round_rect
 
 
@@ -59,7 +60,7 @@ def bind_wheel(widget: tk.Widget, fn: Callable[[int], None]) -> None:
 @dataclass
 class Column:
     key: str
-    title: str
+    title: str              # English, marked with N_(); the heading shows tr(title)
     width: int
     stretch: bool = False
     anchor: str = "w"
@@ -496,7 +497,7 @@ class SongList(tk.Frame):
                     continue
                 anchor = {"e": "e", "center": "center"}.get(col.anchor, "w")
                 xx = x + w if anchor == "e" else x + w / 2 if anchor == "center" else x
-                item = c.create_text(xx, head / 2, text=col.title, anchor=anchor, fill=t.c("text2"),
+                item = c.create_text(xx, head / 2, text=tr(col.title), anchor=anchor, fill=t.c("text2"),
                                      font=t.f("small_b"), tags="head")
                 if self.sort_key == col.key:  # a small triangle: down = A to Z, up = Z to A
                     bx = c.bbox(item)[2] + 8 if anchor == "w" else c.bbox(item)[0] - 8
@@ -900,9 +901,9 @@ class AlbumGrid(tk.Frame):
             draw_icon(c, "check", x + cs - 21, y + 21, 22, t.c("on_accent"), tag=tag)
         elif self.hover == i:
             round_rect(c, x, y, x + cs, y + cs, 8, fill="", outline=t.c("sep"), width=1, tags=tag)
-        c.create_text(x, y + cs + 16, text=fit_text(t.f("card_title"), a["title"], cs, self._fit), anchor="w",
+        c.create_text(x, y + cs + 16, text=fit_text(t.f("card_title"), tr_name(a["title"]), cs, self._fit), anchor="w",
                       fill=t.c("text"), font=t.f("card_title"), tags=tag)
-        c.create_text(x, y + cs + 34, text=fit_text(t.f("card_sub"), a["artist"], cs, self._fit), anchor="w",
+        c.create_text(x, y + cs + 34, text=fit_text(t.f("card_sub"), tr_name(a["artist"]), cs, self._fit), anchor="w",
                       fill=t.c("text2"), font=t.f("card_sub"), tags=tag)
 
     def _half(self, key: str, paths: Sequence[str]) -> Optional[tk.PhotoImage]:

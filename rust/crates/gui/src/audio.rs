@@ -32,6 +32,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use realhires::bitperfect::{self, Access, Format, Mode, Plan, Song};
 use realhires::eq::{EqProcessor, EqState};
 use realhires::probe::{command, tool};
+use realhires::{n_, tr};
 
 /// The engine always works in stereo.
 pub const CHANNELS: usize = 2;
@@ -338,7 +339,7 @@ fn run_decoder(shared: &Shared, job: &Job, gen: u64, start: f64, mut skip: usize
         .spawn();
     let mut child: Child = match child {
         Ok(c) => c,
-        Err(e) => return Decoded::Failed(format!("FFmpeg could not be started: {e}.")),
+        Err(e) => return Decoded::Failed(tr!("FFmpeg could not be started: {e}.", e = e)),
     };
     let stderr = child.stderr.take().map(|err| {
         std::thread::spawn(move || {
@@ -459,9 +460,9 @@ fn decode_loop(shared: Arc<Shared>, mut job: Job) {
         }
         if failed {
             let why = if errors.trim().is_empty() {
-                "FFmpeg could not decode this file.".to_string()
+                tr!("FFmpeg could not decode this file.").to_string()
             } else {
-                format!("FFmpeg could not decode this file: {}", errors.trim())
+                tr!("FFmpeg could not decode this file: {errors}", errors = errors.trim())
             };
             buf.items.push_back(Item::Fail(job.seg.id, why));
             return;
@@ -613,15 +614,17 @@ pub fn output_devices() -> Vec<String> {
     names
 }
 
+/// The sample format in English (kept in `OutputInfo`; the Playback info
+/// window shows it with `i18n::tr()`).
 fn format_label(f: cpal::SampleFormat) -> String {
     use cpal::SampleFormat as F;
     match f {
-        F::F32 => "32-bit float".into(),
-        F::F64 => "64-bit float".into(),
-        F::I16 | F::U16 => "16-bit".into(),
-        F::I24 | F::U24 => "24-bit".into(),
-        F::I32 | F::U32 => "32-bit".into(),
-        F::I8 | F::U8 => "8-bit".into(),
+        F::F32 => n_!("32-bit float").into(),
+        F::F64 => n_!("64-bit float").into(),
+        F::I16 | F::U16 => n_!("16-bit").into(),
+        F::I24 | F::U24 => n_!("24-bit").into(),
+        F::I32 | F::U32 => n_!("32-bit").into(),
+        F::I8 | F::U8 => n_!("8-bit").into(),
         other => format!("{other:?}"),
     }
 }
@@ -927,7 +930,8 @@ impl Engine {
     /// The test and null outputs: the song's rate (or the test device's), and with
     /// bit-perfect playback the format `bitperfect::plan()` picks from the test device.
     fn open_test_output(&mut self, song: &Song) -> Opened {
-        let name = if self.manual { "Test output" } else { "Null output (no sound)" };
+        // English, shown with `i18n::tr()`
+        let name = if self.manual { n_!("Test output") } else { n_!("Null output (no sound)") };
         let normal = self.test_rate(song.rate);
         let dev = self.test_device.clone();
         let (rate, format, channels, plan, exclusive, bp) = if !self.bit_perfect {
@@ -956,7 +960,7 @@ impl Engine {
                 device: name.into(),
                 rate,
                 channels: channels as u16,
-                format: "32-bit float".into(),
+                format: n_!("32-bit float").into(),
                 resampled_from: None,
                 soxr: has_soxr(),
                 sample_format: format,
@@ -1003,9 +1007,9 @@ impl Engine {
         let song_rate = song.rate;
         let Some(device) = self.cpal_device() else {
             self.output = Output::None;
-            return Err("No audio output device was found.".into());
+            return Err(tr!("No audio output device was found.").into());
         };
-        let name = device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Output".into());
+        let name = device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| n_!("Output").into());
         let config = choose_config(&device, song_rate)?;
         let rate = config.sample_rate();
         let plan = bp.as_ref().map(|b| bitperfect::plan(song, &[Mode::new(Format::F32, rate, rate, 2)], &b.failure));
@@ -1029,7 +1033,7 @@ impl Engine {
             .unwrap_or_default();
         let default_rate = device.default_output_config().map(|c| c.sample_rate()).unwrap_or(rate);
         let stream = build_stream(&device, &config.config(), format, self.shared.clone())?;
-        stream.play().map_err(|e| format!("The audio output could not start: {e}."))?;
+        stream.play().map_err(|e| tr!("The audio output could not start: {e}.", e = e))?;
         let info = OutputInfo {
             device: name.clone(),
             rate,
@@ -1105,11 +1109,12 @@ impl Engine {
             let (hw, device) = self.alsa_hw_device();
             let fail = |failure: String| BpDevice { chosen: chosen.clone(), access: Some(Access::Alsa), label: hw.clone(), failure, ..Default::default() };
             let Some(device) = device else {
-                return Err(fail(bitperfect::failure_reason(&format!("the ALSA device {hw} was not found"))));
+                // the details are English, as the core's sentence around them; shown with `tr_text()`
+                return Err(fail(bitperfect::failure_reason(&tr!("the ALSA device {hw} was not found", hw = &hw))));
             };
             let modes = supported_modes(&device).map_err(|e| fail(cpal_failure(&e)))?;
             if modes.is_empty() {
-                return Err(fail(bitperfect::failure_reason("it takes no stereo format this player writes")));
+                return Err(fail(bitperfect::failure_reason(n_!("it takes no stereo format this player writes"))));
             }
             Ok(BpDevice { chosen: chosen.clone(), access: Some(Access::Alsa), label: hw.clone(), modes, ..Default::default() })
         }
@@ -1117,18 +1122,18 @@ impl Engine {
         {
             let fail = |failure: String| BpDevice { chosen: chosen.clone(), access: Some(Access::CoreAudio), failure, ..Default::default() };
             let Some(device) = self.cpal_device() else {
-                return Err(fail(bitperfect::failure_reason("no output device was found")));
+                return Err(fail(bitperfect::failure_reason(n_!("no output device was found"))));
             };
-            let label = device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Output".into());
+            let label = device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| n_!("Output").into());
             let modes = supported_modes(&device).map_err(|e| fail(cpal_failure(&e)))?;
             if modes.is_empty() {
-                return Err(fail(bitperfect::failure_reason("CoreAudio lists no sample rate for it")));
+                return Err(fail(bitperfect::failure_reason(n_!("CoreAudio lists no sample rate for it"))));
             }
             Ok(BpDevice { chosen: chosen.clone(), access: Some(Access::CoreAudio), label, modes, ..Default::default() })
         }
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
-            Err(BpDevice { chosen, failure: bitperfect::failure_reason("this system has no way to do that"), ..Default::default() })
+            Err(BpDevice { chosen, failure: bitperfect::failure_reason(n_!("this system has no way to do that")), ..Default::default() })
         }
     }
 
@@ -1184,7 +1189,7 @@ impl Engine {
             #[cfg(not(target_os = "linux"))]
             let device = self.cpal_device();
             let Some(device) = device else {
-                return Err(bitperfect::failure_reason("the device is gone"));
+                return Err(bitperfect::failure_reason(n_!("the device is gone")));
             };
             let config = cpal::StreamConfig {
                 channels: plan.channels as u16,
@@ -1372,7 +1377,7 @@ fn choose_config(device: &cpal::Device, song_rate: u32) -> Result<cpal::Supporte
             }
         }
     }
-    let def = device.default_output_config().map_err(|e| format!("The audio device has no usable format: {e}."))?;
+    let def = device.default_output_config().map_err(|e| tr!("The audio device has no usable format: {e}.", e = e))?;
     if usable(def.sample_format()) {
         return Ok(def);
     }
@@ -1386,7 +1391,7 @@ fn choose_config(device: &cpal::Device, song_rate: u32) -> Result<cpal::Supporte
                 .min_by_key(|r| rank(r.sample_format()))
         })
         .map(|r| r.with_sample_rate(rate))
-        .ok_or_else(|| "The audio device supports no sample format this player can write.".to_string())
+        .ok_or_else(|| tr!("The audio device supports no sample format this player can write.").to_string())
 }
 
 fn build_stream(
@@ -1396,13 +1401,13 @@ fn build_stream(
     shared: Arc<Shared>,
 ) -> Result<cpal::Stream, String> {
     use cpal::SampleFormat as F;
-    let err = |e: cpal::Error| format!("The audio output could not be opened: {e}.");
+    let err = |e: cpal::Error| tr!("The audio output could not be opened: {e}.", e = e);
     match format {
         F::F32 => stream_of::<f32>(device, config, shared, |x| x).map_err(err),
         F::I32 => stream_of::<i32>(device, config, shared, <i32 as cpal::FromSample<f32>>::from_sample_).map_err(err),
         F::I16 => stream_of::<i16>(device, config, shared, <i16 as cpal::FromSample<f32>>::from_sample_).map_err(err),
         F::U16 => stream_of::<u16>(device, config, shared, <u16 as cpal::FromSample<f32>>::from_sample_).map_err(err),
-        other => Err(format!("The audio device wants {other:?} samples, which this player cannot write.")),
+        other => Err(tr!("The audio device wants {format} samples, which this player cannot write.", format = format!("{other:?}"))),
     }
 }
 
@@ -1448,7 +1453,7 @@ where
             }
         },
         move |e| {
-            errs.events.lock().unwrap().push(Event::OutputError(format!("The audio output failed: {e}.")));
+            errs.events.lock().unwrap().push(Event::OutputError(tr!("The audio output failed: {e}.", e = e)));
         },
         None,
     )

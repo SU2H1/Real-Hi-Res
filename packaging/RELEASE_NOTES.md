@@ -1,4 +1,4 @@
-## What's new in 2.1.0
+## What's new in 2.2.0
 
 **A cleaner window.** The menu bar is gone from both apps. Quality Check is always in the sidebar, the About box is on the Settings page, and the Quality Check page now looks like the rest of the player, in your theme: a page title with the scan's status under it, an accent-coloured Scan button, verdict chips with counts, and a **…** (More) button that holds what the old menus held. Every keyboard shortcut works as before. The **mouse's back and forward buttons** (and Alt+← / Alt+→, Cmd+[ / Cmd+] on a Mac) move between pages, as in a browser. The app has a new icon.
 
@@ -23,6 +23,7 @@
 - The **Cover** window shows a cover large, with its size and where it comes from, and can **change**, **save** or **remove** it for an album or a song (also **Cover…** in every song's menu). FLAC, MP3, Ogg and Opus are changed directly in their tags, M4A and AIFF by FFmpeg without re-encoding, checked sample for sample.
 - **Covers are kept** on disk and made ahead, so scrolling no longer waits for them, and scrolling big libraries is much smoother.
 - The equalizer's **Delete** works again for your own presets.
+- Everything new is in Japanese too when Settings → Appearance → Language is set to 日本語, and Song information from MusicBrainz (new in 2.1.0) is in every song's menu and on album pages next to **Properties…**.
 
 ## Download
 
@@ -55,6 +56,8 @@ The `.zip` files for macOS contain the same app as the `.dmg` files. The Linux p
 ## Credits
 
 Synced lyrics come from [LRCLIB](https://lrclib.net) and the people who contribute to it, and the lyrics feature is modelled on LRCGET by tranxuanthang ([github.com/tranxuanthang/lrcget](https://github.com/tranxuanthang/lrcget)), who also makes LRCLIB. Both are MIT-licensed, and Real-Hi-Res's own lyrics code contains no code from either. Both apps credit them in the lyrics window and in the About box (Settings → About Universal Music Player). Thank you to them.
+
+Song information comes from [MusicBrainz](https://musicbrainz.org) and the people who contribute to it (core data CC0, genres CC BY-NC-SA 3.0); the app's MusicBrainz code is its own, written against MusicBrainz's published web service, and contains no code from MusicBrainz or Picard.
 
 On Windows and Linux the apps use the [Inter](https://rsms.me/inter/) typeface by The Inter Project Authors (SIL Open Font License 1.1; its licence is in every package). The Python app plays sound through [miniaudio](https://github.com/irmen/pyminiaudio) (Irmen de Jong and David Reid, MIT License), the Rust app through [cpal](https://github.com/RustAudio/cpal) (Apache License 2.0).
 

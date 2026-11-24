@@ -10,11 +10,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use egui::{pos2, vec2, Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui};
+use realhires::i18n::{self, tr_name, tr_text};
 use realhires::musiclib::{self, Album, Group, Library, Track};
 use realhires::playerstate::{self, PlayerState};
 use realhires::playqueue::{repeat_label, shuffle_label, PlayQueue, Song, REPEAT_MODES, SHUFFLE_MODES};
 use realhires::pyunicode::casefold;
 use realhires::settings::Settings;
+use realhires::{n_, tr};
 
 use crate::app::App;
 use crate::audio::{Engine, Event};
@@ -53,30 +55,148 @@ pub enum Page {
 }
 
 impl Page {
+    /// The page's name in English (also used as an id and as the queue's
+    /// name); `shown_title()` is the name in the language in use.
     pub fn title(&self) -> &'static str {
         match self {
-            Page::Library => "Library",
-            Page::AllSongs => "All Songs",
-            Page::Folders(_) => "Folders",
-            Page::Albums | Page::Album(_) => "Albums",
-            Page::Artists => "Artists",
-            Page::AlbumArtists => "Album Artists",
-            Page::Genres => "Genres",
-            Page::Years => "Years",
-            Page::Composers => "Composers",
-            Page::Group(kind, _) => GROUPINGS.iter().find(|g| g.0 == *kind).map(|g| g.1).unwrap_or("Artists"),
-            Page::Playlists | Page::Playlist(_) => "Playlists",
-            Page::Liked => "Liked Songs",
-            Page::Disliked => "Disliked Songs",
-            Page::RecentlyPlayed => "Recently Played",
-            Page::Recent => "Recently Added",
-            Page::Stats | Page::StatsDetails => "Your Stats",
-            Page::Search => "Search",
-            Page::NowPlaying => "Now Playing",
-            Page::Settings => "Settings",
-            Page::Quality => "Quality check",
+            Page::Library => n_!("Library"),
+            Page::AllSongs => n_!("All Songs"),
+            Page::Folders(_) => n_!("Folders"),
+            Page::Albums | Page::Album(_) => n_!("Albums"),
+            Page::Artists => n_!("Artists"),
+            Page::AlbumArtists => n_!("Album Artists"),
+            Page::Genres => n_!("Genres"),
+            Page::Years => n_!("Years"),
+            Page::Composers => n_!("Composers"),
+            Page::Group(kind, _) => GROUPINGS.iter().find(|g| g.0 == *kind).map(|g| g.1).unwrap_or(n_!("Artists")),
+            Page::Playlists | Page::Playlist(_) => n_!("Playlists"),
+            Page::Liked => n_!("Liked Songs"),
+            Page::Disliked => n_!("Disliked Songs"),
+            Page::RecentlyPlayed => n_!("Recently Played"),
+            Page::Recent => n_!("Recently Added"),
+            Page::Stats | Page::StatsDetails => n_!("Your Stats"),
+            Page::Search => n_!("Search"),
+            Page::NowPlaying => n_!("Now Playing"),
+            Page::Settings => n_!("Settings"),
+            Page::Quality => n_!("Quality check"),
         }
     }
+
+    /// The page's name in the language in use.
+    pub fn shown_title(&self) -> &'static str {
+        i18n::tr(self.title())
+    }
+}
+
+/// The names a queue gets from a page rather than from the library (see
+/// `Page::title()`; "Songs" is the queue of a single song).
+const PAGE_QUEUE_NAMES: [&str; 20] = [
+    "Library", "All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers",
+    "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats", "Search",
+    "Now Playing", "Settings", "Quality check", n_!("Songs"),
+];
+
+/// The queue's name as "Playing from …" shows it: the queue keeps the English
+/// name of a page (or "Search: …"), shown in the language in use; an album,
+/// artist or playlist name stays as it is.
+pub fn shown_queue_name(name: &str) -> String {
+    if PAGE_QUEUE_NAMES.contains(&name) {
+        return i18n::tr(name).to_string();
+    }
+    if let Some(q) = name.strip_prefix("Search: ") {
+        return tr!("Search: {query}", query = q);
+    }
+    tr_name(name).to_string()
+}
+
+/// A count in the language in use, with thousands separators:
+/// `count(n, n_!("1 song"), n_!("{n} songs"))` ("1 song", "1,234 songs").
+pub fn count(n: usize, one: &'static str, many: &'static str) -> String {
+    if n == 1 {
+        i18n::tr(one).to_string()
+    } else {
+        i18n::fill(i18n::tr(many), &[("n", realhires::stats::thousands(n as i64))])
+    }
+}
+
+/// A count of a noun of the pages ("1 song", "12 songs", "3 albums") in the language in
+/// use, as the Python app's `player_pages.plural()` (its `COUNTS`).
+pub fn plural(n: usize, noun: &str) -> String {
+    let (one, many) = match noun {
+        "song" => (n_!("1 song"), n_!("{n} songs")),
+        "album" => (n_!("1 album"), n_!("{n} albums")),
+        "minute" => (n_!("1 minute"), n_!("{n} minutes")),
+        "artist" => (n_!("1 artist"), n_!("{n} artists")),
+        "album artist" => (n_!("1 album artist"), n_!("{n} album artists")),
+        "genre" => (n_!("1 genre"), n_!("{n} genres")),
+        "year" => (n_!("1 year"), n_!("{n} years")),
+        "composer" => (n_!("1 composer"), n_!("{n} composers")),
+        "folder" => (n_!("1 folder"), n_!("{n} folders")),
+        "playlist" => (n_!("1 playlist"), n_!("{n} playlists")),
+        "play" => (n_!("1 play"), n_!("{n} plays")),
+        _ => {
+            let k = realhires::stats::thousands(n as i64);
+            return if n == 1 { format!("{k} {noun}") } else { format!("{k} {noun}s") };
+        }
+    };
+    count(n, one, many)
+}
+
+/// The texts of Rename… for each grouping that has it, whole sentences for the
+/// translations (the Python app's `RENAME_TEXTS`): (menu entry, title, prompt for the
+/// songs without one, prompt, question for the songs without one, question, nothing to
+/// change).
+pub struct RenameTexts {
+    pub menu: &'static str,
+    pub title: &'static str,
+    pub prompt_unknown: &'static str,
+    pub prompt: &'static str,
+    pub ask_unknown: &'static str,
+    pub ask: &'static str,
+    pub same: &'static str,
+}
+
+pub fn rename_texts(kind: &str) -> RenameTexts {
+    match kind {
+        "genres" => RenameTexts {
+            menu: n_!("Rename genre…"),
+            title: n_!("Rename genre"),
+            prompt_unknown: n_!("Give the songs without a genre this genre:"),
+            prompt: n_!("New name of the genre “{name}”:"),
+            ask_unknown: n_!("Give {n} without a genre the genre “{new}”?"),
+            ask: n_!("Rename the genre “{name}” to “{new}”? The genre of {n} changes."),
+            same: n_!("Every song already has the genre “{new}”: nothing to change."),
+        },
+        "composers" => RenameTexts {
+            menu: n_!("Rename composer…"),
+            title: n_!("Rename composer"),
+            prompt_unknown: n_!("Give the songs without a composer this composer:"),
+            prompt: n_!("New name of the composer “{name}”:"),
+            ask_unknown: n_!("Give {n} without a composer the composer “{new}”?"),
+            ask: n_!("Rename the composer “{name}” to “{new}”? The composer of {n} changes."),
+            same: n_!("Every song already has the composer “{new}”: nothing to change."),
+        },
+        _ => RenameTexts {
+            menu: n_!("Rename year…"),
+            title: n_!("Rename year"),
+            prompt_unknown: n_!("Give the songs without a year this year:"),
+            prompt: n_!("Change the year {name} of these songs to:"),
+            ask_unknown: n_!("Give {n} without a year the year “{new}”?"),
+            ask: n_!("Change the year {name} to {new}? The release date of {n} changes (only its year)."),
+            same: n_!("Every song already has the year “{new}”: nothing to change."),
+        },
+    }
+}
+
+/// The quality badge of a song ("Hi-Res Lossless", "Lossless" or the codec
+/// with its bit rate: the core's text) in the language in use.
+pub fn quality_label(t: &Track) -> String {
+    tr_text(&musiclib::quality(t))
+}
+
+/// "Artist — Album" under a song's title, with the names of missing tags translated.
+pub fn artist_album(t: &Track) -> String {
+    format!("{} — {}", tr_name(&t.display_artist()), tr_name(&t.display_album()))
 }
 
 /// A small window that asks for a name (new playlist, preset, theme...).
@@ -130,6 +250,13 @@ fn wall_clock() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
+/// What the automatic MusicBrainz lookup posts (2.1).
+enum MbMsg {
+    Progress(usize, usize),
+    /// None when it was stopped
+    Done(Option<Vec<realhires::musicbrainz::AutoOutcome>>),
+}
+
 enum LibMsg {
     Progress(usize, usize),
     Done(Vec<Track>),
@@ -164,11 +291,11 @@ static LIB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 /// The groupings of the pages: (page kind, title, noun).
 pub const GROUPINGS: [(&str, &str, &str); 5] = [
-    ("artists", "Artists", "artist"),
-    ("album_artists", "Album Artists", "album artist"),
-    ("genres", "Genres", "genre"),
-    ("years", "Years", "year"),
-    ("composers", "Composers", "composer"),
+    ("artists", n_!("Artists"), "artist"),
+    ("album_artists", n_!("Album Artists"), "album artist"),
+    ("genres", n_!("Genres"), "genre"),
+    ("years", n_!("Years"), "year"),
+    ("composers", n_!("Composers"), "composer"),
 ];
 
 impl LibView {
@@ -281,7 +408,7 @@ pub enum NpTab {
 
 impl NpTab {
     pub const ALL: [(NpTab, &'static str); 3] =
-        [(NpTab::Lyrics, "Lyrics"), (NpTab::UpNext, "Up Next"), (NpTab::Details, "Details")];
+        [(NpTab::Lyrics, n_!("Lyrics")), (NpTab::UpNext, n_!("Up Next")), (NpTab::Details, n_!("Details"))];
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -291,10 +418,11 @@ pub enum ShownLyrics {
     Instrumental,
 }
 
-/// What the Playback info window shows of the saved Real-Hi-Res verdict.
+/// What the Playback info window shows of the saved Real-Hi-Res verdict
+/// (the verdict and its summary, shown in the language in use).
 pub struct InfoWindow {
     pub path: String,
-    pub verdict: Option<(String, String)>,
+    pub verdict: Option<(realhires::verdict::Verdict, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -344,26 +472,27 @@ impl SongCol {
         })
     }
 
-    /// (heading, menu label, width weight, right-aligned)
+    /// (heading, menu label, width weight, right-aligned); the texts are English,
+    /// shown with `i18n::tr()`
     pub fn info(self) -> (&'static str, &'static str, f32, bool) {
         match self {
-            SongCol::Num => ("#", "# (track number)", 0.35, true),
-            SongCol::Title => ("Title", "Title", 3.0, false),
-            SongCol::Artist => ("Artist", "Artist", 2.0, false),
-            SongCol::Album => ("Album", "Album", 2.2, false),
-            SongCol::AlbumArtist => ("Album Artist", "Album Artist", 1.8, false),
-            SongCol::Composer => ("Composer", "Composer", 1.6, false),
-            SongCol::Genre => ("Genre", "Genre", 1.1, false),
-            SongCol::Year => ("Year", "Year", 0.55, false),
-            SongCol::Disc => ("Disc", "Disc", 0.45, true),
-            SongCol::Time => ("Time", "Time", 0.6, true),
-            SongCol::Quality => ("Quality", "Quality", 1.15, false),
-            SongCol::Format => ("Format", "Format", 0.7, false),
-            SongCol::BitRate => ("Bit rate", "Bit rate", 0.9, true),
-            SongCol::Added => ("Date added", "Date added", 1.0, false),
-            SongCol::File => ("File", "File", 1.8, false),
-            SongCol::Like => ("", "Heart (like)", 0.0, false),
-            SongCol::Played => ("Played", "Played", 1.1, false),
+            SongCol::Num => ("#", n_!("# (track number)"), 0.35, true),
+            SongCol::Title => (n_!("Title"), n_!("Title"), 3.0, false),
+            SongCol::Artist => (n_!("Artist"), n_!("Artist"), 2.0, false),
+            SongCol::Album => (n_!("Album"), n_!("Album"), 2.2, false),
+            SongCol::AlbumArtist => (n_!("Album Artist"), n_!("Album Artist"), 1.8, false),
+            SongCol::Composer => (n_!("Composer"), n_!("Composer"), 1.6, false),
+            SongCol::Genre => (n_!("Genre"), n_!("Genre"), 1.1, false),
+            SongCol::Year => (n_!("Year"), n_!("Year"), 0.55, false),
+            SongCol::Disc => (n_!("Disc"), n_!("Disc"), 0.45, true),
+            SongCol::Time => (n_!("Time"), n_!("Time"), 0.6, true),
+            SongCol::Quality => (n_!("Quality"), n_!("Quality"), 1.15, false),
+            SongCol::Format => (n_!("Format"), n_!("Format"), 0.7, false),
+            SongCol::BitRate => (n_!("Bit rate"), n_!("Bit rate"), 0.9, true),
+            SongCol::Added => (n_!("Date added"), n_!("Date added"), 1.0, false),
+            SongCol::File => (n_!("File"), n_!("File"), 1.8, false),
+            SongCol::Like => ("", n_!("Heart (like)"), 0.0, false),
+            SongCol::Played => (n_!("Played"), n_!("Played"), 1.1, false),
         }
     }
 }
@@ -383,15 +512,16 @@ pub fn cell_text(t: &Track, col: SongCol) -> String {
     match col {
         SongCol::Num => if t.track > 0 { t.track.to_string() } else { String::new() },
         SongCol::Title => t.display_title(),
-        SongCol::Artist => t.display_artist(),
-        SongCol::Album => t.display_album(),
+        // "Unknown Artist" and "Unknown Album" in the language in use
+        SongCol::Artist => tr_name(&t.display_artist()).to_string(),
+        SongCol::Album => tr_name(&t.display_album()).to_string(),
         SongCol::AlbumArtist => t.album_artist.clone(),
         SongCol::Composer => t.composer.clone(),
         SongCol::Genre => t.genre.clone(),
         SongCol::Year => t.year.clone(),
         SongCol::Disc => if t.disc > 0 { t.disc.to_string() } else { String::new() },
         SongCol::Time => fmt_time(t.duration),
-        SongCol::Quality => musiclib::quality(t),
+        SongCol::Quality => quality_label(t),
         SongCol::Format => format_label(t),
         SongCol::BitRate => {
             if t.bit_rate > 0 {
@@ -405,7 +535,7 @@ pub fn cell_text(t: &Track, col: SongCol) -> String {
                 return String::new();
             }
             let p = realhires::stats::local_parts(t.mtime_ns as f64 / 1e9);
-            realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", p.year, p.month, p.day))
+            tr_text(&realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", p.year, p.month, p.day)))
         }
         SongCol::File => realhires::paths::file_name(&t.path),
         SongCol::Like | SongCol::Played => String::new(),
@@ -496,6 +626,9 @@ pub struct Player {
     pub lyrics_line: Option<usize>,
     pub song_sort: (SongCol, bool),
     applied_look: Option<(String, String, u64)>,
+    /// the `language` setting in use (egui draws every frame, so a new
+    /// language shows at once, whichever window changed the setting)
+    applied_language: String,
     pub font_used: String,
     pub selected_song: Option<String>,
     /// "Check new songs when the app starts": scan once the library is read
@@ -522,6 +655,16 @@ pub struct Player {
     pub edit_info: Option<crate::editinfo::EditInfo>,
     /// the Cover window (one at a time)
     pub cover_win: Option<crate::coverwin::CoverWin>,
+    /// the MusicBrainz window (2.1, one at a time)
+    pub mb_win: Option<crate::mbwin::MbWindow>,
+    /// the automatic MusicBrainz lookup (2.1): its messages, stop flag, progress and last summary
+    mb_rx: Option<Receiver<MbMsg>>,
+    mb_stop: Arc<AtomicBool>,
+    pub mb_progress: Option<(usize, usize)>,
+    /// `musicbrainz::auto_summary()` of the last run (English, translated when drawn)
+    pub mb_summary: String,
+    pub mb_last: Option<Vec<realhires::musicbrainz::AutoOutcome>>,
+    mb_forced: bool,
     /// the play history (`library.sqlite`)
     pub history: Option<Library>,
     pub history_gen: u64,
@@ -577,6 +720,7 @@ pub fn song_of(t: Option<&Track>) -> realhires::bitperfect::Song {
 
 impl Player {
     pub fn new(ctx: &egui::Context, cfg: Settings, initial: Vec<String>) -> Player {
+        realhires::i18n::set_language(&cfg.language);
         let quality_first = !initial.is_empty();
         let scanner = App::new(ctx, cfg, initial);
         let state = playerstate::load(None);
@@ -629,6 +773,7 @@ impl Player {
             lyrics_line: None,
             song_sort: (SongCol::Artist, false),
             applied_look: None,
+            applied_language: scanner.cfg.language.clone(),
             font_used: String::new(),
             selected_song: None,
             check_after_update: false,
@@ -644,6 +789,13 @@ impl Player {
             themes_gen: 0,
             edit_info: None,
             cover_win: None,
+            mb_win: None,
+            mb_rx: None,
+            mb_stop: Arc::new(AtomicBool::new(false)),
+            mb_progress: None,
+            mb_summary: String::new(),
+            mb_last: None,
+            mb_forced: false,
             history: Library::open(None).ok(),
             history_gen: 0,
             listening: None,
@@ -759,15 +911,138 @@ impl Player {
                 self.scanner.quiet_scan = true;
                 self.page = page;
             }
+            self.lookup_library(false);
+        }
+    }
+
+    // ------------------------------------------------- MusicBrainz (2.1) ---
+
+    /// Open the MusicBrainz window for one song (one at a time).
+    pub fn musicbrainz_song(&mut self, path: &str) {
+        let (heading, sub) = match self.lib.track(path) {
+            Some(t) => (
+                t.display_title(),
+                [t.artist.as_str(), t.album.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · "),
+            ),
+            None => (realhires::paths::file_name(path), String::new()),
+        };
+        self.open_musicbrainz(vec![path.to_string()], false, heading, sub);
+    }
+
+    /// Open the MusicBrainz window for every song of an album.
+    pub fn musicbrainz_album(&mut self, album: &Album) {
+        let n = album.tracks.len();
+        let count = count(n, n_!("1 song"), n_!("{n} songs"));
+        let sub = [tr_name(&album.artist), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
+        let paths = album.tracks.iter().map(|t| t.path.clone()).collect();
+        self.open_musicbrainz(paths, true, album.title.clone(), sub);
+    }
+
+    pub fn open_musicbrainz(&mut self, paths: Vec<String>, album: bool, heading: String, subheading: String) {
+        let paths: Vec<String> = paths.into_iter().filter(|p| std::path::Path::new(p).is_file()).collect();
+        if self.mb_win.is_some() || paths.is_empty() {
+            return;
+        }
+        let cfg = self.scanner.cfg.clone();
+        self.mb_win = Some(crate::mbwin::MbWindow::new(&self.ctx, &cfg, paths, album, heading, subheading));
+    }
+
+    pub fn musicbrainz_busy(&self) -> bool {
+        self.mb_rx.is_some()
+    }
+
+    /// Look the library's songs that miss information up on MusicBrainz in a
+    /// thread: after each library update when `musicbrainz_auto` is on, or by
+    /// hand (`force`, Settings → Library).  False when it did not start.
+    pub fn lookup_library(&mut self, force: bool) -> bool {
+        let cfg = self.scanner.cfg.clone();
+        if self.mb_rx.is_some() || self.lib.tracks.is_empty() || (!force && !cfg.musicbrainz_auto) {
+            return false;
+        }
+        use realhires::musicbrainz as mb;
+        self.mb_forced = force;
+        let known: HashMap<String, (Vec<(String, String)>, f64)> =
+            self.lib.tracks.iter().map(|t| (t.path.clone(), (mb::index_tags(t), t.duration))).collect();
+        let paths: Vec<String> = self.lib.tracks.iter().map(|t| t.path.clone()).collect();
+        let (tx, rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        self.mb_stop = stop.clone();
+        let ctx = self.ctx.clone();
+        let _ = std::thread::Builder::new().name("musicbrainz-auto".into()).spawn(move || {
+            let out = match mb::LookupLog::open(None) {
+                Err(e) => Some(vec![mb::AutoOutcome { status: mb::FAILED.into(), message: e.to_string(), ..Default::default() }]),
+                Ok(log) => {
+                    let mut client = mb::MusicBrainzClient::new(&cfg.musicbrainz_server).with_stop(stop);
+                    let p = tx.clone();
+                    let c = ctx.clone();
+                    match mb::run_auto(&mut client, &paths, Some(&cfg), &log, &|path| known.get(path).cloned(), move |i, n| {
+                        let _ = p.send(MbMsg::Progress(i, n));
+                        c.request_repaint();
+                    }) {
+                        Ok(o) => Some(o),
+                        Err(mb::MbError::Stopped) => None,
+                        Err(mb::MbError::Failed(m)) => {
+                            Some(vec![mb::AutoOutcome { status: mb::FAILED.into(), message: m, ..Default::default() }])
+                        }
+                    }
+                }
+            };
+            let _ = tx.send(MbMsg::Done(out));
+            ctx.request_repaint();
+        });
+        self.mb_rx = Some(rx);
+        self.mb_progress = Some((0, 0));
+        self.mb_summary.clear();
+        true
+    }
+
+    fn poll_musicbrainz(&mut self) {
+        let Some(rx) = &self.mb_rx else { return };
+        let mut done = None;
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                MbMsg::Progress(i, n) => self.mb_progress = Some((i, n)),
+                MbMsg::Done(o) => done = Some(o),
+            }
+        }
+        let Some(out) = done else { return };
+        self.mb_rx = None;
+        self.mb_progress = None;
+        let Some(out) = out else {
+            self.mb_summary.clear();
+            return;
+        };
+        // after an automatic run that asked nothing the status stays quiet; a run by hand always answers
+        let quiet = out.is_empty() && !self.mb_forced;
+        self.mb_summary = if quiet { String::new() } else { realhires::musicbrainz::auto_summary(&out) };
+        let filled = out.iter().any(|o| o.status == realhires::musicbrainz::FILLED);
+        self.mb_last = Some(out);
+        if filled {
+            self.update_library();
+        }
+    }
+
+    /// The sidebar's status line: the library update, else the MusicBrainz lookup.
+    pub fn status_line(&self) -> Option<String> {
+        if let Some(s) = self.library_status() {
+            return Some(s);
+        }
+        match self.mb_progress {
+            Some((i, n)) if i < n => {
+                Some(tr!("Getting song information from MusicBrainz: {i} of {n} albums", i = realhires::stats::thousands(i as i64 + 1), n = realhires::stats::thousands(n as i64)))
+            }
+            Some(_) => None,
+            None if !self.mb_summary.is_empty() => Some(tr_text(&self.mb_summary)),
+            None => None,
         }
     }
 
     pub fn library_status(&self) -> Option<String> {
         let (done, total) = self.lib_progress?;
         Some(if total == 0 {
-            "Updating the library: looking for songs…".into()
+            tr!("Updating the library: looking for songs…").into()
         } else {
-            format!("Updating the library: {done} of {total} songs")
+            tr!("Updating the library: {done} of {total} songs", done = done, total = total)
         })
     }
 
@@ -1168,17 +1443,15 @@ impl Player {
 
     /// Rename… a genre, composer or year: asks for the new name.
     pub fn ask_rename_group(&mut self, kind: &'static str, name: &str) {
-        let noun = realhires::tagedit::group_noun(kind);
+        let texts = rename_texts(kind);
         let unknown = name == unknown_name(kind);
         let prompt = if unknown {
-            format!("Give the songs without a {noun} this {noun}:")
-        } else if kind == "years" {
-            format!("Change the year {name} of these songs to:")
+            i18n::tr(texts.prompt_unknown).to_string()
         } else {
-            format!("New name of the {noun} “{name}”:")
+            i18n::fill(i18n::tr(texts.prompt), &[("name", name.to_string())])
         };
         let initial = if unknown { "" } else { name };
-        self.ask_name_with(&format!("Rename {noun}"), &prompt, initial, NameAction::RenameGroup(kind, name.to_string()), vec![]);
+        self.ask_name_with(i18n::tr(texts.title), &prompt, initial, NameAction::RenameGroup(kind, name.to_string()), vec![]);
     }
 
     /// Merge into… (one genre) or Merge N genres… (several): asks for the genre they become.
@@ -1196,8 +1469,11 @@ impl Player {
                 .filter(|g| casefold(g.name.trim()) != mine && g.name != unknown_name(kind))
                 .map(|g| g.name.clone())
                 .collect();
-            let prompt = format!("Merge the genre “{}” into which genre? Choose one, or type a new name.", groups[0].name);
-            self.ask_name_with("Merge into", &prompt, "", NameAction::MergeGroups(kind, names), others);
+            let prompt = tr!(
+                "Merge the genre “{name}” into which genre? Choose one, or type a new name.",
+                name = tr_name(&groups[0].name)
+            );
+            self.ask_name_with(tr!("Merge into"), &prompt, "", NameAction::MergeGroups(kind, names), others);
         } else {
             let mut biggest = groups.clone();
             biggest.sort_by_key(|g| std::cmp::Reverse(g.tracks.len()));
@@ -1205,8 +1481,8 @@ impl Player {
             let first = choices.first().cloned().unwrap_or_default();
             let k = groups.len();
             self.ask_name_with(
-                &format!("Merge {k} genres"),
-                &format!("Merge {k} genres into one. Its name:"),
+                &tr!("Merge {count} genres", count = k),
+                &tr!("Merge {count} genres into one. Its name:", count = k),
                 &first,
                 NameAction::MergeGroups(kind, names),
                 choices,
@@ -1217,11 +1493,12 @@ impl Player {
     /// Check the new name, find the songs that do not have it yet and ask before
     /// changing their files (`ConfirmAction::RetagGroup`); Err keeps the name dialog open.
     pub fn retag_group(&mut self, kind: &'static str, names: &[String], text: &str, merge: bool) -> Result<(), String> {
-        let new = realhires::tagedit::check_group_name(kind, text).map_err(|e| e.0)?;
+        // the core's message, in the language in use
+        let new = realhires::tagedit::check_group_name(kind, text).map_err(|e| tr_text(&e.0))?;
         if self.tag_job.as_ref().is_some_and(|j| !j.done()) {
-            return Err("Songs are still being changed; try again when that has finished.".into());
+            return Err(tr!("Songs are still being changed; try again when that has finished.").into());
         }
-        let noun = realhires::tagedit::group_noun(kind);
+        let texts = rename_texts(kind);
         let groups: Vec<usize> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).collect();
         let mut seen = HashSet::new();
         let mut paths = vec![];
@@ -1233,29 +1510,47 @@ impl Player {
             }
         }
         if paths.is_empty() {
-            return Err(format!("Every song already has the {noun} “{new}”: nothing to change."));
+            return Err(i18n::fill(i18n::tr(texts.same), &[("new", new.clone())]));
         }
         let from: Vec<String> = groups.iter().map(|&g| self.lib.groups(kind)[g].name.clone()).collect();
-        let n = crate::style::plural(paths.len(), "song");
+        let n = plural(paths.len(), "song");
         let old = from.first().cloned().unwrap_or_default();
         let (title, what) = if merge && from.len() > 1 {
-            let listed: Vec<String> = from.iter().map(|f| format!("“{f}”")).collect();
+            let listed: Vec<String> = from.iter().map(|f| tr!("“{name}”", name = tr_name(f))).collect();
             (
-                "Merge genres".to_string(),
-                format!("Merge {} genres ({}) into “{new}”? The genre of {n} becomes “{new}”.", from.len(), listed.join(", ")),
+                tr!("Merge genres").to_string(),
+                tr!(
+                    "Merge {count} genres ({listed}) into “{target}”? The genre of {n} becomes “{target}”.",
+                    count = from.len(),
+                    listed = listed.join(tr!(", ")),
+                    target = &new,
+                    n = &n
+                ),
             )
         } else if merge {
-            ("Merge genres".to_string(), format!("Merge the genre “{old}” into “{new}”? The genre of {n} becomes “{new}”."))
+            (
+                tr!("Merge genres").to_string(),
+                tr!(
+                    "Merge the genre “{name}” into “{target}”? The genre of {n} becomes “{target}”.",
+                    name = tr_name(&old),
+                    target = &new,
+                    n = &n
+                ),
+            )
         } else if old == unknown_name(kind) {
-            (format!("Rename {noun}"), format!("Give {n} without a {noun} the {noun} “{new}”?"))
-        } else if kind == "years" {
-            (format!("Rename {noun}"), format!("Change the year {old} to {new}? The release date of {n} changes (only its year)."))
+            (i18n::tr(texts.title).to_string(), i18n::fill(i18n::tr(texts.ask_unknown), &[("n", n.clone()), ("new", new.clone())]))
         } else {
-            (format!("Rename {noun}"), format!("Rename the {noun} “{old}” to “{new}”? The {noun} of {n} changes."))
+            (
+                i18n::tr(texts.title).to_string(),
+                i18n::fill(i18n::tr(texts.ask), &[("name", old.clone()), ("new", new.clone()), ("n", n.clone())]),
+            )
         };
         self.confirm = Some(ConfirmAction::RetagGroup {
             title,
-            text: format!("{what} Only the information in the files is changed; the music itself is not touched."),
+            text: tr!(
+                "{question} Only the information in the files is changed; the music itself is not touched.",
+                question = what
+            ),
             kind,
             paths,
             name: new,
@@ -1382,6 +1677,11 @@ impl Player {
     // ------------------------------------------------------------ settings ---
 
     fn apply_look(&mut self, ctx: &egui::Context) {
+        if self.scanner.cfg.language != self.applied_language {
+            self.applied_language = self.scanner.cfg.language.clone();
+            i18n::set_language(&self.applied_language);
+            ctx.request_repaint();
+        }
         let want = (self.scanner.cfg.font_family.clone(), self.scanner.cfg.theme.clone(), self.themes_gen);
         if self.applied_look.as_ref() != Some(&want) {
             if self.applied_look.as_ref().is_none_or(|a| a.0 != want.0) {
@@ -1395,7 +1695,7 @@ impl Player {
     /// The user's themes changed: save them and draw with them.
     pub fn themes_changed(&mut self) {
         if let Err(e) = realhires::themes::save_custom(&self.custom_themes, None) {
-            self.scanner.info = Some(("Themes".into(), format!("The themes could not be saved: {e}.")));
+            self.scanner.info = Some((tr!("Themes").into(), tr!("The themes could not be saved: {e}.", e = e)));
         }
         self.file_themes = realhires::themes::load_folder(&self.custom_themes, None);
         self.themes_gen += 1;
@@ -1440,7 +1740,7 @@ impl Player {
                 self.themes_changed();
                 self.set_theme(&name);
             }
-            Err(e) => self.scanner.info = Some(("Import theme".into(), e)),
+            Err(e) => self.scanner.info = Some((tr!("Import theme").into(), tr_text(&e))),
         }
     }
 
@@ -1459,9 +1759,9 @@ impl Player {
     /// Open the Edit Info window for every song of an album.
     pub fn edit_album_info(&mut self, album: &Album) {
         let n = album.tracks.len();
-        let count = format!("{} song{}", realhires::stats::thousands(n as i64), if n == 1 { "" } else { "s" });
-        let sub = [album.artist.as_str(), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
-        self.edit_info(album.tracks.iter().map(|t| t.path.clone()).collect(), album.title.clone(), sub);
+        let count = count(n, n_!("1 song"), n_!("{n} songs"));
+        let sub = [tr_name(&album.artist), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
+        self.edit_info(album.tracks.iter().map(|t| t.path.clone()).collect(), tr_name(&album.title).to_string(), sub);
     }
 
     /// Open the Edit Info window for these songs; while one is open nothing happens.
@@ -1600,10 +1900,10 @@ impl Player {
         let n = self.state.add_to_playlist(id, songs);
         self.save_state();
         if let Some(p) = self.state.playlist(id) {
-            self.message_info(&format!(
-                "{} added to “{}”.",
-                crate::style::plural(n, "song"),
-                p.name
+            self.message_info(&tr!(
+                "{songs} added to “{name}”.",
+                songs = crate::style::count(n, n_!("1 song"), n_!("{n} songs")),
+                name = p.name
             ));
         }
     }
@@ -1628,7 +1928,7 @@ impl Player {
         match action {
             NameAction::NewPlaylist(songs) => {
                 if realhires::playerstate::clean_name(text).is_empty() {
-                    return Err("Give the playlist a name.".into());
+                    return Err(tr!("Give the playlist a name.").into());
                 }
                 let id = self.new_playlist(text, &songs);
                 if songs.is_empty() {
@@ -1779,6 +2079,12 @@ impl Player {
             return;
         }
         self.scanner.apply_settings(new.clone());
+        if new.language != old.language {
+            // the next frame is drawn in the new language (no restart needed)
+            self.applied_language = new.language.clone();
+            i18n::set_language(&new.language);
+            ctx.request_repaint();
+        }
         if new.gapless != old.gapless {
             self.engine.set_gapless(new.gapless);
         }
@@ -1825,7 +2131,7 @@ impl Player {
         let folders = self.scanner.cfg.library_folders.clone();
         if folders.is_empty() {
             self.scanner.info =
-                Some(("Check the library".into(), "Add your music folder under Settings → Library first.".into()));
+                Some((tr!("Check the library").into(), tr!("Add your music folder under Settings → Library first.").into()));
             return;
         }
         self.scanner.clear();
@@ -1840,8 +2146,8 @@ impl Player {
         let paths: Vec<String> = self.lib.tracks.iter().map(|t| t.path.clone()).collect();
         if paths.is_empty() {
             self.scanner.info = Some((
-                "Download synced lyrics".into(),
-                "The library is empty; add your music folder under Settings → Library first.".into(),
+                tr!("Download synced lyrics").into(),
+                tr!("The library is empty; add your music folder under Settings → Library first.").into(),
             ));
             return;
         }
@@ -1900,7 +2206,7 @@ impl Player {
             .get(&path)
             .cloned()
             .or_else(|| self.scanner.store.as_ref().and_then(|s| s.lookup(&path, &skey, None)))
-            .map(|r| (crate::style::verdict_style(r.verdict).0.to_string(), r.summary.clone()));
+            .map(|r| (r.verdict, r.summary.clone()));
         self.info = Some(InfoWindow { path, verdict });
     }
 
@@ -1918,6 +2224,7 @@ impl Player {
         self.scanner.background(&ctx);
         self.covers.poll(&ctx);
         self.poll_library();
+        self.poll_musicbrainz();
         self.poll_engine();
         self.track_listening();
         self.apply_settings_due(&ctx);
@@ -2038,7 +2345,7 @@ impl Player {
         ui.add_space(10.0);
         let search = egui::TextEdit::singleline(&mut self.search)
             .id(egui::Id::new("player-search"))
-            .hint_text("Search")
+            .hint_text(tr!("Search"))
             .desired_width(f32::INFINITY)
             .margin(Margin::symmetric(8, 5));
         if ui.add(search).changed() {
@@ -2053,37 +2360,37 @@ impl Player {
         // room at the bottom for Quality Check, Settings and the library status
         let height = ui.available_height() - 96.0;
         egui::ScrollArea::vertical().id_salt("sidebar").max_height(height.max(100.0)).auto_shrink([false, true]).show(ui, |ui| {
-            if sidebar_item(ui, pal, Icon::Library, "Library", self.page == Page::Library).clicked() {
+            if sidebar_item(ui, pal, Icon::Library, tr!("Library"), self.page == Page::Library).clicked() {
                 self.back.clear();
                 self.go(Page::Library);
             }
-            section(ui, "Library");
+            section(ui, tr!("Library"));
             let items: [(Icon, &str, Page); 8] = [
-                (Icon::Note, "All Songs", Page::AllSongs),
-                (Icon::Folder, "Folders", Page::Folders(None)),
-                (Icon::Albums, "Albums", Page::Albums),
-                (Icon::Person, "Artists", Page::Artists),
-                (Icon::People, "Album Artists", Page::AlbumArtists),
-                (Icon::Genres, "Genres", Page::Genres),
-                (Icon::Calendar, "Years", Page::Years),
-                (Icon::Composer, "Composers", Page::Composers),
+                (Icon::Note, n_!("All Songs"), Page::AllSongs),
+                (Icon::Folder, n_!("Folders"), Page::Folders(None)),
+                (Icon::Albums, n_!("Albums"), Page::Albums),
+                (Icon::Person, n_!("Artists"), Page::Artists),
+                (Icon::People, n_!("Album Artists"), Page::AlbumArtists),
+                (Icon::Genres, n_!("Genres"), Page::Genres),
+                (Icon::Calendar, n_!("Years"), Page::Years),
+                (Icon::Composer, n_!("Composers"), Page::Composers),
             ];
             for (icon, label, page) in items {
                 let selected = self.page == page
                     || matches!((&self.page, &page), (Page::Album(_), Page::Albums) | (Page::Folders(Some(_)), Page::Folders(None)));
-                if sidebar_item(ui, pal, icon, label, selected).clicked() {
+                if sidebar_item(ui, pal, icon, i18n::tr(label), selected).clicked() {
                     self.back.clear();
                     self.go(page);
                 }
             }
-            section(ui, "Playlists");
-            if sidebar_item(ui, pal, Icon::Playlist, "Playlists", self.page == Page::Playlists).clicked() {
+            section(ui, tr!("Playlists"));
+            if sidebar_item(ui, pal, Icon::Playlist, tr!("Playlists"), self.page == Page::Playlists).clicked() {
                 self.go(Page::Playlists);
             }
-            if sidebar_item(ui, pal, Icon::Heart, "Liked Songs", self.page == Page::Liked).clicked() {
+            if sidebar_item(ui, pal, Icon::Heart, tr!("Liked Songs"), self.page == Page::Liked).clicked() {
                 self.go(Page::Liked);
             }
-            if sidebar_item(ui, pal, Icon::ThumbDown, "Disliked Songs", self.page == Page::Disliked).clicked() {
+            if sidebar_item(ui, pal, Icon::ThumbDown, tr!("Disliked Songs"), self.page == Page::Disliked).clicked() {
                 self.go(Page::Disliked);
             }
             let lists: Vec<(String, String)> = self.state.playlists.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
@@ -2093,32 +2400,32 @@ impl Player {
                     self.go(page);
                 }
             }
-            if sidebar_item(ui, pal, Icon::Playlist, "New Playlist…", false).clicked() {
-                self.ask_name("New Playlist", "New Playlist", NameAction::NewPlaylist(vec![]));
+            if sidebar_item(ui, pal, Icon::Playlist, tr!("New Playlist…"), false).clicked() {
+                self.ask_name(tr!("New Playlist"), tr!("New Playlist"), NameAction::NewPlaylist(vec![]));
             }
-            section(ui, "History");
+            section(ui, tr!("History"));
             let items: [(Icon, &str, Page); 3] = [
-                (Icon::Clock, "Recently Played", Page::RecentlyPlayed),
-                (Icon::Albums, "Recently Added", Page::Recent),
-                (Icon::Chart, "Your Stats", Page::Stats),
+                (Icon::Clock, n_!("Recently Played"), Page::RecentlyPlayed),
+                (Icon::Albums, n_!("Recently Added"), Page::Recent),
+                (Icon::Chart, n_!("Your Stats"), Page::Stats),
             ];
             for (icon, label, page) in items {
                 let selected = self.page == page || (page == Page::Stats && self.page == Page::StatsDetails);
-                if sidebar_item(ui, pal, icon, label, selected).clicked() {
+                if sidebar_item(ui, pal, icon, i18n::tr(label), selected).clicked() {
                     self.go(page);
                 }
             }
         });
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            if let Some(s) = self.library_status() {
+            if let Some(s) = self.status_line() {
                 ui.label(RichText::new(s).small().color(pal.secondary));
                 ui.add_space(4.0);
             }
-            if sidebar_item(ui, pal, Icon::Gear, "Settings", self.page == Page::Settings).clicked() {
+            if sidebar_item(ui, pal, Icon::Gear, tr!("Settings"), self.page == Page::Settings).clicked() {
                 self.go(Page::Settings);
             }
             // always there (2.1: the menu bars are gone), just above Settings
-            if sidebar_item(ui, pal, Icon::Check, "Quality Check", self.page == Page::Quality).clicked() {
+            if sidebar_item(ui, pal, Icon::Check, tr!("Quality Check"), self.page == Page::Quality).clicked() {
                 self.go(Page::Quality);
             }
         });
@@ -2131,24 +2438,25 @@ impl Player {
             ui.spacing_mut().item_spacing.x = 6.0;
             // left: transport
             let shuffle_on = self.state.shuffle != "off";
-            let r = icons::button(ui, Icon::Shuffle, 30.0, shuffle_on, true, &format!("Shuffle: {}", shuffle_label(&self.state.shuffle)));
+            let tip = tr!("Shuffle: {mode}", mode = i18n::tr(shuffle_label(&self.state.shuffle)));
+            let r = icons::button(ui, Icon::Shuffle, 30.0, shuffle_on, true, &tip);
             egui::Popup::menu(&r).show(|ui| {
-                ui.label(RichText::new("Shuffle").strong());
+                ui.label(RichText::new(tr!("Shuffle")).strong());
                 for m in SHUFFLE_MODES {
-                    if ui.radio(self.state.shuffle == m, shuffle_label(m)).clicked() {
+                    if ui.radio(self.state.shuffle == m, i18n::tr(shuffle_label(m))).clicked() {
                         self.set_shuffle(m);
                         ui.close();
                     }
                 }
             });
-            if icons::button(ui, Icon::Previous, 34.0, false, has, "Previous").clicked() {
+            if icons::button(ui, Icon::Previous, 34.0, false, has, tr!("Previous")).clicked() {
                 self.previous();
             }
             let play_icon = if self.is_playing() { Icon::Pause } else { Icon::Play };
-            if icons::button(ui, play_icon, 42.0, false, true, if self.is_playing() { "Pause" } else { "Play" }).clicked() {
+            if icons::button(ui, play_icon, 42.0, false, true, if self.is_playing() { tr!("Pause") } else { tr!("Play") }).clicked() {
                 self.toggle_play();
             }
-            if icons::button(ui, Icon::Next, 34.0, false, has, "Next").clicked() {
+            if icons::button(ui, Icon::Next, 34.0, false, has, tr!("Next")).clicked() {
                 self.next();
             }
             let rep = self.state.repeat.as_str();
@@ -2157,11 +2465,12 @@ impl Player {
                 "stop" => Icon::RepeatStop,
                 _ => Icon::Repeat,
             };
-            let r = icons::button(ui, rep_icon, 30.0, rep != "off", true, &format!("Repeat: {}", repeat_label(rep)));
+            let tip = tr!("Repeat: {mode}", mode = i18n::tr(repeat_label(rep)));
+            let r = icons::button(ui, rep_icon, 30.0, rep != "off", true, &tip);
             egui::Popup::menu(&r).show(|ui| {
-                ui.label(RichText::new("Repeat").strong());
+                ui.label(RichText::new(tr!("Repeat")).strong());
                 for m in REPEAT_MODES {
-                    if ui.radio(self.state.repeat == m, repeat_label(m)).clicked() {
+                    if ui.radio(self.state.repeat == m, i18n::tr(repeat_label(m))).clicked() {
                         self.set_repeat(m);
                         ui.close();
                     }
@@ -2184,7 +2493,7 @@ impl Player {
                     })
                     .inner;
                 let slider = if bit_perfect {
-                    slider.on_disabled_hover_text("Bit-perfect playback is on: set the volume on your amplifier or DAC")
+                    slider.on_disabled_hover_text(tr!("Bit-perfect playback is on: set the volume on your amplifier or DAC"))
                 } else {
                     slider
                 };
@@ -2192,34 +2501,34 @@ impl Player {
                     self.set_volume(v as f64);
                 }
                 let vol_icon = if self.state.muted || self.state.volume <= 0.0 { Icon::SpeakerMuted } else { Icon::Speaker };
-                if icons::button(ui, vol_icon, 28.0, false, true, if self.state.muted { "Unmute" } else { "Mute" }).clicked() {
+                if icons::button(ui, vol_icon, 28.0, false, true, if self.state.muted { tr!("Unmute") } else { tr!("Mute") }).clicked() {
                     self.toggle_mute();
                 }
                 ui.add_space(6.0);
-                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled && !bit_perfect, true, "Equalizer").clicked() {
+                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled && !bit_perfect, true, tr!("Equalizer")).clicked() {
                     self.eq_open = !self.eq_open;
                 }
-                if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, "Up Next").clicked() {
+                if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, tr!("Up Next")).clicked() {
                     self.show_up_next = !self.show_up_next;
                 }
                 let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden && self.np_tab == NpTab::Lyrics;
-                if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, "Lyrics").clicked() {
+                if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, tr!("Lyrics")).clicked() {
                     self.lyrics_button();
                 }
                 let now_path = self.now.as_ref().map(|n| n.path.clone());
-                let r = icons::button(ui, Icon::More, 28.0, false, has, "More");
+                let r = icons::button(ui, Icon::More, 28.0, false, has, tr!("More"));
                 if let Some(p) = now_path.clone() {
                     egui::Popup::menu(&r).show(|ui| self.song_menu(ui, &p));
                 }
                 let disliked = now_path.as_ref().is_some_and(|p| self.state.is_disliked(p));
-                if icons::button(ui, Icon::ThumbDown, 28.0, disliked, has, if disliked { "Remove dislike" } else { "Dislike" }).clicked() {
+                if icons::button(ui, Icon::ThumbDown, 28.0, disliked, has, if disliked { tr!("Remove dislike") } else { tr!("Dislike") }).clicked() {
                     if let Some(p) = now_path.clone() {
                         self.toggle_dislike(&p);
                     }
                 }
                 let liked = now_path.as_ref().is_some_and(|p| self.state.is_liked(p));
                 let heart = if liked { Icon::HeartFilled } else { Icon::Heart };
-                if icons::button(ui, heart, 28.0, liked, has, if liked { "Unlike" } else { "Like" }).clicked() {
+                if icons::button(ui, heart, 28.0, liked, has, if liked { tr!("Unlike") } else { tr!("Like") }).clicked() {
                     if let Some(p) = now_path {
                         self.toggle_like(&p);
                     }
@@ -2299,11 +2608,11 @@ impl Player {
         let tex = self.covers.get(&key, &paths);
         cover(&p, cover_rect, tex.as_ref(), &track.display_album(), 5);
         let cover_resp = ui.interact(cover_rect, ui.id().with("lcd-cover"), Sense::click());
-        if cover_resp.on_hover_text("Now Playing").clicked() {
+        if cover_resp.on_hover_text(tr!("Now Playing")).clicked() {
             self.cover_clicked();
         }
         // texts
-        let badge = musiclib::quality(&track);
+        let badge = quality_label(&track);
         let badge_font = look::title(10.0);
         let badge_w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(badge.clone(), badge_font.clone(), pal.text).size().x) + 12.0;
         let text_left = cover_rect.right() + 10.0;
@@ -2369,7 +2678,7 @@ impl Player {
         let bcol = if bresp.hovered() { pal.text } else { pal.secondary };
         p.rect_stroke(brect, CornerRadius::same(4), Stroke::new(1.0, bcol), egui::StrokeKind::Inside);
         p.text(brect.center(), Align2::CENTER_CENTER, badge, badge_font, bcol);
-        if bresp.on_hover_text("Playback info").clicked() {
+        if bresp.on_hover_text(tr!("Playback info")).clicked() {
             self.open_info();
         }
         match open {
@@ -2380,25 +2689,26 @@ impl Player {
     }
 
     fn up_next(&mut self, ui: &mut Ui, pal: &Palette) {
-        ui.label(RichText::new("Up Next").font(look::title(18.0)).color(pal.text));
+        ui.label(RichText::new(tr!("Up Next")).font(look::title(18.0)).color(pal.text));
         if !self.queue_name.is_empty() {
-            ui.label(RichText::new(format!("Playing from {}", self.queue_name)).color(pal.secondary));
+            let from = tr!("Playing from {name}", name = shown_queue_name(&self.queue_name));
+            ui.label(RichText::new(from).color(pal.secondary));
         }
         ui.add_space(8.0);
         let Some(q) = &self.queue else {
-            ui.label(RichText::new("Nothing is queued.").color(pal.secondary));
+            ui.label(RichText::new(tr!("Nothing is queued.")).color(pal.secondary));
             return;
         };
         let upcoming = q.up_next(50);
         if upcoming.is_empty() {
-            ui.label(RichText::new("Nothing comes after this song.").color(pal.secondary));
+            ui.label(RichText::new(tr!("Nothing comes after this song.")).color(pal.secondary));
         }
         let mut jump = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             for (i, path) in upcoming.iter().enumerate() {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
-                let artist = t.map(|t| t.display_artist()).unwrap_or_default();
+                let artist = t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default();
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
                 if resp.hovered() {
                     ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
@@ -2446,6 +2756,21 @@ impl Player {
                 self.tag_job = Some(job);
             }
         }
+        if let Some(mut w) = self.mb_win.take() {
+            match w.show(ctx, pal) {
+                crate::mbwin::Outcome::Open => self.mb_win = Some(w),
+                crate::mbwin::Outcome::Closed => {}
+                crate::mbwin::Outcome::Saved { close } => {
+                    self.update_library();
+                    if !close {
+                        self.mb_win = Some(w);
+                    }
+                }
+            }
+            if self.mb_win.is_some() {
+                return; // Esc belongs to the MusicBrainz window while it is open
+            }
+        }
         // Esc closes the topmost of the player's windows
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() && !cover_open {
             if self.eq_open {
@@ -2477,7 +2802,7 @@ impl Player {
                 .default_pos(ctx.content_rect().center())
                 .show(ctx, |ui| {
                     ui.set_max_width(420.0);
-                    ui.label(if d.prompt.is_empty() { "Name" } else { d.prompt.as_str() });
+                    ui.label(if d.prompt.is_empty() { tr!("Name") } else { d.prompt.as_str() });
                     let r = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
                     r.request_focus();
                     if !d.choices.is_empty() {
@@ -2490,14 +2815,15 @@ impl Player {
                         });
                     }
                     if !d.error.is_empty() {
-                        ui.label(RichText::new(&d.error).color(pal.accent));
+                        // the core's messages (a taken name...) are English: translated here
+                        ui.label(RichText::new(tr_text(&d.error)).color(pal.accent));
                     }
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("OK").strong()).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if ui.button(RichText::new(tr!("OK")).strong()).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             done = Some(true);
                         }
-                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        if ui.button(tr!("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                             done = Some(false);
                         }
                     });
@@ -2516,17 +2842,27 @@ impl Player {
         if let Some(action) = self.confirm.clone() {
             let (title, text, button) = match &action {
                 ConfirmAction::DeletePlaylist(id) => (
-                    "Delete playlist",
-                    format!("Delete the playlist “{}”? Its songs stay in your library.", self.state.playlist(id).map(|p| p.name.as_str()).unwrap_or("")),
-                    "Delete",
+                    tr!("Delete playlist"),
+                    tr!(
+                        "Delete the playlist “{name}”? Its songs stay in your library.",
+                        name = self.state.playlist(id).map(|p| p.name.as_str()).unwrap_or("")
+                    ),
+                    tr!("Delete"),
                 ),
-                ConfirmAction::DeleteEqPreset(n) => ("Delete preset", format!("Delete your preset “{n}”? The equalizer keeps its current settings."), "Delete"),
-                ConfirmAction::DeleteTheme(n) => ("Delete theme", format!("Delete the theme “{n}”?"), "Delete"),
-                ConfirmAction::RetagGroup { title, text, .. } => (title.as_str(), text.clone(), "Change"),
+                ConfirmAction::DeleteEqPreset(n) => (
+                    tr!("Delete preset"),
+                    tr!("Delete your preset “{name}”? The equalizer keeps its current settings.", name = n),
+                    tr!("Delete"),
+                ),
+                ConfirmAction::DeleteTheme(n) => {
+                    (tr!("Delete theme"), tr!("Delete the theme “{name}”?", name = i18n::tr(n)), tr!("Delete"))
+                }
+                // the title and text are made (translated) by `retag_group()`
+                ConfirmAction::RetagGroup { title, text, .. } => (title.as_str(), text.clone(), tr!("Change")),
                 ConfirmAction::ClearHistory => (
-                    "Clear the play history",
-                    "Forget every song played so far? Recently Played and Your Stats start again from nothing.".to_string(),
-                    "Clear",
+                    tr!("Clear the play history"),
+                    tr!("Forget every song played so far? Recently Played and Your Stats start again from nothing.").to_string(),
+                    tr!("Clear"),
                 ),
             };
             let mut open = true;
@@ -2546,7 +2882,7 @@ impl Player {
                         if ui.button(RichText::new(button).strong().color(pal.accent)).clicked() {
                             done = Some(true);
                         }
-                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        if ui.button(tr!("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                             done = Some(false);
                         }
                     });
@@ -2564,6 +2900,7 @@ impl Player {
         self.flush_listening();
         self.save_state();
         self.lib_stop.store(true, Ordering::Relaxed);
+        self.mb_stop.store(true, Ordering::Relaxed);
         self.engine.stop();
     }
 }
@@ -2713,6 +3050,32 @@ mod tests {
             }
             None => run(p, events),
         }
+    }
+
+    /// A few frames (a new window takes some to reach its size), and every text the last one drew.
+    fn texts(ctx: &egui::Context, p: &mut Player) -> String {
+        fn walk(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    out.push_str(t.galley.text());
+                    out.push('\n');
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        for _ in 0..3 {
+            frame(ctx, p);
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| p.ui(ui));
+        let mut out = String::new();
+        output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        output.drop_without_applying_deltas();
+        out
     }
 
     fn run_until(ctx: &egui::Context, p: &mut Player, what: &str, done: impl Fn(&Player) -> bool) {
@@ -3842,6 +4205,241 @@ mod tests {
             println!("{name:>10}: frame while scrolling: mean {mean:6.2} ms, max {max:6.2} ms");
         }
         drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn musicbrainz_window_from_the_album_page() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-mb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let titles = [("Neon Streets", 201.0), ("Midnight Signal", 245.0), ("Harbour Lights", 187.0), ("Last Train Home", 263.0)];
+        let paths: Vec<String> = titles
+            .iter()
+            .enumerate()
+            .map(|(i, (t, secs))| song(&music, "Night Drive", t, "The Example Band", "Pop", i as u32 + 1, 8_000, *secs))
+            .collect();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+        // the switch is off by default: a library update asks MusicBrainz nothing
+        assert!(!p.scanner.cfg.musicbrainz_auto);
+        assert!(!p.lookup_library(false) && !p.musicbrainz_busy());
+        let album = p.lib.albums.iter().find(|a| a.title == "Night Drive").cloned().unwrap();
+        p.go(Page::Album(album.key.clone()));
+        frame(&ctx, &mut p);
+        p.musicbrainz_album(&album);
+        p.mb_win.as_mut().expect("the MusicBrainz window").set_client(crate::mbwin::test_client());
+        run_until(&ctx, &mut p, "the release", |p| p.mb_win.as_ref().is_some_and(|w| w.detail.is_some() && !w.busy));
+        {
+            let w = p.mb_win.as_mut().unwrap();
+            assert!(w.album && w.query_title == "Night Drive");
+            assert_eq!(w.detail.as_ref().unwrap().release.id, "rel-night-2001");
+            assert_eq!(w.changes().len(), 4);
+            w.only_empty = true;
+            w.update_preview();
+            assert!(!w.lines.iter().any(|(l, _)| l.contains("Genre:")), "the genre is filled");
+            assert!(w.save());
+        }
+        run_until(&ctx, &mut p, "saving and the library update", |p| p.mb_win.is_none() && p.lib_rx.is_none());
+        let tags = realhires::probe::probe(&paths[2]).unwrap().tags;
+        let tag = |k: &str| realhires::probe::tag(&tags, k).unwrap_or("").to_string();
+        assert_eq!((tag("album_artist").as_str(), tag("date").as_str(), tag("genre").as_str()), ("The Example Band", "1999-05-28", "Pop"));
+        let t = p.lib.track(&paths[2]).unwrap();
+        assert_eq!((t.album_artist.as_str(), t.year.as_str()), ("The Example Band", "1999"));
+        p.on_exit();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The player in Japanese (2.1): every page, every Settings group and the
+    /// windows draw Japanese texts.  Only this thread uses Japanese, so the
+    /// tests that run at the same time keep English.
+    #[test]
+    fn japanese_pages_and_windows() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        realhires::i18n::set_thread_language("日本語");
+        let tmp = std::env::temp_dir().join(format!("rhr-player-ja-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        // long enough to be logged in the play history (`musiclib::MIN_LOGGED_SECONDS`)
+        let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 2.0);
+        let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.5);
+        let b1 = song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 1.0);
+        // the setting stays English: `set_language()` would switch every thread of the test run
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 3 && p.lib_rx.is_none());
+        let has = |text: &str, want: &[&str], what: &str| {
+            for w in want {
+                assert!(text.contains(w), "{what}: no {w:?} in\n{text}");
+            }
+        };
+
+        // the start page and the sidebar
+        let t = texts(&ctx, &mut p);
+        has(&t, &["ライブラリ", "すべての曲", "お気に入りの曲", "新規プレイリスト…", "履歴", "あなたの統計", "設定", "3曲", "アルバム2枚"], "Library");
+        for english in ["All Songs", "Recently Played", "Liked Songs", "Settings", "3 songs"] {
+            assert!(!t.contains(english), "English {english:?} on the Library page:\n{t}");
+        }
+        // every page before anything was played
+        let music_dir = realhires::paths::abspath(&music.to_string_lossy());
+        let key = p.lib.track(&a1).unwrap().song().album_key();
+        let pages: Vec<(Page, Vec<&str>)> = vec![
+            (Page::AllSongs, vec!["すべての曲", "タイトル", "アーティスト", "音質", "再生", "シャッフル", "ロスレス"]),
+            (Page::Folders(None), vec!["Music", "再生"]),
+            (Page::Folders(Some(music_dir.clone())), vec!["Paper Lanterns", "2曲"]),
+            (Page::Albums, vec!["アルバム", "Harbour Lights"]),
+            (Page::Album(key.clone()), vec!["戻る", "アルバムのプロパティ…", "MusicBrainzからアルバムの情報を取得…", "2曲、"]),
+            (Page::Artists, vec!["アーティスト", "Mira Calloway"]),
+            (Page::AlbumArtists, vec!["アルバムアーティスト"]),
+            (Page::Genres, vec!["ジャンル", "Jazz"]),
+            (Page::Years, vec!["年", "不明な年"]),
+            (Page::Composers, vec!["作曲者", "不明な作曲者"]),
+            (Page::Playlists, vec!["プレイリスト", "まだプレイリストがありません"]),
+            (Page::Liked, vec!["お気に入りの曲", "お気に入りにした曲がここに表示されます"]),
+            (Page::Disliked, vec!["好きじゃない曲", "シャッフルでは再生されなくなります"]),
+            (Page::RecentlyPlayed, vec!["最近再生した項目", "再生した曲がここに表示されます。"]),
+            (Page::Recent, vec!["最近追加した項目"]),
+            (Page::Stats, vec!["あなたの統計", "今年", "この期間にはまだ再生がありません"]),
+            (Page::StatsDetails, vec!["詳細", "あなたのライブラリ", "サンプリング周波数", "ビット深度"]),
+            (Page::NowPlaying, vec!["再生中の曲はありません", "アルバムか曲を選ぶか、再生ボタンを押してください。"]),
+        ];
+        for (page, want) in pages {
+            p.go(page.clone());
+            let t = texts(&ctx, &mut p);
+            has(&t, &want, &format!("{page:?}"));
+        }
+
+        // playing: the playback bar, Now Playing, Up Next and the play history
+        p.go(Page::Album(key.clone()));
+        let album = p.page_songs();
+        p.play_list(album.clone(), Some(&a1), "Paper Lanterns");
+        p.show_up_next = true;
+        p.go(Page::NowPlaying);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["次に再生", "再生元：Paper Lanterns", "Paper in the Rain", "ロスレス"], "Up Next");
+        p.show_up_next = false;
+        run_until(&ctx, &mut p, "the end of the album", |p| p.now.as_ref().is_some_and(|n| !n.active));
+        frame(&ctx, &mut p);
+        p.play_list(vec![b1.clone()], None, "All Songs");
+        p.show_up_next = true;
+        let t = texts(&ctx, &mut p);
+        has(&t, &["この曲には歌詞がありません。", "歌詞を取得", "再生元：すべての曲", "この曲の後に再生する曲はありません。"], "Now Playing");
+        p.show_up_next = false;
+        // 2.2: Now Playing's switch and its Details, a grouping grid and the Cover window
+        p.set_np_tab(NpTab::Details);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["歌詞", "次に再生", "詳細", "タイトル", "品質チェック", "まだチェックしていません"], "Now Playing, Details");
+        assert!(p.np_hits.details.iter().any(|l| l.starts_with("タイトル: Tidewater")), "{:?}", p.np_hits.details);
+        p.set_np_tab(NpTab::Lyrics);
+        p.go(Page::Genres);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["ジャンル", "2ジャンル", "+クリックでジャンルを複数選択", "アルバム1枚 · 2曲"], "Genres");
+        p.open_cover_window(&b1);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["アートワーク", "アートワークを変更…", "アルバムを表示", "閉じる"], "the Cover window");
+        p.cover_win = None;
+        p.go(Page::NowPlaying);
+        p.engine.stop();
+        for (page, want) in [
+            (Page::RecentlyPlayed, vec!["再生日時", "今日 ", "履歴を消去…"]),
+            (Page::Stats, vec!["詳細"]),
+            (Page::StatsDetails, vec!["合計", "時間帯別の再生時間（分）", "曜日別の再生時間（分）", "月", "トップソング", "回再生"]),
+            (Page::Library, vec!["今年は"]),
+        ] {
+            p.go(page.clone());
+            let t = texts(&ctx, &mut p);
+            has(&t, &want, &format!("{page:?} after playing"));
+        }
+
+        // a playlist with a song whose file is gone
+        p.apply_name(NameAction::NewPlaylist(vec![a1.clone(), "/gone/song.flac".to_string()]), "Road Trip").unwrap();
+        let pid = p.state.playlists[0].id.clone();
+        p.go(Page::Playlist(pid.clone()));
+        let t = texts(&ctx, &mut p);
+        has(&t, &["Road Trip", "名前を変更…", "削除…", "ライブラリにありません", "2曲、"], "a playlist");
+
+        // search
+        p.search = "lanterns".into();
+        p.search_due = Some(Instant::now());
+        let t = texts(&ctx, &mut p);
+        assert_eq!(p.page, Page::Search);
+        has(&t, &["「lanterns」の検索結果", "アルバム", "曲"], "Search");
+        p.search.clear();
+        p.search_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+
+        // every Settings group: its name, its rows and its buttons in Japanese
+        p.go(Page::Settings);
+        for (i, group) in realhires::settings::GROUPS.iter().enumerate() {
+            p.settings_group = i;
+            let shown = realhires::i18n::tr(group);
+            assert_ne!(shown, *group, "the group {group:?} has no Japanese name");
+            let t = texts(&ctx, &mut p);
+            has(&t, &[shown, "このグループを初期設定に戻す"], group);
+            let more: &[&str] = match *group {
+                "Library" => &["ライブラリを今すぐ更新", "ライブラリをスキャン", "再生履歴を消去…"],
+                "Playback" => &["イコライザ…", "出力デバイスを再読み込み"],
+                "Appearance" => &["テーマ", "使用中のフォントは", "テーマフォルダを開く", "新規テーマ…", "内蔵のテーマなので変更できません"],
+                "Saved results" => &["保存されたすべての結果を削除…"],
+                "Detection" => &["品質チェックを開く"],
+                _ => &[],
+            };
+            has(&t, more, group);
+        }
+
+        // the windows: Equalizer (both tabs), Playback info, a name and a confirmation dialog, Edit Info
+        p.play_list(vec![a1.clone()], None, "Songs");
+        p.engine.pause();
+        p.eq_open = true;
+        p.eq_tab = 0;
+        let t = texts(&ctx, &mut p);
+        has(&t, &["イコライザ", "プリセット", "イコライザをオン", "グラフィック", "グラフィックイコライザを使う", "プリアンプ"], "Equalizer");
+        p.eq_tab = 1;
+        let t = texts(&ctx, &mut p);
+        has(&t, &["パラメトリックイコライザを使う", "バンドを追加", "周波数", "ゲイン"], "Equalizer, parametric");
+        p.eq_open = false;
+        p.open_info();
+        let t = texts(&ctx, &mut p);
+        has(&t, &["再生情報", "トラック", "デコーダ", "サンプリング周波数", "ヌル出力（音は出ません）", "判定", "まだチェックしていません", "コピー"], "Playback info");
+        p.info = None;
+        p.ask_name(tr!("New Playlist"), tr!("New Playlist"), NameAction::NewPlaylist(vec![]));
+        let t = texts(&ctx, &mut p);
+        has(&t, &["新規プレイリスト", "名前", "キャンセル"], "the name dialog");
+        assert_eq!(p.name_dialog.as_ref().unwrap().text, "新規プレイリスト", "the proposed name is translated");
+        p.name_dialog = None;
+        p.confirm = Some(ConfirmAction::DeletePlaylist(pid));
+        let t = texts(&ctx, &mut p);
+        has(&t, &["プレイリストを削除", "プレイリスト「Road Trip」を削除しますか？", "削除"], "the confirmation");
+        p.confirm = None;
+        p.edit_song_info(&a2);
+        run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        let t = texts(&ctx, &mut p);
+        has(&t, &["プロパティ", "タイトル", "保存", "キャンセル"], "Properties");
+        p.edit_info = None;
+        frame(&ctx, &mut p);
+        p.engine.stop();
+        drop(p);
+        realhires::i18n::set_thread_language("");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

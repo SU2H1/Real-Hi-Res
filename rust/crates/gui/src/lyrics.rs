@@ -15,8 +15,10 @@ use realhires::lyrics::{
     default_interval, existing_lyrics, lyrics_summary, read_lyrics_file, short_skip, short_status, sidecar,
     skip_reason, splitlines, LyricsOutcome, Status, CREDIT, EXISTING_CHOICES,
 };
+use realhires::i18n::{self, tr_text};
 use realhires::paths::file_name;
 use realhires::probe::tag;
+use realhires::tr;
 use realhires::settings::Settings;
 use realhires::verdict::FileResult;
 
@@ -176,11 +178,11 @@ impl LyricsWindow {
                 path: p.clone(),
                 name: file_name(p),
                 song: song(&app.results, p),
-                status: "Ready".into(),
+                status: tr!("Ready").into(),
                 saved: String::new(),
                 look: Look::Ready,
             });
-            self.messages.insert(p.clone(), format!("{p}\nWill be looked up on LRCLIB by its tags."));
+            self.messages.insert(p.clone(), format!("{p}\n{}", tr!("Will be looked up on LRCLIB by its tags.")));
         }
         for (p, why) in &skipped {
             // listed last, in grey, as in the Fix window
@@ -189,41 +191,49 @@ impl LyricsWindow {
                 path: p.clone(),
                 name: file_name(p),
                 song: song(&app.results, p),
-                status: short_skip(why),
+                status: tr_text(&short_skip(why)),
                 saved: lrc.or(txt).map(|f| file_name(&f)).unwrap_or_default(),
                 look: Look::Skip,
             });
-            self.messages.insert(p.clone(), format!("{p}\n{why}"));
+            self.messages.insert(p.clone(), format!("{p}\n{}", tr_text(why)));
         }
         let n = todo.len();
         self.todo = todo;
-        self.head = if n > 0 {
-            format!("Download synced lyrics for {n} song{}", if n != 1 { "s" } else { "" })
+        self.head = if n == 1 {
+            tr!("Download synced lyrics for 1 song").into()
+        } else if n > 0 {
+            tr!("Download synced lyrics for {n} songs", n = n)
         } else {
-            "Nothing to look up".into()
+            tr!("Nothing to look up").into()
         };
         let interval = default_interval(&cfg.lyrics_server);
         let mut lines = vec![];
         if n > 0 {
             let secs = n as f64 * (interval + 0.35) * if cfg.lyrics_search { 1.3 } else { 1.0 };
-            lines.push(format!(
-                "LRCLIB asks programs to send one request at a time, so this takes {}.",
-                fmt_about(secs)
+            lines.push(tr!(
+                "LRCLIB asks programs to send one request at a time, so this takes {about}.",
+                about = tr_text(&fmt_about(secs))
             ));
         }
         if !skipped.is_empty() {
-            let one = skipped.len() == 1;
-            lines.push(format!(
-                "{} song{} already {} lyrics and {} skipped (listed last, in grey); choose 'Download again and replace \
-                 them' to look them up again.",
-                skipped.len(),
-                if one { "" } else { "s" },
-                if one { "has" } else { "have" },
-                if one { "is" } else { "are" }
-            ));
+            lines.push(if skipped.len() == 1 {
+                tr!(
+                    "1 song already has lyrics and is skipped (listed last, in grey); choose 'Download again and \
+                     replace them' to look them up again."
+                )
+                .to_string()
+            } else {
+                tr!(
+                    "{n} songs already have lyrics and are skipped (listed last, in grey); choose 'Download again \
+                     and replace them' to look them up again.",
+                    n = skipped.len()
+                )
+            });
         }
-        lines.push("Songs without title and artist tags cannot be looked up. Lyrics files are never deleted.".into());
-        lines.push(CREDIT.into());
+        lines.push(tr!("Songs without title and artist tags cannot be looked up. Lyrics files are never deleted.").into());
+        // the credit to LRCLIB and LRCGET (test_lrclib_and_lrcget_are_credited), in the language in use
+        let credit: String = CREDIT.into();
+        lines.push(tr_text(&credit));
         self.note = lines.join("\n");
         self.status.clear();
     }
@@ -245,7 +255,7 @@ impl LyricsWindow {
         self.run = RUNS.fetch_add(1, Ordering::SeqCst);
         let todo = self.todo.clone();
         for r in self.rows.iter_mut().filter(|r| todo.contains(&r.path)) {
-            r.status = "Waiting…".into();
+            r.status = tr!("Waiting…").into();
         }
         self.eta = Some(ScanEta::new(todo.iter().map(|p| (p.clone(), 1u64)).collect()));
         self.update_status();
@@ -259,15 +269,15 @@ impl LyricsWindow {
         let (done, n) = (self.outcomes.len(), self.todo.len());
         self.status_time = Instant::now();
         self.status = format!(
-            "Looking up {} of {n}… {}",
-            (done + 1).min(n),
-            self.eta.as_ref().map(ScanEta::text).unwrap_or_default()
+            "{} {}",
+            tr!("Looking up {n} of {total}…", n = (done + 1).min(n), total = n),
+            tr_text(&self.eta.as_ref().map(ScanEta::text).unwrap_or_default())
         );
     }
 
     pub fn started(&mut self, path: &str) {
         if let Some(r) = self.rows.iter_mut().find(|r| r.path == path) {
-            r.status = "Looking up…".into();
+            r.status = tr!("Looking up…").into();
             r.look = Look::Busy;
             self.scroll_to = Some(path.to_string());
         }
@@ -281,10 +291,10 @@ impl LyricsWindow {
             if let Some(t) = &o.track {
                 r.song = t.label();
             }
-            r.status = short_status(&o);
+            r.status = tr_text(&short_status(&o));
             r.saved = o.written.first().map(|f| file_name(f)).unwrap_or_default();
             r.look = Look::of(o.status);
-            self.messages.insert(o.path.clone(), format!("{}\n{}", o.path, o.message));
+            self.messages.insert(o.path.clone(), format!("{}\n{}", o.path, tr_text(&o.message)));
         }
         if o.saved() {
             self.saved_paths.push(o.written[0].clone());
@@ -297,18 +307,23 @@ impl LyricsWindow {
 
     pub fn finished(&mut self, stopped: bool) {
         self.running = false;
-        let text = lyrics_summary(&self.outcomes);
+        let text = tr_text(&lyrics_summary(&self.outcomes));
         let mut c = text.chars();
         let cap = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default();
-        self.status = format!("{}{cap}", if stopped { "Stopped. " } else { "" });
+        self.status = if stopped { tr!("Stopped. {summary}", summary = cap) } else { cap };
         let n = self.todo.len();
-        self.head = format!("Lyrics saved for {} of {n} song{}", self.saved_paths.len(), if n != 1 { "s" } else { "" });
+        let saved = self.saved_paths.len();
+        self.head = if n == 1 {
+            tr!("Lyrics saved for {saved} of 1 song", saved = saved)
+        } else {
+            tr!("Lyrics saved for {saved} of {n} songs", saved = saved, n = n)
+        };
     }
 
     pub fn stop(&mut self) {
         if self.running {
             self.stop.store(true, Ordering::SeqCst);
-            self.status = "Stopping after the current song…".into();
+            self.status = tr!("Stopping after the current song…").into();
         }
     }
 
@@ -327,7 +342,8 @@ impl LyricsWindow {
         let mut open = true;
         let mut close = false;
         let before = (self.existing.clone(), self.plain, self.instrumental, self.search);
-        egui::Window::new("Download synced lyrics")
+        egui::Window::new(tr!("Download synced lyrics"))
+            .id(egui::Id::unique("lyrics-window"))
             .open(&mut open)
             .collapsible(false)
             .default_width(860.0)
@@ -340,10 +356,12 @@ impl LyricsWindow {
                 ui.add_space(2.0);
                 ui.add(
                     egui::Label::new(secondary(
-                        "Each song is looked up by the title, artist, album and length in its tags on LRCLIB \
-                         (lrclib.net), a free, open lyrics database, and its synced lyrics are saved as an .lrc file \
-                         with the same name next to it. Most music players find that file and show the lyrics line by \
-                         line in time with the music. The audio files themselves are not changed.",
+                        tr!(
+                            "Each song is looked up by the title, artist, album and length in its tags on LRCLIB \
+                             (lrclib.net), a free, open lyrics database, and its synced lyrics are saved as an .lrc file \
+                             with the same name next to it. Most music players find that file and show the lyrics line by \
+                             line in time with the music. The audio files themselves are not changed."
+                        ),
                         &pal,
                     ))
                     .wrap(),
@@ -356,7 +374,7 @@ impl LyricsWindow {
                         egui::Grid::new("lyricsgrid").num_columns(4).striped(true).spacing([14.0, 4.0]).show(
                             ui,
                             |ui| {
-                                for h in ["File", "Artist – title", "Status", "Saved as"] {
+                                for h in [tr!("File"), tr!("Artist – title"), tr!("Status"), tr!("Saved as")] {
                                     ui.label(heading_text(h, &pal));
                                 }
                                 ui.end_row();
@@ -401,7 +419,7 @@ impl LyricsWindow {
                     .selected
                     .as_ref()
                     .and_then(|p| self.messages.get(p).cloned())
-                    .unwrap_or_else(|| "Select a song to see the details.".into());
+                    .unwrap_or_else(|| tr!("Select a song to see the details.").into());
                 ui.add_space(4.0);
                 ui.add(egui::Label::new(RichText::new(detail).color(pal.text)).wrap());
                 ui.add_space(8.0);
@@ -410,27 +428,28 @@ impl LyricsWindow {
                         ui,
                         |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Options").font(look::title(13.0)).color(pal.text));
+                            ui.label(RichText::new(tr!("Options")).font(look::title(13.0)).color(pal.text));
                             ui.add_space(2.0);
                             ui.horizontal(|ui| {
-                                ui.label("Songs that already have lyrics:");
+                                ui.label(tr!("Songs that already have lyrics:"));
+                                // the setting's values stay English; the menu shows them translated
                                 egui::ComboBox::from_id_salt("lyrics_existing")
-                                    .selected_text(self.existing.clone())
+                                    .selected_text(i18n::tr(&self.existing))
                                     .width(300.0)
                                     .show_ui(ui, |ui| {
                                         for c in EXISTING_CHOICES {
-                                            ui.selectable_value(&mut self.existing, c.to_string(), c);
+                                            ui.selectable_value(&mut self.existing, c.to_string(), i18n::tr(c));
                                         }
                                     });
                             });
-                            ui.checkbox(&mut self.plain, "Save plain lyrics as .txt when a song has no synced lyrics");
+                            ui.checkbox(&mut self.plain, tr!("Save plain lyrics as .txt when a song has no synced lyrics"));
                             ui.checkbox(
                                 &mut self.instrumental,
-                                "Mark instrumental songs with an .lrc holding [au: instrumental]",
+                                tr!("Mark instrumental songs with an .lrc holding [au: instrumental]"),
                             );
                             ui.checkbox(
                                 &mut self.search,
-                                "Search by title and artist when there is no exact match (same length ±2 s)",
+                                tr!("Search by title and artist when there is no exact match (same length ±2 s)"),
                             );
                         },
                     );
@@ -444,18 +463,18 @@ impl LyricsWindow {
                     ui.label(RichText::new(&self.status).color(pal.text));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        if flat_button(ui, "Close", true).clicked() {
+                        if flat_button(ui, tr!("Close"), true).clicked() {
                             close = true;
                         }
-                        if flat_button(ui, "Stop", self.running && !self.is_stopping()).clicked() {
+                        if flat_button(ui, tr!("Stop"), self.running && !self.is_stopping()).clicked() {
                             self.stop();
                         }
                         let can_start = !self.running && !self.todo.is_empty();
-                        if primary_button(ui, "Download lyrics", can_start).clicked() {
+                        if primary_button(ui, tr!("Download lyrics"), can_start).clicked() {
                             self.start(app);
                         }
                         let can_show = !self.running && !self.saved_paths.is_empty();
-                        if flat_button(ui, "Show in folder", can_show).clicked() {
+                        if flat_button(ui, tr!("Show in folder"), can_show).clicked() {
                             reveal_in_file_manager(&self.saved_paths[0]);
                         }
                     });
@@ -467,8 +486,8 @@ impl LyricsWindow {
         if !open || close {
             if self.running {
                 app.confirm = Some(Confirm {
-                    title: "Downloading lyrics".into(),
-                    text: "Lyrics are still being downloaded. Stop and close? Lyrics saved so far are kept.".into(),
+                    title: tr!("Downloading lyrics").into(),
+                    text: tr!("Lyrics are still being downloaded. Stop and close? Lyrics saved so far are kept.").into(),
                     action: ConfirmAction::CloseLyrics,
                 });
                 return true;
@@ -491,11 +510,12 @@ pub fn lyrics_job(path: Option<&str>, pal: &Palette) -> LayoutJob {
     match read_lyrics_file(path) {
         None => {
             let acc = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
-            job.append("No lyrics next to this song yet.\n\n", 0.0, muted.clone());
+            job.append(&format!("{}\n\n", tr!("No lyrics next to this song yet.")), 0.0, muted.clone());
             job.append(
-                &format!(
-                    "Get lyrics… ({acc}+L) looks the song up on LRCLIB and saves its synced lyrics as {} next to it.",
-                    file_name(&sidecar(path, ".lrc"))
+                &tr!(
+                    "Get lyrics… ({key}) looks the song up on LRCLIB and saves its synced lyrics as {file} next to it.",
+                    key = format!("{acc}+L"),
+                    file = file_name(&sidecar(path, ".lrc"))
                 ),
                 0.0,
                 muted,
@@ -503,13 +523,13 @@ pub fn lyrics_job(path: Option<&str>, pal: &Palette) -> LayoutJob {
         }
         Some((kind, text, file)) => {
             let head = match kind {
-                Status::Synced => "Synced lyrics",
-                Status::Plain => "Plain lyrics (no timing)",
-                _ => "Instrumental",
+                Status::Synced => tr!("Synced lyrics"),
+                Status::Plain => tr!("Plain lyrics (no timing)"),
+                _ => tr!("Instrumental"),
             };
             job.append(&format!("{head} · {}\n\n", file_name(&file)), 0.0, muted.clone());
             if kind == Status::Instrumental {
-                job.append("LRCLIB lists this song as instrumental: it has no lyrics.", 0.0, muted);
+                job.append(tr!("LRCLIB lists this song as instrumental: it has no lyrics."), 0.0, muted);
                 return job;
             }
             for line in splitlines(&text) {
