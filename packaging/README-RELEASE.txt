@@ -44,6 +44,12 @@ they are and where the originals went.  The "After fix" column (next to
 Bandwidth) and the details of each fake file say what Fix does with it and
 whether it stays marked fake afterwards (a file made from an MP3/AAC stays
 "Fake lossless" at any resolution).
+"Get lyrics..." (Ctrl/Cmd+L, or Edit > Download synced lyrics for all songs)
+downloads synced lyrics from LRCLIB (lrclib.net) and saves them as <name>.lrc
+next to each song, as LRCGET does (plain lyrics as <name>.txt); no scan is
+needed.  Songs are looked up by their title/artist/album tags and length, one
+at a time as LRCLIB asks, and songs that already have an .lrc are skipped.
+The Lyrics tab of the dashboard shows them.
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 
@@ -62,7 +68,8 @@ Command line
   Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)
 
   Run with --help for all options (--only problems, --csv, --json,
-  --spectrogram DIR, --fix, --fix-dir DIR, --set NAME=VALUE, -v ...).
+  --spectrogram DIR, --fix, --fix-dir DIR, --lyrics, --lyrics-only,
+  --set NAME=VALUE, -v ...).
 
 First launch on macOS
 ---------------------

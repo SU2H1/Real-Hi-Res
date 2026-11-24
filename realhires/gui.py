@@ -9,6 +9,8 @@
   open the file or its folder.
 * After every scan a summary window shows what percentage of files got each
   verdict.
+* "Download synced lyrics" saves LRCLIB lyrics as .lrc files next to the songs
+  (as LRCGET does); the Lyrics tab of the dashboard shows them.
 * Settings (detection thresholds, scanning, display) are edited in the
   Settings window and saved for the next start (also used by the CLI).
 
@@ -22,6 +24,7 @@ import multiprocessing
 import os
 import pickle
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -45,8 +48,9 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 
 from . import __version__
 from . import settings as settings_mod
-from .eta import ScanEta, file_sizes
+from .eta import ScanEta, file_sizes, fmt_about
 from .fix import FIXABLE_VERDICTS, fix_advice, fix_outlook
+from . import lyrics as lyrics_mod
 from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
@@ -576,7 +580,8 @@ class SettingsDialog(tk.Toplevel):
         if kind == "choice":
             v = tk.StringVar()
             self.vars[name] = v
-            return ttk.Combobox(parent, textvariable=v, values=info["choices"], state="readonly", width=18)
+            width = max(18, max(len(c) for c in info["choices"]) + 2)  # long choices must not be cut off
+            return ttk.Combobox(parent, textvariable=v, values=info["choices"], state="readonly", width=width)
         if kind == "multi":
             frame = ttk.Frame(parent)
             sub = {}
@@ -970,6 +975,268 @@ class FixDoneDialog(tk.Toplevel):
             reveal_in_file_manager(self.outputs[0])
 
 
+class LyricsDialog(tk.Toplevel):
+    """Download synced lyrics from LRCLIB for songs (realhires.lyrics), the way LRCGET does:
+    one request at a time, <name>.lrc next to each song."""
+
+    OPTION_KEYS = ("lyrics_existing", "lyrics_plain", "lyrics_instrumental", "lyrics_search")
+
+    def __init__(self, app: "App", paths: List[str], autostart: bool = False):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Download synced lyrics")
+        self.transient(app.root)
+        self.paths = list(dict.fromkeys(paths))
+        self.todo: List[str] = []
+        self.messages: Dict[str, str] = {}  # path -> the full sentence, shown for the selected row
+        self.outcomes: list = []
+        self.saved_paths: List[str] = []
+        self.running = False
+        self.stop_event = threading.Event()
+        self.eta: Optional[ScanEta] = None
+        self._status_time = 0.0
+        self.q: queue.Queue = queue.Queue()
+        cfg = app.cfg
+        frm = ttk.Frame(self, padding=12)
+        frm.grid(sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(2, weight=1)
+        self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
+        self.head.grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
+                  text="Each song is looked up by the title, artist, album and length in its tags on LRCLIB "
+                       "(lrclib.net), a free, open lyrics database, and its synced lyrics are saved as an .lrc "
+                       "file with the same name next to it. Most music players find that file and show the "
+                       "lyrics line by line in time with the music. The audio files themselves are not "
+                       "changed.").grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        cols = ("song", "status", "saved")
+        self.tv = ttk.Treeview(frm, columns=cols, show="tree headings",
+                               height=min(max(len(self.paths), 3), 12))
+        self.tv.heading("#0", text="File", anchor="w")
+        self.tv.heading("song", text="Artist – title", anchor="w")
+        self.tv.heading("status", text="Status", anchor="w")
+        self.tv.heading("saved", text="Saved as", anchor="w")
+        self.tv.column("#0", width=210)
+        self.tv.column("song", width=210)
+        self.tv.column("status", width=260)
+        self.tv.column("saved", width=170)
+        for tag, color in (("ok", "#2e7d32"), ("plain", "#1565c0"), ("skip", "#888"), ("miss", "#9a6700"),
+                           ("fail", "#c62828"), ("busy", "#0b62c4")):
+            self.tv.tag_configure(tag, foreground=color)
+        ys = ttk.Scrollbar(frm, orient="vertical", command=self.tv.yview)
+        self.tv.configure(yscrollcommand=ys.set)
+        self.tv.grid(row=2, column=0, sticky="nsew")
+        ys.grid(row=2, column=1, sticky="ns")
+        self.detail = ttk.Label(frm, foreground="#444", wraplength=760, justify="left",
+                                text="Select a song to see the details.")
+        self.detail.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.tv.bind("<<TreeviewSelect>>", lambda e: self._show_detail())
+
+        opts = ttk.LabelFrame(frm, text="Options", padding=8)
+        opts.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        opts.columnconfigure(1, weight=1)
+        self.v_existing = tk.StringVar(value=cfg.lyrics_existing)
+        self.v_plain = tk.BooleanVar(value=cfg.lyrics_plain)
+        self.v_instrumental = tk.BooleanVar(value=cfg.lyrics_instrumental)
+        self.v_search = tk.BooleanVar(value=cfg.lyrics_search)
+        ttk.Label(opts, text="Songs that already have lyrics:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Combobox(opts, textvariable=self.v_existing, values=lyrics_mod.EXISTING_CHOICES, state="readonly",
+                     width=36).grid(row=0, column=1, sticky="w", pady=2)
+        for row, (text, var) in enumerate((
+                ("Save plain lyrics as .txt when a song has no synced lyrics", self.v_plain),
+                ("Mark instrumental songs with an .lrc holding [au: instrumental]", self.v_instrumental),
+                ("Search by title and artist when there is no exact match (same length ±2 s)", self.v_search)), 1):
+            ttk.Checkbutton(opts, text=text, variable=var).grid(row=row, column=0, columnspan=2, sticky="w")
+        for v in (self.v_existing, self.v_plain, self.v_instrumental, self.v_search):
+            v.trace_add("write", lambda *a: self._replan())
+        self.note = ttk.Label(frm, foreground="#666", wraplength=760, justify="left")
+        self.note.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        bottom = ttk.Frame(frm)
+        bottom.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        bottom.columnconfigure(1, weight=1)
+        self.pb = ttk.Progressbar(bottom, length=200, mode="determinate")
+        self.pb.grid(row=0, column=0, padx=(0, 8))
+        self.status = ttk.Label(bottom, text="", wraplength=420, justify="left")
+        self.status.grid(row=0, column=1, sticky="w")
+        self.open_btn = ttk.Button(bottom, text="Show in folder", command=self._open_folder, state="disabled")
+        self.open_btn.grid(row=0, column=2, padx=4)
+        self.start_btn = ttk.Button(bottom, text="Download lyrics", command=self._start)
+        self.start_btn.grid(row=0, column=3)
+        self.stop_btn = ttk.Button(bottom, text="Stop", command=self._stop, state="disabled")
+        self.stop_btn.grid(row=0, column=4, padx=(4, 0))
+        ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=5, padx=(4, 0))
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.bind("<Escape>", lambda e: self._close())
+        self._replan()
+        self.after(100, self._poll)
+        if autostart and self.todo:
+            self.after(400, self._start)
+
+    def _cfg(self):
+        c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
+        c.lyrics_existing, c.lyrics_plain = self.v_existing.get(), self.v_plain.get()
+        c.lyrics_instrumental, c.lyrics_search = self.v_instrumental.get(), self.v_search.get()
+        return c
+
+    def _song(self, path: str) -> str:
+        r = self.app.results.get(path)
+        tags = r.tags if r is not None else {}
+        artist, title = tags.get("artist") or tags.get("album_artist"), tags.get("title")
+        return f"{artist} – {title}" if artist and title else ""
+
+    def _replan(self) -> None:
+        if self.running:
+            return
+        cfg = self._cfg()
+        self.tv.delete(*self.tv.get_children())
+        self.todo, skipped = [], []
+        self.messages = {}
+        for p in self.paths:
+            why = lyrics_mod.skip_reason(p, cfg)
+            (skipped if why else self.todo).append((p, why))
+        for p, _ in self.todo:
+            self.tv.insert("", "end", iid=p, text=os.path.basename(p), values=(self._song(p), "Ready", ""))
+            self.messages[p] = f"{p}\nWill be looked up on LRCLIB by its tags."
+        for p, why in skipped:  # listed last, in grey, as in the Fix window
+            lrc, txt = lyrics_mod.existing_lyrics(p)
+            self.tv.insert("", "end", iid=p, text=os.path.basename(p), tags=("skip",),
+                           values=(self._song(p), lyrics_mod.short_skip(why), os.path.basename(lrc or txt or "")))
+            self.messages[p] = f"{p}\n{why}"
+        self.todo = [p for p, _ in self.todo]
+        n = len(self.todo)
+        self.head.configure(text=f"Download synced lyrics for {n} song{'s' if n != 1 else ''}" if n
+                            else "Nothing to look up")
+        client_interval = lyrics_mod.default_interval(cfg.lyrics_server)
+        lines = []
+        if n:
+            lines.append(f"LRCLIB asks programs to send one request at a time, so this takes "
+                         f"{fmt_about(n * (client_interval + 0.35) * (1.3 if cfg.lyrics_search else 1.0))}.")
+        if skipped:
+            one = len(skipped) == 1
+            lines.append(f"{len(skipped)} song{'' if one else 's'} already {'has' if one else 'have'} lyrics and "
+                         f"{'is' if one else 'are'} skipped (listed last, in grey); choose 'Download again and "
+                         "replace them' to look them up again.")
+        lines.append("Songs without title and artist tags cannot be looked up. Lyrics files are never deleted.")
+        self.note.configure(text="\n".join(lines))
+        self.start_btn.configure(state="normal" if n else "disabled")
+        self.pb.configure(maximum=max(n, 1), value=0)
+        self.status.configure(text="")
+
+    def _start(self) -> None:
+        if self.running or not self.todo:
+            return
+        cfg = self._cfg()
+        for k in self.OPTION_KEYS:  # remember the chosen options
+            setattr(self.app.cfg, k, getattr(cfg, k))
+        self.app.save_settings()
+        self.running = True
+        self.stop_event.clear()
+        self.outcomes = []
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        todo = list(self.todo)
+        for p in todo:
+            self.tv.set(p, "status", "Waiting…")
+        self.eta = ScanEta({p: 1 for p in todo})
+        self._update_status()
+        results = dict(self.app.results)  # read by the worker thread, never changed by it
+        stop = self.stop_event
+
+        def worker():
+            client = lyrics_mod.LrclibClient(cfg.lyrics_server, stop=stop)
+            try:
+                for p in todo:
+                    if stop.is_set():
+                        break
+                    self.q.put(("start", p))
+                    try:
+                        out = lyrics_mod.fetch_for_file(p, client, cfg, results.get(p))
+                    except lyrics_mod.LyricsStopped:
+                        break
+                    self.q.put(("done", out))
+            finally:
+                self.q.put(("finished", stop.is_set()))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_status(self) -> None:
+        done, n = len(self.outcomes), len(self.todo)
+        self._status_time = time.time()
+        self.status.configure(text=f"Looking up {min(done + 1, n)} of {n}… "
+                                   f"{self.eta.text() if self.eta else ''}")
+
+    def _poll(self) -> None:
+        tags = {lyrics_mod.SYNCED: "ok", lyrics_mod.INSTRUMENTAL: "ok", lyrics_mod.PLAIN: "plain",
+                lyrics_mod.SKIPPED: "skip", lyrics_mod.NO_TAGS: "miss", lyrics_mod.NOT_FOUND: "miss",
+                lyrics_mod.PLAIN_ONLY: "miss", lyrics_mod.FAILED: "fail"}
+        try:
+            while True:
+                kind, payload = self.q.get_nowait()
+                if kind == "start":
+                    if self.tv.exists(payload):
+                        self.tv.set(payload, "status", "Looking up…")
+                        self.tv.item(payload, tags=("busy",))
+                        self.tv.see(payload)
+                elif kind == "done":
+                    o = payload
+                    self.outcomes.append(o)
+                    self.pb["value"] = len(self.outcomes)
+                    if self.eta is not None:
+                        self.eta.add(o.path)
+                    if self.tv.exists(o.path):
+                        if o.track is not None:
+                            self.tv.set(o.path, "song", o.track.label)
+                        self.tv.set(o.path, "status", lyrics_mod.short_status(o))
+                        self.tv.set(o.path, "saved", os.path.basename(o.written[0]) if o.written else "")
+                        self.tv.item(o.path, tags=(tags.get(o.status, ""),))
+                        self.messages[o.path] = f"{o.path}\n{o.message}"
+                        if o.path in self.tv.selection():
+                            self._show_detail()
+                    if o.saved:
+                        self.saved_paths.append(o.written[0])
+                        self.app.lyrics_saved(o.path)
+                    if self.running:
+                        self._update_status()
+                elif kind == "finished":
+                    self.running = False
+                    self.stop_btn.configure(state="disabled")
+                    text = lyrics_mod.lyrics_summary(self.outcomes)
+                    self.status.configure(text=("Stopped. " if payload else "") + text[:1].upper() + text[1:])
+                    self.open_btn.configure(state="normal" if self.saved_paths else "disabled")
+                    n = len(self.todo)
+                    self.head.configure(text=f"Lyrics saved for {len(self.saved_paths)} of {n} song{'s' if n != 1 else ''}")
+        except queue.Empty:
+            pass
+        if self.running and time.time() - self._status_time > 1.0:
+            self._update_status()  # the time left keeps counting down between songs
+        if self.winfo_exists():
+            self.after(100, self._poll)
+
+    def _show_detail(self) -> None:
+        sel = self.tv.selection()
+        self.detail.configure(text=self.messages.get(sel[0], "") if sel else "Select a song to see the details.")
+
+    def _stop(self) -> None:
+        if self.running:
+            self.stop_event.set()
+            self.stop_btn.configure(state="disabled")
+            self.status.configure(text="Stopping after the current song…")
+
+    def _open_folder(self) -> None:
+        if self.saved_paths:
+            reveal_in_file_manager(self.saved_paths[0])
+
+    def _close(self) -> None:
+        if self.running:
+            if not messagebox.askyesno("Downloading lyrics", "Lyrics are still being downloaded. Stop and close? "
+                                       "Lyrics saved so far are kept.", parent=self):
+                return
+            self.stop_event.set()
+        self.destroy()
+
+
 class CardGrid(ttk.Frame):
     """Music-player style grid of album or artist cards: cover art, a ring
     showing how many of the songs are fake/suspicious, and the names."""
@@ -1196,6 +1463,7 @@ class App(ttk.Frame):
         self.queue: queue.Queue = queue.Queue()
         threading.Thread(target=lookup_saved, args=(self.lookup_requests, self.queue), daemon=True).start()
         self.scanner: Optional[Scanner] = None
+        self.lyrics_dialog: Optional[LyricsDialog] = None  # one at a time: LRCLIB wants sequential requests
         self.total = self.done = 0
         self.scanning = False
         self.scan_started = 0.0
@@ -1258,6 +1526,10 @@ class App(ttk.Frame):
                       command=self.fix_selected)
         e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
         e.add_separator()
+        e.add_command(label="Download synced lyrics for selected songs…", accelerator=f"{acc}+L",
+                      command=self.lyrics_selected)
+        e.add_command(label="Download synced lyrics for all songs…", command=self.lyrics_all)
+        e.add_separator()
         e.add_command(label="Re-scan selected files", command=self.rescan_selected)
         e.add_command(label="Re-scan files checked by older rules", command=self.rescan_outdated)
         e.add_separator()
@@ -1282,6 +1554,7 @@ class App(ttk.Frame):
         self.root.bind_all(f"<{mod}-f>", lambda e: self.open_find())
         self.root.bind_all(f"<{mod}-F>", lambda e: self.fix_selected())  # Shift+F
         self.root.bind_all(f"<{mod}-a>", self.select_all)
+        self.root.bind_all(f"<{mod}-l>", self.lyrics_selected)
         self.root.bind_all("<F3>", lambda e: self.find_step(1))
         self.root.bind_all("<Shift-F3>", lambda e: self.find_step(-1))
 
@@ -1467,6 +1740,8 @@ class App(ttk.Frame):
         self.copy_btn.pack(side="left")
         self.fix_btn = ttk.Button(btns, text="Fix to real resolution…", command=self.fix_selected, state="disabled")
         self.fix_btn.pack(side="left", padx=(12, 0))
+        self.lyrics_btn = ttk.Button(btns, text="Get lyrics…", command=self.lyrics_selected, state="disabled")
+        self.lyrics_btn.pack(side="left", padx=(4, 0))
         ttk.Label(info, text="Details", foreground="#666").grid(row=4, column=0, columnspan=2, sticky="w")
         txt_frame = ttk.Frame(info)
         txt_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
@@ -1486,6 +1761,19 @@ class App(ttk.Frame):
         self.spectrum = SpectrumCanvas(plots, height=200)
         plots.add(self.spectrogram, text="Spectrogram")
         plots.add(self.spectrum, text="Average spectrum")
+        lyr = ttk.Frame(plots)
+        lyr.rowconfigure(0, weight=1)
+        lyr.columnconfigure(0, weight=1)
+        self.lyrics_text = tk.Text(lyr, wrap="word", height=8, width=30, relief="flat", padx=10, pady=6,
+                                   background="#fafafa", foreground="#1f2328", font=("TkDefaultFont", 10))
+        lys = ttk.Scrollbar(lyr, orient="vertical", command=self.lyrics_text.yview)
+        self.lyrics_text.configure(yscrollcommand=lys.set, state="disabled")
+        self.lyrics_text.tag_configure("time", foreground="#9aa0a6", font=("TkFixedFont", 9))
+        self.lyrics_text.tag_configure("muted", foreground="#666", font=("TkDefaultFont", 9))
+        self.lyrics_text.grid(row=0, column=0, sticky="nsew")
+        lys.grid(row=0, column=1, sticky="ns")
+        plots.add(lyr, text="Lyrics")
+        self.plots = plots
         dash.add(plots, weight=3)
         panes.add(dash, weight=2)
 
@@ -1506,6 +1794,7 @@ class App(ttk.Frame):
         self.menu.add_command(label="Copy path", command=self.copy_path)
         self.menu.add_separator()
         self.menu.add_command(label="Fix to real resolution…", command=self.fix_selected)
+        self.menu.add_command(label="Download synced lyrics…", command=self.lyrics_selected)
         self.menu.add_command(label="Re-scan", command=self.rescan_selected)
 
     def _update_quick_label(self) -> None:
@@ -2402,8 +2691,9 @@ class App(ttk.Frame):
         r = self._current()
         path = self._current_path()
         state = "normal" if path else "disabled"
-        for b in (self.open_folder_btn, self.open_file_btn, self.copy_btn):
+        for b in (self.open_folder_btn, self.open_file_btn, self.copy_btn, self.lyrics_btn):
             b.configure(state=state)
+        self._show_lyrics(path)
         from .fix import FIXABLE_VERDICTS
         fixable = any(self.results.get(i) is not None and self.results[i].verdict in FIXABLE_VERDICTS
                       for i in self.tree.selection())
@@ -2495,6 +2785,72 @@ class App(ttk.Frame):
             self.tree.focus_set()
             self.status_var.set(f"Selected {len(items)} listed file(s).")
         return "break"
+
+    def _show_lyrics(self, path: Optional[str]) -> None:
+        """The Lyrics tab: the .lrc (or .txt) next to the selected song, timestamps in grey."""
+        t = self.lyrics_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        found = lyrics_mod.read_lyrics_file(path) if path else None
+        if path and found is None:
+            acc = "Cmd" if sys.platform == "darwin" else "Ctrl"
+            t.insert("end", "No lyrics next to this song yet.\n\n", "muted")
+            t.insert("end", f"Get lyrics… ({acc}+L) looks the song up on LRCLIB and saves its synced lyrics "
+                            f"as {os.path.basename(lyrics_mod.sidecar(path, '.lrc'))} next to it.", "muted")
+        elif found is not None:
+            kind, text, file = found
+            head = {lyrics_mod.SYNCED: "Synced lyrics", lyrics_mod.PLAIN: "Plain lyrics (no timing)",
+                    lyrics_mod.INSTRUMENTAL: "Instrumental"}[kind]
+            t.insert("end", f"{head} · {os.path.basename(file)}\n\n", "muted")
+            if kind == lyrics_mod.INSTRUMENTAL:
+                t.insert("end", "LRCLIB lists this song as instrumental: it has no lyrics.", "muted")
+            for line in ([] if kind == lyrics_mod.INSTRUMENTAL else text.splitlines()):
+                m = re.match(r"^((?:\s*\[[^\]]*\])+)\s?(.*)$", line) if kind == lyrics_mod.SYNCED else None
+                if m and re.match(r"\s*\[\d", m.group(1)):
+                    t.insert("end", m.group(1).strip() + "  ", "time")
+                    t.insert("end", m.group(2) + "\n")
+                else:  # plain text, or an LRC header such as [ar: ...]
+                    t.insert("end", line + "\n", "muted" if m else ())
+        t.configure(state="disabled")
+
+    def lyrics_saved(self, path: str) -> None:
+        """LyricsDialog saved lyrics for `path`: show them if that song is selected."""
+        if self._current_path() == path:
+            self._show_lyrics(path)
+
+    def download_lyrics(self, paths: List[str]) -> None:
+        d = self.lyrics_dialog
+        if d is not None and d.winfo_exists():
+            if d.running:
+                d.lift()
+                self.status_var.set("Lyrics are being downloaded already; wait for them or press Stop first.")
+                return
+            d.destroy()
+        self.lyrics_dialog = LyricsDialog(self, paths)
+
+    def lyrics_selected(self, event=None):
+        """Ctrl/Cmd+L, the Download lyrics… button and the menus: the selected songs."""
+        if event is not None:
+            try:
+                w = self.root.focus_get()
+            except (KeyError, tk.TclError):
+                w = None
+            if w is not None and w.winfo_toplevel() is not self.root:
+                return None  # another window has the keyboard
+        paths = list(self.tree.selection()) if self.view_var.get() == "Files" else []
+        if not paths:
+            self.status_var.set("Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), "
+                                "or use Edit → Download synced lyrics for all songs.")
+            return "break"
+        self.download_lyrics(paths)
+        return "break"
+
+    def lyrics_all(self) -> None:
+        files = self.all_files()
+        if not files:
+            messagebox.showinfo("Download synced lyrics", "Add a folder or files first.")
+            return
+        self.download_lyrics(files)
 
     def fix_selected(self) -> None:
         if self.scanning:
@@ -2595,6 +2951,8 @@ class App(ttk.Frame):
     def quit_app(self) -> None:
         if self.scanner and self.scanning:
             self.scanner.stop_event.set()
+        if self.lyrics_dialog is not None:
+            self.lyrics_dialog.stop_event.set()
         self.cache.close()
         self.lookup_requests.put((0, None, None, None))
         if self.graph_pool is not None:
