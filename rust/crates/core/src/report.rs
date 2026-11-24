@@ -9,6 +9,7 @@ use sha1::{Digest, Sha1};
 use crate::json::{self, Style, Value};
 use crate::paths::{file_name, relpath, stem};
 use crate::pyfmt::{f, fs, g, pct, round_int};
+use crate::settings::Settings;
 use crate::verdict::{saved_note, verdict_breakdown, FileResult, Verdict};
 
 fn color_code(v: Verdict) -> &'static str {
@@ -49,7 +50,7 @@ pub fn header() -> String {
     format!("{:<14} {:<10} {:<11} {:<9}  FILE", "VERDICT", "CLAIMED", "REAL(EST)", "BANDWIDTH")
 }
 
-pub fn row(r: &FileResult, color: bool, base: Option<&str>, verbose: bool) -> String {
+pub fn row(r: &FileResult, color: bool, base: Option<&str>, verbose: bool, cfg: &Settings) -> String {
     let name = match base {
         Some(b) => relpath(&r.path, b),
         None => r.path.clone(),
@@ -66,6 +67,10 @@ pub fn row(r: &FileResult, color: bool, base: Option<&str>, verbose: bool) -> St
         }
         for note in &r.notes {
             line += &format!("{pad}· {note}");
+        }
+        // what Fix does with a fake file, and whether it stays fake
+        if let Some(advice) = crate::fix::fix_advice(r, cfg) {
+            line += &format!("{pad}· {advice}");
         }
         if !r.bit_usage.is_empty() {
             let top: Vec<String> =

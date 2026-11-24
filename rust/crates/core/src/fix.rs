@@ -19,7 +19,7 @@ use crate::json::{self, Value};
 use crate::library::track_key;
 use crate::paths::{abspath, extension, file_name, parent, BACKUP_DIR_NAME};
 use crate::probe::{command, read_all, tool, PcmReader};
-use crate::pyfmt::{g, pct};
+use crate::pyfmt::{f, g, pct};
 use crate::settings::Settings;
 use crate::verdict::{analyze_file, fmt_rate_u, FileResult, Verdict};
 
@@ -52,7 +52,7 @@ fn same_format(ext: &str) -> Option<Format> {
 
 const KEEPS_COVER: [&str; 2] = [".flac", ".m4a"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Backup {
     Folder,
     Bak,
@@ -99,6 +99,8 @@ pub struct FixOutcome {
     pub new_result: Option<FileResult>,
     pub bytes_before: u64,
     pub bytes_after: u64,
+    /// "exact", "gapless" or "" (plain conversion)
+    pub how: String,
 }
 
 fn family_rate(rate: u32) -> u32 {
@@ -372,6 +374,265 @@ pub fn skip_summary(skipped: &[(FileResult, String)]) -> String {
         .map(|(k, n)| format!("{n} {}", SKIP_GROUPS.iter().find(|(key, _)| key == k).unwrap().1))
         .collect();
     format!("{} file(s) are not changed: {}.", skipped.len(), parts.join("; "))
+}
+
+/// What Fix does with a fake file, without touching the disk: ("unknown" |
+/// "same" | "convert", "bits/rate" target, the "Kept ..." note or ""), the
+/// same decision plan_fix() makes; None for other verdicts.
+fn prospect(r: &FileResult, cfg: &Settings) -> Option<(&'static str, String, String)> {
+    if !FIXABLE_VERDICTS.contains(&r.verdict) {
+        return None;
+    }
+    let Some((rate, bits, notes)) = target_resolution(r, cfg) else {
+        return Some(("unknown", String::new(), String::new()));
+    };
+    let cur_bits = if r.is_float { 32 } else { r.claimed_bits.filter(|b| *b != 0).unwrap_or(16) };
+    let kept = notes.iter().find(|n| n.starts_with("Kept")).cloned().unwrap_or_default();
+    let same = rate == r.sample_rate && bits >= cur_bits;
+    Some((if same { "same" } else { "convert" }, fmt(bits, rate), kept))
+}
+
+/// A few words for the "After fix" column of the desktop app's list: what Fix
+/// turns the file into and whether it is still marked fake then; "" if not fake.
+pub fn fix_outlook(r: &FileResult, cfg: &Settings) -> String {
+    let Some((kind, target, kept)) = prospect(r, cfg) else {
+        return String::new();
+    };
+    if kind == "unknown" {
+        return "Not fixable: resolution unknown".into();
+    }
+    if r.verdict == Verdict::FakeLossless {
+        return if kind == "same" {
+            "Stays fake: MP3/AAC source".into()
+        } else {
+            format!("{target}, stays fake: MP3/AAC source")
+        };
+    }
+    if !kept.is_empty() {
+        return if kind == "same" {
+            "Stays fake: rate kept".into()
+        } else {
+            format!("{target}, stays fake: rate kept")
+        };
+    }
+    if kind == "same" {
+        format!("Already {target}")
+    } else {
+        format!("Fixable to {target}")
+    }
+}
+
+/// "Kept 96 kHz instead of ...: the spectrum ..." -> "keeps 96 kHz instead of ..., because the spectrum ...".
+fn keeps(note: &str) -> String {
+    let rest = note.strip_prefix("Kept ").unwrap_or(&note[note.len().min(5)..]);
+    let rest = rest.replacen(": the spectrum", ", because the spectrum", 1);
+    format!("keeps {}", rest.trim_end_matches('.'))
+}
+
+/// What "Fix to real resolution" does with a fake file, and whether it is
+/// still marked fake afterwards (shown in the details, so a file that stays
+/// fake after fixing and re-scanning says why); None for other verdicts.
+pub fn fix_advice(r: &FileResult, cfg: &Settings) -> Option<String> {
+    let (kind, target, kept) = prospect(r, cfg)?;
+    let lossy = "because it was made from an MP3/AAC, and no conversion can bring back what the lossy \
+                 encoder removed. Only a genuine lossless copy is better.";
+    let fl = r.verdict == Verdict::FakeLossless;
+    Some(match kind {
+        "unknown" => {
+            "Fix to real resolution leaves it unchanged, because its real resolution could not be determined.".into()
+        }
+        "same" if fl => format!(
+            "Fix to real resolution leaves it unchanged: it is already {target}, the resolution it really has. \
+             It stays marked fake lossless, also after fixing and re-scanning, {lossy}"
+        ),
+        "same" if !kept.is_empty() => {
+            let bits = target.split('/').next().unwrap_or("");
+            format!(
+                "Fix to real resolution leaves it unchanged: it {}, and all its {bits} bits are used, so nothing \
+                 would change. It stays marked fake hi-res, also after fixing and re-scanning.",
+                keeps(&kept)
+            )
+        }
+        "same" => format!("Fix to real resolution leaves it unchanged: it is already {target}."),
+        _ if fl => format!(
+            "Fix to real resolution converts it to {target}, the resolution it really has, but it stays marked \
+             fake lossless even then, {lossy}"
+        ),
+        _ if !kept.is_empty() => format!(
+            "Fix to real resolution converts it to {target}, but it {}. It therefore stays marked fake hi-res after \
+             fixing and re-scanning.",
+            keeps(&kept)
+        ),
+        _ => format!(
+            "Fix to real resolution converts it to {target}, the resolution it really has; a re-scan then no longer \
+             marks it fake."
+        ),
+    })
+}
+
+/// "1.2 GB", "350.4 MB", "812 bytes".
+pub fn fmt_bytes(n: f64) -> String {
+    let mut n = n;
+    for unit in ["bytes", "KB", "MB", "GB"] {
+        if n.abs() < 1024.0 {
+            return if unit == "bytes" { format!("{} {unit}", f(n, 0)) } else { format!("{} {unit}", f(n, 1)) };
+        }
+        n /= 1024.0;
+    }
+    format!("{} TB", f(n, 1))
+}
+
+fn files(n: usize) -> String {
+    format!("{n} file{}", if n != 1 { "s" } else { "" })
+}
+
+/// (headline, sentences) for the pop-up shown when fixing has finished.
+/// `skipped` counts the fake files that were left alone on purpose, and
+/// `label` turns a verdict into the name the caller shows (the desktop app's
+/// "CD quality" for NOT HI-RES).
+pub fn done_summary(
+    outcomes: &[FixOutcome],
+    skipped: usize,
+    label: &dyn Fn(Verdict) -> String,
+) -> (String, Vec<String>) {
+    let ok: Vec<&FixOutcome> = outcomes.iter().filter(|o| o.ok).collect();
+    let bad: Vec<&FixOutcome> = outcomes.iter().filter(|o| !o.ok).collect();
+    let copies = !ok.is_empty() && !ok.iter().any(|o| o.plan.replace_original);
+    let head = if ok.is_empty() {
+        if bad.is_empty() { "Nothing was fixed" } else { "No file could be fixed" }.to_string()
+    } else if copies {
+        if bad.is_empty() {
+            format!("Saved corrected copies of {}", files(ok.len()))
+        } else {
+            format!("Saved corrected copies of {} of {}", ok.len(), files(outcomes.len()))
+        }
+    } else if bad.is_empty() {
+        format!("Fixed {} to their real resolution", files(ok.len()))
+    } else {
+        format!("Fixed {} of {} to their real resolution", ok.len(), files(outcomes.len()))
+    };
+    let mut lines = vec![];
+    let were = |n: usize| if n != 1 { "were" } else { "was" };
+    if !ok.is_empty() {
+        let before: u64 = ok.iter().map(|o| o.bytes_before).sum();
+        let after: u64 = ok.iter().map(|o| o.bytes_after).sum();
+        let they = if copies { "The copies take" } else { "They now take" };
+        if after < before {
+            lines.push(format!(
+                "{they} {} instead of {}, {} less.",
+                fmt_bytes(after as f64),
+                fmt_bytes(before as f64),
+                fmt_bytes((before - after) as f64)
+            ));
+        } else {
+            lines.push(format!(
+                "{they} {} (the originals took {}).",
+                fmt_bytes(after as f64),
+                fmt_bytes(before as f64)
+            ));
+        }
+        let exact = ok.iter().filter(|o| o.how == "exact").count();
+        let gapless = ok.iter().filter(|o| o.how == "gapless").count();
+        if exact > 0 {
+            lines.push(format!(
+                "{} {} restored bit-exactly from the untouched 16-bit master, without resampling.",
+                files(exact),
+                were(exact)
+            ));
+        }
+        if gapless > 0 {
+            lines.push(format!(
+                "{} {} converted together with the neighbouring tracks, so the album still plays without gaps.",
+                files(gapless),
+                were(gapless)
+            ));
+        }
+        if copies {
+            let dirs: HashSet<String> =
+                ok.iter().map(|o| parent(&abspath(o.output.as_deref().unwrap_or(&o.plan.output)))).collect();
+            let srcs: HashSet<String> = ok.iter().map(|o| parent(&abspath(&o.plan.source))).collect();
+            let where_ = if dirs.len() == 1 && dirs != srcs {
+                format!("in {}", dirs.iter().next().unwrap())
+            } else if dirs == srcs {
+                "next to the originals".to_string()
+            } else {
+                "in the folder you chose".to_string()
+            };
+            lines.push(format!("The originals were left unchanged; the corrected copies are {where_}."));
+        } else {
+            let kinds: HashSet<Backup> = ok.iter().filter(|o| o.plan.replace_original).map(|o| o.plan.backup).collect();
+            let mut parts: Vec<String> = vec![];
+            if kinds.contains(&Backup::Folder) {
+                let bdirs: HashSet<String> = ok
+                    .iter()
+                    .filter(|o| o.plan.backup == Backup::Folder)
+                    .map(|o| abspath(o.plan.backup_dir.as_deref().unwrap_or("")))
+                    .collect();
+                let named: HashSet<String> = bdirs.iter().map(|d| file_name(d)).collect();
+                if bdirs.len() == 1 {
+                    parts.push(format!("moved to {}", bdirs.iter().next().unwrap()));
+                } else if named.len() == 1 && named.contains(BACKUP_DIR_NAME) {
+                    parts.push(format!("moved to the \"{BACKUP_DIR_NAME}\" folder next to each file"));
+                } else {
+                    parts.push("moved to the backup folders".into());
+                }
+            }
+            if kinds.contains(&Backup::Bak) {
+                parts.push("kept next to each file as .bak files".into());
+            }
+            if kinds.contains(&Backup::None) {
+                parts.push("deleted, as chosen".into());
+            }
+            if !parts.is_empty() {
+                lines.push(format!("The originals were {}.", parts.join(", or ")));
+            }
+        }
+        let checked: Vec<&FileResult> = ok.iter().filter_map(|o| o.new_result.as_ref()).collect();
+        if !checked.is_empty() {
+            let mut counts: Vec<(Verdict, usize)> = vec![];
+            for r in &checked {
+                match counts.iter_mut().find(|(v, _)| *v == r.verdict) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((r.verdict, 1)),
+                }
+            }
+            counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+            let parts: Vec<String> = counts.iter().map(|(v, n)| format!("{n} {}", label(*v))).collect();
+            let mut line = format!("Re-check of the fixed files: {}.", parts.join(", "));
+            let has = |v: Verdict| counts.iter().any(|(k, _)| *k == v);
+            if has(Verdict::FakeLossless) {
+                line += " A file made from MP3/AAC stays fake lossless at any resolution, because fixing cannot \
+                         bring back what the lossy encoder removed.";
+            }
+            if has(Verdict::Fake) {
+                line += " A file whose sample rate had to be kept, to avoid cutting real content, stays marked fake \
+                         hi-res.";
+            }
+            if has(Verdict::FakeLossless) || has(Verdict::Fake) {
+                line += " They keep that mark in later scans, and their details say why.";
+            }
+            lines.push(line);
+        }
+    }
+    if let Some(first) = bad.first() {
+        let n = bad.len();
+        lines.push(format!(
+            "{} could not be fixed and {} left as {}. {}: {}",
+            files(n),
+            were(n),
+            if n != 1 { "they were" } else { "it was" },
+            file_name(&first.plan.source),
+            first.message
+        ));
+    }
+    if skipped > 0 {
+        lines.push(format!(
+            "{} {} left alone on purpose; the Fix window lists the reasons.",
+            files(skipped),
+            were(skipped)
+        ));
+    }
+    (head, lines)
 }
 
 /// (plans, [(result, reason)]) for the fake files among `results`.
@@ -912,6 +1173,7 @@ pub fn run_fix(plan: &FixPlan, cfg: &Settings) -> FixOutcome {
         new_result: None,
         bytes_before: 0,
         bytes_after: 0,
+        how: String::new(),
     };
     let out_dir = {
         let d = parent(&plan.output);
@@ -1002,6 +1264,7 @@ pub fn run_fix(plan: &FixPlan, cfg: &Settings) -> FixOutcome {
             new_result: new,
             bytes_before: before,
             bytes_after: after,
+            how: how.to_string(),
         })
     })();
     if Path::new(&tmp).exists() {

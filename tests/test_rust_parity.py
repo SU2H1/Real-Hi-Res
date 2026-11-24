@@ -247,3 +247,95 @@ def test_rust_fix_keeps_gapless_joins(tmp_path):
     assert joined.shape == ref.shape
     err = np.abs(joined - ref).max(axis=1) / 2.0 ** 31
     assert err.max() < 10 ** (-100 / 20), 20 * np.log10(err.max())
+
+
+# ------------------------------------------------------- texts and lyrics ---
+def run_python(*args, env=None):
+    import sys
+
+    proc = subprocess.run([sys.executable, "-m", "realhires", *args], capture_output=True, text=True,
+                          encoding="utf-8", env=env, cwd=str(ROOT))
+    return proc
+
+
+def test_verbose_output_is_the_same(library):
+    """Every line of `-v`, including what Fix does with each fake file and whether it stays fake."""
+    folder = str(Path(library["real_24_96"]).parent)
+    args = (folder, "-v", "--no-cache", "--no-settings", "--no-color", "-j", "4")
+    py = run_python(*args)
+    rs = subprocess.run([rust_cli(), *args], capture_output=True, text=True, encoding="utf-8")
+    assert py.returncode == rs.returncode == 0, py.stderr + rs.stderr
+    assert "· Fix to real resolution" in py.stdout
+    for a, b in zip(py.stdout.splitlines(), rs.stdout.splitlines()):
+        assert a == b, f"python: {a!r}\nrust:   {b!r}"
+    assert len(py.stdout.splitlines()) == len(rs.stdout.splitlines())
+
+
+def test_lyrics_downloads_match_python(tmp_path, monkeypatch):
+    """The same requests, messages and files as `realhires --lyrics-only`, against a fake LRCLIB."""
+    from test_lyrics import FakeLrclib, make_album, rec
+
+    fake = FakeLrclib()
+    try:
+        env = dict(os.environ, REALHIRES_LYRICS_INTERVAL="0", NO_PROXY="127.0.0.1,localhost",
+                   no_proxy="127.0.0.1,localhost")
+        album = {}
+        for who in ("python", "rust"):
+            fake.songs.clear()
+            album[who] = tmp_path / who / "album"
+            album[who].parent.mkdir()
+            make_album(album[who], fake)
+        fake.songs.append(rec("Alpha", artist="The Band;Guest", synced="[00:00.30] with a guest", rid=9))
+        server = f"lyrics_server={fake.url}"
+        runs = [("--lyrics-only", "--set", server), ("--lyrics-only", "--set", server, "-v"),
+                ("--lyrics-only", "--lyrics-existing", "replace", "--dry-run", "--set", server),
+                ("--lyrics-only", "--lyrics-existing", "skip-any", "--set", server, "-v")]
+        for args in runs:
+            out, requests = {}, {}
+            for who in ("python", "rust"):
+                fake.requests.clear()
+                cmd = (str(album[who]), "--no-settings", "--no-color", *args)
+                proc = run_python(*cmd, env=env) if who == "python" else subprocess.run(
+                    [rust_cli(), *cmd], capture_output=True, text=True, encoding="utf-8", env=env)
+                assert proc.returncode == 0, proc.stdout + proc.stderr
+                out[who] = proc.stdout.replace(str(album[who]), "ALBUM")
+                requests[who] = list(fake.requests)
+            assert out["python"] == out["rust"], args
+            assert requests["python"] == requests["rust"], args
+        for f in sorted(os.listdir(album["python"])):
+            assert (album["rust"] / f).exists(), f
+            if f.endswith((".lrc", ".txt")):
+                assert (album["python"] / f).read_bytes() == (album["rust"] / f).read_bytes(), f
+        assert sorted(os.listdir(album["python"])) == sorted(os.listdir(album["rust"]))
+        # failures and the server check
+        fake.answers = [(400, {})]
+        proc = subprocess.run([rust_cli(), str(album["rust"] / "05 Epsilon.flac"), "--no-settings", "--lyrics-only",
+                               "--set", server], capture_output=True, text=True, encoding="utf-8", env=env)
+        assert proc.returncode == 1 and "refused the request (HTTP 400: fake)" in proc.stdout, proc.stdout
+        assert "Lyrics: 1 failed." in proc.stdout
+        proc = subprocess.run([rust_cli(), "--check-lyrics-server", "--set", server], capture_output=True, text=True,
+                              encoding="utf-8", env=env)
+        assert proc.returncode == 0 and "can be reached" in proc.stdout, proc.stdout + proc.stderr
+        fake.answers = [(400, {})]
+        proc = subprocess.run([rust_cli(), "--check-lyrics-server", "--set", server], capture_output=True, text=True,
+                              encoding="utf-8", env=env)
+        assert proc.returncode == 1 and "error:" in proc.stderr
+    finally:
+        fake.server.shutdown()
+
+
+def test_lyrics_after_a_scan_use_the_scan_tags(tmp_path):
+    from test_lyrics import FakeLrclib, rec, tagged
+
+    fake = FakeLrclib()
+    try:
+        env = dict(os.environ, REALHIRES_LYRICS_INTERVAL="0", NO_PROXY="127.0.0.1,localhost",
+                   no_proxy="127.0.0.1,localhost")
+        song = tagged(tmp_path / "Eta.flac", title="Eta", artist="The Band", album="First")
+        fake.songs.append(rec("Eta", synced="[00:00.20] Eta sings", rid=6))
+        proc = subprocess.run([rust_cli(), song, "--no-cache", "--no-settings", "--lyrics", "--set",
+                               f"lyrics_server={fake.url}"], capture_output=True, text=True, encoding="utf-8", env=env)
+        assert proc.returncode == 0 and "NOT HI-RES" in proc.stdout and "Lyrics: 1 with synced lyrics." in proc.stdout
+        assert (tmp_path / "Eta.lrc").read_text(encoding="utf-8") == "[00:00.20] Eta sings\n"
+    finally:
+        fake.server.shutdown()

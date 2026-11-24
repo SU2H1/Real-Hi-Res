@@ -63,21 +63,26 @@ impl ScanEta {
 
 /// "about 6 min left", "about 1 h 20 min left", "less than a minute left".
 pub fn fmt_left(seconds: Option<f64>) -> String {
-    let Some(s) = seconds else {
-        return "estimating the time left".into();
-    };
+    match seconds {
+        None => "estimating the time left".into(),
+        Some(s) => format!("{} left", fmt_about(s)),
+    }
+}
+
+/// "about 6 min", "about 1 h 20 min", "less than a minute".
+pub fn fmt_about(s: f64) -> String {
     if s < 60.0 {
-        return "less than a minute left".into();
+        return "less than a minute".into();
     }
     let minutes = (s / 60.0).floor() as u64 + if s % 60.0 >= 30.0 { 1 } else { 0 };
     if minutes < 60 {
-        return format!("about {minutes} min left");
+        return format!("about {minutes} min");
     }
     let (h, m) = (minutes / 60, minutes % 60);
     if m > 0 {
-        format!("about {h} h {m} min left")
+        format!("about {h} h {m} min")
     } else {
-        format!("about {h} h left")
+        format!("about {h} h")
     }
 }
 

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use crate::json::{self, Value};
 
-pub const GROUPS: [&str; 5] = ["Detection", "Scanning", "Saved results", "Display", "Fixing"];
+pub const GROUPS: [&str; 6] = ["Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics"];
 pub const SETTINGS_VERSION: i64 = 160;
 
 pub const ALL_VERDICTS: [&str; 7] =
@@ -335,6 +335,28 @@ settings! {
            options above (originals still go to the backup folder; if you chose to delete originals, you are still \
            asked first). Only the desktop app does this; the command-line tool fixes with --fix."),
         Choice, None, None, &["Do nothing", "Ask whether to fix them", "Fix them automatically"];
+
+    // ---- Lyrics (synced lyrics from LRCLIB, as LRCGET) ------------------
+    lyrics_existing: String = s("Skip songs that have synced lyrics"), "Lyrics", "Songs that already have lyrics",
+        s("Which songs are looked up. A song has synced lyrics when <name>.lrc is next to it, and plain lyrics when \
+           <name>.txt is. 'Skip songs that have synced lyrics' still looks up songs that only have a .txt, to add an \
+           .lrc (the .txt is kept). Lyrics files are never deleted; 'Download again and replace them' overwrites \
+           them."), Choice, None, None,
+        &["Skip songs that have synced lyrics", "Skip songs that have any lyrics", "Download again and replace them"];
+    lyrics_plain: bool = true, "Lyrics", "Save plain lyrics as .txt",
+        s("When LRCLIB has only plain (unsynced) lyrics for a song, save them as <name>.txt next to it. Off: such \
+           songs are left without lyrics."), Bool, None, None, NUMS;
+    lyrics_instrumental: bool = true, "Lyrics", "Mark instrumental songs",
+        s("Save an .lrc holding '[au: instrumental]' for songs LRCLIB lists as instrumental, as LRCGET does, so they \
+           are not looked up again."), Bool, None, None, NUMS;
+    lyrics_search: bool = true, "Lyrics", "Search when there is no exact match",
+        s("When LRCLIB has no record with the song's exact title, artist, album and length, search by title and \
+           artist and take a result with the same title, the same artist and a length within 2 seconds. This finds \
+           songs whose album is named differently on LRCLIB. Off: exact matches only (one request per song instead \
+           of up to two)."), Bool, None, None, NUMS;
+    lyrics_server: String = s("https://lrclib.net"), "Lyrics", "LRCLIB server",
+        s("Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB."),
+        Str, None, None, NUMS;
 }
 
 /// Validate/convert a JSON value for a field (Python `_coerce`); None = invalid.

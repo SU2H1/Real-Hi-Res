@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use egui::{Align2, Color32, FontId, Pos2, RichText, Sense, Vec2};
-use realhires::fix::{plan_fix, skip_summary, Backup, FixOutcome, FixPlan, FIXABLE_VERDICTS};
+use realhires::fix::{done_summary, plan_fix, skip_summary, Backup, FixOutcome, FixPlan, FIXABLE_VERDICTS};
 use realhires::paths::{abspath, file_name};
 use realhires::pyfmt::{f, pct};
 use realhires::settings::{Kind, SValue, Settings, GROUPS};
@@ -19,6 +19,7 @@ pub enum ConfirmAction {
     FixAfterScan(Vec<FileResult>),
     FixDeleteOriginals,
     CloseFix,
+    CloseLyrics,
 }
 
 pub struct Confirm {
@@ -42,6 +43,16 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
         let keep = w.show(app, ctx);
         if keep {
             app.fix_win = Some(w);
+        }
+    }
+    if let Some(mut w) = app.lyrics_win.take() {
+        if w.show(app, ctx) {
+            app.lyrics_win = Some(w);
+        }
+    }
+    if let Some(mut w) = app.fix_done.take() {
+        if w.show(ctx) {
+            app.fix_done = Some(w);
         }
     }
     if let Some(c) = app.confirm.take() {
@@ -73,7 +84,13 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
                         app.fix_win = Some(w);
                     }
                 }
-                ConfirmAction::CloseFix => app.fix_win = None,
+                // keep it working while hidden, so the list is updated and the pop-up appears
+                ConfirmAction::CloseFix => {
+                    if let Some(w) = app.fix_win.as_mut() {
+                        w.hidden = true;
+                    }
+                }
+                ConfirmAction::CloseLyrics => app.lyrics_win = None, // dropping it stops the downloads
             },
         }
     }
@@ -451,6 +468,12 @@ pub struct FixWindow {
     pub status: String,
     autostart: Option<Instant>,
     done_paths: Vec<String>,
+    /// FixOutcome of every file of the last run
+    pub outcomes: Vec<FixOutcome>,
+    /// fake files left alone on purpose
+    pub skipped: usize,
+    /// closed while fixing: finishes in the background
+    pub hidden: bool,
 }
 
 fn choices(name: &str) -> &'static [&'static str] {
@@ -478,6 +501,9 @@ impl FixWindow {
             status: String::new(),
             autostart: None,
             done_paths: vec![],
+            outcomes: vec![],
+            skipped: 0,
+            hidden: false,
         };
         w.replan(cfg);
         if autostart && !w.plans.is_empty() {
@@ -559,6 +585,7 @@ impl FixWindow {
             });
         }
         notes.sort();
+        self.skipped = skipped.len();
         let n = self.plans.len();
         let verb = if replace { "Fix" } else { "Save corrected copies of" };
         self.head =
@@ -590,6 +617,7 @@ impl FixWindow {
 
     pub fn done(&mut self, o: FixOutcome) {
         self.done += 1;
+        self.outcomes.push(o.clone());
         let src = o.plan.source.clone();
         if o.ok {
             let mut txt = if o.plan.replace_original { "Fixed".to_string() } else { "Copy saved".to_string() };
@@ -651,6 +679,7 @@ impl FixWindow {
         app.save_settings();
         self.running = true;
         self.started = true;
+        self.outcomes.clear();
         self.status = "Fixing…".into();
         let paths: Vec<String> = self.plans.iter().map(|p| p.source.clone()).collect();
         for p in paths {
@@ -673,6 +702,9 @@ impl FixWindow {
     }
 
     fn show(&mut self, app: &mut App, ctx: &egui::Context) -> bool {
+        if self.hidden {
+            return true;
+        }
         if self.autostart.is_some_and(|t| t.elapsed().as_millis() >= 400) {
             self.autostart = None;
             self.ask_start(app);
@@ -808,7 +840,10 @@ impl FixWindow {
             if self.running {
                 app.confirm = Some(Confirm {
                     title: "Conversion running".into(),
-                    text: "Conversions are still running. Close anyway? Files being converted are finished in the background.".into(),
+                    text:
+                        "Conversions are still running. Close anyway? The files are finished in the background, and a \
+                           pop-up tells you when they are done."
+                            .into(),
                     action: ConfirmAction::CloseFix,
                 });
                 return true;
@@ -817,5 +852,67 @@ impl FixWindow {
         }
         let _ = FIXABLE_VERDICTS;
         true
+    }
+}
+
+// ---------------------------------------------------------- fixing finished ---
+
+/// Pop-up shown when "Fix to real resolution" has finished: how many files
+/// were fixed, how much smaller they are, where the originals went, what the
+/// re-check found, and what failed.  It is not modal and stays when the Fix
+/// window is closed.
+pub struct FixDoneWindow {
+    pub headline: String,
+    pub lines: Vec<String>,
+    failed: bool,
+    outputs: Vec<String>,
+}
+
+impl FixDoneWindow {
+    pub fn new(outcomes: &[FixOutcome], skipped: usize) -> FixDoneWindow {
+        let label = |v: Verdict| {
+            let name = verdict_style(v).0;
+            let mut c = name.chars();
+            match (c.next(), c.next()) {
+                (Some(a), Some(b)) if b.is_lowercase() => format!("{}{}", a.to_lowercase(), &name[a.len_utf8()..]),
+                _ => name.to_string(),
+            }
+        };
+        let (headline, lines) = done_summary(outcomes, skipped, &label);
+        FixDoneWindow {
+            headline,
+            lines,
+            failed: outcomes.iter().any(|o| !o.ok),
+            outputs: outcomes.iter().filter(|o| o.ok).filter_map(|o| o.output.clone()).collect(),
+        }
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context) -> bool {
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new("Fixing finished")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::new(0.0, -60.0))
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                let color = if self.failed || self.outputs.is_empty() { hex(0xa3122a) } else { hex(0x2e7d32) };
+                ui.label(RichText::new(&self.headline).strong().size(16.0).color(color));
+                for (i, line) in self.lines.iter().enumerate() {
+                    ui.add_space(if i == 0 { 8.0 } else { 4.0 });
+                    ui.add(egui::Label::new(line).wrap());
+                }
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                    if ui.add_enabled(!self.outputs.is_empty(), egui::Button::new("Show in folder")).clicked() {
+                        reveal_in_file_manager(&self.outputs[0]);
+                    }
+                });
+            });
+        open && !close
     }
 }

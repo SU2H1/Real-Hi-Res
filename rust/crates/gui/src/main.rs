@@ -5,6 +5,7 @@
 
 mod app;
 mod dialogs;
+mod lyrics;
 mod plots;
 mod style;
 mod work;

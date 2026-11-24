@@ -14,7 +14,7 @@ use egui::{
 use egui_extras::{Column, TableBuilder};
 use realhires::analysis::imap_get;
 use realhires::eta::ScanEta;
-use realhires::fix::{plan_fixes, FIXABLE_VERDICTS};
+use realhires::fix::{fix_advice, fix_outlook, plan_fixes, FIXABLE_VERDICTS};
 use realhires::library::{group_results, sort_groups, Group, GroupMode};
 use realhires::paths::{abspath, file_name, parent};
 use realhires::pyfmt::{f, fs, g};
@@ -22,7 +22,8 @@ use realhires::settings::{self, Settings};
 use realhires::store::{open_store, settings_key, ResultStore};
 use realhires::verdict::{saved_note, FileResult, Verdict, VERDICT_ORDER};
 
-use crate::dialogs::{Confirm, ConfirmAction, FixWindow, SettingsWindow, SummaryWindow};
+use crate::dialogs::{Confirm, ConfirmAction, FixDoneWindow, FixWindow, SettingsWindow, SummaryWindow};
+use crate::lyrics::{lyrics_job, LyricsWindow};
 use crate::plots::{self, SpectroTexture, State};
 use crate::style::*;
 use crate::work::{self, GraphWorker, LookupRequest, Msg, PlotCache, Post, ScanJob};
@@ -58,17 +59,27 @@ pub enum Col {
     Claimed,
     Estimated,
     Bandwidth,
+    Fix,
     Name,
     Folder,
     Track,
 }
 
-const COLUMNS: [(Col, &str); 7] = [
+/// The dashboard's tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PlotTab {
+    Spectrogram,
+    Spectrum,
+    Lyrics,
+}
+
+const COLUMNS: [(Col, &str); 8] = [
     (Col::Verdict, "Verdict"),
     (Col::Why, "Why"),
     (Col::Claimed, "Claimed"),
     (Col::Estimated, "Real (est.)"),
     (Col::Bandwidth, "Bandwidth"),
+    (Col::Fix, "After fix"),
     (Col::Name, "File"),
     (Col::Folder, "Folder"),
 ];
@@ -146,7 +157,9 @@ pub struct App {
     find_index: Option<usize>,
     find_focus: bool,
     // dashboard
-    tab_spectrum: bool,
+    pub tab: PlotTab,
+    /// the Lyrics tab's text for a path, read again when lyrics are saved
+    lyrics_shown: Option<(Option<String>, egui::text::LayoutJob)>,
     spectro: SpectroTexture,
     shown_plot: Option<(String, Option<realhires::analysis::Plot>)>,
     // windows
@@ -154,6 +167,9 @@ pub struct App {
     pub summary: Option<SummaryWindow>,
     pub settings_win: Option<SettingsWindow>,
     pub fix_win: Option<FixWindow>,
+    pub fix_done: Option<FixDoneWindow>,
+    /// one at a time: LRCLIB wants sequential requests
+    pub lyrics_win: Option<LyricsWindow>,
     pub confirm: Option<Confirm>,
     pub info: Option<(String, String)>,
     about: bool,
@@ -226,13 +242,16 @@ impl App {
             find_matches: vec![],
             find_index: None,
             find_focus: false,
-            tab_spectrum: false,
+            tab: PlotTab::Spectrogram,
+            lyrics_shown: None,
             spectro: SpectroTexture::default(),
             shown_plot: None,
             status: "Add a folder or files, then press Scan.".into(),
             summary: None,
             settings_win: None,
             fix_win: None,
+            fix_done: None,
+            lyrics_win: None,
             confirm: None,
             info: None,
             about: false,
@@ -714,8 +733,31 @@ impl App {
                     if let Some(w) = self.fix_win.as_mut() {
                         w.finished();
                         self.status = format!("Fix: {}", w.status);
+                        // a pop-up says it is done; it stays when the Fix window is closed
+                        self.fix_done = Some(FixDoneWindow::new(&w.outcomes, w.skipped));
+                        if w.hidden {
+                            self.fix_win = None;
+                        }
                     }
                     self.rows_dirty = true;
+                }
+                Msg::LyricsStart { run, path } => {
+                    if let Some(w) = self.lyrics_win.as_mut().filter(|w| w.run == run) {
+                        w.started(&path);
+                    }
+                }
+                Msg::LyricsDone { run, outcome } => {
+                    if outcome.saved() {
+                        self.lyrics_saved(&outcome.path);
+                    }
+                    if let Some(w) = self.lyrics_win.as_mut().filter(|w| w.run == run) {
+                        w.done(*outcome);
+                    }
+                }
+                Msg::LyricsFinished { run, stopped } => {
+                    if let Some(w) = self.lyrics_win.as_mut().filter(|w| w.run == run) {
+                        w.finished(stopped);
+                    }
                 }
                 _ => {}
             }
@@ -782,6 +824,7 @@ impl App {
         match self.sort_col {
             Col::Verdict => (index_of(r.verdict) as i64, 0, p, String::new()),
             Col::Bandwidth => ((r.bandwidth_hz.unwrap_or(0.0) * 1000.0) as i64, 0, p, String::new()),
+            Col::Fix => (0, 0, fix_outlook(r, &self.cfg).to_lowercase(), p),
             Col::Claimed => (r.sample_rate as i64, r.claimed_bits.unwrap_or(0) as i64, p, String::new()),
             Col::Estimated => (r.true_rate.unwrap_or(0) as i64, r.effective_bits.unwrap_or(0) as i64, p, String::new()),
             Col::Name => (0, 0, file_name(&r.path).to_lowercase(), String::new()),
@@ -856,6 +899,46 @@ impl App {
 
     fn selected_results(&self) -> Vec<FileResult> {
         self.rows.iter().filter(|p| self.selection.contains(*p)).filter_map(|p| self.results.get(p).cloned()).collect()
+    }
+
+    /// The lyrics next to `path` were saved: show them if that song is selected.
+    pub fn lyrics_saved(&mut self, path: &str) {
+        if self.lyrics_shown.as_ref().is_some_and(|(p, _)| p.as_deref() == Some(path)) {
+            self.lyrics_shown = None;
+        }
+    }
+
+    pub fn download_lyrics(&mut self, paths: Vec<String>) {
+        if self.lyrics_win.as_ref().is_some_and(|w| w.running) {
+            self.status = "Lyrics are being downloaded already; wait for them or press Stop first.".into();
+            return;
+        }
+        self.lyrics_win = Some(LyricsWindow::new(self, paths));
+    }
+
+    /// Ctrl/Cmd+L, the Get lyrics… button and the menus: the selected songs.
+    pub fn lyrics_selected(&mut self) {
+        let paths: Vec<String> = if self.view == View::Files {
+            self.rows.iter().filter(|p| self.selection.contains(*p)).cloned().collect()
+        } else {
+            vec![]
+        };
+        if paths.is_empty() {
+            self.status = "Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), or use Edit → \
+                           Download synced lyrics for all songs."
+                .into();
+            return;
+        }
+        self.download_lyrics(paths);
+    }
+
+    pub fn lyrics_all(&mut self) {
+        let files = self.all_files();
+        if files.is_empty() {
+            self.info = Some(("Download synced lyrics".into(), "Add a folder or files first.".into()));
+            return;
+        }
+        self.download_lyrics(files);
     }
 
     pub fn fix_selected(&mut self) {
@@ -1180,7 +1263,11 @@ impl App {
             && self.confirm.is_none()
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
-            if self.fix_win.as_ref().is_some_and(|w| !w.is_running()) {
+            if self.fix_done.is_some() {
+                self.fix_done = None;
+            } else if self.lyrics_win.as_ref().is_some_and(|w| !w.running) {
+                self.lyrics_win = None;
+            } else if self.fix_win.as_ref().is_some_and(|w| !w.is_running() && !w.hidden) {
                 self.fix_win = None;
             } else if self.settings_win.is_some() {
                 self.settings_win = None;
@@ -1195,10 +1282,17 @@ impl App {
             }
         }
         let typing = ctx.egui_wants_keyboard_input();
-        let dialogs =
-            self.settings_win.is_some() || self.fix_win.is_some() || self.summary.is_some() || self.confirm.is_some();
+        let dialogs = self.settings_win.is_some()
+            || self.fix_win.as_ref().is_some_and(|w| !w.hidden)
+            || self.summary.is_some()
+            || self.confirm.is_some()
+            || self.lyrics_win.is_some()
+            || self.fix_done.is_some();
         if typing || dialogs {
             return;
+        }
+        if pressed(sc(cmd, Key::L)) {
+            self.lyrics_selected();
         }
         if pressed(sc(cmd, Key::A)) {
             self.select_all();
@@ -1392,6 +1486,20 @@ impl App {
                 }
                 if ui.button("Fix all fake files to real resolution…").clicked() {
                     self.fix_all();
+                }
+                ui.separator();
+                if ui
+                    .add(
+                        egui::Button::new("Download synced lyrics for selected songs…").shortcut_text(
+                            ui.ctx().format_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::L)),
+                        ),
+                    )
+                    .clicked()
+                {
+                    self.lyrics_selected();
+                }
+                if ui.button("Download synced lyrics for all songs…").clicked() {
+                    self.lyrics_all();
                 }
                 ui.separator();
                 if ui.button("Re-scan selected files").clicked() {
@@ -1671,7 +1779,7 @@ impl App {
         });
     }
 
-    fn row_texts(&self, path: &str, running: &HashSet<String>) -> ([String; 7], Color32) {
+    fn row_texts(&self, path: &str, running: &HashSet<String>) -> ([String; 8], Color32) {
         let name = file_name(path);
         let folder = parent(path);
         match self.results.get(path) {
@@ -1681,16 +1789,35 @@ impl App {
                     Some(b) if b != 0.0 => format!("{} kHz", f(b / 1000.0, 1)),
                     _ => "-".into(),
                 };
-                ([label.into(), r.summary.clone(), r.claimed(), r.estimated(), bw, name, folder], color)
+                let fix = fix_outlook(r, &self.cfg);
+                ([label.into(), r.summary.clone(), r.claimed(), r.estimated(), bw, fix, name, folder], color)
             }
             None if running.contains(path) => (
-                [RUNNING_LABEL.into(), "Analysing…".into(), String::new(), String::new(), String::new(), name, folder],
+                [
+                    RUNNING_LABEL.into(),
+                    "Analysing…".into(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    name,
+                    folder,
+                ],
                 hex(RUNNING_COLOR),
             ),
             None => {
                 let why = if self.scanning { "Waiting in the scan queue…" } else { "Not scanned yet: press Scan" };
                 (
-                    [PENDING_LABEL.into(), why.into(), String::new(), String::new(), String::new(), name, folder],
+                    [
+                        PENDING_LABEL.into(),
+                        why.into(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        name,
+                        folder,
+                    ],
                     hex(PENDING_COLOR),
                 )
             }
@@ -1716,6 +1843,7 @@ impl App {
             .column(Column::initial(70.0).clip(true))
             .column(Column::initial(85.0).clip(true))
             .column(Column::initial(82.0).clip(true))
+            .column(Column::initial(262.0).clip(true))
             .column(Column::initial(230.0).clip(true))
             .column(Column::remainder().clip(true))
             .min_scrolled_height(0.0);
@@ -1788,6 +1916,7 @@ impl App {
                         ("Open file", "open"),
                         ("Copy path", "copy"),
                         ("Fix to real resolution…", "fix"),
+                        ("Download synced lyrics…", "lyrics"),
                         ("Re-scan", "rescan"),
                     ] {
                         if act == "fix" {
@@ -1833,6 +1962,7 @@ impl App {
                 self.copy_paths(&ctx);
             }
             Some("fix") => self.fix_selected(),
+            Some("lyrics") => self.lyrics_selected(),
             Some("rescan") => self.rescan_selected(),
             _ => {}
         }
@@ -2019,6 +2149,9 @@ impl App {
                 if ui.add_enabled(fixable && !self.scanning, egui::Button::new("Fix to real resolution…")).clicked() {
                     self.fix_selected();
                 }
+                if ui.add_enabled(has, egui::Button::new("Get lyrics…")).clicked() {
+                    self.lyrics_selected();
+                }
             });
             ui.add_space(4.0);
             ui.label(RichText::new("Details").color(hex(0x666666)));
@@ -2029,13 +2162,28 @@ impl App {
         });
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.add(egui::Button::selectable(!self.tab_spectrum, "Spectrogram")).clicked() {
-                    self.tab_spectrum = false;
-                }
-                if ui.add(egui::Button::selectable(self.tab_spectrum, "Average spectrum")).clicked() {
-                    self.tab_spectrum = true;
+                for (t, label) in [
+                    (PlotTab::Spectrogram, "Spectrogram"),
+                    (PlotTab::Spectrum, "Average spectrum"),
+                    (PlotTab::Lyrics, "Lyrics"),
+                ] {
+                    if ui.add(egui::Button::selectable(self.tab == t, label)).clicked() {
+                        self.tab = t;
+                    }
                 }
             });
+            if self.tab == PlotTab::Lyrics {
+                // shown for every selected song, scanned or not
+                let normal = ui.visuals().text_color();
+                if self.lyrics_shown.as_ref().is_none_or(|(p, _)| *p != cur) {
+                    self.lyrics_shown = Some((cur.clone(), lyrics_job(cur.as_deref(), normal)));
+                }
+                let job = self.lyrics_shown.as_ref().map(|(_, j)| j.clone()).unwrap_or_default();
+                egui::ScrollArea::vertical().id_salt("lyrics").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.add(egui::Label::new(job).wrap());
+                });
+                return;
+            }
             let plot = self.plot_for(r.as_ref());
             let state = match (&r, &plot) {
                 (None, _) if cur.is_some() => State::Pending,
@@ -2046,7 +2194,7 @@ impl App {
                 }
                 _ => State::Missing,
             };
-            if self.tab_spectrum {
+            if self.tab == PlotTab::Spectrum {
                 plots::spectrum(ui, r.as_ref(), state);
             } else {
                 plots::spectrogram(
@@ -2095,7 +2243,7 @@ impl App {
     fn facts(&self, r: Option<&FileResult>) -> Vec<(&'static str, String)> {
         let dash = "–".to_string();
         let Some(r) = r else {
-            return ["Claimed", "Real (estimated)", "Bandwidth", "Bits used", "Format", "Duration"]
+            return ["Claimed", "Real (estimated)", "Bandwidth", "Bits used", "Format", "Duration", "After fix"]
                 .iter()
                 .map(|k| (*k, dash.clone()))
                 .collect();
@@ -2124,6 +2272,7 @@ impl App {
             ),
             ("Format", if r.codec.is_empty() { dash.clone() } else { format!("{}, {} ch", r.codec, r.channels) }),
             ("Duration", if r.duration.is_some_and(|d| d != 0.0) { fmt_duration(r.duration) } else { "?".into() }),
+            ("After fix", Some(fix_outlook(r, &self.cfg)).filter(|s| !s.is_empty()).unwrap_or(dash.clone())),
         ]
     }
 
@@ -2132,6 +2281,10 @@ impl App {
             return path.map(|p| format!("{p}\n")).unwrap_or_default();
         };
         let mut parts: Vec<String> = r.reasons.iter().chain(&r.notes).map(|x| format!("• {x}\n")).collect();
+        // what Fix does with it, and whether it stays fake afterwards
+        if let Some(advice) = fix_advice(r, &self.cfg) {
+            parts.push(format!("• {advice}\n"));
+        }
         if r.saved.is_some() {
             parts.insert(0, format!("• {}\n", saved_note(r)));
         }
@@ -2256,7 +2409,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn ffmpeg(args: &[&str]) {
-        let st = Command::new(realhires::probe::tool("ffmpeg")).args(["-v", "error", "-y"]).args(args).status().expect("ffmpeg");
+        let st = Command::new(realhires::probe::tool("ffmpeg"))
+            .args(["-v", "error", "-y"])
+            .args(args)
+            .status()
+            .expect("ffmpeg");
         assert!(st.success(), "{args:?}");
     }
 
@@ -2350,17 +2507,118 @@ mod tests {
         assert!(again.status.contains("3 of 3 files were checked before"), "{}", again.status);
         assert!(!again.scanning);
 
-        // Fix the fake file in place.
+        // The list, the facts and the details say what Fix does with the fake file.
+        let fake_path = app.results.values().find(|r| r.verdict == Verdict::Fake).unwrap().path.clone();
+        let (texts, _) = app.row_texts(&fake_path, &HashSet::new());
+        assert_eq!(texts[5], "Fixable to 16/44.1");
+        let facts = app.facts(app.results.get(&fake_path));
+        assert!(facts.contains(&("After fix", "Fixable to 16/44.1".to_string())), "{facts:?}");
+        let details = app.details(app.results.get(&fake_path), Some(&fake_path));
+        assert!(
+            details.contains("• Fix to real resolution converts it to 16/44.1, the resolution it really has"),
+            "{details}"
+        );
+
+        // Fix the fake file in place, with the Fix window closed (hidden) while it works:
+        // the list is still updated and the pop-up still appears.
         let fake: Vec<FileResult> = app.results.values().filter(|r| r.verdict == Verdict::Fake).cloned().collect();
         app.open_fix(fake, false);
         let mut w = app.fix_win.take().unwrap();
         w.start(&mut app);
+        w.hidden = true;
         app.fix_win = Some(w);
         run_until(&ctx, &mut app, "the fix", |a| a.status.starts_with("Fix: "));
         assert_eq!(app.status, "Fix: 1 fixed.");
         assert!(music.join("Real-Hi-Res backups").join("03 fake.wav").exists());
         let fixed = app.results.values().find(|r| r.path.ends_with("03 fake.wav")).unwrap();
         assert_eq!((fixed.verdict, fixed.claimed()), (Verdict::NotHires, "16/44.1".to_string()));
+        assert!(app.fix_win.is_none());
+        let done = app.fix_done.as_ref().expect("the pop-up after fixing");
+        assert_eq!(done.headline, "Fixed 1 file to their real resolution");
+        assert!(done.lines.iter().any(|l| l.starts_with("They now take ")), "{:?}", done.lines);
+        assert!(done.lines.iter().any(|l| l == "Re-check of the fixed files: 1 CD quality."), "{:?}", done.lines);
+        frame(&ctx, &mut app);
+        assert!(app.fix_done.is_some());
+
+        // Synced lyrics from a fake LRCLIB on this computer, then the Lyrics tab shows them.
+        let server = fake_lrclib();
+        std::env::set_var(realhires::lyrics::INTERVAL_ENV, "0");
+        let song_dir = tmp.join("Lyrics");
+        std::fs::create_dir_all(&song_dir).unwrap();
+        let song = song_dir.join("Song.flac").to_string_lossy().into_owned();
+        ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-metadata",
+            "title=Song",
+            "-metadata",
+            "artist=Band",
+            "-c:a",
+            "flac",
+            &song,
+        ]);
+        app.cfg.lyrics_server = server;
+        app.fix_done = None;
+        app.download_lyrics(vec![song.clone()]);
+        let w = app.lyrics_win.as_ref().unwrap();
+        assert_eq!(w.head, "Download synced lyrics for 1 song");
+        assert!(w.note.starts_with("LRCLIB asks programs to send one request at a time, so this takes"), "{}", w.note);
+        let mut w = app.lyrics_win.take().unwrap();
+        w.start(&mut app);
+        app.lyrics_win = Some(w);
+        run_until(&ctx, &mut app, "the lyrics", |a| a.lyrics_win.as_ref().is_some_and(|w| !w.running));
+        let w = app.lyrics_win.as_ref().unwrap();
+        assert_eq!(w.status, "1 with synced lyrics.");
+        assert_eq!(w.head, "Lyrics saved for 1 of 1 song");
+        let lrc = song_dir.join("Song.lrc");
+        assert_eq!(std::fs::read_to_string(&lrc).unwrap(), "[00:01.00] la la\n[00:02.50] second line\n");
+        // a second window skips the song, which now has an .lrc
+        app.lyrics_win = None;
+        app.download_lyrics(vec![song.clone()]);
+        assert_eq!(app.lyrics_win.as_ref().unwrap().head, "Nothing to look up");
+        app.lyrics_win = None;
+        app.current = Some(song.clone());
+        app.tab = PlotTab::Lyrics;
+        frame(&ctx, &mut app);
+        let text = app.lyrics_shown.as_ref().map(|(_, j)| j.text.clone()).unwrap_or_default();
+        assert!(text.starts_with("Synced lyrics · Song.lrc") && text.contains("[00:01.00]  la la"), "{text}");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// One song on a fake LRCLIB: /api/get answers with its synced lyrics.
+    fn fake_lrclib() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut req = vec![];
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&req).lines().next().unwrap_or("").to_string();
+                let (status, body) = if line.starts_with("GET /api/get?") && line.contains("track_name=Song") {
+                    (
+                        "200 OK",
+                        r#"{"id": 1, "trackName": "Song", "artistName": "Band", "albumName": "", "duration": 4.0, "instrumental": false, "plainLyrics": "la la\nsecond line", "syncedLyrics": "[00:01.00] la la\n[00:02.50] second line"}"#,
+                    )
+                } else {
+                    ("404 Not Found", r#"{"message": "Failed to find specified track"}"#)
+                };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
     }
 }

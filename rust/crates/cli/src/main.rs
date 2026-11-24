@@ -1,16 +1,20 @@
 //! Command-line interface: `realhires PATH... [options]` (the Rust counterpart
 //! of `realhires/cli.py`, with the same options, output and saved results).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use clap::{ArgAction, Parser, ValueEnum};
 use realhires::eta::{file_sizes, ScanEta};
 use realhires::fix::{plan_fixes, prepare_gapless, run_fix, run_parallel, skip_summary, Backup};
-use realhires::paths::{abspath, collect};
+use realhires::lyrics::{
+    check_server, lyrics_summary, run_lyrics, skip_reason, LrclibClient, LyricsOutcome, Status, EXISTING_CLI,
+};
+use realhires::paths::{abspath, collect, file_name};
 use realhires::probe::require_tools;
 use realhires::report::{
     header, row, safe_stem, short_hash, summary, summary_bars, use_color, write_csv, write_json, write_svg,
@@ -116,9 +120,24 @@ struct Args {
     fix_dir: Option<String>,
     #[arg(long, hide = true)]
     fix_replace: bool,
-    /// with --fix: only show what would be changed
+    /// with --fix or --lyrics: only show what would be changed (lyrics are still looked up, but nothing is saved)
     #[arg(long)]
     dry_run: bool,
+    /// after scanning, download synced lyrics from LRCLIB (lrclib.net) for every scanned song and save them as
+    /// <name>.lrc next to it (plain lyrics as <name>.txt), as LRCGET does; songs are looked up by the title, artist,
+    /// album and length in their tags
+    #[arg(long)]
+    lyrics: bool,
+    /// download lyrics as --lyrics does, without analysing the files (only their tags are read)
+    #[arg(long)]
+    lyrics_only: bool,
+    /// with --lyrics: skip songs that have an .lrc (skip-synced, the default), skip songs that have an .lrc or .txt
+    /// (skip-any), or download again and replace (replace)
+    #[arg(long, value_enum)]
+    lyrics_existing: Option<ExistingArg>,
+    /// check that the LRCLIB server can be reached (one request) and exit
+    #[arg(long)]
+    check_lyrics_server: bool,
     /// analyse every file again, even files with a saved result from an earlier scan (the saved results are
     /// updated)
     #[arg(long)]
@@ -148,6 +167,24 @@ struct Args {
     /// disable coloured output
     #[arg(long)]
     no_color: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ExistingArg {
+    SkipSynced,
+    SkipAny,
+    Replace,
+}
+
+impl ExistingArg {
+    fn choice(self) -> &'static str {
+        let key = match self {
+            ExistingArg::SkipSynced => "skip-synced",
+            ExistingArg::SkipAny => "skip-any",
+            ExistingArg::Replace => "replace",
+        };
+        EXISTING_CLI.iter().find(|(k, _)| *k == key).unwrap().1
+    }
 }
 
 fn after_help() -> String {
@@ -223,6 +260,19 @@ fn run() -> i32 {
             }
         };
     }
+    if args.check_lyrics_server {
+        let mut client = LrclibClient::new(&cfg.lyrics_server);
+        return match check_server(&mut client) {
+            Ok(text) => {
+                println!("{text}");
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        };
+    }
     if args.paths.is_empty() {
         eprintln!("usage: realhires [OPTIONS] [PATHS]...\nrealhires: error: no files or folders given");
         return 2;
@@ -237,6 +287,12 @@ fn run() -> i32 {
     if files.is_empty() {
         eprintln!("No audio files found.");
         return 1;
+    }
+    if let Some(e) = args.lyrics_existing {
+        cfg.lyrics_existing = e.choice().into();
+    }
+    if args.lyrics_only {
+        return run_lyrics_cli(&files, &cfg, args.dry_run, args.verbose, &HashMap::new());
     }
 
     let stdout_tty = std::io::stdout().is_terminal();
@@ -331,7 +387,7 @@ fn run() -> i32 {
             }
         }
         if wanted.as_ref().is_none_or(|w| w.contains(&r.verdict)) {
-            println!("{}", row(&r, color, base.as_deref(), args.verbose));
+            println!("{}", row(&r, color, base.as_deref(), args.verbose, &cfg));
             let _ = std::io::stdout().flush();
         }
         results.push(r);
@@ -419,10 +475,83 @@ fn run() -> i32 {
     if let Some(p) = &args.spectrogram {
         println!("Spectrograms written to {p}/");
     }
-    if args.fix {
-        return run_fixes(&results, &cfg, jobs, args.dry_run, store.as_mut());
+    let mut rc = if args.fix { run_fixes(&results, &cfg, jobs, args.dry_run, store.as_mut()) } else { 0 };
+    if args.lyrics {
+        let paths: Vec<String> = results.iter().map(|r| r.path.clone()).collect();
+        let by_path: HashMap<String, FileResult> = results.iter().map(|r| (r.path.clone(), r.clone())).collect();
+        rc = rc.max(run_lyrics_cli(&paths, &cfg, args.dry_run, args.verbose, &by_path));
     }
-    0
+    rc
+}
+
+/// Download synced lyrics for `paths` (--lyrics, --lyrics-only), one song at a time.
+fn run_lyrics_cli(
+    paths: &[String],
+    cfg: &Settings,
+    dry_run: bool,
+    verbose: bool,
+    results: &HashMap<String, FileResult>,
+) -> i32 {
+    // Ctrl+C stops after the current song, as in the Python version; a second one quits at once
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let _ = ctrlc::set_handler(move || {
+        if flag.swap(true, Ordering::SeqCst) {
+            std::process::exit(130);
+        }
+    });
+    let mut client = LrclibClient::new(&cfg.lyrics_server).with_stop(stop.clone());
+    let todo: Vec<&String> = paths.iter().filter(|p| skip_reason(p, cfg).is_empty()).collect();
+    println!();
+    let skipped = paths.len() - todo.len();
+    let note = if skipped > 0 {
+        let (has, is) = if skipped == 1 { ("has", "is") } else { ("have", "are") };
+        format!("; {skipped} already {has} lyrics and {is} skipped")
+    } else {
+        String::new()
+    };
+    println!(
+        "Lyrics: looking up {} song(s) on LRCLIB ({}), one at a time{note}{}",
+        todo.len(),
+        client.server,
+        if dry_run { " (dry run: nothing is saved)." } else { "." }
+    );
+    let _ = std::io::stdout().flush();
+    let show_progress = std::io::stderr().is_terminal();
+    let mut eta = show_progress.then(|| ScanEta::new(todo.iter().map(|p| (p.to_string(), 1u64)).collect()));
+    let mut outcomes: Vec<LyricsOutcome> = vec![];
+    run_lyrics(paths, cfg, results, dry_run, &mut client, |o| {
+        if show_progress {
+            eprint!("\r\x1b[K");
+        }
+        if let Some(e) = eta.as_mut() {
+            e.add(&o.path);
+        }
+        if o.status != Status::Skipped || verbose {
+            let name = o.track.as_ref().map(|t| t.label()).unwrap_or_else(|| file_name(&o.path));
+            println!("  {:<20} {name}\n  {:<20} {}", o.status.label(), "", o.message);
+            let _ = std::io::stdout().flush();
+        }
+        outcomes.push(o);
+        if show_progress && outcomes.len() < paths.len() {
+            let left = eta.as_ref().map(ScanEta::text).unwrap_or_default();
+            eprint!("[{}/{}] looking up lyrics… {left}", outcomes.len(), paths.len());
+            let _ = std::io::stderr().flush();
+        }
+    });
+    if show_progress {
+        eprint!("\r\x1b[K");
+    }
+    if stop.load(Ordering::SeqCst) {
+        println!("Lyrics: stopped after {} of {} song(s): {}", outcomes.len(), paths.len(), lyrics_summary(&outcomes));
+        return 130;
+    }
+    println!("Lyrics: {}", lyrics_summary(&outcomes));
+    if outcomes.iter().any(|o| o.status == Status::Failed) {
+        1
+    } else {
+        0
+    }
 }
 
 fn run_fixes(

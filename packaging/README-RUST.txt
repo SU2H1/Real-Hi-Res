@@ -39,8 +39,13 @@ many songs are fake; click a card to list its songs.  Ctrl/Cmd+F finds text
 corrects the selected fake files in place so their properties show the real
 resolution, keeping name, tags and cover art; originals go to a
 "Real-Hi-Res backups" folder.  Ctrl/Cmd+A selects every listed file.
+The "After fix" column says what Fix would do with each fake file, and the
+details say whether it stays marked fake afterwards; a pop-up sums up each
+fix.  "Get lyrics..." (Ctrl/Cmd+L) downloads synced lyrics for the selected
+songs from LRCLIB (lrclib.net), as LRCGET does, and saves them as .lrc files
+next to the songs; the dashboard's Lyrics tab shows them.
 "Settings..." holds the detection thresholds, scanning, saved results,
-display and fixing options.
+display, fixing and lyrics options.
 
 Command line
 ------------
@@ -50,7 +55,7 @@ Command line
 
   The options are those of the Python version's realhires-cli: run with
   --help (--only problems, --csv, --json, --spectrogram DIR, --fix,
-  --fix-dir DIR, --set NAME=VALUE, -v ...).
+  --fix-dir DIR, --lyrics, --lyrics-only, --set NAME=VALUE, -v ...).
 
 First launch on macOS
 ---------------------
