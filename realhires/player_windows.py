@@ -7,7 +7,7 @@ import copy
 import math
 import tkinter as tk
 from tkinter import ttk
-from typing import TYPE_CHECKING, Dict, List, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from . import eq
 from .player import fmt_db
@@ -25,6 +25,79 @@ def _window(app: "PlayerApp", title: str) -> tk.Toplevel:
     app.theme.reg(w, bg="bg")
     w.bind("<Escape>", lambda e: w.event_generate("<<Close>>"))
     return w
+
+
+class NameDialog:
+    """Asks for a name (playlist, preset, theme); `check(name)` returns the cleaned
+    name or raises an error whose message is shown under the field."""
+
+    def __init__(self, app: "PlayerApp", title: str, prompt: str, initial: str = "",
+                 check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None):
+        self.app, t = app, app.theme
+        self.check = check
+        self.result: Optional[str] = None
+        self.win = _window(app, title)
+        if parent is not None:
+            self.win.transient(parent)
+        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.win.bind("<<Close>>", lambda e: self.cancel())
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=22, pady=18)
+        label(box, t, prompt, "body_b").pack(anchor="w")
+        self.var = tk.StringVar(value=initial)
+        self.entry = ttk.Entry(box, textvariable=self.var, width=40, style="P.TEntry", font=t.f("body"))
+        self.entry.pack(anchor="w", fill="x", pady=(6, 0))
+        self.error = label(box, t, "", "small", fg="error", wraplength=360, justify="left")
+        self.error.pack(anchor="w", pady=(4, 0))
+        btns = frame(box, t)
+        btns.pack(fill="x", pady=(12, 0))
+        PillButton(btns, t, ok, command=self.submit).pack(side="right")
+        PillButton(btns, t, "Cancel", kind="plain", command=self.cancel).pack(side="right", padx=(0, 8))
+        self.entry.bind("<Return>", lambda e: self.submit())
+        self.entry.bind("<KP_Enter>", lambda e: self.submit())
+        self.entry.select_range(0, "end")
+        self.entry.focus_set()
+        app.name_dialog = self
+
+    def submit(self) -> None:
+        name = self.var.get()
+        try:
+            name = self.check(name) if self.check is not None else " ".join(name.split())
+        except ValueError as exc:  # playerstate.InvalidName, themes.ThemeError
+            self.error.configure(text=str(exc))
+            return
+        if not name:
+            self.error.configure(text="Give it a name.")
+            return
+        self.result = name
+        self.close()
+
+    def cancel(self) -> None:
+        self.result = None
+        self.close()
+
+    def close(self) -> None:
+        if self.app.name_dialog is self:
+            self.app.name_dialog = None
+        try:
+            self.win.grab_release()
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+    def run(self) -> Optional[str]:
+        try:
+            self.win.grab_set()
+        except tk.TclError:
+            pass
+        self.win.wait_window()
+        return self.result
+
+
+def ask_name(app: "PlayerApp", title: str, prompt: str, initial: str = "",
+             check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None) -> Optional[str]:
+    """A name from the user, or None when they cancel (waits for the dialog)."""
+    return NameDialog(app, title, prompt, initial, check, ok, parent).run()
 
 
 class PlaybackInfoWindow:
@@ -122,6 +195,18 @@ class EqualizerWindow:
                         command=self._toggles).pack(side="left", padx=(18, 0))
         self.pre_note = label(top, t, "", "small", fg="text2")
         self.pre_note.pack(side="right")
+        presets = frame(box, t)
+        presets.pack(fill="x", pady=(10, 0))
+        label(presets, t, "Preset", "body", fg="text2").pack(side="left", padx=(0, 8))
+        self.v_preset = tk.StringVar(value="")
+        self.preset_btn = PillButton(presets, t, "", kind="plain", arrow=True, command=self._post_presets)
+        self.preset_btn.pack(side="left")
+        for text, cmd in (("Export…", self._export), ("Import…", self._import), ("Delete…", self._delete),
+                          ("Rename…", self._rename), ("Save as preset…", self._save_as)):
+            PillButton(presets, t, text, kind="plain", command=cmd).pack(side="right", padx=(8, 0))
+        self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
+        self.note.pack(anchor="w", pady=(4, 0))
+        self.preset_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
         t.reg(self.curve, bg="lcd")
         self.curve.pack(fill="x", pady=(10, 10))
@@ -139,8 +224,9 @@ class EqualizerWindow:
         PillButton(bottom, t, "Done", command=self.close).pack(side="right")
         PillButton(bottom, t, "Reset", kind="plain", command=self._reset).pack(side="right", padx=(0, 8))
         t.on_change(self.draw_curve, self.win)
-        self.win.minsize(700, 560)
+        self.win.minsize(700, 600)
         self.draw_curve()
+        self._show_preset()
 
     # ---- graphic --------------------------------------------------------
     def _build_graphic(self) -> None:
@@ -150,12 +236,6 @@ class EqualizerWindow:
         self.v_gon = tk.BooleanVar(value=g["enabled"])
         ttk.Checkbutton(head, text="Use the graphic equalizer", variable=self.v_gon, style="P.TCheckbutton",
                         command=self._toggles).pack(side="left")
-        self.v_preset = tk.StringVar(value=g["preset"])
-        cb = ttk.Combobox(head, textvariable=self.v_preset, values=eq.PRESET_NAMES + [eq.CUSTOM], state="readonly",
-                          width=16, style="P.TCombobox", font=t.f("body"))
-        cb.pack(side="right")
-        cb.bind("<<ComboboxSelected>>", lambda e: self._preset(self.v_preset.get()))
-        label(head, t, "Preset", "body", fg="text2").pack(side="right", padx=(0, 8))
         bands = frame(self.graphic, t)
         bands.pack(fill="both", expand=True, padx=8, pady=(4, 8))
         self.g_sliders: List[Slider] = []
@@ -193,14 +273,12 @@ class EqualizerWindow:
             g["gains"][i - 1] = value
             self.g_values[i - 1].configure(text=self._db(value))
             g["preset"] = eq.preset_name(g["gains"])
-            self.v_preset.set(g["preset"])
         self._changed()
 
     def _preset(self, name: str) -> None:
         if name == eq.CUSTOM:
             return
         self.state = eq.apply_preset(self.state, name)
-        self.v_preset.set(name)
         for s, v, lab in zip(self.g_sliders, self.state["graphic"]["gains"], self.g_values):
             s.set(v)
             lab.configure(text=self._db(v))
@@ -323,7 +401,6 @@ class EqualizerWindow:
         for s, lab in zip(self.g_sliders, self.g_values):
             s.set(0.0)
             lab.configure(text=self._db(0.0))
-        self.v_preset.set(g["preset"])
         self.v_gon.set(g["enabled"])
         self.v_pon.set(self.state["parametric"]["enabled"])
         self.v_clip.set(self.state["prevent_clipping"])
@@ -336,6 +413,174 @@ class EqualizerWindow:
         self.state = eq.normalize(self.state)
         self.app.set_eq(self.state)
         self.draw_curve()
+        self._show_preset()
+
+    # ---- presets ----------------------------------------------------------
+    def preset_label(self) -> str:
+        """The user preset the EQ is, else the built-in preset of the graphic bands, or Custom."""
+        return self.app.state.matching_eq_preset() or eq.preset_name(self.state["graphic"]["gains"])
+
+    def _show_preset(self) -> None:
+        name = self.preset_label()
+        self.v_preset.set(name)
+        self.preset_btn.set(text=name)
+
+    def build_preset_menu(self) -> tk.Menu:
+        """Built-in presets, "My presets", and "Custom" when the gains match none."""
+        m = tk.Menu(self.win, tearoff=False)
+        self.app.theme_menu(m)
+        cur = self.preset_label()
+        for name in eq.PRESET_NAMES:
+            m.add_radiobutton(label=name, value=name, variable=self.v_preset, command=lambda n=name: self._preset(n))
+        mine = self.app.state.eq_presets
+        if mine:
+            m.add_separator()
+            m.add_command(label="My presets", state="disabled")
+            for p in mine:
+                m.add_radiobutton(label=p["name"], value=p["name"], variable=self.v_preset,
+                                  command=lambda n=p["name"]: self.use_preset(n))
+        if cur == eq.CUSTOM:
+            m.add_separator()
+            m.add_radiobutton(label=eq.CUSTOM, value=eq.CUSTOM, variable=self.v_preset, state="disabled")
+        self.v_preset.set(cur)
+        self.preset_menu = m
+        return m
+
+    def _post_presets(self) -> None:
+        b = self.preset_btn
+        self.build_preset_menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def use_preset(self, name: str) -> None:
+        """One of the user's presets: the whole equalizer (graphic and parametric)."""
+        p = self.app.state.eq_preset(name)
+        if p is not None:
+            st = eq.normalize(copy.deepcopy(p["eq"]))
+            st["enabled"] = self.state["enabled"] or st["enabled"]
+            self.load_state(st)
+
+    def load_state(self, st: dict) -> None:
+        """Show (and apply) another equalizer state in every control."""
+        self.state = eq.normalize(st)
+        s, g, p = self.state, self.state["graphic"], self.state["parametric"]
+        self.v_on.set(s["enabled"])
+        self.v_clip.set(s["prevent_clipping"])
+        self.v_gon.set(g["enabled"])
+        self.v_pon.set(p["enabled"])
+        self.g_pre.set(g["preamp"])
+        self.g_pre_val.configure(text=self._db(g["preamp"]))
+        for sl, v, lab in zip(self.g_sliders, g["gains"], self.g_values):
+            sl.set(v)
+            lab.configure(text=self._db(v))
+        self.p_pre.set(p["preamp"])
+        self.p_pre_val.configure(text=f"{self._db(p['preamp'])} dB")
+        self._band_rows()
+        self._changed()
+
+    def save_preset(self, name: str) -> str:
+        """Keep the current equalizer as a preset of the user's (raises InvalidName)."""
+        name = self.app.state.save_eq_preset(name, self.state)
+        self.app.save_state()
+        self._show_preset()
+        self.note.configure(text=f"Saved as “{name}”.", fg=self.t.c("text2"))
+        return name
+
+    def _save_as(self) -> None:
+        from . import playerstate
+
+        name = ask_name(self.app, "Save as preset", "Name of the new preset", "My preset",
+                        check=self.app.state.check_preset_name, ok="Save", parent=self.win)
+        if name:
+            try:
+                self.save_preset(name)
+            except playerstate.InvalidName as exc:
+                self.note.configure(text=str(exc), fg=self.t.c("error"))
+
+    def _mine(self) -> str:
+        name = self.app.state.matching_eq_preset()
+        if not name:
+            self.note.configure(text="Choose one of your own presets first (the menu lists them under My presets).",
+                                fg=self.t.c("error"))
+        return name
+
+    def rename_preset(self, old: str, new: str) -> str:
+        new = self.app.state.rename_eq_preset(old, new)
+        self.app.save_state()
+        self._show_preset()
+        return new
+
+    def _rename(self) -> None:
+        old = self._mine()
+        if old:
+            new = ask_name(self.app, "Rename preset", "New name of the preset", old, parent=self.win,
+                           check=lambda n: self.app.state.check_preset_name(n, renaming=old), ok="Rename")
+            if new:
+                self.rename_preset(old, new)
+
+    def _delete(self) -> None:
+        from tkinter import messagebox
+
+        name = self._mine()
+        if name and messagebox.askyesno("Delete preset", f"Delete your preset “{name}”?", parent=self.win):
+            self.app.state.delete_eq_preset(name)
+            self.app.save_state()
+            self._show_preset()
+            self.note.configure(text=f"Deleted “{name}”.", fg=self.t.c("text2"))
+
+    def import_file(self, path: str) -> str:
+        """Read a .json or Equalizer APO / AutoEQ .txt preset, apply it and save it under
+        its name (a taken name gets " 2"); returns the name.  Raises EqFileError / OSError."""
+        import os
+
+        from . import playerstate
+
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            text = fh.read()
+        name, st, notes = eq.import_eq(text, os.path.splitext(os.path.basename(path))[0])
+        base, n = name, 2
+        while True:
+            try:
+                name = self.app.state.check_preset_name(name)
+                break
+            except playerstate.InvalidName:
+                name = f"{base} {n}"
+                n += 1
+        self.load_state(st)
+        self.save_preset(name)
+        self.note.configure(text=" ".join([f"Imported “{name}”."] + notes), fg=self.t.c("text2"))
+        return name
+
+    def _import(self) -> None:
+        from tkinter import filedialog
+
+        path = filedialog.askopenfilename(parent=self.win, title="Import an equalizer preset",
+                                          filetypes=[("Equalizer presets", "*.json *.txt"), ("All files", "*")])
+        if path:
+            try:
+                self.import_file(path)
+            except (eq.EqFileError, OSError) as exc:
+                self.note.configure(text=str(exc), fg=self.t.c("error"))
+
+    def export_file(self, path: str) -> None:
+        """.txt: Equalizer APO / AutoEQ text; anything else: Real-Hi-Res's own .json."""
+        name = self.preset_label()
+        text = eq.export_apo(name, self.state) if path.lower().endswith(".txt") else eq.export_json(name, self.state)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        self.note.configure(text=f"Exported “{name}” to {path}.", fg=self.t.c("text2"))
+
+    def _export(self) -> None:
+        from tkinter import filedialog
+
+        path = filedialog.asksaveasfilename(
+            parent=self.win, title="Export the equalizer", initialfile=f"{self.preset_label()}.json",
+            defaultextension=".json", filetypes=[("Real-Hi-Res preset", "*.json"),
+                                                 ("Equalizer APO / AutoEQ text", "*.txt")])
+        if path:
+            try:
+                self.export_file(path)
+            except OSError as exc:
+                self.note.configure(text=f"Could not export: {exc}", fg=self.t.c("error"))
+
 
     def draw_curve(self) -> None:
         t, c = self.t, self.curve
@@ -375,4 +620,4 @@ class EqualizerWindow:
         self.win.destroy()
 
 
-__all__ = ["PlaybackInfoWindow", "EqualizerWindow"]
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "NameDialog", "ask_name"]

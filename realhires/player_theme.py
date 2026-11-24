@@ -24,20 +24,42 @@ from .probe import external_env
 FONT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "fonts", "InterVariable.ttf")
 DEFAULT_FONT_LABEL = "SF Pro (macOS) / Inter"
 
-LIGHT = {
-    "bg": "#FFFFFF", "sidebar": "#F5F5F7", "text": "#1D1D1F", "text2": "#6E6E73", "sep": "#D2D2D7",
-    "accent": "#FA2D48", "lcd": "#F2F2F4", "hover": "#F0F0F3", "zebra": "#FAFAFC", "side_sel": "#E3E3E8",
-    "ph": "#E8E8ED", "ph_icon": "#B0B0B6", "field": "#E6E6EB", "disabled": "#C2C2C7", "on_accent": "#FFFFFF",
-    "accent_dark": "#E0263F", "seek": "#D2D2D7", "seek_fill": "#8A8A8F", "error": "#D70015", "knob": "#FFFFFF",
-    "badge": "#8A8A8F",
-}
-DARK = {
-    "bg": "#1E1E1E", "sidebar": "#262628", "text": "#F5F5F7", "text2": "#A1A1A6", "sep": "#3A3A3C",
-    "accent": "#FA2D48", "lcd": "#2C2C2E", "hover": "#2A2A2D", "zebra": "#222224", "side_sel": "#3A3A3D",
-    "ph": "#3A3A3C", "ph_icon": "#6E6E73", "field": "#3A3A3C", "disabled": "#55555A", "on_accent": "#FFFFFF",
-    "accent_dark": "#E0263F", "seek": "#48484A", "seek_fill": "#AEAEB2", "error": "#FF453A", "knob": "#E5E5EA",
-    "badge": "#A1A1A6",
-}
+def mix(a: str, b: str, t: float) -> str:
+    """The colour t of the way from a to b (#rrggbb)."""
+    ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+    rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02x%02x%02x" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t), round(ba + (bb - ba) * t))
+
+
+def luminance(c: str) -> float:
+    r, g, b = (int(c[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def palette(theme: dict) -> Dict[str, str]:
+    """Every colour the app draws with, from a theme's eight (themes.COLOR_KEYS)."""
+    c, dark = theme["colors"], bool(theme.get("dark"))
+    bg, text, accent = c["background"], c["text"], c["accent"]
+    return {
+        "bg": bg, "sidebar": c["sidebar"], "text": text, "text2": c["secondary"], "sep": c["separator"],
+        "accent": accent, "lcd": c["panel"], "side_sel": c["hover"], "field": c["hover"], "ph": c["hover"],
+        "hover": mix(bg, c["hover"], 0.7), "zebra": mix(bg, c["hover"], 0.3),
+        "ph_icon": mix(c["hover"], c["secondary"], 0.6), "disabled": mix(bg, c["secondary"], 0.45),
+        "on_accent": "#1d1d1f" if luminance(accent) > 0.62 else "#ffffff",
+        "accent_dark": mix(accent, "#000000", 0.12), "seek": c["separator"], "seek_fill": c["secondary"],
+        "error": "#ff453a" if dark else "#d70015", "knob": mix(text, "#ffffff", 0.2) if dark else "#ffffff",
+        "badge": c["secondary"],
+    }
+
+
+def _builtin(name: str) -> Dict[str, str]:
+    from .themes import BUILTIN
+
+    return palette(BUILTIN[name])
+
+
+LIGHT = _builtin("Light")
+DARK = _builtin("Dark")
 
 # pixel sizes (negative Tk sizes are pixels) and weights of the named fonts
 FONT_SPECS = {
@@ -46,6 +68,7 @@ FONT_SPECS = {
     "side": (-13, "normal"), "side_head": (-11, "bold"), "badge": (-9, "bold"), "time": (-10, "normal"),
     "lyrics": (-24, "normal"), "lyrics_b": (-24, "bold"), "plain": (-17, "normal"), "lcd_title": (-13, "bold"),
     "lcd_sub": (-12, "normal"), "card_title": (-13, "bold"), "card_sub": (-12, "normal"),
+    "tile": (-14, "bold"), "stat_big": (-30, "bold"), "stat_label": (-12, "bold"), "stat_detail": (-12, "normal"),
 }
 
 
@@ -128,6 +151,7 @@ class Theme:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.dark = False
+        self.name = "Light"
         self.colors: Dict[str, str] = dict(LIGHT)
         self.family = default_family(root)
         self.fonts: Dict[str, tkfont.Font] = {}
@@ -162,10 +186,16 @@ class Theme:
         self._hooks.append((owner, fn))
 
     def configure(self, theme_setting: str, family_setting: str) -> None:
-        """Choose the palette and the font family (without repainting)."""
-        dark = theme_setting == "Dark" or (theme_setting not in ("Light", "Dark") and system_is_dark())
-        self.dark = dark
-        self.colors = dict(DARK if dark else LIGHT)
+        """Choose the palette and the font family (without repainting): the theme of that
+        name (built-in or the user's own, themes.resolve()); unknown names follow the system."""
+        from . import themes
+
+        custom = themes.load_custom()
+        known = theme_setting in themes.BUILTIN or any(t["name"] == theme_setting for t in custom)
+        theme = themes.resolve(theme_setting, False if known else system_is_dark(), custom)
+        self.name = theme["name"]
+        self.dark = bool(theme["dark"])
+        self.colors = palette(theme)
         families = set(tkfont.families(self.root))
         self.family = family_setting if family_setting and family_setting in families else default_family(self.root)
         for f in self.fonts.values():
@@ -497,6 +527,86 @@ def draw_icon(c: tk.Canvas, name: str, cx: float, cy: float, s: float, color: st
         c.create_line(cx, cy - 0.04 * s, cx, cy + 0.24 * s, width=w * 1.1, fill=color, capstyle="round", **kw)
         q = 0.05 * s
         c.create_oval(cx - q, cy - 0.22 * s - q, cx + q, cy - 0.22 * s + q, fill=color, outline=color, **kw)
+    elif name == "library":  # books on a shelf
+        for x0, x1, top in ((-0.44, -0.24, -0.34), (-0.18, 0.0, -0.42)):
+            c.create_rectangle(cx + x0 * s, cy + top * s, cx + x1 * s, cy + 0.42 * s, outline=color, width=w, **kw)
+        c.create_polygon(cx + 0.08 * s, cy - 0.3 * s, cx + 0.24 * s, cy - 0.36 * s, cx + 0.46 * s, cy + 0.36 * s,
+                         cx + 0.3 * s, cy + 0.42 * s, fill="", outline=color, width=w, joinstyle="round", **kw)
+    elif name == "folder":
+        c.create_line(cx - 0.46 * s, cy + 0.36 * s, cx - 0.46 * s, cy - 0.34 * s, cx - 0.12 * s, cy - 0.34 * s,
+                      cx - 0.02 * s, cy - 0.22 * s, cx + 0.46 * s, cy - 0.22 * s, cx + 0.46 * s, cy + 0.36 * s,
+                      cx - 0.46 * s, cy + 0.36 * s, width=w, fill=color, joinstyle="round", **kw)
+        c.create_line(cx - 0.46 * s, cy - 0.1 * s, cx + 0.46 * s, cy - 0.1 * s, width=w, fill=color, **kw)
+    elif name == "mic":
+        round_rect(c, cx - 0.16 * s, cy - 0.46 * s, cx + 0.16 * s, cy + 0.1 * s, 0.16 * s, fill="", outline=color,
+                   width=w, **kw)
+        c.create_arc(cx - 0.3 * s, cy - 0.28 * s, cx + 0.3 * s, cy + 0.26 * s, start=180, extent=180, style="arc",
+                     outline=color, width=w, **kw)
+        c.create_line(cx, cy + 0.26 * s, cx, cy + 0.44 * s, width=w, fill=color, **kw)
+        c.create_line(cx - 0.18 * s, cy + 0.44 * s, cx + 0.18 * s, cy + 0.44 * s, width=w, fill=color,
+                      capstyle="round", **kw)
+    elif name == "calendar":
+        round_rect(c, cx - 0.44 * s, cy - 0.36 * s, cx + 0.44 * s, cy + 0.42 * s, 0.1 * s, fill="", outline=color,
+                   width=w, **kw)
+        c.create_line(cx - 0.44 * s, cy - 0.12 * s, cx + 0.44 * s, cy - 0.12 * s, width=w, fill=color, **kw)
+        for dx in (-0.22, 0.22):
+            c.create_line(cx + dx * s, cy - 0.46 * s, cx + dx * s, cy - 0.26 * s, width=w, fill=color,
+                          capstyle="round", **kw)
+        q = 0.05 * s
+        for dx in (-0.22, 0.0, 0.22):
+            for dy in (0.06, 0.24):
+                c.create_oval(cx + dx * s - q, cy + dy * s - q, cx + dx * s + q, cy + dy * s + q, fill=color,
+                              outline=color, **kw)
+    elif name == "piano":  # composers
+        round_rect(c, cx - 0.46 * s, cy - 0.36 * s, cx + 0.46 * s, cy + 0.36 * s, 0.08 * s, fill="", outline=color,
+                   width=w, **kw)
+        for dx in (-0.15, 0.15):
+            c.create_line(cx + dx * s, cy + 0.0 * s, cx + dx * s, cy + 0.36 * s, width=w, fill=color, **kw)
+        for dx in (-0.31, 0.0, 0.31):
+            c.create_rectangle(cx + (dx - 0.07) * s, cy - 0.36 * s, cx + (dx + 0.07) * s, cy + 0.04 * s, fill=color,
+                               outline=color, **kw)
+    elif name == "playlist":
+        for dy, ln in ((-0.32, 0.44), (-0.1, 0.44), (0.12, 0.06)):
+            c.create_line(cx - 0.44 * s, cy + dy * s, cx + ln * s, cy + dy * s, width=w, fill=color,
+                          capstyle="round", **kw)
+        c.create_oval(cx + 0.06 * s, cy + 0.22 * s, cx + 0.3 * s, cy + 0.42 * s, fill=color, outline=color, **kw)
+        c.create_line(cx + 0.29 * s, cy + 0.32 * s, cx + 0.29 * s, cy - 0.02 * s, cx + 0.44 * s, cy + 0.06 * s,
+                      width=w, fill=color, joinstyle="round", capstyle="round", **kw)
+    elif name in ("thumbs_down", "thumbs_up"):
+        sign = 1 if name == "thumbs_up" else -1
+        pts = [(-0.2, 0.44), (-0.2, -0.04), (0.0, -0.44), (0.1, -0.44), (0.12, -0.34), (0.06, -0.1), (0.36, -0.1),
+               (0.44, -0.02), (0.38, 0.38), (0.3, 0.44)]
+        flat = []
+        for x, y in pts:
+            flat += [cx + x * s, cy + sign * y * s]
+        c.create_polygon(flat, fill=color if filled else "", outline=color, width=max(1.2, s * 0.08),
+                         joinstyle="round", **kw)
+        c.create_rectangle(cx - 0.46 * s, cy + sign * -0.04 * s, cx - 0.28 * s, cy + sign * 0.44 * s,
+                           fill=color if filled else "", outline=color, width=max(1.2, s * 0.08), **kw)
+    elif name == "history":
+        r = 0.42 * s
+        c.create_arc(cx - r, cy - r, cx + r, cy + r, start=120, extent=-300, style="arc", outline=color, width=w,
+                     **kw)
+        ax, ay = cx + r * math.cos(math.radians(120)), cy - r * math.sin(math.radians(120))
+        c.create_polygon(ax - 0.16 * s, ay - 0.02 * s, ax + 0.06 * s, ay - 0.12 * s, ax + 0.02 * s, ay + 0.12 * s,
+                         fill=color, outline=color, **kw)
+        c.create_line(cx, cy - 0.22 * s, cx, cy, cx + 0.16 * s, cy + 0.1 * s, width=w, fill=color,
+                      capstyle="round", joinstyle="round", **kw)
+    elif name == "stats":
+        for dx, top in ((-0.33, 0.1), (-0.11, -0.3), (0.11, -0.05), (0.33, -0.42)):
+            c.create_rectangle(cx + (dx - 0.08) * s, cy + top * s, cx + (dx + 0.08) * s, cy + 0.42 * s, fill=color,
+                               outline=color, **kw)
+    elif name == "plus":
+        q = 0.36 * s
+        c.create_line(cx - q, cy, cx + q, cy, width=w * 1.2, fill=color, capstyle="round", **kw)
+        c.create_line(cx, cy - q, cx, cy + q, width=w * 1.2, fill=color, capstyle="round", **kw)
+    elif name == "dots":
+        q = 0.08 * s
+        for dx in (-0.3, 0.0, 0.3):
+            c.create_oval(cx + dx * s - q, cy - q, cx + dx * s + q, cy + q, fill=color, outline=color, **kw)
+    elif name == "chevron":
+        c.create_line(cx - 0.14 * s, cy - 0.34 * s, cx + 0.18 * s, cy, cx - 0.14 * s, cy + 0.34 * s, width=w,
+                      fill=color, capstyle="round", joinstyle="round", **kw)
 
 
 # ---------------------------------------------------------------- widgets ---
@@ -586,7 +696,7 @@ class IconButton(tk.Canvas):
         self.delete("all")
         if not self.enabled:
             color = t.c("disabled")
-        elif self.on or (self.icon == "heart" and self.filled):
+        elif self.on or (self.icon in ("heart", "thumbs_down") and self.filled):
             color = t.c("accent")
         elif self.hover or self.primary:
             color = t.c("text")
@@ -700,10 +810,10 @@ class PillButton(tk.Canvas):
     ("accent", Apple Music's Play and Shuffle) or the LCD grey ("plain")."""
 
     def __init__(self, master, theme: Theme, text: str, command: Optional[Callable[[], None]] = None,
-                 icon: str = "", kind: str = "accent", bg_role: str = "bg", height: int = 32):
+                 icon: str = "", kind: str = "accent", bg_role: str = "bg", height: int = 32, arrow: bool = False):
         super().__init__(master, height=height, width=40, highlightthickness=0, bd=0, cursor="hand2")
         self.theme, self.text, self.command, self.icon, self.kind = theme, text, command, icon, kind
-        self.h, self.enabled, self.hover = height, True, False
+        self.h, self.enabled, self.hover, self.arrow = height, True, False, arrow
         theme.reg(self, bg=bg_role)
         theme.on_change(self.redraw, self)
         self.bind("<Enter>", lambda e: self._hov(True))
@@ -731,7 +841,7 @@ class PillButton(tk.Canvas):
         t = self.theme
         font = t.f("body_b")
         iw = 20 if self.icon else 0
-        w = font.measure(self.text) + iw + 34
+        w = font.measure(self.text) + iw + 34 + (16 if self.arrow else 0)
         self.configure(width=w)
         self.delete("all")
         if self.kind == "accent":
@@ -746,6 +856,9 @@ class PillButton(tk.Canvas):
             draw_icon(self, self.icon, x + 7, self.h / 2, 13, fg)
             x += iw
         self.create_text(x, self.h / 2, text=self.text, anchor="w", fill=fg, font=font)
+        if self.arrow:  # a menu opens below
+            ax, ay = w - 20, self.h / 2
+            self.create_polygon(ax - 4, ay - 2, ax + 4, ay - 2, ax, ay + 3, fill=fg, outline=fg)
 
 
 def fit_text(font: tkfont.Font, text: str, width: int, cache: Optional[dict] = None) -> str:
@@ -772,5 +885,7 @@ def fit_text(font: tkfont.Font, text: str, width: int, cache: Optional[dict] = N
     return out
 
 
-__all__ = ["Theme", "IconButton", "PillButton", "Slider", "Tooltip", "draw_icon", "round_rect", "fit_text", "load_bundled_font",
-           "default_family", "font_families", "system_is_dark", "LIGHT", "DARK", "DEFAULT_FONT_LABEL"]
+__all__ = ["Theme", "IconButton", "PillButton", "Slider", "Tooltip", "draw_icon", "round_rect", "fit_text",
+           "load_bundled_font",
+           "default_family", "font_families", "system_is_dark", "LIGHT", "DARK", "DEFAULT_FONT_LABEL", "mix",
+           "palette"]

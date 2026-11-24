@@ -74,8 +74,11 @@ class SongList(tk.Frame):
                  header: bool = True, zebra: bool = True, on_activate: Optional[Callable[[int], None]] = None,
                  on_heart: Optional[Callable[[Any], None]] = None, on_select: Optional[Callable[[int], None]] = None,
                  is_liked: Optional[Callable[[Any], bool]] = None, is_current: Optional[Callable[[Any], bool]] = None,
-                 bg_role: str = "bg", sortable: bool = True, empty_text: str = ""):
+                 bg_role: str = "bg", sortable: bool = True, empty_text: str = "",
+                 on_context: Optional[Callable[[int, Any], None]] = None,
+                 is_dim: Optional[Callable[[Any], bool]] = None):
         super().__init__(master, bd=0, highlightthickness=0)
+        self.on_context, self.is_dim = on_context, is_dim
         self.theme, self.columns, self.value, self.sort_value = theme, list(columns), value, sort_value
         self.rh, self.has_header, self.zebra = row_height, header, zebra
         self.on_activate, self.on_heart, self.on_select = on_activate, on_heart, on_select
@@ -109,6 +112,8 @@ class SongList(tk.Frame):
         c.bind("<Prior>", lambda e: self._move(-self._page_rows()))
         c.bind("<Next>", lambda e: self._move(self._page_rows()))
         bind_wheel(c, lambda n: self.scroll(n * 3 * self.rh))
+        c.bind("<Button-3>", self._context)
+        c.bind("<Button-2>", self._context)  # macOS right click
         theme.on_change(lambda: (self._fit.clear(), self.redraw()), self)  # a new font measures differently
 
     # ------------------------------------------------------------- data ---
@@ -236,6 +241,14 @@ class SongList(tk.Frame):
         if i is not None and self.on_select is not None:
             self.on_select(i)
 
+    def _context(self, e) -> None:
+        """Right click: select the row and ask for its menu (on_context(index, event))."""
+        i = self._row_at(e.y)
+        if i is None or self.on_context is None:
+            return
+        self.select(i)
+        self.on_context(i, e)
+
     def _double(self, e) -> None:
         i = self._row_at(e.y)
         col = self._column_at(e.x)
@@ -277,8 +290,9 @@ class SongList(tk.Frame):
                 round_rect(c, 6, y + 1, W - 6, y + self.rh - 1, 6, fill=t.c("hover"), outline="")
             elif self.zebra and i % 2 == 1:
                 round_rect(c, 6, y + 1, W - 6, y + self.rh - 1, 6, fill=t.c("zebra"), outline="")
-            fg = t.c("on_accent") if sel else (t.c("accent") if current else t.c("text"))
-            fg2 = t.c("on_accent") if sel else t.c("text2")
+            dim = self.is_dim(row) if self.is_dim else False
+            fg = t.c("on_accent") if sel else (t.c("accent") if current else t.c("disabled" if dim else "text"))
+            fg2 = t.c("on_accent") if sel else t.c("disabled" if dim else "text2")
             mid = y + self.rh / 2
             for col, x, w in cols:
                 if col.kind == "heart":
@@ -289,6 +303,10 @@ class SongList(tk.Frame):
                     continue
                 if col.kind == "num" and current:
                     draw_icon(c, "speaker", x + w / 2, mid, 13, t.c("on_accent") if sel else t.c("accent"))
+                    continue
+                if col.kind == "icon":  # value() names the icon
+                    draw_icon(c, self.value(row, col.key), x + w / 2, mid, 16, t.c("on_accent") if sel
+                              else t.c("accent"))
                     continue
                 if col.kind == "two":
                     c.create_text(x, mid - 8, text=fit_text(t.f("body_b"), self.value(row, col.key), w, self._fit),
@@ -453,8 +471,29 @@ def draw_cover(c: tk.Canvas, theme: Theme, img: Optional[tk.PhotoImage], x: floa
     draw_icon(c, "note", x + size / 2, y + size / 2, size * 0.36, theme.c("ph_icon"), tag=tag)
 
 
+def draw_mosaic(c: tk.Canvas, theme: Theme, covers: "CoverCache", quarters: Sequence[tuple], x: float, y: float,
+                size: int, tag: str = "") -> None:
+    """A playlist picture: the covers of its first four songs' albums, 2 x 2
+    (`quarters` = [(album key, [paths])]); fewer songs repeat the covers."""
+    if not quarters:
+        round_rect(c, x, y, x + size, y + size, max(3, size * 0.045), fill=theme.c("ph"), outline="", tags=tag)
+        draw_icon(c, "playlist", x + size / 2, y + size / 2, size * 0.34, theme.c("ph_icon"), tag=tag)
+        return
+    if len(quarters) == 1:  # one album: its cover alone
+        key, paths = quarters[0]
+        draw_cover(c, theme, covers.get(key, paths, size), x, y, size, tag)
+        return
+    half = size // 2 - 1
+    tiles = [quarters[i % len(quarters)] for i in range(4)]
+    for i, (key, paths) in enumerate(tiles):
+        dx, dy = (i % 2) * (half + 2), (i // 2) * (half + 2)
+        draw_cover(c, theme, covers.get(key, paths, half), x + dx, y + dy, half, tag)
+
+
 class AlbumGrid(tk.Frame):
-    """Album cards: the square cover, the title (bold) and the artist (grey)."""
+    """Album cards: the square cover, the title (bold) and the artist (grey).
+    An item can instead be a playlist ("mosaic": up to four (album key, paths)) or
+    the "New Playlist…" card ("new": True)."""
 
     COVER = 176
     GAP = 24
@@ -532,9 +571,16 @@ class AlbumGrid(tk.Frame):
         t, c, cs = self.theme, self.canvas, self.COVER
         tag = f"card{i}"
         c.delete(tag)
-        img = self.covers.get(a["key"], [tr.path for tr in a["tracks"]], cs) if self._visible(y) else \
-            self.covers.images.get((a["key"], cs))
-        draw_cover(c, t, img, x, y, cs, tag)
+        if a.get("new"):
+            round_rect(c, x, y, x + cs, y + cs, 8, fill=t.c("hover" if self.hover == i else "lcd"), outline="",
+                       tags=tag)
+            draw_icon(c, "plus", x + cs / 2, y + cs / 2, cs * 0.28, t.c("accent"), tag=tag)
+        elif "mosaic" in a:
+            draw_mosaic(c, t, self.covers, a["mosaic"], x, y, cs, tag)
+        else:
+            img = self.covers.get(a["key"], [tr.path for tr in a["tracks"]], cs) if self._visible(y) else \
+                self.covers.images.get((a["key"], cs))
+            draw_cover(c, t, img, x, y, cs, tag)
         if self.hover == i:
             round_rect(c, x, y, x + cs, y + cs, 8, fill="", outline=t.c("sep"), width=1, tags=tag)
         c.create_text(x, y + cs + 16, text=fit_text(t.f("card_title"), a["title"], cs, self._fit), anchor="w",
@@ -549,14 +595,22 @@ class AlbumGrid(tk.Frame):
     def _request_visible(self) -> None:
         for a in self.albums:
             pos = self.positions.get(a["key"])
+            if a.get("new") or "mosaic" in a:
+                continue
             if pos and self._visible(pos[1]) and (a["key"], self.COVER) not in self.covers.images:
                 self.covers.get(a["key"], [tr.path for tr in a["tracks"]], self.COVER)
 
     def _cover_ready(self, key: str, size: int) -> None:
-        if size != self.COVER or key not in self.positions or not self.winfo_exists():
+        if not self.winfo_exists():
             return
-        x, y, i = self.positions[key]
-        self._draw_card(i, self.albums[i], x, y)
+        if size == self.COVER and key in self.positions:
+            x, y, i = self.positions[key]
+            self._draw_card(i, self.albums[i], x, y)
+        if size in (self.COVER, self.COVER // 2 - 1):  # a playlist picture (one cover, or a quarter)
+            for a in self.albums:
+                if any(q[0] == key for q in a.get("mosaic", ())) and a["key"] in self.positions:
+                    x, y, i = self.positions[a["key"]]
+                    self._draw_card(i, a, x, y)
 
     def _index_at(self, e) -> Optional[int]:
         x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
@@ -582,5 +636,5 @@ class AlbumGrid(tk.Frame):
             self.on_open(self.albums[i])
 
 
-__all__ = ["SongList", "Column", "AlbumGrid", "CoverCache", "draw_cover", "fmt_time", "bind_wheel",
-           "scroll_units"]
+__all__ = ["SongList", "Column", "AlbumGrid", "CoverCache", "draw_cover", "draw_mosaic", "fmt_time", "bind_wheel",
+           "scroll_units", "show_scrollbar"]

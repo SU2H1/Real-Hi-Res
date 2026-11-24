@@ -14,7 +14,7 @@ from . import lyrics as lyrics_mod
 from . import musiclib
 from . import settings as settings_mod
 from .musiclib import Track
-from .player_theme import DEFAULT_FONT_LABEL, IconButton, PillButton, Theme, fit_text, font_families
+from .player_theme import DEFAULT_FONT_LABEL, IconButton, PillButton, Theme, fit_text, font_families, round_rect
 from .player_widgets import AlbumGrid, Column, SongList, bind_wheel, draw_cover, fmt_time, show_scrollbar
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -36,7 +36,7 @@ def track_value(t: Track, key: str) -> str:
     if key == "title":
         return t.display_title
     if key == "artist":
-        return t.display_artist
+        return "Not in the library" if getattr(t, "missing", False) else t.display_artist
     if key == "album":
         return t.display_album
     if key == "genre":
@@ -49,6 +49,8 @@ def track_value(t: Track, key: str) -> str:
         return str(t.track) if t.track else ""
     if key == "year":
         return t.year
+    if key == "composer":
+        return t.composer
     return ""
 
 
@@ -126,11 +128,20 @@ class Page(tk.Frame):
             self.app.play_list(songs, 0, self.list_name, shuffle=shuffle)
 
 
-def song_table(page: Page, parent, columns=None, **kw) -> SongList:
+def song_table(page: Page, parent, columns=None, value=None, extra_menu=None, sort_value=None, **kw) -> SongList:
+    """A song table with likes, the playing mark and the song menu (right click);
+    `extra_menu(index)` gives more (label, command) entries, e.g. a playlist's."""
     app = page.app
-    table = SongList(parent, page.theme, columns or SONG_COLUMNS, track_value, track_sort,
+    table: SongList
+
+    def context(i: int, e) -> None:
+        app.song_menu(table.rows[i], extra_menu(i) if extra_menu else (), list_name=page.list_name,
+                      rows=table.rows, index=i).tk_popup(e.x_root, e.y_root)
+
+    table = SongList(parent, page.theme, columns or SONG_COLUMNS, value or track_value, sort_value or track_sort,
                      on_heart=lambda r: app.toggle_like(r.path), is_liked=lambda r: app.is_liked(r.path),
-                     is_current=lambda r: r.path == app.current, **kw)
+                     is_current=lambda r: r.path == app.current, on_context=context,
+                     is_dim=lambda r: getattr(r, "missing", False), **kw)
     return table
 
 
@@ -271,21 +282,34 @@ class AlbumPage(Page):
         self.table.redraw()
 
 
-# -------------------------------------------------------------- artists ---
-class _ListAndDetail(Page):
-    """A list on the left (artists, genres) and the chosen entry on the right."""
+# ------------------------------------------------------------ groupings ---
+GROUPINGS = {  # page: (title, musiclib grouping, noun, what the right side shows)
+    "artists": ("Artists", musiclib.artists, "artist", "albums"),
+    "album_artists": ("Album Artists", musiclib.album_artists, "album artist", "albums"),
+    "genres": ("Genres", musiclib.genres, "genre", "songs"),
+    "years": ("Years", musiclib.years, "year", "songs"),
+    "composers": ("Composers", musiclib.composers, "composer", "songs"),
+}
 
-    def __init__(self, app, title: str):
+
+class GroupPage(Page):
+    """Artists, Album Artists, Genres, Years, Composers: the names on the left with
+    their song counts, the chosen one's albums (cards) or songs (a table) on the right."""
+
+    def __init__(self, app, kind: str):
         super().__init__(app)
         t = self.theme
-        self.list_name = title
-        head, self.title_l, self.sub = self.heading(self, title, buttons=False)
+        self.kind = kind
+        self.title, self.group_fn, self.noun, self.shows = GROUPINGS[kind]
+        self.list_name = self.title
+        head, self.title_l, self.sub = self.heading(self, self.title, buttons=False)
         head.pack(fill="x", padx=28, pady=(22, 8))
         body = frame(self, t)
         body.pack(fill="both", expand=True)
-        self.left = SongList(body, t, [Column("name", "", 200, True)], lambda r, k: r["name"], header=False,
+        self.left = SongList(body, t, [Column("name", "", 200, True), Column("count", "", 44, anchor="e")],
+                             lambda r, k: r["name"] if k == "name" else f"{len(r['tracks']):,}", header=False,
                              zebra=False, on_select=self._chosen, on_activate=self._activate, row_height=34)
-        self.left.configure(width=250)
+        self.left.configure(width=270)
         self.left.pack(side="left", fill="y", padx=(12, 0))
         self.left.pack_propagate(False)
         frame(body, t, bg="sep", width=1).pack(side="left", fill="y", padx=(8, 0))
@@ -296,12 +320,17 @@ class _ListAndDetail(Page):
         rh.pack(fill="x", padx=24, pady=(6, 8))
         self.items: List[dict] = []
         self.chosen: Optional[dict] = None
-
-    def entries(self) -> List[dict]:
-        return []
+        if self.shows == "albums":
+            self.grid_w = AlbumGrid(self.right, t, app.covers, app.open_album)
+            self.grid_w.pack(fill="both", expand=True)
+        else:
+            self.table = song_table(self, self.right, on_activate=lambda i: app.play_list(
+                self.table.rows, i, self.list_name))
+            self.table.pack(fill="both", expand=True, padx=(8, 12))
+        self.refresh()
 
     def refresh(self) -> None:
-        self.items = self.entries()
+        self.items = self.group_fn(self.app.tracks)
         self.sub.configure(text=plural(len(self.items), self.noun) if self.items else "")
         names = [i["name"] for i in self.items]
         keep = self.chosen["name"] if self.chosen else None
@@ -309,11 +338,21 @@ class _ListAndDetail(Page):
         idx = names.index(keep) if keep in names else (0 if self.items else None)
         self.left.selected = idx
         self.left.redraw()
-        self._chosen(idx) if idx is not None else self._show(None)
+        self._chosen(idx)
 
     def _chosen(self, i: Optional[int]) -> None:
         self.chosen = self.items[i] if i is not None and i < len(self.items) else None
-        self._show(self.chosen)
+        item = self.chosen
+        self.r_title.configure(text=item["name"] if item else "")
+        self.list_name = item["name"] if item else self.title
+        if self.shows == "albums":
+            albums = musiclib.albums(item["tracks"]) if item else []
+            self.r_sub.configure(text=f"{plural(len(albums), 'album')}, {plural(len(item['tracks']), 'song')}"
+                                 if item else "")
+            self.grid_w.set_albums(albums)
+        else:
+            self.r_sub.configure(text=plural(len(item["tracks"]), "song") if item else "")
+            self.table.set_rows(item["tracks"] if item else [])
 
     def _activate(self, i: int) -> None:
         self._chosen(i)
@@ -326,83 +365,43 @@ class _ListAndDetail(Page):
                 return
 
     def songs(self) -> List[Track]:
-        return list(self.chosen["tracks"]) if self.chosen else []
-
-
-class ArtistsPage(_ListAndDetail):
-    noun = "artist"
-
-    def __init__(self, app):
-        super().__init__(app, "Artists")
-        self.grid_w = AlbumGrid(self.right, self.theme, app.covers, app.open_album)
-        self.grid_w.pack(fill="both", expand=True)
-        self.refresh()
-
-    def entries(self) -> List[dict]:
-        return musiclib.artists(self.app.tracks)
-
-    def _show(self, item: Optional[dict]) -> None:
-        self.r_title.configure(text=item["name"] if item else "")
-        albums = musiclib.albums(item["tracks"]) if item else []
-        self.r_sub.configure(text=f"{plural(len(albums), 'album')}, {plural(len(item['tracks']), 'song')}"
-                             if item else "")
-        self.list_name = item["name"] if item else "Artists"
-        self.grid_w.set_albums(albums)
-
-    def songs(self) -> List[Track]:
-        return album_order(self.chosen["tracks"]) if self.chosen else []
-
-
-class GenresPage(_ListAndDetail):
-    noun = "genre"
-
-    def __init__(self, app):
-        super().__init__(app, "Genres")
-        self.table = song_table(self, self.right, on_activate=lambda i: app.play_list(self.table.rows, i,
-                                                                                       self.list_name))
-        self.table.pack(fill="both", expand=True, padx=(8, 12))
-        self.refresh()
-
-    def entries(self) -> List[dict]:
-        return musiclib.genres(self.app.tracks)
-
-    def _show(self, item: Optional[dict]) -> None:
-        self.r_title.configure(text=item["name"] if item else "")
-        self.r_sub.configure(text=plural(len(item["tracks"]), "song") if item else "")
-        self.list_name = item["name"] if item else "Genres"
-        self.table.set_rows(item["tracks"] if item else [])
-
-    def songs(self) -> List[Track]:
-        return list(self.table.rows)
+        if not self.chosen:
+            return []
+        return album_order(self.chosen["tracks"]) if self.shows == "albums" else list(self.table.rows)
 
     def likes_changed(self) -> None:
-        self.table.redraw()
+        if self.shows == "songs":
+            self.table.redraw()
 
     def song_changed(self) -> None:
-        self.table.redraw()
+        if self.shows == "songs":
+            self.table.redraw()
 
 
 # ---------------------------------------------------------------- songs ---
 class SongsPage(Page):
-    """Every song (Songs) or the liked ones (Liked Songs)."""
+    """All Songs, Liked Songs or Disliked Songs."""
 
-    def __init__(self, app, title: str, liked: bool = False):
+    EMPTY = {"all": "No songs yet. Add your music folder in Settings.",
+             "liked": "Songs you like appear here. Click the heart of a song to like it.",
+             "disliked": "Songs you dislike appear here, and shuffles leave them out. Use the thumbs-down "
+                         "button or a song's menu to dislike it."}
+
+    def __init__(self, app, title: str, which: str = "all"):
         super().__init__(app)
-        self.title, self.liked, self.list_name = title, liked, title
+        self.title, self.which, self.list_name = title, which, title
         head, self.title_l, self.sub = self.heading(self, title)
         head.pack(fill="x", padx=28, pady=(22, 8))
-        empty = ("Songs you like appear here. Click the heart of a song to like it." if liked
-                 else "No songs yet. Add your music folder in Settings.")
         self.table = song_table(self, self, on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name),
-                                empty_text=empty)
+                                empty_text=self.EMPTY[which])
         self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.refresh()
 
     def rows(self) -> List[Track]:
         tracks = musiclib.sort_songs(self.app.tracks)
-        if self.liked:
-            liked = set(self.app.state.liked)
-            tracks = [t for t in tracks if t.path in liked]
+        if self.which != "all":
+            wanted = set(self.app.state.liked if self.which == "liked" else self.app.state.disliked)
+            tracks = [t for t in tracks if t.path in wanted]
         return tracks
 
     def refresh(self) -> None:
@@ -415,7 +414,7 @@ class SongsPage(Page):
         return list(self.table.rows)
 
     def likes_changed(self) -> None:
-        if self.liked:
+        if self.which != "all":
             self.refresh()
         else:
             self.table.redraw()
@@ -705,6 +704,82 @@ class NowPlayingPage(Page):
 
 
 # ------------------------------------------------------------- settings ---
+class ThemeEditor(tk.Frame):
+    """Settings → Appearance: New theme…, Import…, Export…, and for the user's own
+    themes Rename…, Delete…, "Dark theme" and a colour button for each of the eight
+    colours, which change the app at once.  Built-in themes cannot be edited."""
+
+    def __init__(self, master, app: "PlayerApp"):
+        from . import themes
+
+        super().__init__(master, bd=0, highlightthickness=0)
+        t = app.theme
+        self.app = app
+        t.reg(self, bg="bg")
+        theme = app.current_theme()
+        own = app.is_custom_theme(theme["name"])
+        self.name = theme["name"]
+        label(self, t, "Theme colours", "body_b").pack(anchor="w")
+        if own:
+            note = f"“{theme['name']}” is your own theme: a click on a colour changes it, and the app at once."
+        else:
+            note = (f"“{theme['name']}” is a built-in theme and cannot be changed. “New theme…” makes a copy of "
+                    "it that you can change.")
+        label(self, t, note, "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH, justify="left").pack(
+            anchor="w", pady=(2, 8))
+        btns = frame(self, t)
+        btns.pack(anchor="w")
+        acts = [("New theme…", app.new_theme)]
+        if own:
+            acts += [("Rename…", lambda: app.rename_theme(self.name)),
+                     ("Delete…", lambda: app.delete_theme(self.name))]
+        acts += [("Import…", app.import_theme_file), ("Export…", lambda: app.export_theme_file(self.name))]
+        for i, (text, cmd) in enumerate(acts):
+            PillButton(btns, t, text, kind="accent" if i == 0 else "plain", command=cmd).pack(
+                side="left", padx=(0 if i == 0 else 8, 0))
+        if own:
+            self.v_dark = tk.BooleanVar(value=bool(theme["dark"]))
+            ttk.Checkbutton(self, text="Dark theme", variable=self.v_dark, style="P.TCheckbutton",
+                            command=lambda: app.set_theme_dark(self.name, self.v_dark.get())).pack(anchor="w",
+                                                                                                  pady=(10, 0))
+        grid = frame(self, t)
+        grid.pack(anchor="w", pady=(10, 0))
+        self.swatches: Dict[str, tk.Canvas] = {}
+        for i, key in enumerate(themes.COLOR_KEYS):
+            cell = frame(grid, t)
+            cell.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 28), pady=4)
+            sw = tk.Canvas(cell, width=30, height=30, highlightthickness=0, bd=0, cursor="hand2")
+            t.reg(sw, bg="bg")
+            sw.pack(side="left")
+            value = theme["colors"][key]
+            round_rect(sw, 1, 1, 29, 29, 7, fill=value, outline=t.c("sep"))
+            sw.bind("<Button-1>", lambda e, k=key: self._pick(k))
+            box = frame(cell, t)
+            box.pack(side="left", padx=(10, 0))
+            label(box, t, themes.COLOR_LABELS[key], "body").pack(anchor="w")
+            label(box, t, value, "small", fg="text2").pack(anchor="w")
+            self.swatches[key] = sw
+        self.own = own
+
+    def _pick(self, key: str) -> None:
+        from tkinter import colorchooser, messagebox
+
+        app = self.app
+        if not self.own:
+            if not messagebox.askyesno("Built-in theme", f"Built-in themes cannot be changed. Make a copy of "
+                                       f"“{self.name}” and change that?", parent=app.root):
+                return
+            name = app.new_theme()
+            if not name:
+                return
+            self.name = name
+        theme = app.current_theme()
+        got = colorchooser.askcolor(color=theme["colors"][key], parent=app.root,
+                                    title=f"{theme['name']}: {key.capitalize()}")
+        if got and got[1]:
+            app.set_theme_color(self.name, key, got[1])
+
+
 class SettingsPage(Page):
     """Every setting, one section per settings.GROUPS entry, plus the actions of
     the 1.x app (scan, lyrics, saved results).  Every change is saved at once."""
@@ -797,6 +872,8 @@ class SettingsPage(Page):
                 self._device(row, value)
             elif name == "font_family":
                 self._font(row, value)
+            elif name == "theme":
+                self._theme(row, value)
             elif kind == "choice":
                 var = tk.StringVar(value=value)
                 width = max(18, max(len(c) for c in info["choices"]) + 2)
@@ -835,6 +912,18 @@ class SettingsPage(Page):
         help_l = label(row, t, info["help"], "small", fg="text2", wraplength=self.HELP_WIDTH, justify="left")
         help_l.pack(anchor="w", pady=(3, 0))
         self.help_labels[name] = help_l
+        if name == "theme":
+            self.theme_editor = ThemeEditor(row, self.app)
+            self.theme_editor.pack(anchor="w", fill="x", pady=(12, 0))
+
+    def _theme(self, parent, value: str) -> None:
+        t = self.theme
+        names = self.app.theme_names()
+        var = tk.StringVar(value=value if value in names else names[0])
+        cb = ttk.Combobox(parent, textvariable=var, values=names, state="readonly",
+                          width=max(24, max(len(n) for n in names) + 2), style="P.TCombobox", font=t.f("body"))
+        cb.pack(anchor="w")
+        cb.bind("<<ComboboxSelected>>", lambda e: self.app.select_theme(var.get()))
 
     def _paths(self, parent, name: str, value: List[str]) -> None:
         t = self.theme
@@ -888,9 +977,10 @@ class SettingsPage(Page):
         acts = []
         if self.group == "Library":
             acts = [("Update the library now", app.refresh_library),
-                    ("Check the library for fake files", lambda: app.check_library(switch=True)),
+                    ("Scan library", lambda: app.check_library(switch=True)),
                     ("Download lyrics for the whole library…", app.lyrics_for_library),
-                    ("Open the quality checker", lambda: app.show_page("quality"))]
+                    ("Open the quality checker", lambda: app.show_page("quality")),
+                    ("Clear the play history…", app.clear_history)]
         elif self.group == "Playback":
             acts = [("Equalizer…", app.open_eq)]
         elif self.group == "Saved results":
@@ -948,5 +1038,5 @@ class SettingsPage(Page):
         self.app.apply_settings(new)
 
 
-__all__ = ["Page", "AlbumsPage", "AlbumPage", "ArtistsPage", "SongsPage", "GenresPage", "SearchPage",
+__all__ = ["Page", "AlbumsPage", "AlbumPage", "GroupPage", "SongsPage", "SearchPage",
            "NowPlayingPage", "SettingsPage", "LyricsView", "track_value", "track_sort", "album_order"]

@@ -126,7 +126,7 @@ def loaded():
     assert len(app.tracks) == N_SONGS, len(app.tracks)
     assert not app.library_busy() and app.sidebar.status.cget("text") == ""
     albums = app.page("albums")
-    assert len(albums.grid_w.albums) == N_ALBUMS and app.page_name == "albums"
+    assert len(albums.grid_w.albums) == N_ALBUMS and app.page_name == "library"  # the start page
     assert [a["title"] for a in albums.grid_w.albums][:2] == ["City Rain", "Northern Lights"]
     for name in ("recent", "songs", "artists", "genres", "liked"):
         app.show_page(name)
@@ -136,8 +136,11 @@ def loaded():
     assert len(app.page("artists").items) == N_ALBUMS and app.page("artists").grid_w.albums
     assert {{g["name"] for g in app.page("genres").items}} >= {{"Ambient", "Indie Pop", "Jazz"}}
     assert app.page("liked").table.rows == []
-    # nothing plays yet: only Play is enabled
-    assert not app.bar.next.enabled and not app.bar.heart.enabled and app.bar.play.enabled
+    # nothing plays yet: Previous, Next and the song's buttons are disabled, the rest is usable
+    assert not app.bar.next.enabled and not app.bar.prev.enabled and not app.bar.heart.enabled
+    assert not app.bar.dislike.enabled and not app.bar.more.enabled
+    assert app.bar.play.enabled and app.bar.eq.enabled and app.bar.queue.enabled and app.bar.lyrics.enabled
+    assert app.bar.volume.enabled
     assert "Real-Hi-Res" in texts(app.bar.lcd)
     # like a song: saved at once, listed in Liked Songs
     app.toggle_like(umbrella)
@@ -332,6 +335,221 @@ print("OK")
     run_script(tmp_path, body, env)
 
 
+AUTOEQ = """# Studio Cans (an invented example)
+Preamp: -4.2 dB
+Filter 1: ON LSC Fc 105 Hz Gain 4.5 dB Q 0.71
+Filter 2: ON PK Fc 2400 Hz Gain -2.0 dB Q 1.40
+"""
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not _has_miniaudio(), reason="miniaudio not installed")
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_library_playlists_history_presets_and_themes(tmp_path):
+    """The 2.0 additions: the Library page and its fourteen entries, a folder page,
+    playlists, dislikes, the play history with Recently Played and Your Stats, EQ
+    presets with their files, and custom themes."""
+    lib = make_library(tmp_path, seconds=3, mp3=False)
+    (tmp_path / "Studio Cans.txt").write_text(AUTOEQ, encoding="utf-8")
+    from realhires import settings
+
+    cfg = settings.Settings()
+    cfg.library_folders = [lib["music"]]
+    cfg.theme = "Light"
+    settings.save(cfg, str(tmp_path / "settings.json"))
+    env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
+               REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
+               REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_THEMES=str(tmp_path / "themes.json"),
+               REALHIRES_AUDIO_BACKEND="null")
+    body = f"""
+LIB = {json.dumps(lib)}
+TMP = {str(tmp_path)!r}
+S = LIB["songs"]
+import tkinter as tk
+from realhires import player_gui, playerstate, themes
+from realhires.player_collections import TILES
+player_gui.messagebox.askyesno = lambda *a, **k: True  # confirmations say yes
+state = {{}}
+
+def fail(exc, val, tb):
+    import traceback
+    traceback.print_exception(exc, val, tb)
+    os._exit(1)
+
+def wait(cond, then, timeout=30.0, what="", start=None):
+    start = start or time.monotonic()
+    if cond():
+        return root.after(50, then)
+    assert time.monotonic() - start < timeout, "timed out: " + what
+    root.after(100, lambda: wait(cond, then, timeout, what, start))
+
+def texts(canvas):
+    return [canvas.itemcget(i, "text") for i in canvas.find_all() if canvas.type(i) == "text"]
+
+def answer(name):  # fills in the next name dialog
+    def go():
+        d = app.name_dialog
+        if d is None:
+            return root.after(50, go)
+        d.var.set(name)
+        d.submit()
+    root.after(50, go)
+
+root = tk.Tk()
+root.geometry("1280x800")
+root.report_callback_exception = fail
+app = player_gui.PlayerApp(root)
+
+def loaded():
+    # the Library start page: fourteen tiles, each opening its page
+    assert app.page_name == "library"
+    page = app.page("library")
+    names = [n for _, n, _ in TILES]
+    assert names == ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers",
+                     "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"]
+    shown = texts(page.c)
+    assert all(n in shown for n in names) and "11 songs" in shown and "Recently Added" in shown, shown
+    for key, name, _ in TILES:
+        app.show_page(key)
+        root.update()
+        assert app.page_name == key and app.pages[key].winfo_ismapped(), key
+    assert [g["name"] for g in app.page("composers").items] == ["Lena Frost", "Mika Rowe", "Unknown Composer"]
+    assert [g["name"] for g in app.page("years").items] == ["2023", "2021", "2019", "2018"]
+    assert app.page("songs").title_l.cget("text") == "All Songs"
+    # a folder page with a breadcrumb
+    fp = app.page("folders")
+    app.show_page("folders")
+    assert [r[1] for r in fp.dirs.rows] == ["Aurora Fields", "June Harbor", "The Paper Boats", "Velvet Static"]
+    fp.open(os.path.join(LIB["music"], "Aurora Fields", "Northern Lights"))
+    root.update()
+    assert [p[0] for p in fp.parts] == ["Music", "Aurora Fields", "Northern Lights"]
+    assert [t.display_title for t in fp.table.rows] == ["First Light", "Glacier Song", "Midnight Sun", "Polar Drift"]
+    crumb = [w for w in fp.crumbs.winfo_children() if w.cget("text") == "Aurora Fields"][0]
+    crumb.event_generate("<Button-1>")
+    root.update()
+    assert fp.folder == os.path.join(LIB["music"], "Aurora Fields")
+    assert [r[1] for r in fp.dirs.rows] == ["Northern Lights"]
+    # a playlist: create (name dialog), add from a song's menu, play, rename, delete
+    answer("Road Trip")
+    pid = app.new_playlist()
+    assert pid and app.page_name == "playlist" and app.state.playlist(pid)["name"] == "Road Trip"
+    assert ("playlist:" + pid, "Road Trip", "playlist") in app.sidebar.items()
+    m = app.song_menu(app.track(S["Taxi Lights"]))
+    labels = [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"]
+    assert "Add to playlist" in labels and "Dislike" in labels and "Like" in labels, labels
+    sub = root.nametowidget(m.entrycget(labels_index(m, "Add to playlist"), "menu"))
+    sub.invoke(labels_index(sub, "Road Trip"))
+    app.add_to_playlist(pid, [S["First Light"], os.path.join(TMP, "gone.flac")])
+    assert playerstate.load().playlist(pid)["songs"][:2] == [S["Taxi Lights"], S["First Light"]]
+    pp = app.page("playlist")
+    root.update()
+    rows = pp.table.rows
+    assert [r.display_title for r in rows] == ["Taxi Lights", "First Light", "gone"] and rows[2].missing
+    assert pp._value(rows[2], "artist") == "Not in the library"
+    dict(pp._extra(0))["Move down"]()
+    assert [r.display_title for r in pp.table.rows][:2] == ["First Light", "Taxi Lights"]
+    pp.table.on_activate(0)
+    assert app.current == S["First Light"] and app.queue.order == [S["First Light"], S["Taxi Lights"]]
+    answer("Long Drive")
+    app.rename_playlist(pid)
+    assert app.state.playlist(pid)["name"] == "Long Drive" and pp.title_l.cget("text") == "Long Drive"
+    app.delete_playlist(pid)
+    assert app.state.playlists == [] and app.page_name == "playlists"
+    # dislike: left out when shuffling
+    app.toggle_dislike(S["Midnight Sun"])
+    assert app.state.disliked == [S["Midnight Sun"]] and playerstate.load().disliked == [S["Midnight Sun"]]
+    app.show_page("disliked")
+    assert [t.display_title for t in app.page("disliked").table.rows] == ["Midnight Sun"]
+    album = next(a for a in app.albums if a["title"] == "Northern Lights")
+    app.set_shuffle("songs")
+    app.play_list(album["tracks"], 0, album["title"])
+    assert app.current == S["First Light"] and S["Midnight Sun"] not in app.queue.order
+    assert len(app.queue.order) == 3
+    app.set_shuffle("off")
+    # the play history: two songs heard for more than a second
+    app.play_list(album["tracks"], 0, album["title"])
+    wait(lambda: app.engine.position() > 1.6, first_heard, what="first song")
+
+def labels_index(menu, label):
+    return next(i for i in range(menu.index("end") + 1) if menu.type(i) != "separator"
+                and menu.entrycget(i, "label") == label)
+
+def first_heard():
+    app.next()
+    wait(lambda: app.current == S["Glacier Song"] and app.engine.position() > 1.6, second_heard, what="second song")
+
+def second_heard():
+    app.next()  # the second song stops being the current one: it is logged too
+    plays = app.plays()
+    assert [p.path for p in plays] == [S["First Light"], S["Glacier Song"]], [p.path for p in plays]
+    assert all(1.0 < p.seconds < 3.5 for p in plays), [p.seconds for p in plays]
+    app.engine.pause()
+    app.show_page("played")
+    rp = app.page("played")
+    assert [t.display_title for t in rp.table.rows] == ["Glacier Song", "First Light"]
+    assert rp._value(rp.table.rows[0], "played").startswith("Today ")
+    app.show_page("stats")
+    st = app.page("stats")
+    root.update()
+    cards = texts(st.area.c)
+    assert st.st["logged"] == 2 and "MINUTES LISTENED" in cards and "YOUR TOP SONG" in cards, cards
+    assert "Glacier Song" in cards or "First Light" in cards, cards
+    app.show_page("stats_details")
+    root.update()
+    shown = texts(app.page("stats_details").area.c)
+    assert "Top songs" in shown and "Your library" in shown and "Listening by hour of the day (minutes)" in shown
+    app.show_page("library")
+    assert any("minutes of music this year" in x or x == "Your Stats" for x in texts(app.page("library").c))
+    # equalizer presets: save, rename, export both ways, import an AutoEQ text
+    app.open_eq()
+    w = app.eq_window
+    w.v_on.set(True); w._toggles()
+    w._preset("Rock")
+    answer("Bright Rock")
+    w._save_as()
+    assert [p["name"] for p in app.state.eq_presets] == ["Bright Rock"] and w.preset_label() == "Bright Rock"
+    menu = w.build_preset_menu()
+    mlabels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+    assert mlabels[:2] == ["Flat", "Bass Boost"] and "My presets" in mlabels and "Bright Rock" in mlabels
+    answer("Rock Plus")
+    w._rename()
+    assert [p["name"] for p in app.state.eq_presets] == ["Rock Plus"]
+    w.export_file(os.path.join(TMP, "rock.json"))
+    w.export_file(os.path.join(TMP, "rock.txt"))
+    assert '"real-hi-res-eq"' in open(os.path.join(TMP, "rock.json"), encoding="utf-8").read()
+    assert "Filter 1: ON PK Fc 32.0 Hz" in open(os.path.join(TMP, "rock.txt"), encoding="utf-8").read()
+    w._preset("Flat")
+    assert w.import_file(os.path.join(TMP, "Studio Cans.txt")) == "Studio Cans"
+    assert w.preset_label() == "Studio Cans" and len(w.state["parametric"]["bands"]) == 2
+    assert w.state["parametric"]["preamp"] == -4.2 and "Imported" in w.note.cget("text")
+    assert w.import_file(os.path.join(TMP, "rock.json")) == "Rock Plus 2"
+    w.close()
+    assert [p["name"] for p in playerstate.load().eq_presets] == ["Rock Plus", "Studio Cans", "Rock Plus 2"]
+    # a custom theme: copy of Midnight, a colour changed, export and import
+    app.show_page("settings", group="Appearance")
+    app.select_theme("Midnight")
+    assert app.theme.name == "Midnight" and app.theme.dark
+    name = app.new_theme()
+    assert name == "Midnight copy" and app.cfg.theme == "Midnight copy" and app.is_custom_theme(name)
+    app.set_theme_color(name, "accent", "#00ff00")
+    assert app.theme.c("accent") == "#00ff00" and themes.load_custom()[0]["colors"]["accent"] == "#00ff00"
+    root.update()
+    ed = app.page("settings").theme_editor
+    assert ed.own and ed.name == name
+    path = app.export_theme_file(name, os.path.join(TMP, "mine.json"))
+    assert app.import_theme_file(path) == "Midnight copy 2" and app.cfg.theme == "Midnight copy 2"
+    app.delete_theme("Midnight copy 2")
+    assert app.cfg.theme == themes.SYSTEM and [t["name"] for t in themes.load_custom()] == ["Midnight copy"]
+    app.select_theme("Light")
+    print("OK")
+    app.quit()
+
+wait(lambda: len(app.tracks) == len(S) and not app.library_busy(), loaded, what="library")
+root.mainloop()
+"""
+    run_script(tmp_path, body, env)
+
+
 @needs_ffmpeg
 @pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
 def test_check_new_songs_when_the_app_starts(tmp_path):
@@ -365,7 +583,7 @@ def check():
         seen.add("scanning")
     if len(app.qc.results) < {len(lib["songs"])} or app.qc.scanning:
         return root.after(100, check)
-    assert "scanning" in seen and app.page_name == "albums" and not app.qc.active
+    assert "scanning" in seen and app.page_name == "library" and not app.qc.active
     root.after(600, done)
 def done():
     assert not [w for w in root.winfo_children() if isinstance(w, (gui.SummaryDialog, gui.FixDialog))]
