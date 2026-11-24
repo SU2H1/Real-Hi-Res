@@ -25,6 +25,10 @@ for name in ("ffmpeg", "ffprobe"):
 ffmpeg_docs = [(p, "ffmpeg") for p in glob.glob(os.path.join(FFMPEG_DIR, "*.txt"))]
 ICON_PNG = os.path.join(ROOT, "realhires", "assets", "icon.png")
 assets = [(ICON_PNG, os.path.join("realhires", "assets"))]
+# 2.0: the Inter typeface (SIL Open Font License, its licence travels with it), loaded
+# privately by the player on Windows and Linux (realhires/player_theme.py)
+assets += [(p, os.path.join("realhires", "assets", "fonts"))
+           for p in glob.glob(os.path.join(ROOT, "realhires", "assets", "fonts", "*"))]
 IS_WIN = sys.platform == "win32"
 # PyInstaller converts the PNG to .ico/.icns itself when Pillow is installed.
 try:
@@ -72,10 +76,15 @@ MACOS_MIN = os.environ.get("REALHIRES_MACOS_MIN", "12.0")
 
 EXCLUDES = ["matplotlib", "scipy", "pandas", "PIL", "IPython", "pytest", "setuptools", "pip"]
 
+# 2.0: the player's sound output is miniaudio, a cffi extension (_miniaudio) whose C code
+# imports _cffi_backend, which PyInstaller cannot see; realhires.player imports miniaudio
+# inside a function.
+PLAYER_IMPORTS = ["miniaudio", "_miniaudio", "_cffi_backend"]
 gui_a = Analysis([os.path.join(SPECPATH, "entry_gui.py")], pathex=[ROOT],
-                 binaries=ffmpeg_bins, datas=ffmpeg_docs + assets, excludes=EXCLUDES)
+                 binaries=ffmpeg_bins, datas=ffmpeg_docs + assets, excludes=EXCLUDES,
+                 hiddenimports=PLAYER_IMPORTS)
 cli_a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT],
-                 excludes=EXCLUDES + ["tkinter", "_tkinter"])
+                 excludes=EXCLUDES + ["tkinter", "_tkinter"] + PLAYER_IMPORTS + ["cffi"])
 
 if sys.platform.startswith("linux"):
     # Use the desktop's own fontconfig/freetype: they are on every Linux desktop,
