@@ -7,6 +7,7 @@ mod app;
 mod audio;
 #[cfg(windows)]
 mod audio_wasapi;
+mod cover_cache;
 mod dialogs;
 mod editinfo;
 mod eqwin;

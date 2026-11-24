@@ -874,6 +874,7 @@ class PlayerApp:
         self.albums = musiclib.albums(self.tracks)
         self.album_by_key = {a["key"]: a for a in self.albums}
         self._album_key = {t.path: a["key"] for a in self.albums for t in a["tracks"]}
+        self.covers.library_changed(self.albums)  # covers are kept unless an album's songs changed
         self.dirty = set(self.pages) - {"quality"}
         if self.page_name in self.dirty:
             self.dirty.discard(self.page_name)
@@ -926,6 +927,7 @@ class PlayerApp:
 
     def _library_done(self, tracks: List[Track]) -> None:
         self.set_tracks(tracks)
+        self.covers.prefetch(self.albums)  # the grid covers not on disk yet, after those on screen
         self.sidebar.set_status("")
         if self.lib_again:
             self.lib_again = False

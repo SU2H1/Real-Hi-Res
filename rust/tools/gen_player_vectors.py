@@ -1,9 +1,9 @@
 """Writes the Python answers the Rust player core is tested against:
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
 python_eqfiles.json, python_themes.json, python_playerstate.json,
-python_tagedit.json (the tag editor and the themes folder) and
-python_bitperfect.json (bit-perfect playback's decisions and texts).  Run
-from the repository root:
+python_tagedit.json (the tag editor and the themes folder),
+python_bitperfect.json (bit-perfect playback's decisions and texts) and python_covers.json
+(the names of covers kept on disk).  Run from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -555,3 +555,47 @@ with open(os.path.join(OUT, "python_bitperfect.json"), "w", encoding="utf-8") as
                          "off": bp.OFF,
                          "idle": bp.ON_IDLE},
                "standard_rates": list(bp.STANDARD_RATES)}, fh, indent=0, ensure_ascii=False)
+# ------------------------------------------------- covers kept on disk ---
+# The names of saved covers (covers.cache_key/cache_name), which both apps share:
+# made-up paths that do not exist (every size and time is -1), and real files with
+# fixed sizes and times under a folder the Rust test makes itself ("{root}").
+from realhires import covers  # noqa: E402
+
+made_up = [
+    (["/no/such/Music/Album/01 One.flac"], 176),
+    (["/no/such/Music/Album/01 One.flac", "/no/such/Music/Album/02 Two.flac", "/no/such/Music/Album/CD2/03.flac",
+      "/no/such/Music/Album/04 Four.flac", "/no/such/Music/Other/05.flac"], 176),
+    (["/no/such/音楽/宇多田ヒカル/First Love/01 Automatic.flac", "/no/such/Música/Ça va/02 Été.mp3"], 220),
+    (["/no/such/a b/cé.wav"] * 3, 480),
+    (["/no/such/song.flac"], 44),
+    ([], 150),
+]
+cover_names = [{"paths": paths, "size": size, "key": covers.cache_key(paths, size),
+                "name": covers.cache_name(paths, size)} for paths, size in made_up]
+cover_layout = {
+    "files": [{"path": "Album A/01.flac", "bytes": 1234, "mtime_ns": 1_700_000_001_234_567_800},
+              {"path": "Album A/02.flac", "bytes": 0, "mtime_ns": 1_700_000_002_000_000_000},
+              {"path": "Album B/Disc 1/01.wav", "bytes": 44, "mtime_ns": 999_999_999_900},
+              {"path": "Album B/Disc 2/02.wav", "bytes": 70000, "mtime_ns": 1_800_000_000_000_000_100}],
+    "folders": [{"path": "Album A", "mtime_ns": 1_700_000_100_000_000_000},
+                {"path": "Album B/Disc 1", "mtime_ns": 1_700_000_200_000_000_500},
+                {"path": "Album B/Disc 2", "mtime_ns": 1_700_000_300_000_000_000}],
+}
+cover_files = []
+with tempfile.TemporaryDirectory() as root:
+    for f in cover_layout["files"]:
+        p = root + "/" + f["path"]
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as fh:
+            fh.write(b"\0" * f["bytes"])
+        os.utime(p, ns=(f["mtime_ns"], f["mtime_ns"]))
+    for f in cover_layout["folders"]:
+        os.utime(root + "/" + f["path"], ns=(f["mtime_ns"], f["mtime_ns"]))
+    for rel, size in ((["Album A/01.flac", "Album A/02.flac"], 176),
+                      (["Album B/Disc 1/01.wav", "Album B/Disc 2/02.wav", "Album A/missing.flac"], 480)):
+        paths = [root + "/" + r for r in rel]
+        cover_files.append({"paths": rel, "size": size, "key": covers.cache_key(paths, size).replace(root, "{root}")})
+
+with open(os.path.join(OUT, "python_covers.json"), "w", encoding="utf-8") as fh:
+    json.dump({"version": covers.CACHE_VERSION, "paths": covers.CACHE_PATHS, "names": cover_names,
+               "layout": cover_layout, "files": cover_files}, fh, indent=0, ensure_ascii=False)

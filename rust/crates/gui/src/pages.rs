@@ -683,7 +683,7 @@ impl Player {
         let track = self.lib.track(&path).cloned().unwrap_or_else(|| Track { path: path.clone(), ..Default::default() });
         let key = track.song().album_key();
         let paths: Vec<String> = self.lib.album_of(&path).map(|a| a.tracks.iter().map(|t| t.path.clone()).collect()).unwrap_or_else(|| vec![path.clone()]);
-        let tex = self.covers.get(&key, &paths);
+        let tex = self.covers.get_large(&key, &paths);
         let lyrics = self.lyrics_of_now();
         let area = ui.available_rect_before_wrap();
         let has_lyrics = matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));

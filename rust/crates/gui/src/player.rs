@@ -3,9 +3,9 @@
 //! (`pages.rs`), the Up Next panel and the Playback info and Equalizer windows.
 //! The 1.x scanner (`app::App`) lives on as the Quality check page.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,7 @@ use realhires::settings::Settings;
 
 use crate::app::App;
 use crate::audio::{Engine, Event};
+use crate::cover_cache::Covers;
 use crate::icons::{self, Icon};
 use crate::look::{self, Palette};
 
@@ -168,65 +169,6 @@ impl LibView {
     pub fn album_of(&self, path: &str) -> Option<&Album> {
         let key = self.track(path)?.song().album_key();
         self.album_index.get(&key).map(|i| &self.albums[*i])
-    }
-}
-
-/// Album covers, made by FFmpeg in a worker thread (`covers::cover_png`).
-pub struct Covers {
-    tx: Sender<(String, Vec<String>)>,
-    rx: Receiver<(String, Option<Vec<u8>>)>,
-    tex: HashMap<String, Option<egui::TextureHandle>>,
-    pending: HashSet<String>,
-}
-
-impl Covers {
-    fn new(ctx: &egui::Context) -> Covers {
-        let (tx, jobs) = mpsc::channel::<(String, Vec<String>)>();
-        let (done, rx) = mpsc::channel();
-        let ctx = ctx.clone();
-        std::thread::Builder::new()
-            .name("player-covers".into())
-            .spawn(move || {
-                while let Ok((key, paths)) = jobs.recv() {
-                    let png = realhires::covers::cover_png(&paths, 480);
-                    if done.send((key, png)).is_err() {
-                        break;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-            .expect("cover thread");
-        Covers { tx, rx, tex: HashMap::new(), pending: HashSet::new() }
-    }
-
-    fn poll(&mut self, ctx: &egui::Context) {
-        while let Ok((key, png)) = self.rx.try_recv() {
-            self.pending.remove(&key);
-            let tex = png.and_then(|d| image::load_from_memory(&d).ok()).map(|img| {
-                let rgba = img.to_rgba8();
-                let ci = egui::ColorImage::from_rgba_unmultiplied(
-                    [rgba.width() as usize, rgba.height() as usize],
-                    rgba.as_raw(),
-                );
-                ctx.load_texture(format!("player cover {key}"), ci, egui::TextureOptions::LINEAR)
-            });
-            self.tex.insert(key, tex);
-        }
-    }
-
-    /// The cover of an album (None while it is made, or when it has none).
-    pub fn get(&mut self, key: &str, paths: &[String]) -> Option<egui::TextureHandle> {
-        if let Some(t) = self.tex.get(key) {
-            return t.clone();
-        }
-        if self.pending.insert(key.to_string()) {
-            let _ = self.tx.send((key.to_string(), paths.iter().take(4).cloned().collect()));
-        }
-        None
-    }
-
-    pub fn clear(&mut self) {
-        self.tex.clear();
     }
 }
 
@@ -439,6 +381,7 @@ impl Player {
             scanner,
         };
         p.file_themes = realhires::themes::load_folder(&p.custom_themes, None);
+        p.covers.library_changed(&p.lib.albums);
         p.fill_choices();
         p.engine.set_device(&p.scanner.cfg.output_device.clone());
         p.update_library();
@@ -523,7 +466,9 @@ impl Player {
             self.lib_rx = None;
             self.lib_progress = None;
             self.lib = LibView::new(tracks);
-            self.covers.clear();
+            // covers stay unless an album's songs changed; then the grid covers not on disk yet
+            self.covers.library_changed(&self.lib.albums);
+            self.covers.prefetch(&self.lib.albums);
             if let Some(q) = self.queue.as_mut() {
                 q.library = self.lib.songs.clone();
             }
@@ -2088,6 +2033,7 @@ mod tests {
         std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
         std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
         let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 2.0);
         let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.5);
         let b1 = song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 1.5);
@@ -2398,6 +2344,7 @@ mod tests {
         std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
         std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
         let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 1.0);
         let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.0);
         let mut cfg = Settings::default();
@@ -2590,6 +2537,79 @@ mod tests {
         run_until(&ctx, &mut p, "the normal path", |p| {
             p.engine.info().is_some_and(|i| i.sample_format == realhires::bitperfect::Format::F32)
         });
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Album covers are made ahead once the library is read, stay when the
+    /// library is read again, and only a changed album's cover is made again.
+    #[test]
+    fn covers_are_made_ahead_and_kept() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-covers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 0.5);
+        song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 0.5);
+        for (album, name, colour) in [("Paper Lanterns", "cover.png", "red"), ("Harbour Lights", "folder.png", "blue")] {
+            let img = music.join(album).join(name).to_string_lossy().into_owned();
+            ffmpeg(&["-f", "lavfi", "-i", &format!("color=c={colour}:s=96x96"), "-frames:v", "1", &img]);
+        }
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 2 && p.lib_rx.is_none());
+        let paths = |a: &Album| -> Vec<String> { a.tracks.iter().map(|t| t.path.clone()).collect() };
+        assert_eq!(p.covers.grid_px(), crate::cover_cache::GRID_PX);
+        run_until(&ctx, &mut p, "the covers made ahead", |p| {
+            p.covers.prefetching() == 0
+                && p.lib.albums.iter().all(|a| realhires::covers::is_cached(&paths(a), crate::cover_cache::GRID_PX))
+        });
+        p.go(Page::Albums);
+        let shown = |p: &Player| -> Vec<(String, egui::TextureId)> {
+            let mut v: Vec<(String, egui::TextureId)> = p
+                .lib
+                .albums
+                .iter()
+                .filter_map(|a| {
+                    let t = p.covers.tex.get(&a.key)?.iter().find(|(s, _)| *s == crate::cover_cache::GRID_PX)?;
+                    Some((a.key.clone(), t.1.as_ref()?.id()))
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        run_until(&ctx, &mut p, "the covers on screen", |p| shown(p).len() == 2);
+        let before = shown(&p);
+
+        // the library is read again: the textures stay
+        p.update_library();
+        run_until(&ctx, &mut p, "the second update", |p| p.lib_rx.is_none());
+        frame(&ctx, &mut p);
+        assert_eq!(shown(&p), before);
+
+        // a song changes: only its album's cover is made again
+        let f = std::fs::File::options().write(true).open(&a1).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(86_400)).unwrap();
+        drop(f);
+        let key_a = p.lib.track(&a1).unwrap().song().album_key();
+        p.update_library();
+        run_until(&ctx, &mut p, "the third update", |p| p.lib_rx.is_none());
+        let now = shown(&p);
+        assert_eq!(now.len(), 1, "{now:?}");
+        assert!(now[0].0 != key_a && before.contains(&now[0]));
+        run_until(&ctx, &mut p, "the new cover", |p| shown(p).len() == 2);
+        let after = shown(&p);
+        assert!(after.iter().any(|(k, id)| *k == key_a && !before.contains(&(k.clone(), *id))));
         drop(p);
         let _ = std::fs::remove_dir_all(&tmp);
     }
