@@ -38,6 +38,9 @@ pub enum Icon {
     Chart,
     Library,
     People,
+    ChevronUp,
+    ChevronDown,
+    Close,
 }
 
 fn heart_points(c: Pos2, s: f32) -> Vec<Pos2> {
@@ -385,6 +388,16 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Back => {
             let h = s * 0.3;
             p.add(Shape::line(vec![pos2(c.x + h * 0.3, c.y - h * 0.7), pos2(c.x - h * 0.4, c.y), pos2(c.x + h * 0.3, c.y + h * 0.7)], stroke));
+        }
+        Icon::ChevronUp | Icon::ChevronDown => {
+            let h = s * 0.3;
+            let d = if icon == Icon::ChevronUp { -1.0 } else { 1.0 };
+            poly(p, &[pos2(c.x - h * 0.75, c.y - d * h * 0.35), pos2(c.x, c.y + d * h * 0.4), pos2(c.x + h * 0.75, c.y - d * h * 0.35)], stroke, false);
+        }
+        Icon::Close => {
+            let h = s * 0.22;
+            p.line_segment([pos2(c.x - h, c.y - h), pos2(c.x + h, c.y + h)], stroke);
+            p.line_segment([pos2(c.x - h, c.y + h), pos2(c.x + h, c.y - h)], stroke);
         }
     }
 }
