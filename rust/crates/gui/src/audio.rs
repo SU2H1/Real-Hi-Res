@@ -1694,15 +1694,18 @@ mod tests {
         let a = noise(&dir, "a.flac", 0.3, 44_100, 16, 2);
         let b = noise(&dir, "b.flac", 0.2, 44_100, 16, 1);
         let c = noise(&dir, "c.flac", 0.2, 44_100, 24, 2);
+        // probed first: probing b between play() and set_next() took longer on a busy CI runner
+        // than decoding all 0.3 s of a, which then ended before it had a next song to join
+        let (sa, sb, sc) = (song_of_file(&a), song_of_file(&b), song_of_file(&c));
         let mut e = Engine::manual();
         e.set_bit_perfect(true);
-        e.play(&a, 0.0, song_of_file(&a));
-        e.set_next(Some((&b, song_of_file(&b))));
+        e.play(&a, 0.0, sa);
+        e.set_next(Some((&b, sb)));
         let (_, ev) = pull_until(&mut e, 700, |ev| ev.iter().any(|x| matches!(x, Event::Ended { chained: false, .. })));
         let chained: Vec<bool> = ev.iter().filter_map(|x| if let Event::Ended { chained, .. } = x { Some(*chained) } else { None }).collect();
         assert_eq!(chained, vec![true, false], "a and b (16-bit, 44.1 kHz) join: {ev:?}");
-        e.play(&a, 0.0, song_of_file(&a));
-        e.set_next(Some((&c, song_of_file(&c))));
+        e.play(&a, 0.0, sa);
+        e.set_next(Some((&c, sc)));
         let (_, ev) = pull_until(&mut e, 700, |ev| ev.iter().any(|x| matches!(x, Event::Ended { .. })));
         assert!(
             ev.iter().any(|x| matches!(x, Event::Ended { path, chained: false, .. } if *path == a)),

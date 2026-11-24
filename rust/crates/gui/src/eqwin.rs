@@ -1,13 +1,13 @@
 //! The Equalizer and Playback info windows of the player (2.0).
 
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, Rect, RichText, Sense, Shape, Stroke};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, RichText, Sense, Shape, Stroke};
 use realhires::eq::{self, Band, BAND_TYPES, GRAPHIC_LABELS, MAX_PARAMETRIC_BANDS, PRESETS};
 use realhires::musiclib::Track;
 use realhires::playerstate::PlayerState;
 
 use crate::audio::OutputInfo;
 use crate::look::{self, Palette};
-use crate::player::{engine_gain, ConfirmAction, NameAction, Player};
+use crate::player::{engine_gain, NameAction, Player};
 
 /// "44.1 kHz", "96 kHz".
 pub fn khz(rate: i64) -> String {
