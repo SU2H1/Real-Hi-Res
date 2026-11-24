@@ -404,11 +404,13 @@ def wait(cond, then, timeout=30.0, what="", start=None):
 def texts(canvas):
     return [canvas.itemcget(i, "text") for i in canvas.find_all() if canvas.type(i) == "text"]
 
-def answer(name):  # fills in the next name dialog
-    def go():
+def answer(name):  # fills in the next name dialog, once it is on the screen (as a person would)
+    def go(tries=0):
         d = app.name_dialog
         if d is None:
-            return root.after(50, go)
+            return root.after(50, lambda: go(tries))
+        if not d.win.winfo_viewable() and tries < 40:
+            return root.after(50, lambda: go(tries + 1))
         d.var.set(name)
         d.submit()
     root.after(50, go)

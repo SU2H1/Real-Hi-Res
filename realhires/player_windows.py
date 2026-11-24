@@ -21,6 +21,18 @@ if TYPE_CHECKING:  # pragma: no cover
     from .player_gui import PlayerApp
 
 
+def close_window(w: tk.Toplevel) -> None:
+    """Destroy a window of the player.  Its pending idle work (geometry, mapping) is
+    run first: Tk on macOS crashed (SIGSEGV in TclServiceIdle, during a redraw) after
+    the name dialog was destroyed with idle work still queued for it."""
+    try:
+        w.grab_release()
+        w.update_idletasks()
+        w.destroy()
+    except tk.TclError:
+        pass
+
+
 def _window(app: "PlayerApp", title: str) -> tk.Toplevel:
     w = tk.Toplevel(app.root)
     w.title(title)
@@ -82,11 +94,7 @@ class NameDialog:
     def close(self) -> None:
         if self.app.name_dialog is self:
             self.app.name_dialog = None
-        try:
-            self.win.grab_release()
-            self.win.destroy()
-        except tk.TclError:
-            pass
+        close_window(self.win)
 
     def run(self) -> Optional[str]:
         try:
@@ -170,7 +178,7 @@ class PlaybackInfoWindow:
 
     def close(self) -> None:
         self.app.info_window = None
-        self.win.destroy()
+        close_window(self.win)
 
 
 class EqualizerWindow:
@@ -620,7 +628,7 @@ class EqualizerWindow:
     def close(self) -> None:
         self.app.save_eq(self.state)
         self.app.eq_window = None
-        self.win.destroy()
+        close_window(self.win)
 
 
 class EditInfoWindow:
@@ -808,10 +816,7 @@ class EditInfoWindow:
             return
         if self.app.edit_window is self:
             self.app.edit_window = None
-        try:
-            self.win.destroy()
-        except tk.TclError:
-            pass
+        close_window(self.win)
 
 
 __all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "NameDialog", "ask_name"]
