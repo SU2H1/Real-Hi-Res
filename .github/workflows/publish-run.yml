@@ -1,0 +1,94 @@
+# Publishes the packages that an earlier "Test, build and release" run built
+# from main, at once, and scans them for antivirus detections afterwards: the
+# scan then adds the "Antivirus scan results" section to the release page, as
+# the daily refresh does.  The usual route, build.yml, scans before it
+# publishes; this one is for when the user asks to release first and scan
+# after (first used for 2.0.0 on 2026-11-24).
+#
+# Start it with Actions -> "Publish a build now, scan after" -> Run workflow,
+# giving the ID of a finished build.yml run (from its URL).  Cancel that run
+# first if its own av-scan/release jobs are still waiting, or it publishes the
+# same version again after its scan.
+name: Publish a build now, scan after
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "ID of the build.yml run on main whose packages to publish"
+        required: true
+
+permissions:
+  contents: write   # create the release and its tag
+  actions: read     # read the other run and download its packages
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      build_url: ${{ steps.check.outputs.build_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Check the run
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
+          BRANCH=$(jq -r .head_branch <<< "$INFO"); SHA=$(jq -r .head_sha <<< "$INFO")
+          WORKFLOW=$(jq -r .path <<< "$INFO"); URL=$(jq -r .html_url <<< "$INFO")
+          [ "$WORKFLOW" = .github/workflows/build.yml ] || { echo "::error::run $RUN_ID is not a build.yml run"; exit 1; }
+          [ "$BRANCH" = main ] || { echo "::error::run $RUN_ID built $BRANCH, not main"; exit 1; }
+          # all ten package jobs (Python and Rust, five platforms each) must have passed
+          JOBS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            -q '.jobs[] | select(.name | startswith("UniversalMusicPlayer-")) | "\(.name) \(.conclusion)"')
+          echo "$JOBS"
+          [ "$(grep -c ' success$' <<< "$JOBS" || true)" = 10 ] || { echo "::error::not all 10 package jobs passed"; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "build_url=$URL" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.check.outputs.sha }}
+      - name: Decide the tag and the notes
+        id: tag
+        shell: bash
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('realhires/__init__.py').read()).group(1))")
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::$TAG already exists"; exit 1
+          fi
+          sed "s/<version>/$VERSION/g" packaging/RELEASE_NOTES.md > notes.md
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing $TAG from run $RUN_ID (${{ steps.check.outputs.sha }})"
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: UniversalMusicPlayer-*
+          path: assets
+          merge-multiple: true
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - run: ls -la assets
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ steps.check.outputs.sha }}
+          name: Universal Music Player ${{ steps.tag.outputs.tag }}
+          body_path: notes.md
+          generate_release_notes: true
+          make_latest: "true"
+          files: assets/*
+
+  # The same scan as the daily refresh: it downloads the published files and
+  # writes the "Antivirus scan results" section into the release notes.
+  av-scan:
+    needs: release
+    uses: ./.github/workflows/av-scan.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      build_url: ${{ needs.release.outputs.build_url }}
+    secrets: inherit
