@@ -214,10 +214,14 @@ class EqualizerWindow:
         self.preset_btn.pack(side="left")
         for text, cmd in (("Export…", self._export), ("Import…", self._import), ("Delete…", self._delete),
                           ("Rename…", self._rename), ("Save as preset…", self._save_as)):
-            PillButton(presets, t, text, kind="plain", command=cmd).pack(side="right", padx=(8, 0))
+            b = PillButton(presets, t, text, kind="plain", command=cmd)
+            b.pack(side="right", padx=(8, 0))
+            if cmd == self._delete:
+                self.delete_btn = b
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
         self.preset_menu: Optional[tk.Menu] = None
+        self.delete_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
         t.reg(self.curve, bg="lcd")
         self.curve.pack(fill="x", pady=(10, 10))
@@ -528,14 +532,43 @@ class EqualizerWindow:
                 self.rename_preset(old, new)
 
     def _delete(self) -> None:
+        """Delete…: the preset the equalizer is set to; when it is set to none of the
+        user's presets (changed since, or never chosen), a menu of them to pick from."""
+        name = self.app.state.matching_eq_preset()
+        if name:
+            self.delete_preset(name)
+            return
+        if not self.app.state.eq_presets:
+            self.note.configure(text="You have no presets of your own yet: Save as preset… keeps the current "
+                                     "settings as one.", fg=self.t.c("error"))
+            return
+        b = self.delete_btn
+        self.build_delete_menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def build_delete_menu(self) -> tk.Menu:
+        m = tk.Menu(self.win, tearoff=False)
+        self.app.theme_menu(m)
+        m.add_command(label="Delete which preset?", state="disabled")
+        for p in self.app.state.eq_presets:
+            m.add_command(label=p["name"], command=lambda n=p["name"]: self.delete_preset(n))
+        self.delete_menu = m
+        return m
+
+    def delete_preset(self, name: str, confirm: bool = True) -> bool:
+        """Delete one of the user's presets (after asking); the equalizer keeps its settings."""
         from tkinter import messagebox
 
-        name = self._mine()
-        if name and messagebox.askyesno("Delete preset", f"Delete your preset “{name}”?", parent=self.win):
-            self.app.state.delete_eq_preset(name)
-            self.app.save_state()
-            self._show_preset()
-            self.note.configure(text=f"Deleted “{name}”.", fg=self.t.c("text2"))
+        if self.app.state.eq_preset(name) is None:
+            return False
+        if confirm and not messagebox.askyesno(
+                "Delete preset", f"Delete your preset “{name}”? The equalizer keeps its current settings.",
+                parent=self.win):
+            return False
+        self.app.state.delete_eq_preset(name)
+        self.app.save_state()
+        self._show_preset()
+        self.note.configure(text=f"Deleted “{name}”.", fg=self.t.c("text2"))
+        return True
 
     def import_file(self, path: str) -> str:
         """Read a .json or Equalizer APO / AutoEQ .txt preset, apply it and save it under

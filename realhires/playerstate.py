@@ -116,9 +116,11 @@ class PlayerState:
         self.eq_presets = [p for p in self.eq_presets if p["name"] != name]
 
     def matching_eq_preset(self) -> str:
-        """The name of the user preset the current EQ is, or ""."""
-        cur = eq.normalize(self.eq)
-        return next((p["name"] for p in self.eq_presets if eq.normalize(p["eq"]) == cur), "")
+        """The name of the user preset the current EQ is, or "".  Whether the equalizer
+        is on is not part of a preset (choosing one keeps the equalizer on), so it is not
+        compared: a preset saved while the equalizer was off is still found once it is on."""
+        cur = dict(eq.normalize(self.eq), enabled=False)
+        return next((p["name"] for p in self.eq_presets if dict(eq.normalize(p["eq"]), enabled=False) == cur), "")
 
     # -------------------------------------------------------- playlists ---
     def playlist(self, pid: str) -> Optional[dict]:

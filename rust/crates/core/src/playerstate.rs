@@ -163,9 +163,15 @@ impl PlayerState {
         self.eq_presets.retain(|p| p.name != name);
     }
 
-    /// The name of the user preset the current EQ is, or "".
+    /// The name of the user preset the current EQ is, or "".  Whether the
+    /// equalizer is on is not part of a preset (choosing one keeps the equalizer
+    /// on), so it is not compared (Python `matching_eq_preset`).
     pub fn matching_eq_preset(&self) -> String {
-        self.eq_presets.iter().find(|p| p.eq == self.eq).map(|p| p.name.clone()).unwrap_or_default()
+        self.eq_presets
+            .iter()
+            .find(|p| EqState { enabled: self.eq.enabled, ..p.eq.clone() } == self.eq)
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
     }
 
     // -------------------------------------------------------- playlists ---
@@ -436,5 +442,21 @@ mod tests {
         assert_eq!((again.shuffle.as_str(), again.repeat.as_str(), again.volume), ("genre", "off", 0.5));
         assert_eq!(again.eq.preset, "Jazz");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preset_saved_with_the_equalizer_off_is_found_once_it_is_on() {
+        let mut st = PlayerState::default();
+        st.eq.apply_preset("Rock");
+        st.eq.enabled = false;
+        let saved = st.eq.clone();
+        st.save_eq_preset("Quiet", &saved, false).unwrap();
+        st.eq.enabled = true; // choosing a preset keeps the equalizer on
+        assert_eq!(st.matching_eq_preset(), "Quiet");
+        st.eq.gains[0] += 0.5; // changed since: no preset any more
+        assert_eq!(st.matching_eq_preset(), "");
+        st.eq = saved;
+        st.delete_eq_preset("Quiet");
+        assert!(st.eq_presets.is_empty() && st.matching_eq_preset().is_empty());
     }
 }

@@ -1795,7 +1795,7 @@ impl Player {
                     format!("Delete the playlist “{}”? Its songs stay in your library.", self.state.playlist(id).map(|p| p.name.as_str()).unwrap_or("")),
                     "Delete",
                 ),
-                ConfirmAction::DeleteEqPreset(n) => ("Delete preset", format!("Delete the equalizer preset “{n}”?"), "Delete"),
+                ConfirmAction::DeleteEqPreset(n) => ("Delete preset", format!("Delete your preset “{n}”? The equalizer keeps its current settings."), "Delete"),
                 ConfirmAction::DeleteTheme(n) => ("Delete theme", format!("Delete the theme “{n}”?"), "Delete"),
                 ConfirmAction::ClearHistory => (
                     "Clear the play history",
