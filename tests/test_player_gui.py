@@ -115,10 +115,19 @@ def wait(cond, then, timeout=30.0, what="", start=None):
 def texts(canvas):
     return [canvas.itemcget(i, "text") for i in canvas.find_all() if canvas.type(i) == "text"]
 
+def lines(canvas):
+    # the texts on one line joined, left to right ("Artist — Album" is drawn in pieces, 2.1)
+    rows = {{}}
+    for i in canvas.find_all():
+        if canvas.type(i) == "text":
+            x, y = canvas.coords(i)[:2]
+            rows.setdefault(round(y), []).append((x, canvas.itemcget(i, "text")))
+    return ["".join(t for _, t in sorted(r)) for r in rows.values()]
+
 def shows(canvas, full):
     # the canvas shows `full`, or as much of it as fits: on a small screen (the Windows
     # runners have 1024 x 768) the LCD is narrow and cuts its texts with "…"
-    for t in texts(canvas):
+    for t in texts(canvas) + lines(canvas):
         if t == full or (len(t) > 1 and t.endswith("…") and full.startswith(t[:-1].rstrip())):
             return True
     return False
@@ -190,6 +199,93 @@ def lyrics_ok():
     assert np.lyrics.itemcget(item, "text") == "Blue ice under a silver sky"
     assert str(np.lyrics.itemcget(item, "font")) == str(app.theme.f("lyrics_b"))
     assert str(np.lyrics.itemcget(np.lyrics.items[1], "font")) == str(app.theme.f("lyrics"))
+    # 2.1: the label says what the lyrics are and where they come from
+    assert (np.kind_l.cget("text"), np.source_l.cget("text")) == ("Synced lyrics", ".lrc file")
+    # the cover with the title and "Artist — Album" under it: one block in the middle of the left half
+    W, H = np.art.winfo_width(), np.art.winfo_height()
+    box = next(b for b in np.links if b[0] == "cover")
+    assert abs((box[1] + box[3]) / 2 - W / 2) <= 1 and abs((box[2] + box[4] + 80) / 2 - H / 2) <= 1, (box, W, H)
+    assert texts(np.art)[:2] == ["Glacier Song", "Aurora Fields"], texts(np.art)
+    # A- / A+: 26 px by default, 2 px a step, saved at once
+    assert app.state.lyrics_size == 26 and app.theme.f("lyrics").cget("size") == -26
+    np.bigger.event_generate("<ButtonRelease-1>", x=5, y=5)
+    assert app.state.lyrics_size == 28 and playerstate.load().lyrics_size == 28
+    assert app.theme.f("lyrics_b").cget("size") == -28 and np.lyrics.heights[0] > 0
+    np.smaller.event_generate("<ButtonRelease-1>", x=5, y=5)
+    assert app.state.lyrics_size == 26 and playerstate.load().lyrics_size == 26
+    # scrolled away from the current line: following stops and "Back to the current line" shows
+    v = np.lyrics
+    v.scroll_by(600); root.update()
+    assert v.away and np.back_btn.winfo_ismapped() and not v.line_in_view()
+    held = v.offset
+    v.update_position(0.6); v.update_position(4.2); root.update()
+    assert v.offset == held and v.away  # no automatic scrolling while it shows
+    np.back_btn.event_generate("<ButtonRelease-1>", x=5, y=5); root.update()
+    assert not v.away and not np.back_btn.winfo_ismapped() and v.line_in_view()
+    v.scroll_by(600); root.update()
+    assert v.away
+    v.scroll_by(-600); root.update()  # scrolled back into view: the button goes
+    assert not v.away and not np.back_btn.winfo_ismapped()
+    v.update_position(0.6)
+    # the switch: Up Next lists the rest of the album, Details describes the song
+    np.switch.choose("upnext"); root.update()
+    assert app.np_tab == "upnext" and not app.bar.lyrics.on and np.upnext_pane.winfo_ismapped()
+    assert [t.display_title for t in np.queue_list.rows] == ["Midnight Sun", "Polar Drift"]
+    assert not np.lyrics.winfo_ismapped()
+    np.switch.choose("details"); root.update()
+    for needed in ("Title: Glacier Song", "Composer: Lena Frost", "Track: 2 of 4", "Format: FLAC · 24-bit/96 kHz",
+                   "Album artist: Aurora Fields", "File: " + glacier, "Quality check: Not checked yet"):
+        assert needed in np.details.text(), (needed, np.details.text())
+    app.toggle_now_playing(); root.update()  # the Lyrics button chooses Lyrics again
+    assert app.np_tab == "lyrics" and np.lyrics.winfo_ismapped() and app.bar.lyrics.on and not app.lyrics_hidden
+    # the names are links: the artist opens the artist, the album name the album; the cover
+    # opens the Cover window (another branch)
+    class At:
+        def __init__(self, box):
+            self.x, self.y = (box[1] + box[3]) / 2, (box[2] + box[4]) / 2
+    links = {{b[0]: b for b in np.links}}
+    np._art_click(At(links["artist"])); root.update()
+    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "Aurora Fields"
+    app.go_back(); root.update()
+    np._art_click(At(links["album_name"])); root.update()
+    assert app.page_name == "album" and app.page("album").title_l.cget("text") == "Northern Lights"
+    app.go_back(); root.update()
+    opened = []
+    app.open_cover_window = opened.append
+    np._art_click(At(links["cover"])); root.update()
+    assert app.page_name == "nowplaying" and opened == [glacier]
+    del app.open_cover_window
+    # several artists in one field: each one its own link, on Now Playing, in the LCD and in Details
+    tr = app.track(glacier)
+    tr.artist = "June Harbor, Aurora Fields"
+    np.draw_art(); app.bar.lcd.redraw()
+    names = [b[5] for b in np.links if b[0] == "artist"]
+    assert names == ["June Harbor", "Aurora Fields"], np.links
+    second = next(b for b in np.links if b[5] == "Aurora Fields")
+    np._art_click(At(second)); root.update()
+    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "Aurora Fields"
+    app.go_back(); root.update()
+    lcd = app.bar.lcd
+    assert lcd.artists == {{"artist:0": "June Harbor", "artist:1": "Aurora Fields"}}, lcd.artists
+    lcd._release(At(("artist:0",) + tuple(lcd.geo["artist:0"]))); root.update()
+    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "June Harbor"
+    app.go_back(); root.update()
+    np.switch.choose("details"); root.update()
+    assert "Artist: June Harbor, Aurora Fields" in np.details.text()
+    assert [x[4] for x in np.details.links] == ["June Harbor", "Aurora Fields"]
+    np.details._click(At((None,) + tuple(np.details.links[0][:4]))); root.update()
+    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "June Harbor"
+    app.go_back(); root.update()
+    tr.artist = "Aurora Fields"
+    app.toggle_now_playing(); root.update()
+    assert app.np_tab == "lyrics"
+    lcd = app.bar.lcd  # in the LCD: the title and the album open the album, the artist the artist
+    for what, page in (("title", "album"), ("album", "album"), ("artist:0", "artists")):
+        g = lcd.geo[what]
+        lcd._release(At((what,) + tuple(g))); root.update()
+        assert app.page_name == page, (what, app.page_name)
+        app.go_back(); root.update()
+    assert app.page_name == "nowplaying"
     # 2.1: on Now Playing the Lyrics button hides the lyrics (the cover in the middle) and
     # the page stays; pressed again it shows them; a click on the LCD's cover leaves the page
     app.toggle_now_playing(); root.update()
@@ -835,3 +931,117 @@ root.mainloop()
         assert [p for p, _, _ in fake.requests].count("/api/get") == 6  # the untagged song is never asked for
     finally:
         fake.server.shutdown()
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not _has_miniaudio(), reason="miniaudio not installed")
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_get_lyrics_from_now_playing(tmp_path):
+    """"Get lyrics button doesn't work" (2026-11-24): it opened the lyrics window, which then
+    waited for its own Download lyrics button.  Now Get lyrics (Now Playing, and a song's
+    menu) starts the download at once, and Now Playing shows the lyrics without leaving."""
+    from test_lyrics import FakeLrclib, rec
+
+    lib = make_library(tmp_path, seconds=30, mp3=False)
+    fake = FakeLrclib()
+    fake.songs.append(rec("Midnight Sun", artist="Aurora Fields", album="Northern Lights", duration=30.0,
+                          synced="[00:00.50] Midnight sun is shining\n[00:03.00] Over the frozen bay"))
+    try:
+        from realhires import settings
+
+        cfg = settings.Settings()
+        cfg.library_folders = [lib["music"]]
+        cfg.lyrics_server = fake.url
+        settings.save(cfg, str(tmp_path / "settings.json"))
+        env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
+                   REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
+                   REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_AUDIO_BACKEND="null",
+                   REALHIRES_LYRICS_INTERVAL="0", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+        body = f"""
+LIB = {json.dumps(lib)}
+sun, drift = LIB["songs"]["Midnight Sun"], LIB["songs"]["Polar Drift"]
+import tkinter as tk
+from realhires import player_gui
+root = tk.Tk()
+root.geometry("1280x800")
+def fail(exc, val, tb):
+    import traceback
+    traceback.print_exception(exc, val, tb)
+    os._exit(1)
+root.report_callback_exception = fail
+app = player_gui.PlayerApp(root)
+
+def wait(cond, then, timeout=60.0, what="", start=None):
+    start = start or time.monotonic()
+    if cond():
+        return root.after(50, then)
+    assert time.monotonic() - start < timeout, "timed out: " + what
+    root.after(100, lambda: wait(cond, then, timeout, what, start))
+
+def loaded():
+    album = next(a for a in app.albums if a["title"] == "Northern Lights")
+    app.play_list(album["tracks"], [t.path for t in album["tracks"]].index(sun), "Northern Lights")
+    app.toggle_now_playing(); root.update()
+    np = app.page("nowplaying")
+    assert app.page_name == "nowplaying" and np.kind == "" and np.get_btn.winfo_ismapped()
+    np.get_btn.event_generate("<ButtonRelease-1>", x=5, y=5)  # press Get lyrics
+    d = app.qc.lyrics_dialog
+    assert d is not None and d.todo == [sun]
+    wait(lambda: len(d.outcomes) == 1 and not d.running, saved, what="the download")
+
+def saved():
+    np, d = app.page("nowplaying"), app.qc.lyrics_dialog
+    assert d.outcomes[0].status == "synced", d.outcomes[0].message
+    assert os.path.isfile(os.path.splitext(sun)[0] + ".lrc")
+    # Now Playing shows them at once, and stays
+    root.update()
+    assert app.page_name == "nowplaying" and np.kind == "synced" and np.lyrics.winfo_ismapped()
+    assert np.lyrics.itemcget(np.lyrics.items[0], "text") == "Midnight sun is shining"
+    assert (np.kind_l.cget("text"), np.source_l.cget("text")) == ("Synced lyrics", ".lrc file")
+    # a song's menu: Get lyrics… starts at once too (this one is not on LRCLIB)
+    m = app.song_menu(app.track(drift))
+    i = next(i for i in range(m.index("end") + 1)
+             if m.type(i) == "command" and m.entrycget(i, "label") == "Get lyrics…")
+    m.invoke(i)
+    d2 = app.qc.lyrics_dialog
+    assert d2 is not d and d2.todo == [drift]
+    wait(lambda: len(d2.outcomes) == 1 and not d2.running, done, what="the second download")
+
+def done():
+    d2 = app.qc.lyrics_dialog
+    assert d2.outcomes[0].status == "not-found", d2.outcomes[0].status
+    print("OK")
+    app.quit()
+
+wait(lambda: len(app.tracks) == {len(lib["songs"])} and not app.library_busy(), loaded, what="the library")
+root.mainloop()
+"""
+        run_script(tmp_path, body, env, timeout=150)
+        assert [q.get("track_name") for p, q, _ in fake.requests if p == "/api/get"] == ["Midnight Sun", "Polar Drift"]
+    finally:
+        fake.server.shutdown()
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_now_playing_details(tmp_path):
+    """Now Playing's Details: the rows, the format line and the comment tag."""
+    pytest.importorskip("tkinter")
+    from realhires.musiclib import Track
+    from realhires.player_pages import format_line, read_comment, song_details
+
+    song = tmp_path / "Song.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", "-metadata", "comment=Live in Oslo",
+                    str(song)], check=True)
+    assert read_comment(str(song)) == "Live in Oslo"
+    assert read_comment(str(tmp_path / "gone.flac")) == ""
+    t = Track(str(song), title="Song", artist="A; B", album="Album", composer="C", year="2020", track=3, disc=1,
+              duration=125.0, codec="flac", sample_rate=96000, bits=24, bit_rate=2304000)
+    assert format_line(t) == "FLAC · 24-bit/96 kHz · 2,304 kbps"
+    assert format_line(Track("x.mp3", codec="mp3", sample_rate=44100, is_lossy=True, bit_rate=320000)) == \
+        "MP3 · 44.1 kHz · 320 kbps"
+    rows = dict(song_details(t, 12, "Live in Oslo", ("Fake hi-res", "Upsampled from 44.1 kHz"), ["A", "B"]))
+    assert rows["Artist"] == "A, B" and rows["Track"] == "3 of 12" and rows["Duration"] == "2:05"
+    assert rows["Comment"] == "Live in Oslo" and rows["Album artist"] == "—" and rows["File"] == str(song)
+    assert rows["Quality check"] == "Fake hi-res" and rows["Why"] == "Upsampled from 44.1 kHz"
+    rows = dict(song_details(Track("y.flac", title="Y"), 0, "", None))
+    assert rows["Quality check"] == "Not checked yet" and "Comment" not in rows and rows["Format"] == "—"

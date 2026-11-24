@@ -37,7 +37,7 @@ from . import player as player_mod
 from .player_collections import (FoldersPage, LibraryPage, PlaylistPage, PlaylistsPage, RecentlyPlayedPage,
                                  StatsDetailsPage, StatsPage, missing_track)
 from .player_pages import (AlbumPage, AlbumsPage, GroupPage, NowPlayingPage, Page, SearchPage, SettingsPage,
-                           SongsPage, album_order, frame, label)
+                           SongsPage, album_order, artist_line, frame, label)
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
                            system_is_dark)
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
@@ -260,7 +260,9 @@ class Sidebar(tk.Frame):
 # ------------------------------------------------------------------ LCD ---
 class Lcd(tk.Canvas):
     """The middle of the playback bar: the cover, the title, "Artist — Album", the seek
-    bar with the elapsed and remaining time, and the quality badge."""
+    bar with the elapsed and remaining time, and the quality badge.  A click on the cover
+    opens (or leaves) Now Playing, on the title or the album name the album, on the artist
+    name the artist, each of several artists its own (2.1)."""
 
     MAX_W = 720
     COVER = 44
@@ -280,6 +282,9 @@ class Lcd(tk.Canvas):
         self.bind("<B1-Motion>", self._motion_drag)
         self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Motion>", self._motion)
+        self.bind("<Leave>", lambda e: self._hover_link(None))
+        self.hover: Optional[str] = None
+        self.artists: Dict[str, str] = {}  # "artist:0"... -> the name of that link
         t.on_change(lambda: (self._fit.clear(), self.redraw()))
         app.covers.listeners.append(lambda key, size: size == self.COVER and self.redraw())
 
@@ -329,15 +334,31 @@ class Lcd(tk.Canvas):
         tx0, tx1 = cx0 + self.COVER + 14, bx0 - 14
         mid = (tx0 + tx1) / 2
         width = max(40, int(tx1 - tx0))
-        self.create_text(mid, y0 + 14, text=fit_text(t.f("lcd_title"), tr.display_title, width, self._fit),
-                         fill=t.c("text"), font=t.f("lcd_title"))
+        has_album = self.app.album_of(tr) is not None
+        title = self.create_text(mid, y0 + 14, text=fit_text(t.f("lcd_title"), tr.display_title, width, self._fit),
+                                 fill=t.c("text"), font=t.f("lcd_title"))
+        if has_album:
+            self.geo["title"] = self.bbox(title)
         if self.error:
-            sub, color = self.error, t.c("error")
-        else:
-            sub, color = f"{tr.display_artist} — {tr.display_album}", t.c("text2")
-        self.create_text(mid, y0 + 30, text=fit_text(t.f("lcd_sub"), sub, width, self._fit), fill=color,
-                         font=t.f("lcd_sub"))
+            self.create_text(mid, y0 + 30, text=fit_text(t.f("lcd_sub"), self.error, width, self._fit),
+                             fill=t.c("error"), font=t.f("lcd_sub"))
+        else:  # "Artist, Artist — Album", the names apart, so each one can be clicked
+            font = t.f("lcd_sub")
+            pieces = artist_line(font, self.app.artists_of(tr), tr.display_album if has_album else None,
+                                 tr.display_album, width, self._fit)
+            x = mid - sum(font.measure(p[0]) for p in pieces) / 2
+            self.artists = {}
+            for text, what, name in pieces:
+                item = self.create_text(x, y0 + 30, text=text, anchor="w", fill=t.c("text2"), font=font)
+                if what == "artist":
+                    key = f"artist:{len(self.artists)}"
+                    self.artists[key] = name
+                    self.geo[key] = self.bbox(item)
+                elif what == "album_name":
+                    self.geo["album"] = self.bbox(item)
+                x += font.measure(text)
         self.geo["text"] = (tx0, tx1)
+        self._underline()
         self._draw_seek()
 
     def _seek_geo(self):
@@ -382,8 +403,27 @@ class Lcd(tk.Canvas):
         a, b, _ = self._seek_geo()
         return min(max((x - a) / max(b - a, 1), 0.0), 1.0)
 
+    def _link_at(self, x: float, y: float) -> Optional[str]:
+        return next((n for n in self.geo if (n in ("title", "album") or n.startswith("artist:"))
+                     and self._hit(n, x, y)), None)
+
+    def _hover_link(self, name: Optional[str]) -> None:
+        if name != self.hover:
+            self.hover = name
+            self._underline()
+
+    def _underline(self) -> None:
+        """The title, artist or album name under the pointer is underlined."""
+        self.delete("underline")
+        g = self.geo.get(self.hover or "")
+        if g:
+            color = self.app.theme.c("text" if self.hover == "title" else "text2")
+            self.create_line(g[0] + 1, g[3] - 1, g[2] - 1, g[3] - 1, fill=color, tags="underline")
+
     def _motion(self, e) -> None:
-        hand = self._hit("cover", e.x, e.y) or self._hit("badge", e.x, e.y) or self._on_seek_bar(e.x, e.y)
+        link = None if self.drag is not None else self._link_at(e.x, e.y)
+        self._hover_link(link)
+        hand = link or self._hit("cover", e.x, e.y) or self._hit("badge", e.x, e.y) or self._on_seek_bar(e.x, e.y)
         self.configure(cursor="hand2" if hand else "")
 
     def _press(self, e) -> None:
@@ -408,6 +448,13 @@ class Lcd(tk.Canvas):
             self.app.cover_clicked()
         elif self._hit("badge", e.x, e.y):
             self.app.open_info()
+        elif self.track is not None and self._link_at(e.x, e.y) is not None:
+            link = self._link_at(e.x, e.y)
+            self._hover_link(None)
+            if link.startswith("artist:"):
+                self.app.open_artist(self.artists[link])
+            else:
+                self.app.open_album_of(self.track.path)
 
 
 # --------------------------------------------------------- playback bar ---
@@ -472,7 +519,7 @@ class PlaybackBar(tk.Frame):
         self.heart.set(enabled=has, filled=bool(has and app.is_liked(app.current)))
         self.dislike.set(enabled=has, filled=bool(has and app.is_disliked(app.current)))
         self.more.set(enabled=has)
-        self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden)
+        self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden and app.np_tab == "lyrics")
         self.queue.set(on=app.up_next_shown)
         self.eq.set(on=bool(st.eq.get("enabled")))
         self.speaker.set(level=0.0 if st.muted else st.volume)
@@ -521,6 +568,7 @@ class PlayerApp:
         self.theme.reg(root, bg="bg")
         self.fit_cache: dict = {}
         self.state = playerstate.load()
+        self.apply_lyrics_size()
         self.engine = Player(device=cfg.output_device, gapless=cfg.gapless)
         self.engine.set_volume(self.state.volume, self.state.muted)
         self.engine.set_eq(self.state.eq)
@@ -528,6 +576,7 @@ class PlayerApp:
         self.q: queue.Queue = queue.Queue()
         self.tracks: List[Track] = []
         self.by_path: Dict[str, Track] = {}
+        self.known_artists: set = set()  # musiclib.known_artists(), once per library load
         self.albums: List[dict] = []
         self.album_by_key: Dict[str, dict] = {}
         self._album_key: Dict[str, str] = {}
@@ -545,6 +594,7 @@ class PlayerApp:
         self.history: List[tuple] = []
         self.up_next_shown = False
         self.lyrics_hidden = False  # Now Playing without its lyrics column (the Lyrics button, 2.1)
+        self.np_tab = "lyrics"      # Now Playing's right half: lyrics, upnext or details (for the session)
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
         self.edit_window: Optional[EditInfoWindow] = None  # one Edit Info window at a time
@@ -789,17 +839,62 @@ class PlayerApp:
         self.show_page("artists")
         self.page("artists").choose(name)
 
+    def artists_of(self, t: Track) -> List[str]:
+        """The artists of a song's artist field (`musiclib.split_artists()`), each a link."""
+        return musiclib.split_artists(t.display_artist, self.known_artists) or [t.display_artist]
+
+    def open_cover_window(self, path: str) -> None:
+        """A click on Now Playing's cover: the Cover window (another branch)."""
+
+    def open_album_of(self, path: str) -> None:
+        t = self.track(path)
+        album = self.album_of(t) if t is not None else None
+        if album is not None:
+            self.open_album(album)
+
     def toggle_now_playing(self) -> None:
         """The Lyrics button and Ctrl/Cmd+L: elsewhere they open Now Playing with the
-        lyrics; on Now Playing they hide or show the lyrics (hidden, the cover is in the
-        middle) and the page stays (2.1, as the user asked)."""
+        lyrics; on Now Playing they choose Lyrics in its switch, and when Lyrics is chosen
+        already they hide or show the lyrics (hidden, the cover is in the middle) and the
+        page stays (2.1, as the user asked)."""
         if self.page_name == "nowplaying":
-            self.lyrics_hidden = not self.lyrics_hidden
-            self.pages["nowplaying"].load_lyrics()
+            if self.np_tab != "lyrics":
+                self.np_tab, self.lyrics_hidden = "lyrics", False
+            else:
+                self.lyrics_hidden = not self.lyrics_hidden
+            self.pages["nowplaying"].tab_changed()
             self.bar.update_controls()
         elif self.current is not None:
             self.lyrics_hidden = False
+            self.np_tab = "lyrics"
             self.show_page("nowplaying")
+
+    def set_np_tab(self, tab: str) -> None:
+        """Now Playing's switch: Lyrics, Up Next or Details (kept for the session)."""
+        self.np_tab, self.lyrics_hidden = tab, False
+        p = self.pages.get("nowplaying")
+        if isinstance(p, NowPlayingPage):
+            p.tab_changed()
+        self.bar.update_controls()
+
+    def apply_lyrics_size(self) -> None:
+        """The lyrics fonts at the size of A− / A+ (`PlayerState.lyrics_size`); plain lyrics
+        a little smaller."""
+        size = playerstate.clean_lyrics_size(self.state.lyrics_size)
+        self.theme.f("lyrics").configure(size=-size)
+        self.theme.f("lyrics_b").configure(size=-size)
+        self.theme.f("plain").configure(size=-playerstate.plain_lyrics_size(size))
+
+    def lyrics_size_step(self, steps: int) -> None:
+        """A+ (+1) / A− (-1) on Now Playing: the lyrics larger or smaller, saved at once."""
+        before = self.state.lyrics_size
+        if self.state.step_lyrics_size(steps) == before:
+            return
+        self.apply_lyrics_size()
+        self.save_state()
+        p = self.pages.get("nowplaying")
+        if isinstance(p, NowPlayingPage):
+            p.size_changed()
 
     def cover_clicked(self) -> None:
         """A click on the LCD's cover opens Now Playing, or leaves it when it is shown."""
@@ -839,6 +934,7 @@ class PlayerApp:
     def set_tracks(self, tracks: List[Track]) -> None:
         self.tracks = list(tracks)
         self.by_path = {t.path: t for t in self.tracks}
+        self.known_artists = musiclib.known_artists(self.tracks)
         self.albums = musiclib.albums(self.tracks)
         self.album_by_key = {a["key"]: a for a in self.albums}
         self._album_key = {t.path: a["key"] for a in self.albums for t in a["tracks"]}
@@ -939,8 +1035,14 @@ class PlayerApp:
         self.qc.download_lyrics([t.path for t in musiclib.sort_songs(self.tracks)])
 
     def get_lyrics_current(self) -> None:
+        """Now Playing's "Get lyrics"."""
         if self.current:
-            self.qc.download_lyrics([self.current])
+            self.get_lyrics([self.current])
+
+    def get_lyrics(self, paths: List[str]):
+        """Get lyrics (Now Playing, a song's menu): the lyrics window for these songs, which
+        starts downloading at once; Now Playing shows the lyrics when they are saved."""
+        return self.qc.download_lyrics(paths, autostart=True)
 
     def lyrics_changed(self, path: str) -> None:
         p = self.pages.get("nowplaying")
@@ -1031,6 +1133,7 @@ class PlayerApp:
         if album is not None:
             m.add_command(label="Show album", command=lambda: self.open_album(album))
         if os.path.exists(path):
+            m.add_command(label="Get lyrics…", command=lambda: self.get_lyrics([path]))
             m.add_command(label="Edit info…", command=lambda: self.edit_info([track]))
             m.add_command(label="Show in folder", command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
