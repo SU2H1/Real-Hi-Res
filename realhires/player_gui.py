@@ -562,6 +562,7 @@ class PlayerApp:
         self.name_dialog = None                     # an open NameDialog (tests fill it in)
         self.last_menu: Optional[tk.Menu] = None    # the song menu shown last
         self.lib = musiclib.Library()                # the main thread's connection (index, play history)
+        self.lib_pending = False
         self._build()
         self.qc = QualityCheck(root, self, parent=self.pages["quality"], initial=initial, cfg=cfg)
         self.qc.pack(fill="both", expand=True)
@@ -843,7 +844,8 @@ class PlayerApp:
         return self.album_by_key.get(self._album_key.get(track.path, ""))
 
     def library_busy(self) -> bool:
-        return self.lib_thread is not None and self.lib_thread.is_alive()
+        """An update is running, or its result has not reached the window yet."""
+        return self.lib_pending or (self.lib_thread is not None and self.lib_thread.is_alive())
 
     def refresh_library(self, then_check: bool = False) -> None:
         """Re-read the tags of new and changed files in a background thread."""
@@ -870,6 +872,7 @@ class PlayerApp:
                 if lib is not None:
                     lib.close()
 
+        self.lib_pending = True  # until "lib_done" or "lib_error" has been handled
         self.lib_thread = threading.Thread(target=work, daemon=True, name="realhires-library")
         self.lib_thread.start()
         if self.page_name in ("albums", "recent") and not self.tracks:
@@ -1730,8 +1733,10 @@ class PlayerApp:
                     done, total = rest
                     self.sidebar.set_status(f"Updating the library: {done:,} of {total:,} songs")
                 elif kind == "lib_done":
+                    self.lib_pending = False
                     self._library_done(rest[0])
                 elif kind == "lib_error":
+                    self.lib_pending = False
                     self.sidebar.set_status(f"The library could not be updated: {rest[0]}")
         except queue.Empty:
             pass

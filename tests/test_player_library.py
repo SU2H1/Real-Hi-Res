@@ -121,13 +121,13 @@ def test_playlists_dislikes_and_eq_presets(tmp_path):
 def test_shuffle_leaves_out_disliked_songs():
     songs = [t.song() for t in LIB]
     paths = [t.path for t in LIB]
-    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={"/m/A/02.flac", "/m/B/04.mp3"})
-    q.start("/m/A/01.flac")
-    assert q.order == ["/m/A/01.flac", "/m/B/sub/03.flac"]
-    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={"/m/A/01.flac"})
-    assert q.start("/m/A/01.flac") == "/m/A/01.flac" and "/m/A/01.flac" not in q.order[1:]
-    q = PlayQueue(songs, paths, shuffle="off", disliked={"/m/A/02.flac"})
-    q.start("/m/A/01.flac")
+    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={P("/m/A/02.flac"), P("/m/B/04.mp3")})
+    q.start(P("/m/A/01.flac"))
+    assert q.order == [P("/m/A/01.flac"), P("/m/B/sub/03.flac")]
+    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={P("/m/A/01.flac")})
+    assert q.start(P("/m/A/01.flac")) == P("/m/A/01.flac") and P("/m/A/01.flac") not in q.order[1:]
+    q = PlayQueue(songs, paths, shuffle="off", disliked={P("/m/A/02.flac")})
+    q.start(P("/m/A/01.flac"))
     assert q.order == paths  # in order: nothing is left out
 
 

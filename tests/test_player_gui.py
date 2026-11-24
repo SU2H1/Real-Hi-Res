@@ -51,6 +51,7 @@ HEADER = f"""
 import faulthandler, json, os, sys, time
 sys.path.insert(0, {REPO!r})
 sys.path.insert(0, {TESTS!r})
+faulthandler.enable()  # a crash (the macOS runner once ended a script with SIGSEGV) shows its stack
 faulthandler.dump_traceback_later(200, exit=True)
 """
 
@@ -171,7 +172,9 @@ def playing():
     lcd = texts(app.bar.lcd)
     assert shows(app.bar.lcd, "Glacier Song") and shows(app.bar.lcd, "Aurora Fields — Northern Lights"), lcd
     assert "Hi-Res Lossless" in lcd, lcd
-    assert any(t.startswith("-0:0") for t in lcd), lcd  # the remaining time
+    a, b, _ = app.bar.lcd._seek_geo()
+    if b - a >= 20:  # a narrow LCD (a 1024-pixel screen) has no room for the seek bar and its times
+        assert any(t.startswith("-0:0") for t in lcd), lcd  # the remaining time
     assert app.bar.next.enabled and app.bar.play.icon == "pause"
     # Now Playing with synced lyrics: the current line in bold
     app.toggle_now_playing()
