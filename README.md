@@ -304,23 +304,27 @@ MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with or
 
 ## Rust version (preview)
 
-The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language. It is a preview: the release packages are still the Python version, so you build the Rust version yourself from the source. It has the command-line tool with all of the options described above, including `--fix`, and it judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
+The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language: the desktop app and the command-line tool, with everything described above, including Fix. It is a preview: the release packages are still the Python version, so you build the Rust version yourself from the source. It judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
 
-To build it you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the program, as in the release packages). Then run this in the `rust` folder:
+![The Rust desktop app: the list of fake files, and the dashboard showing a fake 24/192 file upsampled from 44.1 kHz, with its spectrogram cut off at 22.05 kHz](docs/rust-gui.png)
+
+To build it you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
 
 ```bash
 cargo build --release
 ```
 
-The command-line tool is then `rust/target/release/realhires` (`realhires.exe` on Windows), and it takes the same arguments as the Python one:
+The desktop app is then `rust/target/release/realhires-gui` (`realhires-gui.exe` on Windows), and the command-line tool is `rust/target/release/realhires`, which takes the same arguments as the Python one:
 
 ```bash
 rust/target/release/realhires ~/Music/HiRes
 ```
 
-Rust compiles to a native program, so it needs neither Python nor NumPy, starts at once, and analyses files in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The help text (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
+The desktop app works like the one described under [Desktop app](#desktop-app-gui): the Sources panel, the live scan with the time left, the filters with counts, Search, Find (Ctrl+F), the Files, By album and By artist views, the dashboard with the spectrogram and the average spectrum, the summary chart after each scan, the Settings window with the same five tabs, saved results that appear as soon as a folder is listed, and the Fix window, including fixing automatically after a scan. Folders and files can also be dropped onto its window. Its pop-up windows (summary, Settings, Fix) open inside the main window rather than as separate windows. On Linux it needs a desktop with OpenGL, which every X11 or Wayland desktop provides (it loads the system's `libxkbcommon-x11` and OpenGL driver).
 
-The test [`tests/test_rust_parity.py`](tests/test_rust_parity.py) keeps the two versions equal. It runs the Rust tool on the synthetic test library and fails if any verdict, flag, reason or summary differs from the Python version, or if a measurement differs by more than rounding. It also checks that both versions read each other's saved results and settings, and that the Rust `--fix` restores FFmpeg-made upsamples bit-exactly and keeps gapless albums gapless. It is skipped when the Rust tool has not been built.
+Rust compiles to native programs, so they need neither Python nor NumPy and start at once: the command-line tool is about 5 MB and the desktop app about 18 MB, without FFmpeg. Files are analysed in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The command-line help (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
+
+The test [`tests/test_rust_parity.py`](tests/test_rust_parity.py) keeps the two versions equal. It runs the Rust tool on the synthetic test library and fails if any verdict, flag, reason or summary differs from the Python version, or if a measurement differs by more than rounding. It also checks that both versions read each other's saved results and settings, and that the Rust `--fix` restores FFmpeg-made upsamples bit-exactly and keeps gapless albums gapless. It is skipped when the Rust tool has not been built. The desktop app has its own test, which runs the whole app without a screen: it scans generated files, checks the verdicts, the summary, the album view and the saved results on a second start, and fixes a file.
 
 ## Development
 
@@ -330,7 +334,7 @@ Run the test suite with pytest. The tests generate synthetic real and fake files
 python3 -m pytest -q
 ```
 
-The Rust version has its own unit tests, which run with `cargo test` in the `rust` folder. Once it is built (`cargo build --release`), `python3 -m pytest -q` also runs the comparison of the two versions in `tests/test_rust_parity.py`.
+The Rust version has its own tests, including one that drives the whole desktop app without a screen, which run with `cargo test` in the `rust` folder. Once it is built (`cargo build --release`), `python3 -m pytest -q` also runs the comparison of the two versions in `tests/test_rust_parity.py`.
 
 ### Building the packages and publishing a release
 

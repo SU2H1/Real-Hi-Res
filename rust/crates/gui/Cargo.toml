@@ -1,0 +1,20 @@
+[package]
+name = "realhires-gui"
+description = "Real-Hi-Res desktop app: find fake hi-res and fake lossless audio files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "realhires-gui"
+path = "src/main.rs"
+
+[dependencies]
+realhires-core = { path = "../core" }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "system_fonts", "wayland", "x11", "glow"] }
+# only to switch on winit's default features (dlopen for Wayland), which eframe's glow setup leaves off
+winit = "0.30.13"
+egui = "0.37"
+egui_extras = "0.37"
+rfd = "0.18"
+image = { version = "0.25", default-features = false, features = ["png"] }

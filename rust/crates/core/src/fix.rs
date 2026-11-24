@@ -366,7 +366,7 @@ pub fn skip_summary(skipped: &[(FileResult, String)]) -> String {
             None => counts.push((k, 1)),
         }
     }
-    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.sort_by_key(|c| std::cmp::Reverse(c.1));
     let parts: Vec<String> = counts
         .iter()
         .map(|(k, n)| format!("{n} {}", SKIP_GROUPS.iter().find(|(key, _)| key == k).unwrap().1))

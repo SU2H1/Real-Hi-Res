@@ -49,7 +49,8 @@ jobs:
       - name: Build
         working-directory: rust
         run: cargo build --release --locked
-      - name: Rust unit tests
+      # includes the desktop app's test, which drives the whole app headlessly
+      - name: Rust tests
         working-directory: rust
         run: cargo test --release --locked
       - name: Compare with the Python version
@@ -60,4 +61,6 @@ jobs:
           path: |
             rust/target/release/realhires
             rust/target/release/realhires.exe
+            rust/target/release/realhires-gui
+            rust/target/release/realhires-gui.exe
           if-no-files-found: error

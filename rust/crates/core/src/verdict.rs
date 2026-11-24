@@ -444,7 +444,7 @@ fn judge(
         res.grid_gain_db = Some(pyfmt::round_to(gr.gain_db, 2));
     }
     res.bit_usage = bits.bit_usage().into_iter().map(|(k, v)| (k, pyfmt::round_to(v, 4))).collect();
-    res.bit_usage.sort_by(|a, b| b.0.cmp(&a.0));
+    res.bit_usage.sort_by_key(|b| std::cmp::Reverse(b.0));
     res.bandwidth_hz = Some(spec.bandwidth_hz);
     res.cutoff_drop_db = Some(spec.cutoff_drop_db);
     res.noise_floor_db = Some(spec.noise_floor_db);
