@@ -1,6 +1,6 @@
 # Real-Hi-Res
 
-Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain.
+Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
 
 ![Real-Hi-Res desktop app: list of fake and suspicious files, and the dashboard showing a fake FLAC with its spectrogram and a one-line reason](docs/gui-screenshot.png)
 
@@ -92,6 +92,7 @@ Album, artist and track numbers come from the files' tags (FLAC/Vorbis, ID3, MP4
 - The key facts: the claimed resolution, the resolution the audio really has, the bandwidth, how many bits are actually used, the format and the duration.
 - A **spectrogram** (time left to right, frequency bottom to top). On an upsampled or MP3-sourced file it shows a hard black area above the cut-off for the whole track, and the detected cut-off is marked with a labelled line.
 - The **average spectrum** tab, which shows the same thing as a single curve.
+- The **Lyrics** tab, which shows the lyrics saved next to the song (its `.lrc` or `.txt` file), with the timestamps of synced lyrics in grey. See [Synced lyrics](#synced-lyrics-lrclib) below.
 - The full reasoning and measurements under **Details**.
 
 **Opening files quickly.** **Open Folder** opens the file's folder in Explorer, Finder or your Linux file manager with the file selected, and **Open File** plays it in your default player. Double-clicking a row or pressing **Enter** opens the folder, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) opens the file. You can swap these two in Settings. Right-click a row for the same actions, or **Ctrl+C** to copy the paths of the selected rows. **Ctrl+A** (**Cmd+A** on a Mac, or **Edit → Select all listed files**) selects every file the list currently shows, so the filters decide what it takes; in the Search and Find boxes it still selects their text. **File → Export…** saves the listed files as CSV or JSON.
@@ -130,17 +131,44 @@ Before fixing a large library, keep in mind what cannot be avoided. A resampled 
 
 ![Fix to real resolution window after an automatic fix: four upsampled files fixed in place with their originals in the backup folder; two MP3-sourced files at 16/44.1 left unchanged, with the reason](docs/gui-fix.png)
 
-**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with five tabs, and pointing at any setting shows an explanation of what it does:
+**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with six tabs, and pointing at any setting shows an explanation of what it does:
 
 - **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the narrow and deep upsampling cliffs, the resampler mid-point ratio, the lossy cut-off drop and search range, the expected ultrasonic content, the converter noise floor, the value-grid strength, the bit-usage threshold and more.
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
 - **Saved results** turns saving and reusing results on or off, re-scans results of older detection rules automatically if you want, and sets the space for saved graphs. It also shows where the results are kept and how big they are, with a button to delete them.
 - **Display** sets the view at start-up (Files, By album or By artist), what the album/artist rings show, the card order, which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
 - **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check, plus what happens **after a scan** (nothing, ask, or fix automatically).
+- **Lyrics** holds the defaults of the lyrics window: which songs are skipped because they already have lyrics, whether plain lyrics and instrumental marks are saved, whether to search when there is no exact match, and the LRCLIB server.
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
 ![Settings window on the Saved results tab](docs/gui-settings.png)
+
+### Synced lyrics (LRCLIB)
+
+Real-Hi-Res can also download synced lyrics for your songs, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does. Select songs in the list and click **Get lyrics…** in the dashboard (or press **Ctrl+L**, **Cmd+L** on a Mac, or use the right-click menu), or choose **Edit → Download synced lyrics for all songs…** for every song you have added. You do not need to scan first. Each song is looked up on [LRCLIB](https://lrclib.net), a free and open lyrics database, by the title, artist, album and length in its tags, and its synced lyrics are saved as an `.lrc` file with the same name next to it, so `01 Song.flac` gets `01 Song.lrc`. Many music players and lyrics plug-ins find such a file and show the lyrics line by line in time with the music. The audio files themselves are never changed.
+
+![Download synced lyrics window after a run: synced lyrics saved for three songs (one found by searching), plain lyrics saved as .txt for one, one song marked instrumental, one not found and one without tags](docs/gui-lyrics.png)
+
+The window lists every song with its artist and title, and after the download its result: **Synced lyrics saved**, **Plain lyrics saved (no synced ones)**, **Marked instrumental**, **Not found on LRCLIB** or **No title or artist tag**. Selecting a row shows the full explanation under the list, and **Show in folder** opens the folder of the lyrics. When LRCLIB has only plain (unsynced) lyrics for a song, they are saved as `<name>.txt`. A song that LRCLIB lists as instrumental gets an `.lrc` holding `[au: instrumental]`, as in LRCGET, so that it is not looked up again. These are LRCGET's conventions, so lyrics files made by either program are understood by the other. Songs that already have an `.lrc` are skipped without asking LRCLIB at all, so running the download again over a whole library only looks up the songs that still have no lyrics; they are listed last, in grey. A song without a title or artist tag cannot be looked up. Lyrics files are never deleted.
+
+**How a song is matched.** Real-Hi-Res first asks LRCLIB for the record with the song's title, artist and album whose length is within 2 seconds of the song's, which is LRCLIB's exact lookup. If there is no such record, it searches by title and artist and accepts a result only when its title and artist are the same as the song's (case, punctuation and additions such as "(Remastered 2011)" or "feat. …" do not matter) and its length is within 2 seconds. This finds songs whose album is named differently on LRCLIB, and the window says "found by searching". Synced lyrics are preferred to plain ones. You can turn the search off in the options, and then only exact matches are used.
+
+**LRCLIB's rules.** LRCLIB is a free service, and Real-Hi-Res follows the rules it sets for programs. It sends one request at a time with a pause after each (at most about 85 per minute, below the 90 per minute that LRCLIB allows a program that names itself), it names itself and its version in every request, and it waits as long as LRCLIB asks when the server is busy or the limit is reached. A library of 1,000 songs without lyrics therefore takes roughly 15 to 25 minutes. The window estimates the time left, and **Stop** ends the run after the current song, keeping everything saved so far. Only the title, artist, album and length of each song are sent to lrclib.net; file names and folders are not.
+
+**Options** (in the window, and as defaults under **Settings → Lyrics**):
+
+- **Songs that already have lyrics** is **Skip songs that have synced lyrics** by default. A song that has only a `.txt` is then looked up again in case LRCLIB now has synced lyrics for it, and an `.lrc` is added next to the `.txt`, which is kept. **Skip songs that have any lyrics** skips songs that have a `.txt` too, and **Download again and replace them** looks every song up again and overwrites its lyrics files.
+- **Save plain lyrics as .txt** (on by default) saves plain lyrics when a song has no synced ones.
+- **Mark instrumental songs** (on by default) writes the `[au: instrumental]` mark.
+- **Search when there is no exact match** (on by default) is described above.
+- **LRCLIB server** (Settings only) is `https://lrclib.net`; change it only if you run your own LRCLIB server.
+
+The **Lyrics** tab of the dashboard shows the lyrics of the selected song, and it updates as soon as they are downloaded:
+
+![The Lyrics tab of the dashboard showing the synced lyrics of the selected song, with grey timestamps](docs/gui-lyrics-tab.png)
+
+On the command line, `--lyrics-only` downloads lyrics without analysing the files, and `--lyrics` does it after a scan; see [Synced lyrics on the command line](#synced-lyrics-on-the-command-line).
 
 ## Running from source
 
@@ -214,7 +242,11 @@ While it works, a progress line on the terminal counts the files and estimates t
 | `--fix-backup folder\|bak\|none` | With `--fix`, keep originals in the backup folder (default), as `<name>.bak`, or delete them. |
 | `--fix-backup-dir DIR` | With `--fix`, move the originals into `DIR`. |
 | `--fix-copy` / `--fix-dir DIR` | With `--fix`, leave the files alone and save corrected copies next to them or into `DIR`. |
-| `--dry-run` | With `--fix`, only show what would be changed. |
+| `--dry-run` | With `--fix`, only show what would be changed. With `--lyrics` or `--lyrics-only`, look the songs up but save nothing. |
+| `--lyrics` | After scanning, download synced lyrics from LRCLIB for every scanned song and save them as `<name>.lrc` next to it (plain lyrics as `<name>.txt`), as LRCGET does. See [Synced lyrics on the command line](#synced-lyrics-on-the-command-line). |
+| `--lyrics-only` | Download lyrics as `--lyrics` does, without analysing the files (only their tags are read). |
+| `--lyrics-existing skip-synced\|skip-any\|replace` | With `--lyrics`, skip songs that have an `.lrc` (default), skip songs that have an `.lrc` or a `.txt`, or download again and replace their lyrics files. |
+| `--check-lyrics-server` | Make one request to the LRCLIB server, say whether it can be reached, and exit. This helps when a firewall or proxy blocks the downloads. |
 | `-t SECONDS`, `--max-seconds SECONDS` | Analyse only the first N seconds of each file, which is faster but slightly less reliable. |
 | `-n`, `--no-recursive` | Do not descend into sub-folders. |
 | `--set NAME=VALUE` | Override one setting for this run, for example `--set cliff_db=30` or `--set lossy_max_khz=20.8`. You can repeat it. |
@@ -241,6 +273,27 @@ And the following command lists only the problem files and saves spectrograms an
 ```bash
 realhires ~/Music --only problems --spectrogram realhires-report/spectrograms --csv realhires-report/report.csv
 ```
+
+### Synced lyrics on the command line
+
+`--lyrics-only` downloads synced lyrics for every song without analysing the audio, and `--lyrics` does the same after a scan. They follow the same rules and settings as the desktop app (see [Synced lyrics](#synced-lyrics-lrclib)). Songs that already have an `.lrc` are skipped and only counted, unless you add `-v`.
+
+```bash
+realhires ~/Music --lyrics-only
+```
+
+```
+Lyrics: looking up 3 song(s) on LRCLIB (https://lrclib.net), one at a time; 1 already has lyrics and is skipped.
+  Synced lyrics saved  Nightjar Ensemble – Harbour Lights
+                       Saved synced lyrics as 01 Harbour Lights.lrc.
+  Synced lyrics saved  Nightjar Ensemble – Northern Line
+                       Saved synced lyrics as 02 Northern Line.lrc (found by searching).
+  Not found            Nightjar Ensemble – Under the Lanterns
+                       LRCLIB has no lyrics for this song (yet).
+Lyrics: 2 with synced lyrics, 1 not found on LRCLIB, 1 skipped (already had lyrics).
+```
+
+On a terminal, a progress line estimates the time left. The command exits with code 1 if a lookup failed (for example because the server could not be reached), but not when a song is simply not found. Use `--lyrics-existing replace` to download lyrics again, `--set lyrics_search=false` for exact matches only, and `--check-lyrics-server` to test the connection.
 
 ### Settings file
 
@@ -300,11 +353,13 @@ Old analogue recordings often have no content above 20 kHz even when they were t
 
 A real hi-res file whose ultrasonic band contains only analogue tape or microphone hiss is reported as REAL, because that hiss is genuinely captured above 22 kHz.
 
+Lyrics can only be as good as LRCLIB's records and your tags. A song with wrong or missing title and artist tags cannot be found, and when LRCLIB holds only another recording of a song with the same length (a remaster or a different mix), its timing may be slightly off. LRCLIB adds songs over time, so a song that is not found today may be found by a later run.
+
 MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with ordinary CD anti-aliasing filters, so a lossy source is not always detectable in a 44.1 or 48 kHz file. Upsampled to hi-res, such a file is still caught by the cliff test. You can raise **Lossy cut-off search up to** in Settings (`lossy_max_khz`) to about 20.8 kHz to catch more of them, at the risk of flagging CD masters that have an unusually low and steep anti-aliasing filter.
 
 ## Development
 
-Run the test suite with pytest. The tests generate synthetic real and fake files with FFmpeg and NumPy, so no audio files are stored in the repository. They cover genuine 24/48, 24/96 and 24/192 files, upsamples from 44.1→96, 48→96 (with soxr and with FFmpeg's default resampler), 44.1→192 and 96→192, bit-padded 16-in-24 and 16-in-float files, 16-bit masters given a gain change or dither into 24-bit and float, MP3-sourced files, a dull 96 kHz analogue transfer with converter noise, a dull 48 kHz transfer upsampled to 96 kHz, and dull and silent files. The Fix tests check that FFmpeg-made 2× and 4× upsamples come back as the bit-identical 16-bit master, and that a three-track gapless album fixed track by track joins exactly like the album converted in one piece.
+Run the test suite with pytest. The tests generate synthetic real and fake files with FFmpeg and NumPy, so no audio files are stored in the repository. They cover genuine 24/48, 24/96 and 24/192 files, upsamples from 44.1→96, 48→96 (with soxr and with FFmpeg's default resampler), 44.1→192 and 96→192, bit-padded 16-in-24 and 16-in-float files, 16-bit masters given a gain change or dither into 24-bit and float, MP3-sourced files, a dull 96 kHz analogue transfer with converter noise, a dull 48 kHz transfer upsampled to 96 kHz, and dull and silent files. The Fix tests check that FFmpeg-made 2× and 4× upsamples come back as the bit-identical 16-bit master, and that a three-track gapless album fixed track by track joins exactly like the album converted in one piece. The lyrics tests run a fake LRCLIB server on `127.0.0.1`, so they need no internet connection; they check the files that are saved, the search fallback, the skipping of songs that have lyrics, the pauses between requests and the handling of `Retry-After`.
 
 ```bash
 python3 -m pytest -q
@@ -318,7 +373,7 @@ The release packages are built by GitHub Actions ([`.github/workflows/build.yml`
 2. It runs the test suite with that FFmpeg.
 3. It builds the package with PyInstaller.
 4. It runs [`packaging/check_compat.py`](packaging/check_compat.py), which fails the build if any bundled file needs a newer glibc or macOS than the package claims, or (on macOS) lacks the right CPU architecture. On Windows it runs [`packaging/check_windows.py`](packaging/check_windows.py) instead, which fails the build if an executable carries its program archive inside it again or lacks version information, and logs the hash of the PyInstaller launcher, which the Windows job compiles on the build machine.
-5. It smoke-tests the frozen command-line tool with an empty `PATH`.
+5. It smoke-tests the frozen command-line tool with an empty `PATH`, including a lyrics download from a fake LRCLIB server and one request to lrclib.net, which fails the build if the bundled OpenSSL cannot verify its certificate.
 6. It packages the result.
 
 Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
@@ -348,6 +403,10 @@ ASSET=RealHiRes-local bash packaging/ci_build.sh
 On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).
+
+## Acknowledgements
+
+Lyrics come from [LRCLIB](https://lrclib.net), a free and open lyrics database. The lyrics feature follows [LRCGET](https://github.com/tranxuanthang/lrcget) by tranxuanthang (MIT License), the official LRCLIB client, in how songs are looked up and how lyrics files are named and marked; no LRCGET code is used.
 
 ## License
 
