@@ -7,7 +7,7 @@ use realhires::playerstate::PlayerState;
 
 use crate::audio::OutputInfo;
 use crate::look::{self, Palette};
-use crate::player::{gain_of, ConfirmAction, NameAction, Player};
+use crate::player::{gain_of, NameAction, Player};
 
 /// "44.1 kHz", "96 kHz".
 pub fn khz(rate: i64) -> String {
@@ -367,7 +367,9 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     match action {
         Some(EqAction::SaveAs) => p.ask_name("Save Equalizer Preset", "My Preset", NameAction::SaveEqPreset),
         Some(EqAction::Rename(n)) => p.ask_name("Rename Preset", &n.clone(), NameAction::RenameEqPreset(n)),
-        Some(EqAction::Delete(n)) => p.confirm = Some(ConfirmAction::DeleteEqPreset(n)),
+        Some(EqAction::Delete(n)) => {
+            p.eq_delete(Some(n));
+        }
         Some(EqAction::Import) => {
             if let Some(path) = rfd::FileDialog::new().add_filter("Equalizer presets", &["json", "txt"]).pick_file() {
                 let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());

@@ -35,6 +35,8 @@ pub enum Page {
     Genres,
     Years,
     Composers,
+    /// one artist, album artist, genre, year or composer (a card of a grouping page)
+    Group(&'static str, String),
     Playlists,
     Playlist(String),
     Liked,
@@ -61,6 +63,7 @@ impl Page {
             Page::Genres => "Genres",
             Page::Years => "Years",
             Page::Composers => "Composers",
+            Page::Group(kind, _) => GROUPINGS.iter().find(|g| g.0 == *kind).map(|g| g.1).unwrap_or("Artists"),
             Page::Playlists | Page::Playlist(_) => "Playlists",
             Page::Liked => "Liked Songs",
             Page::Disliked => "Disliked Songs",
@@ -81,6 +84,10 @@ pub struct NameDialog {
     pub text: String,
     pub action: NameAction,
     pub error: String,
+    /// what the field is for ("Name" when empty)
+    pub prompt: String,
+    /// names to choose from (Merge into…); the field can still be typed into
+    pub choices: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +98,10 @@ pub enum NameAction {
     RenameEqPreset(String),
     NewTheme(String),
     RenameTheme(String),
+    /// rename a genre, composer or year (the kind, its name)
+    RenameGroup(&'static str, String),
+    /// merge genres into the name typed or chosen (the kind, their names)
+    MergeGroups(&'static str, Vec<String>),
 }
 
 /// A question before something is deleted.
@@ -100,6 +111,9 @@ pub enum ConfirmAction {
     DeleteEqPreset(String),
     DeleteTheme(String),
     ClearHistory,
+    /// write a new genre, composer or year into these files (the question, the kind, the
+    /// paths, the new name, the groups it came from)
+    RetagGroup { title: String, text: String, kind: &'static str, paths: Vec<String>, name: String, from: Vec<String> },
 }
 
 /// The song being listened to, for the play history.
@@ -135,30 +149,71 @@ pub struct LibView {
     /// album indices, newest first
     pub recent: Vec<usize>,
     pub songs: Vec<Song>,
+    /// the first four songs of each album (what its cover is made from), made once
+    pub album_paths: Vec<Vec<String>>,
+    /// per grouping ("artists"...), each group's albums (indices, in album order), made once
+    pub group_albums: HashMap<&'static str, Vec<Vec<usize>>>,
+    /// the artists that stand on their own (`musiclib::known_artists`), for split artist fields
+    pub known: std::collections::HashSet<String>,
+    /// a new number for each library read, so that the pages' caches know when to start again
+    pub gen: u64,
 }
+
+static LIB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The groupings of the pages: (page kind, title, noun).
+pub const GROUPINGS: [(&str, &str, &str); 5] = [
+    ("artists", "Artists", "artist"),
+    ("album_artists", "Album Artists", "album artist"),
+    ("genres", "Genres", "genre"),
+    ("years", "Years", "year"),
+    ("composers", "Composers", "composer"),
+];
 
 impl LibView {
     pub fn new(mut tracks: Vec<Track>) -> LibView {
         musiclib::sort_songs(&mut tracks);
         let by_path = tracks.iter().enumerate().map(|(i, t)| (t.path.clone(), i)).collect();
         let albums = musiclib::albums(&tracks);
-        let album_index = albums.iter().enumerate().map(|(i, a)| (a.key.clone(), i)).collect();
+        let album_index: HashMap<String, usize> = albums.iter().enumerate().map(|(i, a)| (a.key.clone(), i)).collect();
         let mut recent: Vec<usize> = (0..albums.len()).collect();
         let newest = |a: &Album| a.tracks.iter().map(|t| t.mtime_ns).max().unwrap_or(0);
         recent.sort_by(|a, b| newest(&albums[*b]).cmp(&newest(&albums[*a])));
-        LibView {
+        let album_paths = albums.iter().map(|a| a.tracks.iter().take(4).map(|t| t.path.clone()).collect()).collect();
+        let mut lib = LibView {
             artists: musiclib::artists(&tracks),
             album_artists: musiclib::album_artists(&tracks),
             genres: musiclib::genres(&tracks),
             years: musiclib::years(&tracks),
             composers: musiclib::composers(&tracks),
             songs: tracks.iter().map(Track::song).collect(),
+            known: musiclib::known_artists(&tracks),
             tracks,
             by_path,
             albums,
             album_index,
             recent,
+            album_paths,
+            group_albums: HashMap::new(),
+            gen: LIB_GEN.fetch_add(1, Ordering::Relaxed),
+        };
+        let album_of_path: HashMap<&str, usize> =
+            lib.albums.iter().enumerate().flat_map(|(i, a)| a.tracks.iter().map(move |t| (t.path.as_str(), i))).collect();
+        for (kind, _, _) in GROUPINGS {
+            let per: Vec<Vec<usize>> = lib
+                .groups(kind)
+                .iter()
+                .map(|g| {
+                    let mut idx: Vec<usize> = g.tracks.iter().filter_map(|t| album_of_path.get(t.path.as_str()).copied()).collect();
+                    idx.sort_unstable();
+                    idx.dedup();
+                    idx
+                })
+                .collect();
+            lib.group_albums.insert(kind, per);
         }
+        drop(album_of_path);
+        lib
     }
 
     pub fn track(&self, path: &str) -> Option<&Track> {
@@ -168,6 +223,23 @@ impl LibView {
     pub fn album_of(&self, path: &str) -> Option<&Album> {
         let key = self.track(path)?.song().album_key();
         self.album_index.get(&key).map(|i| &self.albums[*i])
+    }
+
+    /// The groups of a grouping page ("artists", "album_artists", "genres", "years", "composers").
+    pub fn groups(&self, kind: &str) -> &Vec<Group> {
+        match kind {
+            "artists" => &self.artists,
+            "album_artists" => &self.album_artists,
+            "genres" => &self.genres,
+            "years" => &self.years,
+            _ => &self.composers,
+        }
+    }
+
+    /// The index of a group by its name (in any case).
+    pub fn find_group(&self, kind: &str, name: &str) -> Option<usize> {
+        let key = casefold(name.trim());
+        self.groups(kind).iter().position(|g| casefold(g.name.trim()) == key)
     }
 }
 
@@ -243,14 +315,138 @@ pub struct InfoWindow {
     pub verdict: Option<(String, String)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SongCol {
+    Num,
     Title,
     Artist,
     Album,
+    AlbumArtist,
+    Composer,
     Genre,
+    Year,
+    Disc,
     Time,
     Quality,
+    Format,
+    BitRate,
+    Added,
+    File,
+    /// the heart (not sortable)
+    Like,
+    /// Recently Played's "Played" column
+    Played,
+}
+
+impl SongCol {
+    /// The column of a name in player.json's "columns" (`playerstate::SONG_COLUMNS`).
+    pub fn from_name(name: &str) -> Option<SongCol> {
+        Some(match name {
+            "num" => SongCol::Num,
+            "title" => SongCol::Title,
+            "artist" => SongCol::Artist,
+            "album" => SongCol::Album,
+            "album_artist" => SongCol::AlbumArtist,
+            "composer" => SongCol::Composer,
+            "genre" => SongCol::Genre,
+            "year" => SongCol::Year,
+            "disc" => SongCol::Disc,
+            "time" => SongCol::Time,
+            "quality" => SongCol::Quality,
+            "format" => SongCol::Format,
+            "bit_rate" => SongCol::BitRate,
+            "added" => SongCol::Added,
+            "file" => SongCol::File,
+            "like" => SongCol::Like,
+            _ => return None,
+        })
+    }
+
+    /// (heading, menu label, width weight, right-aligned)
+    pub fn info(self) -> (&'static str, &'static str, f32, bool) {
+        match self {
+            SongCol::Num => ("#", "# (track number)", 0.35, true),
+            SongCol::Title => ("Title", "Title", 3.0, false),
+            SongCol::Artist => ("Artist", "Artist", 2.0, false),
+            SongCol::Album => ("Album", "Album", 2.2, false),
+            SongCol::AlbumArtist => ("Album Artist", "Album Artist", 1.8, false),
+            SongCol::Composer => ("Composer", "Composer", 1.6, false),
+            SongCol::Genre => ("Genre", "Genre", 1.1, false),
+            SongCol::Year => ("Year", "Year", 0.55, false),
+            SongCol::Disc => ("Disc", "Disc", 0.45, true),
+            SongCol::Time => ("Time", "Time", 0.6, true),
+            SongCol::Quality => ("Quality", "Quality", 1.15, false),
+            SongCol::Format => ("Format", "Format", 0.7, false),
+            SongCol::BitRate => ("Bit rate", "Bit rate", 0.9, true),
+            SongCol::Added => ("Date added", "Date added", 1.0, false),
+            SongCol::File => ("File", "File", 1.8, false),
+            SongCol::Like => ("", "Heart (like)", 0.0, false),
+            SongCol::Played => ("Played", "Played", 1.1, false),
+        }
+    }
+}
+
+/// The Format column: the codec ("FLAC", "MP3"; PCM for WAV and AIFF samples).
+pub fn format_label(t: &Track) -> String {
+    let c = t.codec.to_lowercase();
+    if c.starts_with("pcm_") {
+        "PCM".into()
+    } else {
+        c.to_uppercase()
+    }
+}
+
+/// A song table's cell (Python `track_value`).
+pub fn cell_text(t: &Track, col: SongCol) -> String {
+    match col {
+        SongCol::Num => if t.track > 0 { t.track.to_string() } else { String::new() },
+        SongCol::Title => t.display_title(),
+        SongCol::Artist => t.display_artist(),
+        SongCol::Album => t.display_album(),
+        SongCol::AlbumArtist => t.album_artist.clone(),
+        SongCol::Composer => t.composer.clone(),
+        SongCol::Genre => t.genre.clone(),
+        SongCol::Year => t.year.clone(),
+        SongCol::Disc => if t.disc > 0 { t.disc.to_string() } else { String::new() },
+        SongCol::Time => fmt_time(t.duration),
+        SongCol::Quality => musiclib::quality(t),
+        SongCol::Format => format_label(t),
+        SongCol::BitRate => {
+            if t.bit_rate > 0 {
+                format!("{} kbps", realhires::stats::thousands(realhires::pyfmt::round_int(t.bit_rate as f64 / 1000.0)))
+            } else {
+                String::new()
+            }
+        }
+        SongCol::Added => {
+            if t.mtime_ns <= 0 {
+                return String::new();
+            }
+            let p = realhires::stats::local_parts(t.mtime_ns as f64 / 1e9);
+            realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", p.year, p.month, p.day))
+        }
+        SongCol::File => realhires::paths::file_name(&t.path),
+        SongCol::Like | SongCol::Played => String::new(),
+    }
+}
+
+/// What a click on a column heading sorts by (Python `track_sort`; numbers padded).
+pub fn sort_key(t: &Track, col: SongCol) -> (String, String, String) {
+    let title = casefold(&t.display_title());
+    let n = |x: i64| if x == 0 { 9999 } else { x };
+    match col {
+        SongCol::Artist => (casefold(&t.display_artist()), casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track)),
+        SongCol::Num | SongCol::Disc => (format!("{:05}{:05}", n(t.disc), n(t.track)), title, t.path.clone()),
+        SongCol::Time => (format!("{:012.3}", t.duration), title, t.path.clone()),
+        SongCol::Quality => {
+            let (bits, rate, float, kbps) = musiclib::quality_sort(t);
+            (format!("{bits:04}{rate:09}{}{kbps:012}", float as u8), title, t.path.clone())
+        }
+        SongCol::BitRate => (format!("{:012}", t.bit_rate), title, t.path.clone()),
+        SongCol::Added => (format!("{:020}", t.mtime_ns), title, t.path.clone()),
+        SongCol::Title => (title, casefold(&t.display_artist()), t.path.clone()),
+        other => (casefold(&cell_text(t, other)), title, t.path.clone()),
+    }
 }
 
 pub struct NowPlaying {
@@ -300,8 +496,17 @@ pub struct Player {
     pub selected_song: Option<String>,
     /// "Check new songs when the app starts": scan once the library is read
     check_after_update: bool,
-    /// the name chosen on each grouped page (Artists, Genres, Years...)
-    pub group_sel: HashMap<&'static str, String>,
+    /// the genres selected (Ctrl/Cmd-click) on the Genres page, to be merged
+    pub group_selected: Vec<String>,
+    /// the sort of album pages (None: track order) and the album it is for
+    pub album_sort: Option<(SongCol, bool)>,
+    album_sort_for: String,
+    /// sorted song lists, made again only when the library, the sort or the likes change
+    list_cache: HashMap<String, ((u64, Option<(SongCol, bool)>, u64), Arc<Vec<String>>)>,
+    /// counts likes and dislikes, for the lists made of them
+    likes_gen: u64,
+    /// renaming a genre, composer or year, or merging genres (one at a time)
+    pub tag_job: Option<crate::editinfo::RenameJob>,
     seed: u64,
     // 2.0 additions
     pub custom_themes: Vec<realhires::themes::Theme>,
@@ -382,7 +587,12 @@ impl Player {
             font_used: String::new(),
             selected_song: None,
             check_after_update: false,
-            group_sel: HashMap::new(),
+            group_selected: vec![],
+            album_sort: None,
+            album_sort_for: String::new(),
+            list_cache: HashMap::new(),
+            likes_gen: 0,
+            tag_job: None,
             custom_themes: realhires::themes::load_custom(None),
             file_themes: vec![],
             file_themes_read: Instant::now(),
@@ -674,6 +884,7 @@ impl Player {
     pub fn toggle_like(&mut self, path: &str) {
         let liked = self.state.is_liked(path);
         self.state.set_liked(path, !liked);
+        self.likes_gen += 1;
         self.save_state();
     }
 
@@ -792,6 +1003,11 @@ impl Player {
             Page::Liked => self.liked_songs().iter().map(|t| t.path.clone()).collect(),
             Page::AllSongs => self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect(),
             Page::Playlist(id) => self.playlist_songs(id),
+            Page::Group(kind, name) => self
+                .lib
+                .find_group(kind, name)
+                .map(|i| self.lib.groups(kind)[i].tracks.iter().map(|t| t.path.clone()).collect())
+                .unwrap_or_default(),
             Page::Disliked => self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).map(|t| t.path.clone()).collect(),
             _ => all(),
         }
@@ -801,23 +1017,193 @@ impl Player {
         self.lib.tracks.iter().filter(|t| self.state.is_liked(&t.path)).collect()
     }
 
-    pub fn sorted_songs<'a>(&self, mut v: Vec<&'a Track>) -> Vec<&'a Track> {
-        let (col, rev) = self.song_sort;
-        let key = |t: &Track| -> (String, String, String) {
-            match col {
-                SongCol::Title => (casefold(&t.display_title()), casefold(&t.display_artist()), t.path.clone()),
-                SongCol::Artist => (casefold(&t.display_artist()), casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track)),
-                SongCol::Album => (casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track), t.path.clone()),
-                SongCol::Genre => (casefold(&t.genre), casefold(&t.display_artist()), t.path.clone()),
-                SongCol::Time => (format!("{:012.3}", t.duration), String::new(), t.path.clone()),
-                SongCol::Quality => (musiclib::quality(t), casefold(&t.display_title()), t.path.clone()),
+    pub fn sorted_songs<'a>(&self, v: Vec<&'a Track>) -> Vec<&'a Track> {
+        sort_tracks(v, Some(self.song_sort))
+    }
+
+    /// A song list of a page, sorted, made again only when the library, the sort or the
+    /// likes changed: sorting thousands of songs every frame made scrolling lag.
+    pub fn cached_list(
+        &mut self,
+        id: &str,
+        sort: Option<(SongCol, bool)>,
+        make: impl FnOnce(&Player) -> Vec<String>,
+    ) -> Arc<Vec<String>> {
+        let key = (self.lib.gen, sort, self.likes_gen);
+        if let Some((k, v)) = self.list_cache.get(id) {
+            if *k == key {
+                return v.clone();
             }
-        };
-        v.sort_by_key(|t| key(t));
-        if rev {
-            v.reverse();
         }
+        let v = Arc::new(make(self));
+        if self.list_cache.len() > 64 {
+            self.list_cache.clear();
+        }
+        self.list_cache.insert(id.to_string(), (key, v.clone()));
         v
+    }
+
+    pub fn album_sort_for(&self) -> &str {
+        &self.album_sort_for
+    }
+
+    /// Another album page is shown: in track order again.
+    pub fn set_album_sort_for(&mut self, key: &str) {
+        self.album_sort_for = key.to_string();
+        self.album_sort = None;
+    }
+
+    /// The sort of a kind of song list: album pages have their own (track order at first).
+    pub fn sort_of(&self, kind: &str) -> Option<(SongCol, bool)> {
+        if kind == "album" {
+            self.album_sort
+        } else {
+            Some(self.song_sort)
+        }
+    }
+
+    pub fn set_sort(&mut self, kind: &str, col: SongCol) {
+        let cur = self.sort_of(kind);
+        let next = match cur {
+            Some((c, rev)) if c == col => (col, !rev),
+            _ => (col, false),
+        };
+        if kind == "album" {
+            self.album_sort = Some(next);
+        } else {
+            self.song_sort = next;
+        }
+    }
+
+    /// The page of an artist (Artists, else Album Artists).  Each artist of a field such
+    /// as "Mariah Carey, Michael Bublé" has a page of its own; a name that is not an
+    /// artist of the library opens the first artist `split_artists()` gives.
+    pub fn open_artist(&mut self, name: &str) {
+        let mut names = vec![name.to_string()];
+        names.extend(musiclib::split_artists(name, &self.lib.known).into_iter().take(1));
+        for n in &names {
+            for kind in ["artists", "album_artists"] {
+                if let Some(i) = self.lib.find_group(kind, n) {
+                    let name = self.lib.groups(kind)[i].name.clone();
+                    self.go(Page::Group(kind, name));
+                    return;
+                }
+            }
+        }
+        self.go(Page::Artists);
+    }
+
+    // --------------------------------------------- renaming and merging ---
+
+    /// Rename… a genre, composer or year: asks for the new name.
+    pub fn ask_rename_group(&mut self, kind: &'static str, name: &str) {
+        let noun = realhires::tagedit::group_noun(kind);
+        let unknown = name == unknown_name(kind);
+        let prompt = if unknown {
+            format!("Give the songs without a {noun} this {noun}:")
+        } else if kind == "years" {
+            format!("Change the year {name} of these songs to:")
+        } else {
+            format!("New name of the {noun} “{name}”:")
+        };
+        let initial = if unknown { "" } else { name };
+        self.ask_name_with(&format!("Rename {noun}"), &prompt, initial, NameAction::RenameGroup(kind, name.to_string()), vec![]);
+    }
+
+    /// Merge into… (one genre) or Merge N genres… (several): asks for the genre they become.
+    pub fn ask_merge_groups(&mut self, kind: &'static str, names: Vec<String>) {
+        let groups: Vec<&Group> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).map(|i| &self.lib.groups(kind)[i]).collect();
+        if groups.is_empty() {
+            return;
+        }
+        if groups.len() == 1 {
+            let mine = casefold(groups[0].name.trim());
+            let others: Vec<String> = self
+                .lib
+                .groups(kind)
+                .iter()
+                .filter(|g| casefold(g.name.trim()) != mine && g.name != unknown_name(kind))
+                .map(|g| g.name.clone())
+                .collect();
+            let prompt = format!("Merge the genre “{}” into which genre? Choose one, or type a new name.", groups[0].name);
+            self.ask_name_with("Merge into", &prompt, "", NameAction::MergeGroups(kind, names), others);
+        } else {
+            let mut biggest = groups.clone();
+            biggest.sort_by_key(|g| std::cmp::Reverse(g.tracks.len()));
+            let choices: Vec<String> = biggest.iter().filter(|g| g.name != unknown_name(kind)).map(|g| g.name.clone()).collect();
+            let first = choices.first().cloned().unwrap_or_default();
+            let k = groups.len();
+            self.ask_name_with(
+                &format!("Merge {k} genres"),
+                &format!("Merge {k} genres into one. Its name:"),
+                &first,
+                NameAction::MergeGroups(kind, names),
+                choices,
+            );
+        }
+    }
+
+    /// Check the new name, find the songs that do not have it yet and ask before
+    /// changing their files (`ConfirmAction::RetagGroup`); Err keeps the name dialog open.
+    pub fn retag_group(&mut self, kind: &'static str, names: &[String], text: &str, merge: bool) -> Result<(), String> {
+        let new = realhires::tagedit::check_group_name(kind, text).map_err(|e| e.0)?;
+        if self.tag_job.as_ref().is_some_and(|j| !j.done()) {
+            return Err("Songs are still being changed; try again when that has finished.".into());
+        }
+        let noun = realhires::tagedit::group_noun(kind);
+        let groups: Vec<usize> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).collect();
+        let mut seen = HashSet::new();
+        let mut paths = vec![];
+        for &g in &groups {
+            for t in &self.lib.groups(kind)[g].tracks {
+                if group_value(kind, t) != new && seen.insert(t.path.clone()) {
+                    paths.push(t.path.clone());
+                }
+            }
+        }
+        if paths.is_empty() {
+            return Err(format!("Every song already has the {noun} “{new}”: nothing to change."));
+        }
+        let from: Vec<String> = groups.iter().map(|&g| self.lib.groups(kind)[g].name.clone()).collect();
+        let n = crate::style::plural(paths.len(), "song");
+        let old = from.first().cloned().unwrap_or_default();
+        let (title, what) = if merge && from.len() > 1 {
+            let listed: Vec<String> = from.iter().map(|f| format!("“{f}”")).collect();
+            (
+                "Merge genres".to_string(),
+                format!("Merge {} genres ({}) into “{new}”? The genre of {n} becomes “{new}”.", from.len(), listed.join(", ")),
+            )
+        } else if merge {
+            ("Merge genres".to_string(), format!("Merge the genre “{old}” into “{new}”? The genre of {n} becomes “{new}”."))
+        } else if old == unknown_name(kind) {
+            (format!("Rename {noun}"), format!("Give {n} without a {noun} the {noun} “{new}”?"))
+        } else if kind == "years" {
+            (format!("Rename {noun}"), format!("Change the year {old} to {new}? The release date of {n} changes (only its year)."))
+        } else {
+            (format!("Rename {noun}"), format!("Rename the {noun} “{old}” to “{new}”? The {noun} of {n} changes."))
+        };
+        self.confirm = Some(ConfirmAction::RetagGroup {
+            title,
+            text: format!("{what} Only the information in the files is changed; the music itself is not touched."),
+            kind,
+            paths,
+            name: new,
+            from,
+        });
+        Ok(())
+    }
+
+    /// The Equalizer's Delete…: the preset named (chosen from its menu), else the one the
+    /// equalizer is set to; asks first (`ConfirmAction::DeleteEqPreset`).
+    pub fn eq_delete(&mut self, name: Option<String>) -> bool {
+        let name = name.or_else(|| Some(self.state.matching_eq_preset()).filter(|n| !n.is_empty()));
+        match name {
+            Some(n) if self.state.eq_preset(&n).is_some() => {
+                self.confirm = Some(ConfirmAction::DeleteEqPreset(n));
+                true
+            }
+            _ => false,
+        }
     }
 
     // ------------------------------------------------------------ lyrics ---
@@ -1071,6 +1457,7 @@ impl Player {
     pub fn toggle_dislike(&mut self, path: &str) {
         let d = self.state.is_disliked(path);
         self.state.set_disliked(path, !d);
+        self.likes_gen += 1;
         self.save_state();
         if let Some(q) = self.queue.as_mut() {
             q.disliked = self.state.disliked.iter().cloned().collect();
@@ -1112,6 +1499,8 @@ impl Player {
                 self.themes_changed();
                 self.set_theme(&name);
             }
+            NameAction::RenameGroup(kind, name) => self.retag_group(kind, &[name], text, false)?,
+            NameAction::MergeGroups(kind, names) => self.retag_group(kind, &names, text, true)?,
             NameAction::RenameTheme(old) => {
                 let name = realhires::themes::check_name(text, &self.all_themes(), &old).map_err(|e| e.0)?;
                 if let Some(t) = self.custom_themes.iter_mut().find(|t| t.name == old) {
@@ -1147,11 +1536,35 @@ impl Player {
                 }
             }
             ConfirmAction::ClearHistory => self.clear_history(),
+            ConfirmAction::RetagGroup { title, kind, paths, name, from, .. } => {
+                if self.tag_job.as_ref().is_none_or(|j| j.done()) {
+                    // the page of the group follows it to its new name
+                    if let Page::Group(k, n) = &self.page {
+                        if *k == kind && from.iter().any(|f| casefold(f.trim()) == casefold(n.trim())) {
+                            self.page = Page::Group(kind, name.clone());
+                        }
+                    }
+                    self.group_selected.clear();
+                    let cfg = self.scanner.cfg.clone();
+                    self.tag_job = Some(crate::editinfo::RenameJob::new(&self.ctx, title, kind, paths, name, cfg));
+                }
+            }
         }
     }
 
     pub fn ask_name(&mut self, title: &str, text: &str, action: NameAction) {
-        self.name_dialog = Some(NameDialog { title: title.into(), text: text.into(), action, error: String::new() });
+        self.ask_name_with(title, "", text, action, vec![]);
+    }
+
+    pub fn ask_name_with(&mut self, title: &str, prompt: &str, text: &str, action: NameAction, choices: Vec<String>) {
+        self.name_dialog = Some(NameDialog {
+            title: title.into(),
+            text: text.into(),
+            action,
+            error: String::new(),
+            prompt: prompt.into(),
+            choices,
+        });
     }
 
     /// Import an equalizer preset file's text: applied and kept under its name.
@@ -1731,6 +2144,15 @@ impl Player {
                 return; // Esc belongs to the Edit Info window while it is open
             }
         }
+        if let Some(mut job) = self.tag_job.take() {
+            let (open, finished) = job.show(ctx, pal);
+            if finished {
+                self.update_library();
+            }
+            if open {
+                self.tag_job = Some(job);
+            }
+        }
         // Esc closes the topmost of the player's windows
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() {
             if self.eq_open {
@@ -1761,9 +2183,19 @@ impl Player {
                 .pivot(Align2::CENTER_CENTER)
                 .default_pos(ctx.content_rect().center())
                 .show(ctx, |ui| {
-                    ui.label("Name");
+                    ui.set_max_width(420.0);
+                    ui.label(if d.prompt.is_empty() { "Name" } else { d.prompt.as_str() });
                     let r = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
                     r.request_focus();
+                    if !d.choices.is_empty() {
+                        egui::ScrollArea::vertical().max_height(160.0).id_salt("name-choices").show(ui, |ui| {
+                            for c in d.choices.clone() {
+                                if ui.selectable_label(d.text == c, &c).clicked() {
+                                    d.text = c;
+                                }
+                            }
+                        });
+                    }
                     if !d.error.is_empty() {
                         ui.label(RichText::new(&d.error).color(pal.accent));
                     }
@@ -1797,6 +2229,7 @@ impl Player {
                 ),
                 ConfirmAction::DeleteEqPreset(n) => ("Delete preset", format!("Delete your preset “{n}”? The equalizer keeps its current settings."), "Delete"),
                 ConfirmAction::DeleteTheme(n) => ("Delete theme", format!("Delete the theme “{n}”?"), "Delete"),
+                ConfirmAction::RetagGroup { title, text, .. } => (title.as_str(), text.clone(), "Change"),
                 ConfirmAction::ClearHistory => (
                     "Clear the play history",
                     "Forget every song played so far? Recently Played and Your Stats start again from nothing.".to_string(),
@@ -1856,6 +2289,35 @@ fn sidebar_item(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: b
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), vec2(18.0, 18.0)), icon, pal.accent);
     ui.painter().text(pos2(rect.left() + 32.0, rect.center().y), Align2::LEFT_CENTER, label, look::text(13.0), pal.text);
     resp
+}
+
+/// The name of the group of songs without a genre, composer or year.
+pub fn unknown_name(kind: &str) -> &'static str {
+    match kind {
+        "genres" => "Unknown Genre",
+        "composers" => "Unknown Composer",
+        "years" => "Unknown Year",
+        _ => "",
+    }
+}
+
+/// A song's genre, composer or year, as a rename compares it with the new name.
+pub fn group_value(kind: &str, t: &Track) -> String {
+    match kind {
+        "years" => t.year.clone(),
+        "composers" => realhires::tagedit::clean_value(&t.composer),
+        _ => realhires::tagedit::clean_value(&t.genre),
+    }
+}
+
+/// Songs sorted by a column (None: as they are).
+pub fn sort_tracks(mut v: Vec<&Track>, sort: Option<(SongCol, bool)>) -> Vec<&Track> {
+    let Some((col, rev)) = sort else { return v };
+    v.sort_by_cached_key(|t| sort_key(t, col));
+    if rev {
+        v.reverse();
+    }
+    v
 }
 
 /// A cover, or a coloured square with a note when the album has none.
@@ -2280,6 +2742,292 @@ mod tests {
         });
         assert_eq!(p.lib.album_of(&a1).unwrap().tracks.len(), 2, "the album stays one album");
         assert_eq!(p.lib.track(&a2).unwrap().title, "Paper in the Rain");
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A song with a composer and a release date too.
+    #[allow(clippy::too_many_arguments)]
+    fn tagged(dir: &std::path::Path, album: &str, title: &str, artist: &str, genre: &str, composer: &str, date: &str, n: u32) -> String {
+        let d = dir.join(album);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join(format!("{n:02} {title}.flac"));
+        let src = format!("sine=frequency={}:sample_rate=44100:duration=1", 300 + 40 * n);
+        let meta = [
+            format!("title={title}"),
+            format!("artist={artist}"),
+            format!("album_artist={artist}"),
+            format!("album={album}"),
+            format!("track={n}"),
+            format!("genre={genre}"),
+            format!("composer={composer}"),
+            format!("date={date}"),
+        ];
+        let mut args: Vec<&str> = vec!["-f", "lavfi", "-i", &src];
+        for m in &meta {
+            args.extend(["-metadata", m.as_str()]);
+        }
+        let out = f.to_string_lossy().into_owned();
+        args.push(&out);
+        ffmpeg(&args);
+        realhires::paths::abspath(&out)
+    }
+
+    fn tag_of(path: &str, key: &str) -> String {
+        realhires::probe::probe(path).unwrap().tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    /// Run a confirmed rename until its files are written and the library was read again.
+    fn rename(ctx: &egui::Context, p: &mut Player, what: &str, check: impl Fn(&Player) -> bool) {
+        let action = p.confirm.take().expect("a confirmation");
+        p.confirmed(action);
+        run_until(ctx, p, what, |p| p.tag_job.as_ref().is_some_and(|j| j.done()) && p.lib_rx.is_none() && check(p));
+        assert!(p.tag_job.as_ref().unwrap().outcomes.as_ref().unwrap().iter().all(|o| o.ok));
+    }
+
+    #[test]
+    fn grids_renames_columns_quality_and_preset_delete() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-grids-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a1 = tagged(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", "Ann", "2001-05-03", 1);
+        let a2 = tagged(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", "Ann", "2001", 2);
+        let b1 = tagged(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", "", "1999", 1);
+        let c1 = tagged(&music, "Two Rivers", "Where the Rivers Meet", "Mira Calloway, The Northern Quay", "Folk", "Ann", "2005", 1);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg.clone(), vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+
+        // the grouping pages are card grids: each group with its albums (a duet on both artists)
+        let names: Vec<&str> = p.lib.artists.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["Mira Calloway", "The Northern Quay"]);
+        assert_eq!(p.lib.group_albums["artists"][0].len(), 2, "Paper Lanterns and Two Rivers");
+        assert_eq!(p.lib.group_albums["composers"].len(), 2);
+        for page in [Page::Artists, Page::AlbumArtists, Page::Genres, Page::Years, Page::Composers] {
+            p.go(page);
+            frame(&ctx, &mut p);
+        }
+        // open_artist(): an artist, or the first artist of a field that is not one
+        p.open_artist("Mira Calloway & Somebody New");
+        assert_eq!(p.page, Page::Group("artists", "Mira Calloway".into()));
+        frame(&ctx, &mut p);
+        p.open_artist("The Northern Quay");
+        assert_eq!(p.page, Page::Group("artists", "The Northern Quay".into()));
+        // the album page: track order at first, sortable, the album columns (# first)
+        let key = p.lib.track(&a1).unwrap().song().album_key();
+        p.go(Page::Album(key.clone()));
+        frame(&ctx, &mut p);
+        assert_eq!(p.album_sort, None);
+        assert_eq!(p.state.columns_of("album")[0], "num");
+        p.set_sort("album", SongCol::Title);
+        p.set_sort("album", SongCol::Title);
+        assert_eq!(p.album_sort, Some((SongCol::Title, true)));
+        frame(&ctx, &mut p);
+        let duet = p.lib.track(&c1).unwrap().song().album_key();
+        p.go(Page::Album(duet));
+        frame(&ctx, &mut p);
+        assert_eq!(p.album_sort, None, "another album starts in track order");
+        // the Quality column: quality() in the cell, the resolution as its tooltip; sorted by bits, then rate
+        let t = p.lib.track(&a1).unwrap();
+        assert_eq!((cell_text(t, SongCol::Quality), musiclib::quality_detail(t)), ("Lossless".to_string(), "16-bit/44.1 kHz".to_string()));
+        p.song_sort = (SongCol::Quality, false);
+        p.go(Page::AllSongs);
+        frame(&ctx, &mut p);
+        // the columns of song lists: chosen per kind, kept in player.json
+        p.state.toggle_column("songs", "year");
+        p.save_state();
+        frame(&ctx, &mut p);
+        assert!(playerstate::load(None).columns_of("songs").contains(&"year".to_string()));
+        assert!(!p.state.columns_of("album").contains(&"year".to_string()));
+        p.state.reset_columns("songs");
+
+        // rename a genre from its page: the files change, the page follows the new name
+        p.go(Page::Group("genres", "Jazz".into()));
+        frame(&ctx, &mut p);
+        p.ask_rename_group("genres", "Jazz");
+        assert_eq!(p.name_dialog.as_ref().unwrap().text, "Jazz");
+        assert!(p.apply_name(NameAction::RenameGroup("genres", "Jazz".into()), "  ").is_err());
+        p.name_dialog = None;
+        p.retag_group("genres", &["Jazz".into()], "Smooth Jazz", false).unwrap();
+        match &p.confirm {
+            Some(ConfirmAction::RetagGroup { text, paths, .. }) => {
+                assert!(text.starts_with("Rename the genre “Jazz” to “Smooth Jazz”? The genre of 1 song changes."), "{text}");
+                assert_eq!(paths, &vec![b1.clone()]);
+            }
+            other => panic!("{other:?}"),
+        }
+        rename(&ctx, &mut p, "the genre renamed", |p| p.lib.track(&b1).is_some_and(|t| t.genre == "Smooth Jazz"));
+        assert_eq!(tag_of(&b1, "genre"), "Smooth Jazz");
+        assert_eq!(p.page, Page::Group("genres", "Smooth Jazz".into()));
+        // merge two genres: only the songs that do not have the name yet are written
+        p.group_selected = vec!["Pop".into(), "Folk".into()];
+        p.go(Page::Genres);
+        frame(&ctx, &mut p);
+        p.ask_merge_groups("genres", p.group_selected.clone());
+        assert_eq!(p.name_dialog.as_ref().unwrap().choices, vec!["Pop".to_string(), "Folk".to_string()], "the biggest first");
+        p.name_dialog = None;
+        p.retag_group("genres", &["Pop".into(), "Folk".into()], "Pop", true).unwrap();
+        rename(&ctx, &mut p, "the genres merged", |p| p.lib.genres.len() == 2);
+        assert_eq!(tag_of(&c1, "genre"), "Pop");
+        assert!(p.group_selected.is_empty());
+        assert!(p.retag_group("genres", &["Pop".into()], "Pop", true).is_err(), "nothing to change");
+        // a year: only the year of each release date changes
+        p.retag_group("years", &["2001".into()], "2004", false).unwrap();
+        rename(&ctx, &mut p, "the year renamed", |p| p.lib.track(&a2).is_some_and(|t| t.year == "2004"));
+        assert_eq!((tag_of(&a1, "date"), tag_of(&a2, "date")), ("2004-05-03".to_string(), "2004".to_string()));
+        assert!(p.retag_group("years", &["2004".into()], "04", false).is_err());
+        // a composer
+        p.retag_group("composers", &["Ann".into()], "Ann Lind", false).unwrap();
+        rename(&ctx, &mut p, "the composer renamed", |p| p.lib.track(&c1).is_some_and(|t| t.composer == "Ann Lind"));
+        p.tag_job = None;
+
+        // the Equalizer: a preset saved while the equalizer was off, chosen with it on, deleted
+        p.state.eq.apply_preset("Rock");
+        p.state.eq.enabled = false;
+        p.apply_name(NameAction::SaveEqPreset, "Quiet Rock").unwrap();
+        p.state.eq.enabled = true;
+        assert_eq!(p.state.matching_eq_preset(), "Quiet Rock");
+        let before = p.state.eq.clone();
+        p.eq_open = true;
+        frame(&ctx, &mut p);
+        assert!(p.eq_delete(None), "the Delete… button");
+        assert_eq!(p.confirm, Some(ConfirmAction::DeleteEqPreset("Quiet Rock".into())));
+        frame(&ctx, &mut p);
+        let action = p.confirm.take().unwrap();
+        p.confirmed(action);
+        assert!(p.state.eq_presets.is_empty() && playerstate::load(None).eq_presets.is_empty());
+        assert_eq!(p.state.eq, before, "the equalizer keeps its settings");
+        assert_eq!(p.state.matching_eq_preset(), "");
+        // set to none of the user's presets: Delete… lists them
+        p.apply_name(NameAction::SaveEqPreset, "Mine").unwrap();
+        p.state.eq.apply_preset("Jazz");
+        assert!(!p.eq_delete(None));
+        frame(&ctx, &mut p);
+        assert!(p.eq_delete(Some("Mine".into())));
+        let action = p.confirm.take().unwrap();
+        p.confirmed(action);
+        assert!(playerstate::load(None).eq_presets.is_empty());
+        p.eq_open = false;
+        let _ = a2;
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 5,000 invented songs on 500 albums (no files: the tracks are made directly).
+    pub fn invented_tracks() -> Vec<Track> {
+        let genres = ["Ambient", "Indie Pop", "Jazz", "Electronic", "Rock", "Classical", "Folk", "Soul", "Hip-Hop", "Metal"];
+        let mut out = vec![];
+        for a in 0..500usize {
+            let artist = format!("Invented Artist {}", a % 120);
+            let album = format!("Invented Album {a}");
+            let lossy = a % 7 == 0;
+            for n in 0..10usize {
+                out.push(Track {
+                    path: format!("/invented/Music/{artist}/{album}/{:02} Song {a}-{n}.{}", n + 1, if lossy { "mp3" } else { "flac" }),
+                    title: format!("Song {a}-{n} of the invented library"),
+                    artist: artist.clone(),
+                    album: album.clone(),
+                    album_artist: artist.clone(),
+                    genre: genres[a % genres.len()].to_string(),
+                    composer: format!("Composer {}", (a + n) % 60),
+                    disc: 1,
+                    track: n as i64 + 1,
+                    year: (1970 + a % 45).to_string(),
+                    duration: 120.0 + ((a * 7 + n * 13) % 200) as f64,
+                    codec: if lossy { "mp3".into() } else { "flac".into() },
+                    sample_rate: [44_100, 48_000, 96_000, 192_000][a % 4],
+                    bits: if lossy { 0 } else { [16, 24, 24, 32][a % 4] },
+                    is_lossy: lossy,
+                    channels: 2,
+                    bit_rate: if lossy { 320_000 } else { 900_000 },
+                    size: 1000,
+                    mtime_ns: (a * 1000 + n) as i64,
+                    ..Default::default()
+                });
+            }
+        }
+        out
+    }
+
+    /// One frame with a mouse-wheel step over the page, tessellated as the window would.
+    fn scroll_frame(ctx: &egui::Context, p: &mut Player, dy: f32) {
+        let mut events = vec![egui::Event::PointerMoved(pos2(760.0, 520.0))];
+        if dy != 0.0 {
+            events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| p.ui(ui));
+        let shapes = std::mem::take(&mut out.shapes);
+        let ppp = out.pixels_per_point;
+        out.drop_without_applying_deltas();
+        let _ = ctx.tessellate(shapes, ppp);
+    }
+
+    /// Frame times while scrolling the pages of a big library (run with
+    /// `cargo test --release -p realhires-gui profile_big_library -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn profile_big_library() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var("REALHIRES_COVERS", tmp.join("covers"));
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, Settings::default(), vec![]);
+        let t0 = Instant::now();
+        p.lib = LibView::new(invented_tracks());
+        println!("LibView::new (5,000 songs, 500 albums): {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        let pages = [
+            ("Library", Page::Library),
+            ("All Songs", Page::AllSongs),
+            ("Albums", Page::Albums),
+            ("Artists", Page::Artists),
+            ("Genres", Page::Genres),
+            ("Composers", Page::Composers),
+            ("Years", Page::Years),
+        ];
+        for (name, page) in pages {
+            p.go(page);
+            for _ in 0..5 {
+                scroll_frame(&ctx, &mut p, 0.0);
+            }
+            let mut ms = vec![];
+            for i in 0..60 {
+                let t = Instant::now();
+                scroll_frame(&ctx, &mut p, if i % 20 < 10 { -60.0 } else { 60.0 });
+                ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            let mean = ms.iter().sum::<f64>() / ms.len() as f64;
+            let max = ms.iter().cloned().fold(0.0, f64::max);
+            println!("{name:>10}: frame while scrolling: mean {mean:6.2} ms, max {max:6.2} ms");
+        }
         drop(p);
         let _ = std::fs::remove_dir_all(&tmp);
     }

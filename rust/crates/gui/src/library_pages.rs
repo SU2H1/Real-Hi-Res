@@ -262,7 +262,7 @@ impl Player {
         if !songs.is_empty() {
             let list: Vec<String> = songs.iter().map(|t| t.path.clone()).collect();
             let name = file_name(&folder);
-            self.song_table(ui, pal, &list, &name, false);
+            self.song_table_kind(ui, pal, &list, &name, "folders", false);
         }
     }
 
