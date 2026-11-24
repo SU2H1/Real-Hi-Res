@@ -52,6 +52,8 @@ from .eta import ScanEta, file_sizes, fmt_about
 from .fix import FIXABLE_VERDICTS, fix_advice, fix_outlook
 from . import lyrics as lyrics_mod
 from .listing import list_source
+from .player_theme import Button, Chip, IconButton, RoundFrame, SearchBox, Segmented, Theme, mix, round_rect, theme_menu
+from .player_widgets import draw_cover, rounded_photo
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
 from .report import write_csv, write_json
@@ -74,6 +76,43 @@ PENDING_STYLE = ("Not scanned", "#808080")
 RUNNING = "RUNNING"  # GUI-only: being analysed right now
 RUNNING_STYLE = ("Analysing…", "#0b62c4")
 SEARCH_DELAY_MS = 200  # the list is filtered once typing pauses, not on every key
+PLOT_BG = "#1c1c1e"    # the plots' dark area, in light and dark themes
+MOD = "Command" if sys.platform == "darwin" else "Control"
+ACC = "Cmd" if sys.platform == "darwin" else "Ctrl"
+
+
+def ink(theme: Theme, color: str) -> str:
+    """A verdict or status colour as text on the theme's background: dark themes get it
+    lighter, so the dark reds and blues stay readable."""
+    return mix(color, "#ffffff", 0.42) if theme.dark else color
+
+
+def make_theme(root: tk.Tk, cfg) -> Theme:
+    """The player's look for the scanner on its own (scanner_main(), the tests): the
+    theme and font of the settings."""
+    theme = Theme(root)
+    theme.configure(cfg.theme, cfg.font_family)
+    theme.styles()
+    theme.reg(root, bg="bg")
+    return theme
+
+
+def themed_window(win: tk.Toplevel, app: "App") -> Theme:
+    """A window opened from the page, in the theme's colours."""
+    app.theme.reg(win, bg="bg")
+    return app.theme
+
+
+def autohide(sb: ttk.Scrollbar, first, last, panel: bool = False) -> None:
+    """A scroll bar that is drawn only when there is something to scroll (it keeps its
+    place, so the layout never jumps)."""
+    sb.set(first, last)
+    need = float(first) > 0.0 or float(last) < 1.0
+    orient = "Horizontal" if str(sb.cget("orient")) == "horizontal" else "Vertical"
+    style = f"{'Panel.' if panel else ''}{orient}.TScrollbar" if need else \
+        f"{'PanelHide' if panel else 'Hide'}.{orient}.TScrollbar"
+    if str(sb.cget("style")) != style:
+        sb.configure(style=style)
 
 
 def _work(path: str, max_seconds: Optional[float], cfg) -> FileResult:
@@ -238,10 +277,15 @@ class PlotCache:
 
 # ------------------------------------------------------------------ plots ---
 class _PlotBase(tk.Canvas):
-    L, R, T, B = 52, 12, 24, 28
+    """A plot: a dark area with rounded corners on the dashboard's panel."""
 
-    def __init__(self, master, **kw):
-        super().__init__(master, background="#ffffff", highlightthickness=0, **kw)
+    L, R, T, B = 52, 14, 26, 28
+    GRID, AXIS, LABEL, TITLE = "#3a3a3c", "#636366", "#a1a1a6", "#f2f2f7"
+
+    def __init__(self, master, app: "App", **kw):
+        super().__init__(master, highlightthickness=0, bd=0, **kw)
+        self.app = app
+        app.theme.reg(self, bg="lcd")
         self.result: Optional[FileResult] = None
         self.plot: Optional[dict] = None
         self.waiting = False  # graphs of a saved result are being drawn
@@ -251,16 +295,29 @@ class _PlotBase(tk.Canvas):
         self.result, self.plot, self.waiting = result, plot, waiting and not plot
         self.redraw()
 
+    def _area(self) -> bool:
+        """The dark rounded area; False when the canvas is too small to draw in."""
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 80 or h < 60:
+            return False
+        round_rect(self, 0, 0, w, h, 10, fill=PLOT_BG, outline=PLOT_BG)
+        return True
+
+    def _font(self, name: str = "small"):
+        return self.app.theme.f(name)
+
     def _message(self, text: str) -> None:
-        self.create_text(self.winfo_width() / 2, self.winfo_height() / 2, text=text, fill="#888")
+        self.create_text(self.winfo_width() / 2, self.winfo_height() / 2, text=text, fill=self.LABEL,
+                         font=self._font("body"), width=max(60, self.winfo_width() - 40), justify="center")
 
     def _freq_axis(self, nyq: float, x0: float, y_of) -> None:
         kstep = 2 if nyq <= 24000 else 5 if nyq <= 50000 else 10 if nyq <= 100000 else 20
         k = 0
         while k * 1000 <= nyq:
             y = y_of(k * 1000)
-            self.create_line(x0 - 4, y, x0, y, fill="#666")
-            self.create_text(x0 - 6, y, text=f"{k}k", anchor="e", fill="#555", font=("TkDefaultFont", 8))
+            self.create_line(x0 - 4, y, x0, y, fill=self.AXIS)
+            self.create_text(x0 - 6, y, text=f"{k}k", anchor="e", fill=self.LABEL, font=self._font())
             k += kstep
 
 
@@ -269,26 +326,21 @@ class SpectrogramCanvas(_PlotBase):
     black area above its cut-off for the whole duration of the track."""
 
     def __init__(self, master, app: "App", **kw):
-        super().__init__(master, **kw)
-        self.app = app
-        self.configure(background="#1e1e1e")
+        super().__init__(master, app, **kw)
         self._img = None
 
     def redraw(self) -> None:
         from .imaging import spectrogram_rgb, to_ppm
 
-        self.delete("all")
-        w, h = self.winfo_width(), self.winfo_height()
-        if w < 80 or h < 60:
+        if not self._area():
             return
+        w, h = self.winfo_width(), self.winfo_height()
         sg = (self.plot or {}).get("spectrogram") if self.plot else None
         if self.result is None:
-            self.create_text(w / 2, h / 2, text="Select a scanned file to see its spectrogram", fill="#aaa")
+            self._message("Select a scanned file to see its spectrogram")
             return
         if not sg:
-            self.create_text(w / 2, h / 2, fill="#aaa",
-                             text="Drawing the spectrogram…" if self.waiting else
-                             "No spectrogram (silent or unreadable file)")
+            self._message("Drawing the spectrogram…" if self.waiting else "No spectrogram (silent or unreadable file)")
             return
         L, R, T, B = self.L, self.R, self.T, self.B
         pw, ph = w - L - R, h - T - B
@@ -302,29 +354,24 @@ class SpectrogramCanvas(_PlotBase):
             return T + ph - ph * f / nyq
 
         self._freq_axis(nyq, L, Y)
-        for c in self.find_withtag("all"):
-            if self.type(c) == "text":
-                self.itemconfigure(c, fill="#ccc")
         total = sg["shape"][0] * sg["seconds_per_column"]
         for frac in (0, 0.25, 0.5, 0.75, 1.0):
             x = L + frac * pw
-            self.create_line(x, T + ph, x, T + ph + 4, fill="#aaa")
-            self.create_text(x, T + ph + 13, text=fmt_duration(frac * total),
-                             fill="#ccc", font=("TkDefaultFont", 8))
+            self.create_line(x, T + ph, x, T + ph + 4, fill=self.AXIS)
+            self.create_text(x, T + ph + 13, text=fmt_duration(frac * total), fill=self.LABEL, font=self._font())
         r = self.result
         marks = []
         if r.upsampled_from:
-            marks.append((r.upsampled_from / 2.0, "#4fc3f7",
+            marks.append((r.upsampled_from / 2.0, "#64d2ff",
                           f"{r.upsampled_from / 2000:g} kHz: limit of a {r.upsampled_from / 1000:g} kHz master"))
         if r.lossy_cutoff_hz:
-            marks.append((r.lossy_cutoff_hz, "#ff6e6e", f"{r.lossy_cutoff_hz / 1000:.1f} kHz: lossy encoder cut-off"))
+            marks.append((r.lossy_cutoff_hz, "#ff6961", f"{r.lossy_cutoff_hz / 1000:.1f} kHz: lossy encoder cut-off"))
         for hz, color, label in marks:
             if 0 < hz < nyq:
                 y = Y(hz)
                 self.create_line(L, y, L + pw, y, fill=color, dash=(6, 4), width=2)
-                self.create_text(L + pw - 4, y - 8, text=label, anchor="e", fill=color,
-                                 font=("TkDefaultFont", 9, "bold"))
-        self.create_text(L, 12, anchor="w", fill="#eee", font=("TkDefaultFont", 9, "bold"),
+                self.create_text(L + pw - 4, y - 9, text=label, anchor="e", fill=color, font=self._font("small_b"))
+        self.create_text(L, 13, anchor="w", fill=self.TITLE, font=self._font("small_b"),
                          text="Spectrogram (time →, frequency ↑)")
 
 
@@ -332,10 +379,9 @@ class SpectrumCanvas(_PlotBase):
     """Average spectrum over the whole file."""
 
     def redraw(self) -> None:
-        self.delete("all")
-        w, h = self.winfo_width(), self.winfo_height()
-        if w < 80 or h < 60:
+        if not self._area():
             return
+        w, h = self.winfo_width(), self.winfo_height()
         p = self.plot
         if self.result is None or not p or not p.get("freqs"):
             self._message("Select a scanned file to see its spectrum" if self.result is None
@@ -346,6 +392,7 @@ class SpectrumCanvas(_PlotBase):
         nyq = p["nyquist"]
         top = (int(p["peak_db"] + 5) // 10 + 1) * 10
         bottom = max((int(min(p["floor_db"], p["threshold_db"]) - 15) // 10) * 10, top - 200)
+        small = self._font()
 
         def X(f):
             return L + pw * f / nyq
@@ -357,36 +404,36 @@ class SpectrumCanvas(_PlotBase):
         step = 10 if top - bottom <= 120 else 20
         lvl = top
         while lvl >= bottom:
-            self.create_line(L, Y(lvl), L + pw, Y(lvl), fill="#eeeeee")
-            self.create_text(L - 6, Y(lvl), text=f"{lvl}", anchor="e", fill="#666", font=("TkDefaultFont", 8))
+            self.create_line(L, Y(lvl), L + pw, Y(lvl), fill=self.GRID)
+            self.create_text(L - 6, Y(lvl), text=f"{lvl}", anchor="e", fill=self.LABEL, font=small)
             lvl -= step
         kstep = 2 if nyq <= 24000 else 5 if nyq <= 50000 else 10 if nyq <= 100000 else 20
         k = 0
         while k * 1000 <= nyq:
             x = X(k * 1000)
-            self.create_line(x, T, x, T + ph, fill="#eeeeee")
-            self.create_text(x, T + ph + 12, text=f"{k}k", fill="#666", font=("TkDefaultFont", 8))
+            self.create_line(x, T, x, T + ph, fill=self.GRID)
+            self.create_text(x, T + ph + 12, text=f"{k}k", fill=self.LABEL, font=small)
             k += kstep
         for i, ref in enumerate((22050, 24000, 44100, 48000)):
             if ref < nyq * 0.9:
-                self.create_line(X(ref), T, X(ref), T + ph, fill="#aaaaaa", dash=(2, 3))
+                self.create_line(X(ref), T, X(ref), T + ph, fill=self.AXIS, dash=(2, 3))
                 self.create_text(X(ref) + 3, T + ph - 8 - 12 * (i % 2), text=f"{ref / 1000:g}k",
-                                 anchor="w", fill="#999", font=("TkDefaultFont", 8))
-        color = VERDICT_STYLE.get(self.result.verdict, ("", "#1565c0"))[1]
+                                 anchor="w", fill=self.LABEL, font=small)
+        color = mix(VERDICT_STYLE.get(self.result.verdict, ("", "#1565c0"))[1], "#ffffff", 0.35)
         if p.get("bandwidth_hz"):
             x = X(p["bandwidth_hz"])
             self.create_line(x, T, x, T + ph, fill=color, dash=(6, 4), width=2)
             anchor, dx = ("e", -4) if x > L + pw - 130 else ("w", 4)
             self.create_text(x + dx, T + 10, text=f"bandwidth {p['bandwidth_hz'] / 1000:.1f} kHz",
-                             anchor=anchor, fill=color)
-        self.create_line(L, Y(p["floor_db"]), L + pw, Y(p["floor_db"]), fill="#8250df", dash=(4, 4))
+                             anchor=anchor, fill=color, font=self._font("small_b"))
+        self.create_line(L, Y(p["floor_db"]), L + pw, Y(p["floor_db"]), fill="#bf9bff", dash=(4, 4))
         pts = []
         for f, v in zip(p["freqs"], p["db"]):
             pts += [X(f), Y(v)]
         if len(pts) >= 4:
-            self.create_line(*pts, fill="#1f2328", width=1)
-        self.create_rectangle(L, T, L + pw, T + ph, outline="#999")
-        self.create_text(L, 12, anchor="w", font=("TkDefaultFont", 9, "bold"), fill="#333",
+            self.create_line(*pts, fill="#f2f2f7", width=1)
+        self.create_rectangle(L, T, L + pw, T + ph, outline=self.AXIS)
+        self.create_text(L, 13, anchor="w", font=self._font("small_b"), fill=self.TITLE,
                          text="Average spectrum (dB per bin)")
 
 
@@ -401,58 +448,59 @@ class SummaryDialog(tk.Toplevel):
     def __init__(self, app: "App", results: List[FileResult], elapsed: Optional[float]):
         super().__init__(app.root)
         self.app = app
+        t = themed_window(self, app)
         self.title("Scan summary")
         self.transient(app.root)
         self.resizable(False, False)
-        frm = ttk.Frame(self, padding=16)
+        frm = ttk.Frame(self, padding=20)
         frm.grid(sticky="nsew")
         n = len(results)
         problems = sum(1 for r in results if r.verdict in PROBLEM_VERDICTS)
         head = f"Scanned {n} file{'s' if n != 1 else ''}" + (f" in {elapsed:.1f} s" if elapsed else "")
-        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frm, text=head, style="Head.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
         pct_problems = 100.0 * problems / n if n else 0.0
-        ttk.Label(frm, text=f"{problems} file{'s' if problems != 1 else ''} ({pct_problems:.1f} %) are fake or "
-                            "suspicious." if problems else "No fake or suspicious files found.",
-                  foreground="#a3122a" if problems else "#2e7d32").grid(row=1, column=0, columnspan=2,
-                                                                         sticky="w", pady=(2, 10))
+        tk.Label(frm, text=f"{problems} file{'s' if problems != 1 else ''} ({pct_problems:.1f} %) are fake or "
+                           "suspicious." if problems else "No fake or suspicious files found.",
+                 font=t.f("body_b"), bg=t.c("bg"), fg=ink(t, "#a3122a" if problems else "#2e7d32"), bd=0).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 14))
         breakdown = verdict_breakdown(results)
-        self.canvas = tk.Canvas(frm, width=self.SIZE, height=self.SIZE, highlightthickness=0,
-                                background=self._bg())
-        self.canvas.grid(row=2, column=0, sticky="n", padx=(0, 18))
+        self.canvas = tk.Canvas(frm, width=self.SIZE, height=self.SIZE, highlightthickness=0, bd=0,
+                                background=t.c("bg"))
+        self.canvas.grid(row=2, column=0, sticky="n", padx=(0, 22))
         self._draw_pie(breakdown, n, pct_problems)
 
         legend = ttk.Frame(frm)
         legend.grid(row=2, column=1, sticky="nw")
         for i, (v, count, pct) in enumerate(breakdown):
             label, color, desc = VERDICT_STYLE[v]
-            sw = tk.Canvas(legend, width=14, height=14, highlightthickness=0, background=self._bg())
-            sw.create_rectangle(0, 0, 14, 14, fill=color, outline="")
-            sw.grid(row=2 * i, column=0, padx=(0, 6), pady=(4, 0), sticky="w")
-            name = ttk.Label(legend, text=label, foreground=color, font=("TkDefaultFont", 10, "bold"),
-                             cursor="hand2")
-            name.grid(row=2 * i, column=1, sticky="w", pady=(4, 0))
-            ttk.Label(legend, text=f"{pct:5.1f} %", width=7, anchor="e",
-                      font=("TkDefaultFont", 10, "bold")).grid(row=2 * i, column=2, sticky="e", pady=(4, 0))
-            ttk.Label(legend, text=f"{count} file{'s' if count != 1 else ''}", foreground="#555").grid(
-                row=2 * i, column=3, sticky="w", padx=(8, 0), pady=(4, 0))
-            ttk.Label(legend, text=desc, foreground="#777", font=("TkDefaultFont", 8)).grid(
-                row=2 * i + 1, column=1, columnspan=3, sticky="w")
+            sw = tk.Canvas(legend, width=14, height=14, highlightthickness=0, bd=0, background=t.c("bg"))
+            sw.create_oval(1, 1, 13, 13, fill=color, outline=color)
+            sw.grid(row=2 * i, column=0, padx=(0, 8), pady=(6, 0), sticky="w")
+            name = tk.Label(legend, text=label, fg=ink(t, color), bg=t.c("bg"), font=t.f("body_b"), bd=0,
+                            cursor="hand2")
+            name.grid(row=2 * i, column=1, sticky="w", pady=(6, 0))
+            ttk.Label(legend, text=f"{pct:5.1f} %", width=7, anchor="e", style="Bold.TLabel").grid(
+                row=2 * i, column=2, sticky="e", pady=(6, 0))
+            ttk.Label(legend, text=f"{count} file{'s' if count != 1 else ''}", style="Muted.TLabel").grid(
+                row=2 * i, column=3, sticky="w", padx=(8, 0), pady=(6, 0))
+            ttk.Label(legend, text=desc, style="Small.TLabel").grid(row=2 * i + 1, column=1, columnspan=3, sticky="w")
             for w in (sw, name):
                 w.bind("<Button-1>", lambda e, v=v: self._close(only=v))
-        ttk.Label(frm, text="Click a slice or a name to list only those files.", foreground="#777",
-                  font=("TkDefaultFont", 8)).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(frm, text="Click a slice or a name to list only those files.", style="Small.TLabel").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
         self.again = tk.BooleanVar(value=app.cfg.show_summary_popup)
         ttk.Checkbutton(frm, text="Show this summary after every scan", variable=self.again).grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(6, 8))
+            row=4, column=0, columnspan=2, sticky="w", pady=(6, 10))
         btns = ttk.Frame(frm)
         btns.grid(row=5, column=0, columnspan=2, sticky="e")
-        ttk.Button(btns, text="Show problem files", command=lambda: self._close(problems_only=True)).pack(side="left")
-        ttk.Button(btns, text="Show all files", command=lambda: self._close(show_all=True)).pack(side="left", padx=4)
-        ttk.Button(btns, text="Export CSV…", command=lambda: app.export("csv", all_results=True)).pack(side="left")
-        close = ttk.Button(btns, text="Close", command=self._close)
-        close.pack(side="left", padx=(4, 0))
-        close.focus_set()
+        Button(btns, t, "Show problem files", command=lambda: self._close(problems_only=True)).pack(side="left")
+        Button(btns, t, "Show all files", command=lambda: self._close(show_all=True)).pack(side="left", padx=8)
+        Button(btns, t, "Export CSV…", command=lambda: app.export("csv", all_results=True)).pack(side="left")
+        close = Button(btns, t, "Close", command=self._close, kind="accent")
+        close.pack(side="left", padx=(8, 0))
+        self.focus_set()
         self.bind("<Escape>", lambda e: self._close())
+        self.bind("<Return>", lambda e: self._close())
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.update_idletasks()
         x = app.root.winfo_rootx() + (app.root.winfo_width() - self.winfo_width()) // 2
@@ -460,12 +508,12 @@ class SummaryDialog(tk.Toplevel):
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def _bg(self) -> str:
-        try:
-            return ttk.Style(self).lookup("TFrame", "background") or "#f0f0f0"
-        except tk.TclError:
-            return "#f0f0f0"
+        return self.app.theme.c("bg")
 
     def _draw_pie(self, breakdown, total: int, pct_problems: float) -> None:
+        import math
+
+        t = self.app.theme
         c, size, pad = self.canvas, self.SIZE, 8
         box = (pad, pad, size - pad, size - pad)
         start = 90.0  # 12 o'clock, clockwise like most pie charts
@@ -474,29 +522,25 @@ class SummaryDialog(tk.Toplevel):
             extent = 360.0 * count / max(total, 1)
             tag = f"slice-{v}"
             if extent >= 359.99:
-                c.create_oval(*box, fill=color, outline="white", width=2, tags=(tag,))
+                c.create_oval(*box, fill=color, outline=self._bg(), width=2, tags=(tag,))
             else:
-                c.create_arc(*box, start=start, extent=-extent, fill=color, outline="white", width=2,
+                c.create_arc(*box, start=start, extent=-extent, fill=color, outline=self._bg(), width=2,
                              style="pieslice", tags=(tag,))
             c.tag_bind(tag, "<Button-1>", lambda e, v=v: self._close(only=v))
             c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
             c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
             if pct >= 7:  # label big slices with their percentage
-                import math
-
                 mid = math.radians(start - extent / 2)
                 r = (size / 2 - pad) * 0.78
                 c.create_text(size / 2 + r * math.cos(mid), size / 2 - r * math.sin(mid),
-                              text=f"{pct:.0f}%", fill="white", font=("TkDefaultFont", 9, "bold"))
+                              text=f"{pct:.0f}%", fill="white", font=t.f("small_b"))
             start -= extent
         hole = size * 0.27  # donut hole with the headline number
         c.create_oval(size / 2 - hole, size / 2 - hole, size / 2 + hole, size / 2 + hole,
                       fill=self._bg(), outline="")
-        c.create_text(size / 2, size / 2 - 12, text=f"{pct_problems:.0f}%",
-                      font=("TkDefaultFont", 20, "bold"),
-                      fill="#a3122a" if pct_problems else "#2e7d32")
-        c.create_text(size / 2, size / 2 + 16, text="fake or suspicious", fill="#555",
-                      font=("TkDefaultFont", 8))
+        c.create_text(size / 2, size / 2 - 10, text=f"{pct_problems:.0f}%", font=t.f("big"),
+                      fill=ink(t, "#a3122a" if pct_problems else "#2e7d32"))
+        c.create_text(size / 2, size / 2 + 18, text="fake or suspicious", fill=t.c("text2"), font=t.f("small"))
 
     def _close(self, problems_only: bool = False, show_all: bool = False, only: Optional[str] = None) -> None:
         if self.again.get() != self.app.cfg.show_summary_popup:
@@ -517,11 +561,12 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, app: "App"):
         super().__init__(app.root)
         self.app = app
+        t = themed_window(self, app)
         self.title("Settings")
         self.transient(app.root)
         self.vars: Dict[str, object] = {}
         self.path_fields: set = set()
-        outer = ttk.Frame(self, padding=12)
+        outer = ttk.Frame(self, padding=16)
         outer.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -532,12 +577,12 @@ class SettingsDialog(tk.Toplevel):
         self.help_var = tk.StringVar(value="Point at a setting to see what it does.")
         infos = settings_mod.Settings.field_info()
         for group in settings_mod.GROUPS:
-            tab = ttk.Frame(nb, padding=10)
+            tab = ttk.Frame(nb, padding=14)
             tab.columnconfigure(1, weight=1)
             nb.add(tab, text=group)
             row = 0
             if group == "Detection":
-                ttk.Label(tab, text="Changes apply to the next scan.", foreground="#666").grid(
+                ttk.Label(tab, text="Changes apply to the next scan.", style="Muted.TLabel").grid(
                     row=row, column=0, columnspan=2, sticky="w", pady=(0, 6))
                 row += 1
             for info in [i for i in infos if i["group"] == group]:
@@ -553,19 +598,19 @@ class SettingsDialog(tk.Toplevel):
                 st = app.store.stats() if app.store is not None else None
                 where = (f"{st['files']} file(s), {st['disk_bytes'] / 1e6:.1f} MB, in {st['path']}" if st
                          else f"Saving is turned off. Results are kept in {store_default_path()}")
-                ttk.Label(tab, text=where, foreground="#666", wraplength=520, justify="left").grid(
-                    row=row, column=0, columnspan=2, sticky="w", pady=(12, 4))
-                ttk.Button(tab, text="Delete all saved results…", command=app.forget_saved).grid(
+                ttk.Label(tab, text=where, style="Muted.TLabel", wraplength=520, justify="left").grid(
+                    row=row, column=0, columnspan=2, sticky="w", pady=(12, 6))
+                Button(tab, t, "Delete all saved results…", command=app.forget_saved).grid(
                     row=row + 1, column=0, sticky="w")
-        ttk.Label(outer, textvariable=self.help_var, wraplength=520, foreground="#444",
-                  justify="left").grid(row=1, column=0, sticky="ew", pady=(8, 4))
-        ttk.Label(outer, text=f"Saved in {settings_mod.default_path()}", foreground="#888",
-                  font=("TkDefaultFont", 8)).grid(row=2, column=0, sticky="w")
+        ttk.Label(outer, textvariable=self.help_var, wraplength=560, style="Muted.TLabel",
+                  justify="left").grid(row=1, column=0, sticky="ew", pady=(10, 4))
+        ttk.Label(outer, text=f"Saved in {settings_mod.default_path()}", style="Small.TLabel").grid(
+            row=2, column=0, sticky="w")
         btns = ttk.Frame(outer)
-        btns.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        ttk.Button(btns, text="Restore defaults", command=self._defaults).pack(side="left")
-        ttk.Button(btns, text="Save", command=self._save).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right", padx=4)
+        btns.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        Button(btns, t, "Restore defaults", command=self._defaults).pack(side="left")
+        Button(btns, t, "Save", command=self._save, kind="accent").pack(side="right")
+        Button(btns, t, "Cancel", command=self.destroy).pack(side="right", padx=8)
         self.bind("<Escape>", lambda e: self.destroy())
         self._load(app.cfg)
         self.update_idletasks()
@@ -654,6 +699,7 @@ class FixDialog(tk.Toplevel):
     def __init__(self, app: "App", results: List[FileResult], autostart: bool = False):
         super().__init__(app.root)
         self.app = app
+        t = themed_window(self, app)
         self.title("Fix to real resolution")
         self.transient(app.root)
         self.results = results
@@ -666,15 +712,15 @@ class FixDialog(tk.Toplevel):
         self.running = False
         self.q: queue.Queue = queue.Queue()
         cfg = app.cfg
-        frm = ttk.Frame(self, padding=12)
+        frm = ttk.Frame(self, padding=16)
         frm.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         frm.columnconfigure(1, weight=1)
         frm.rowconfigure(2, weight=1)
-        self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
+        self.head = ttk.Label(frm, style="Head.TLabel")
         self.head.grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
+        ttk.Label(frm, style="Muted.TLabel", wraplength=760, justify="left",
                   text="Each file is rewritten at the sample rate and bit depth it really contains, so "
                        "its properties show the actual values (e.g. a fake 24/96 upsampled from a CD "
                        "becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing "
@@ -691,16 +737,16 @@ class FixDialog(tk.Toplevel):
         self.tv.column("change", width=140, anchor="center", stretch=False)
         self.tv.column("status", width=230)
         self.tv.column("output", width=260)
-        self.tv.tag_configure("skip", foreground="#888")
-        self.tv.tag_configure("ok", foreground="#2e7d32")
-        self.tv.tag_configure("fail", foreground="#c62828")
+        self.tv.tag_configure("skip", foreground=t.c("text2"))
+        self.tv.tag_configure("ok", foreground=ink(t, "#2e7d32"))
+        self.tv.tag_configure("fail", foreground=t.c("error"))
         ys = ttk.Scrollbar(frm, orient="vertical", command=self.tv.yview)
-        self.tv.configure(yscrollcommand=ys.set)
+        self.tv.configure(yscrollcommand=lambda a, b: autohide(ys, a, b))
         self.tv.grid(row=2, column=0, columnspan=2, sticky="nsew")
         ys.grid(row=2, column=2, sticky="ns")
 
-        opts = ttk.LabelFrame(frm, text="Options", padding=8)
-        opts.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        opts = ttk.LabelFrame(frm, text="Options", padding=10)
+        opts.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         opts.columnconfigure(1, weight=1)
         info = {i["name"]: i for i in settings_mod.Settings.field_info()}
         self.v_output = tk.StringVar(value=cfg.fix_output)
@@ -723,8 +769,8 @@ class FixDialog(tk.Toplevel):
             fr.columnconfigure(0, weight=1)
             e = ttk.Entry(fr, textvariable=var)
             e.grid(row=0, column=0, sticky="ew")
-            b = ttk.Button(fr, text="Browse…", command=lambda: self._browse(var, title))
-            b.grid(row=0, column=1, padx=(4, 0))
+            b = Button(fr, t, "Browse…", command=lambda: self._browse(var, title), height=28)
+            b.grid(row=0, column=1, padx=(6, 0))
             return e, b
 
         combo(0, "Fix files by:", self.v_output, "fix_output")
@@ -735,27 +781,27 @@ class FixDialog(tk.Toplevel):
         combo(5, "Target bit depth:", self.v_bits, "fix_bits")
         ttk.Checkbutton(opts, text="Re-check each fixed file", variable=self.v_verify).grid(
             row=6, column=1, sticky="w", pady=(2, 0))
-        ttk.Label(opts, foreground="#777", font=("TkDefaultFont", 8),
+        ttk.Label(opts, style="Small.TLabel",
                   text="Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never "
                        "scanned).").grid(row=7, column=1, sticky="w")
         for v in (self.v_backup, self.v_backup_dir):
             v.trace_add("write", lambda *a: self._replan())
         for v in (self.v_output, self.v_folder, self.v_format, self.v_bits):
             v.trace_add("write", lambda *a: self._replan())
-        self.note = ttk.Label(frm, foreground="#9a6700", wraplength=760, justify="left")
-        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.note = ttk.Label(frm, style="Warn.TLabel", wraplength=760, justify="left")
+        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
         bottom = ttk.Frame(frm)
-        bottom.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         bottom.columnconfigure(1, weight=1)
         self.pb = ttk.Progressbar(bottom, length=200, mode="determinate")
-        self.pb.grid(row=0, column=0, padx=(0, 8))
-        self.status = ttk.Label(bottom, text="")
+        self.pb.grid(row=0, column=0, padx=(0, 10))
+        self.status = ttk.Label(bottom, text="", style="Muted.TLabel")
         self.status.grid(row=0, column=1, sticky="w")
-        self.open_btn = ttk.Button(bottom, text="Show in folder", command=self._open_folder, state="disabled")
-        self.open_btn.grid(row=0, column=2, padx=4)
-        self.start_btn = ttk.Button(bottom, text="Fix files", command=self._start)
+        self.open_btn = Button(bottom, t, "Show in folder", command=self._open_folder, state="disabled")
+        self.open_btn.grid(row=0, column=2, padx=8)
+        self.start_btn = Button(bottom, t, "Fix files", command=self._start, kind="accent")
         self.start_btn.grid(row=0, column=3)
-        ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=4, padx=(4, 0))
+        Button(bottom, t, "Close", command=self._close).grid(row=0, column=4, padx=(8, 0))
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<Escape>", lambda e: self._close())
         self._replan()
@@ -942,6 +988,7 @@ class FixDoneDialog(tk.Toplevel):
 
         super().__init__(app.root)
         self.app = app
+        t = themed_window(self, app)
         self.title("Fixing finished")
         self.transient(over or app.root)
         self.resizable(False, False)
@@ -954,21 +1001,20 @@ class FixDoneDialog(tk.Toplevel):
         self.headline, self.lines = head, lines
         failed = any(not o.ok for o in outcomes)
         self.outputs = [o.output for o in outcomes if o.ok and o.output]
-        frm = ttk.Frame(self, padding=16)
+        frm = ttk.Frame(self, padding=20)
         frm.grid(sticky="nsew")
-        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold"),
-                  foreground="#a3122a" if failed or not self.outputs else "#2e7d32").grid(
+        ttk.Label(frm, text=head, style="Bad.TLabel" if failed or not self.outputs else "Good.TLabel").grid(
             row=0, column=0, sticky="w")
         for i, line in enumerate(lines):
             ttk.Label(frm, text=line, wraplength=460, justify="left").grid(
-                row=i + 1, column=0, sticky="w", pady=(8 if i == 0 else 4, 0))
+                row=i + 1, column=0, sticky="w", pady=(10 if i == 0 else 4, 0))
         btns = ttk.Frame(frm)
-        btns.grid(row=len(lines) + 1, column=0, sticky="e", pady=(14, 0))
-        ttk.Button(btns, text="Show in folder", command=self._show,
-                   state="normal" if self.outputs else "disabled").pack(side="left")
-        close = ttk.Button(btns, text="Close", command=self.destroy)
-        close.pack(side="left", padx=(4, 0))
-        close.focus_set()
+        btns.grid(row=len(lines) + 1, column=0, sticky="e", pady=(16, 0))
+        Button(btns, t, "Show in folder", command=self._show,
+               state="normal" if self.outputs else "disabled").pack(side="left")
+        close = Button(btns, t, "Close", command=self.destroy, kind="accent")
+        close.pack(side="left", padx=(8, 0))
+        self.focus_set()
         self.bind("<Escape>", lambda e: self.destroy())
         self.bind("<Return>", lambda e: self.destroy())
         self.update_idletasks()
@@ -992,6 +1038,7 @@ class LyricsDialog(tk.Toplevel):
     def __init__(self, app: "App", paths: List[str], autostart: bool = False):
         super().__init__(app.root)
         self.app = app
+        t = themed_window(self, app)
         self.title("Download synced lyrics")
         self.transient(app.root)
         self.paths = list(dict.fromkeys(paths))
@@ -1005,15 +1052,15 @@ class LyricsDialog(tk.Toplevel):
         self._status_time = 0.0
         self.q: queue.Queue = queue.Queue()
         cfg = app.cfg
-        frm = ttk.Frame(self, padding=12)
+        frm = ttk.Frame(self, padding=16)
         frm.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         frm.columnconfigure(0, weight=1)
         frm.rowconfigure(2, weight=1)
-        self.head = ttk.Label(frm, font=("TkDefaultFont", 11, "bold"))
+        self.head = ttk.Label(frm, style="Head.TLabel")
         self.head.grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(frm, foreground="#555", wraplength=760, justify="left",
+        ttk.Label(frm, style="Muted.TLabel", wraplength=760, justify="left",
                   text="Each song is looked up by the title, artist, album and length in its tags on LRCLIB "
                        "(lrclib.net), a free, open lyrics database, and its synced lyrics are saved as an .lrc "
                        "file with the same name next to it. Most music players find that file and show the "
@@ -1030,20 +1077,21 @@ class LyricsDialog(tk.Toplevel):
         self.tv.column("song", width=210)
         self.tv.column("status", width=260)
         self.tv.column("saved", width=170)
-        for tag, color in (("ok", "#2e7d32"), ("plain", "#1565c0"), ("skip", "#888"), ("miss", "#9a6700"),
-                           ("fail", "#c62828"), ("busy", "#0b62c4")):
-            self.tv.tag_configure(tag, foreground=color)
+        for tag, color in (("ok", "#2e7d32"), ("plain", "#1565c0"), ("miss", "#9a6700"), ("fail", "#c62828"),
+                           ("busy", "#0b62c4")):
+            self.tv.tag_configure(tag, foreground=ink(t, color))
+        self.tv.tag_configure("skip", foreground=t.c("text2"))
         ys = ttk.Scrollbar(frm, orient="vertical", command=self.tv.yview)
-        self.tv.configure(yscrollcommand=ys.set)
+        self.tv.configure(yscrollcommand=lambda a, b: autohide(ys, a, b))
         self.tv.grid(row=2, column=0, sticky="nsew")
         ys.grid(row=2, column=1, sticky="ns")
-        self.detail = ttk.Label(frm, foreground="#444", wraplength=760, justify="left",
+        self.detail = ttk.Label(frm, style="Muted.TLabel", wraplength=760, justify="left",
                                 text="Select a song to see the details.")
-        self.detail.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.detail.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.tv.bind("<<TreeviewSelect>>", lambda e: self._show_detail())
 
-        opts = ttk.LabelFrame(frm, text="Options", padding=8)
-        opts.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        opts = ttk.LabelFrame(frm, text="Options", padding=10)
+        opts.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         opts.columnconfigure(1, weight=1)
         self.v_existing = tk.StringVar(value=cfg.lyrics_existing)
         self.v_plain = tk.BooleanVar(value=cfg.lyrics_plain)
@@ -1059,22 +1107,22 @@ class LyricsDialog(tk.Toplevel):
             ttk.Checkbutton(opts, text=text, variable=var).grid(row=row, column=0, columnspan=2, sticky="w")
         for v in (self.v_existing, self.v_plain, self.v_instrumental, self.v_search):
             v.trace_add("write", lambda *a: self._replan())
-        self.note = ttk.Label(frm, foreground="#666", wraplength=760, justify="left")
-        self.note.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.note = ttk.Label(frm, style="Muted.TLabel", wraplength=760, justify="left")
+        self.note.grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
         bottom = ttk.Frame(frm)
-        bottom.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        bottom.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         bottom.columnconfigure(1, weight=1)
         self.pb = ttk.Progressbar(bottom, length=200, mode="determinate")
-        self.pb.grid(row=0, column=0, padx=(0, 8))
-        self.status = ttk.Label(bottom, text="", wraplength=420, justify="left")
+        self.pb.grid(row=0, column=0, padx=(0, 10))
+        self.status = ttk.Label(bottom, text="", wraplength=420, justify="left", style="Muted.TLabel")
         self.status.grid(row=0, column=1, sticky="w")
-        self.open_btn = ttk.Button(bottom, text="Show in folder", command=self._open_folder, state="disabled")
-        self.open_btn.grid(row=0, column=2, padx=4)
-        self.start_btn = ttk.Button(bottom, text="Download lyrics", command=self._start)
+        self.open_btn = Button(bottom, t, "Show in folder", command=self._open_folder, state="disabled")
+        self.open_btn.grid(row=0, column=2, padx=8)
+        self.start_btn = Button(bottom, t, "Download lyrics", command=self._start, kind="accent")
         self.start_btn.grid(row=0, column=3)
-        self.stop_btn = ttk.Button(bottom, text="Stop", command=self._stop, state="disabled")
-        self.stop_btn.grid(row=0, column=4, padx=(4, 0))
-        ttk.Button(bottom, text="Close", command=self._close).grid(row=0, column=5, padx=(4, 0))
+        self.stop_btn = Button(bottom, t, "Stop", command=self._stop, state="disabled")
+        self.stop_btn.grid(row=0, column=4, padx=(8, 0))
+        Button(bottom, t, "Close", command=self._close).grid(row=0, column=5, padx=(8, 0))
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<Escape>", lambda e: self._close())
         self._replan()
@@ -1290,22 +1338,23 @@ class ScanLyrics(threading.Thread):
 
 
 class CardGrid(ttk.Frame):
-    """Music-player style grid of album or artist cards: cover art, a ring
-    showing how many of the songs are fake/suspicious, and the names."""
+    """The By album / By artist views: cards like the player's album cards (the rounded
+    cover, the title in bold, the artist in grey), with a ring on the cover's corner
+    showing how many of the songs are fake or suspicious, and a line saying so."""
 
-    CW, CH, COVER, PAD = 184, 246, 150, 12
-    RING_FAKE, RING_SUS, RING_OK, RING_BG = "#d32f2f", "#f39c12", "#43a047", "#e6e6e6"
+    CW, CH, COVER, PAD = 174, 226, 150, 4
+    RING_FAKE, RING_SUS, RING_OK = "#d32f2f", "#f39c12", "#43a047"
 
     def __init__(self, master, app: "App"):
         super().__init__(master)
-        import tkinter.font as tkfont
-
         self.app = app
+        t = app.theme
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0)
+        t.reg(self.canvas, bg="bg")
         self.vs = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vs.set)
+        self.canvas.configure(yscrollcommand=lambda a, b: autohide(self.vs, a, b))
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vs.grid(row=0, column=1, sticky="ns")
         self.groups: list = []
@@ -1315,15 +1364,16 @@ class CardGrid(ttk.Frame):
         self.positions: Dict[str, tuple] = {}
         self.found: set = set()
         self.current: Optional[str] = None
-        self.f_title = tkfont.Font(family="TkDefaultFont", size=10, weight="bold")
-        self.f_sub = tkfont.Font(family="TkDefaultFont", size=9)
-        self.f_ring = tkfont.Font(family="TkDefaultFont", size=9, weight="bold")
+        self.hover: Optional[str] = None
         self._cols = 0
         self.canvas.bind("<Configure>", lambda e: self._maybe_relayout())
+        self.canvas.bind("<Motion>", self._motion)
+        self.canvas.bind("<Leave>", lambda e: self._set_hover(None))
         for w in (self.canvas,):
             w.bind("<MouseWheel>", self._wheel)
             w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
             w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+        t.on_change(self.relayout, self)
 
     @staticmethod
     def _ph_tag(key: str) -> str:
@@ -1354,7 +1404,7 @@ class CardGrid(ttk.Frame):
         return text + "…"
 
     def relayout(self) -> None:
-        c = self.canvas
+        c, t = self.canvas, self.app.theme
         c.delete("all")
         self.image_items.clear()
         self.positions.clear()
@@ -1364,7 +1414,7 @@ class CardGrid(ttk.Frame):
             msg = ("Scan some files first: albums and artists are read from the files' tags "
                    "(untagged files are grouped by folder)." if not self.app.results else
                    "No album or artist matches the search.")
-            c.create_text(w / 2, 60, text=msg, fill="#888", width=w - 40)
+            c.create_text(w / 2, 50, text=msg, fill=t.c("text2"), font=t.f("body"), width=w - 40)
             c.configure(scrollregion=(0, 0, w, 120))
             return
         for i, g in enumerate(self.groups):
@@ -1377,30 +1427,23 @@ class CardGrid(ttk.Frame):
         self.app.request_covers(self.groups, self.mode)
 
     def _draw_card(self, g, x: int, y: int) -> None:
-        c, S = self.canvas, self.COVER
+        c, S, t = self.canvas, self.COVER, self.app.theme
         tag = f"card{id(g)}"
-        hl = self.current == g.key
+        current = self.current == g.key
         found = g.key in self.found
-        c.create_rectangle(x - 6, y - 6, x + self.CW - 18, y + self.CH - 14,
-                           fill="#fff3c4" if found else "#ffffff",
-                           outline="#f39c12" if hl else ("#e0c060" if found else "#ffffff"),
-                           width=3 if hl else 1, tags=(tag, "cardbg"))
+        if found or current or self.hover == g.key:  # the find bar's matches, and the pointer
+            fill = mix(t.c("bg"), t.c("accent"), 0.14) if found else t.c("hover")
+            round_rect(c, x - 6, y - 6, x + S + 6, y + self.CH - 12, 10, fill=fill,
+                       outline=t.c("accent") if current else fill, width=2 if current else 1, tags=(tag, "cardbg"))
         img = self.images.get(f"{self.mode}:{g.key}")
         if img is not None:
             self.image_items[g.key] = c.create_image(x, y, image=img, anchor="nw", tags=(tag,))
-        else:  # placeholder until (or unless) a cover is found
-            hue = sum(map(ord, g.title)) % 360
-            import colorsys
-
-            r, gg, b = colorsys.hls_to_rgb(hue / 360, 0.42, 0.35)
-            col = f"#{int(r * 255):02x}{int(gg * 255):02x}{int(b * 255):02x}"
-            c.create_rectangle(x, y, x + S, y + S, fill=col, outline="", tags=(tag, self._ph_tag(g.key)))
-            initials = "".join(wd[0] for wd in g.title.split()[:2]).upper() or "?"
-            c.create_text(x + S / 2, y + S / 2, text=initials, fill="white",
-                          font=("TkDefaultFont", 28, "bold"), tags=(tag, self._ph_tag(g.key)))
-        # ring badge (bottom-right corner of the cover)
-        cx, cy, R, r = x + S - 8, y + S - 8, 27, 18
-        c.create_oval(cx - R - 3, cy - R - 3, cx + R + 3, cy + R + 3, fill="white", outline="", tags=(tag,))
+        else:  # the player's placeholder until (or unless) a cover is found
+            draw_cover(c, t, None, x, y, S, tag=(tag, self._ph_tag(g.key)))
+        # the ring on the cover's bottom-right corner
+        cx, cy, R, r = x + S - 10, y + S - 10, 24, 16
+        ring_bg = t.c("bg")
+        c.create_oval(cx - R - 3, cy - R - 3, cx + R + 3, cy + R + 3, fill=ring_bg, outline="", tags=(tag,))
         total = max(g.total, 1)
         start = 90.0
         for count, color in ((g.fake, self.RING_FAKE), (g.suspicious, self.RING_SUS),
@@ -1414,19 +1457,18 @@ class CardGrid(ttk.Frame):
                 c.create_arc(cx - R, cy - R, cx + R, cy + R, start=start, extent=-ext, fill=color,
                              outline="", style="pieslice", tags=(tag,))
             start -= ext
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill="white", outline="", tags=(tag,))
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=ring_bg, outline="", tags=(tag,))
         if self.app.cfg.card_label.startswith("Songs"):
             label = f"{g.problems}/{g.total}"
         else:
             label = f"{g.problem_pct:.0f}%"
-        c.create_text(cx, cy, text=label, font=self.f_ring,
-                      fill=self.RING_FAKE if g.fake else (self.RING_SUS if g.suspicious else self.RING_OK),
-                      tags=(tag,))
-        tw = self.CW - 28
-        c.create_text(x, y + S + 10, anchor="nw", text=self._fit(g.title, self.f_title, tw),
-                      font=self.f_title, fill="#1f2328", tags=(tag,))
-        c.create_text(x, y + S + 29, anchor="nw", text=self._fit(g.subtitle, self.f_sub, tw),
-                      font=self.f_sub, fill="#666", tags=(tag,))
+        color = self.RING_FAKE if g.fake else (self.RING_SUS if g.suspicious else self.RING_OK)
+        c.create_text(cx, cy, text=label, font=t.f("small_b"), fill=ink(t, color), tags=(tag,))
+        tw = S
+        c.create_text(x, y + S + 16, anchor="w", text=self._fit(g.title, t.f("card_title"), tw),
+                      font=t.f("card_title"), fill=t.c("text"), tags=(tag,))
+        c.create_text(x, y + S + 34, anchor="w", text=self._fit(g.subtitle, t.f("card_sub"), tw),
+                      font=t.f("card_sub"), fill=t.c("text2"), tags=(tag,))
         if g.problems:
             parts = []
             if g.fake:
@@ -1437,22 +1479,42 @@ class CardGrid(ttk.Frame):
             col = self.RING_FAKE if g.fake else self.RING_SUS
         else:
             line, col = f"All {g.total} song{'s' if g.total != 1 else ''} fine", self.RING_OK
-        c.create_text(x, y + S + 46, anchor="nw", text=self._fit(line, self.f_sub, tw), font=self.f_sub,
-                      fill=col, tags=(tag,))
+        c.create_text(x, y + S + 52, anchor="w", text=self._fit(line, t.f("small"), tw), font=t.f("small"),
+                      fill=ink(t, col), tags=(tag,))
         c.tag_bind(tag, "<Button-1>", lambda e, g=g: self.app.open_group(g, self.mode))
         c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
         c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
 
-    def set_cover(self, key: str, png: Optional[bytes]) -> None:
-        """A cover arrived from the loader thread: show it on its card."""
-        import base64
+    def _key_at(self, e) -> Optional[str]:
+        x, y = self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)
+        for key, (px, py) in self.positions.items():
+            if px - 6 <= x <= px + self.COVER + 6 and py - 6 <= y <= py + self.CH - 12:
+                return key
+        return None
 
+    def _motion(self, e) -> None:
+        self._set_hover(self._key_at(e))
+
+    def _set_hover(self, key: Optional[str]) -> None:
+        if key != self.hover:
+            old, self.hover = self.hover, key
+            for k in (old, key):
+                self._redraw_card(k)
+
+    def _redraw_card(self, key: Optional[str]) -> None:
+        g = next((g for g in self.groups if g.key == key), None) if key in self.positions else None
+        if g is not None:
+            self.canvas.delete(f"card{id(g)}")
+            x, y = self.positions[key]
+            self._draw_card(g, x, y)
+
+    def set_cover(self, key: str, png: Optional[bytes]) -> None:
+        """A cover arrived from the loader thread: show it on its card, with rounded corners."""
         mode, _, gkey = key.partition(":")
         if not png:
             return
-        try:
-            img = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"), format="png")
-        except tk.TclError:
+        img = rounded_photo(self, png, self.COVER)
+        if img is None:
             return
         self.images[key] = img
         if mode == self.mode and gkey in self.positions:
@@ -1483,21 +1545,64 @@ class CardGrid(ttk.Frame):
             self.canvas.yview_moveto(top)
 
 # -------------------------------------------------------------------- app ---
+class VerdictBadge(tk.Canvas):
+    """The dashboard's verdict: a rounded pill in the verdict's colour with white text.
+    `set(text, color)`; `cget("text")` gives the text."""
+
+    def __init__(self, master, theme: Theme, bg_role: str = "lcd", height: int = 24):
+        super().__init__(master, height=height, width=10, highlightthickness=0, bd=0)
+        self.theme, self.h, self.text, self.color = theme, height, "", ""
+        theme.reg(self, bg=bg_role)
+        theme.on_change(self.redraw, self)
+
+    def set(self, text: str, color: str) -> None:
+        self.text, self.color = text, color
+        self.redraw()
+
+    def cget(self, key):
+        return self.text if key == "text" else super().cget(key)
+
+    def redraw(self) -> None:
+        t = self.theme
+        self.delete("all")
+        if not self.text:
+            self.configure(width=1)
+            return
+        font = t.f("small_b")
+        w = font.measure(self.text) + 24
+        self.configure(width=w)
+        h = self.h - 1
+        self.create_oval(0, 0, h, h, fill=self.color, outline=self.color)
+        self.create_oval(w - 1 - h, 0, w - 1, h, fill=self.color, outline=self.color)
+        self.create_rectangle(h / 2, 0, w - 1 - h / 2, h, fill=self.color, outline=self.color)
+        self.create_text(w / 2, self.h / 2, text=self.text, fill="#ffffff", font=font)
+
+
 class App(ttk.Frame):
+    """The quality checker (the 1.x app): the Quality check page of the player
+    (player_gui.QualityCheck), or a window of its own (scanner_main()), drawn in the
+    player's look either way (`theme`)."""
+
     COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "fix", "name", "folder")
     HEADINGS = {"verdict": "Verdict", "why": "Why", "claimed": "Claimed", "estimated": "Real (est.)",
                 "bandwidth": "Bandwidth", "fix": "After fix", "name": "File", "folder": "Folder"}
+    PADX = 24
+    PLOT_TABS = ("Spectrogram", "Average spectrum", "Lyrics")
 
-    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None, parent=None):
+    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None, parent=None,
+                 theme: Optional[Theme] = None):
         # `parent`: the 2.0 player shows this app as its "Quality check" page inside its own
-        # window; then the menu bar is only built (the player shows it on that page), the
+        # window; then there is no menu bar (everything is on the page and its More menu), the
         # keyboard shortcuts work while `active`, and quitting asks the player (`quit_callback`).
+        # `theme`: the player's colours and fonts (the window of its own makes its own).
         self.embedded = parent is not None
-        super().__init__(parent if parent is not None else root, padding=8)
+        self.cfg = cfg or settings_mod.load()
+        self.theme = theme if theme is not None else make_theme(root, self.cfg)
+        super().__init__(parent if parent is not None else root, padding=0)
         self.root = root
         self.active = True
         self.quit_callback = None
-        self.cfg = cfg or settings_mod.load()
+        self.menubar: Optional[tk.Menu] = None       # only the window of its own has one
         self.sources: List[str] = []                 # added folders/files, in order
         self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
         self.listing: Dict[str, threading.Event] = {}  # sources still being listed -> cancel flag
@@ -1544,8 +1649,14 @@ class App(ttk.Frame):
         self.status_var = tk.StringVar(value="Add a folder or files, then press Scan.")
         self.scan_lyrics: Optional[ScanLyrics] = None  # lyrics while scanning (Settings → Library)
         self._last_stopped = False
-        self._build_menu()
+        self._hover_row: Optional[str] = None
+        self._chips_width = 0
+        if not self.embedded:
+            self._build_menu()
+        self._bind_keys()
         self._build()
+        self._build_more_menu()
+        self.theme.on_change(self._retheme, self)
         if not self.embedded:
             self.grid(sticky="nsew")
             root.columnconfigure(0, weight=1)
@@ -1559,13 +1670,12 @@ class App(ttk.Frame):
             self.after(200, self.start_scan)  # waits for the listing to finish
         self.after(100, self._poll)
 
-    # ---------- layout ---------------------------------------------------
+    # ---------- menus and keys -------------------------------------------
     def _build_menu(self) -> None:
-        mod = "Command" if sys.platform == "darwin" else "Control"
-        acc = "Cmd" if sys.platform == "darwin" else "Ctrl"
+        """The menu bar of the window of its own (scanner_main()); the player has none."""
         m = tk.Menu(self.root)
         f = tk.Menu(m, tearoff=False)
-        f.add_command(label="Add Folder…", accelerator=f"{acc}+O", command=self.add_folder)
+        f.add_command(label="Add Folder…", accelerator=f"{ACC}+O", command=self.add_folder)
         f.add_command(label="Add Files…", command=self.add_files)
         f.add_separator()
         f.add_command(label="Export listed files as CSV…", command=lambda: self.export("csv"))
@@ -1573,28 +1683,28 @@ class App(ttk.Frame):
         f.add_separator()
         f.add_command(label="Delete all saved results…", command=self.forget_saved)
         f.add_separator()
-        f.add_command(label="Quit", accelerator=f"{acc}+Q", command=self.quit_app)
+        f.add_command(label="Quit", accelerator=f"{ACC}+Q", command=self.quit_app)
         m.add_cascade(label="File", menu=f)
         e = tk.Menu(m, tearoff=False)
         e.add_command(label="Open file location", accelerator="Enter", command=self.reveal)
-        e.add_command(label="Open file", accelerator=f"{acc}+Enter", command=self.open_file)
-        e.add_command(label="Select all listed files", accelerator=f"{acc}+A", command=self.select_all)
-        e.add_command(label="Copy path", accelerator=f"{acc}+C", command=self.copy_path)
+        e.add_command(label="Open file", accelerator=f"{ACC}+Enter", command=self.open_file)
+        e.add_command(label="Select all listed files", accelerator=f"{ACC}+A", command=self.select_all)
+        e.add_command(label="Copy path", accelerator=f"{ACC}+C", command=self.copy_path)
         e.add_separator()
-        e.add_command(label="Find…", accelerator=f"{acc}+F", command=self.open_find)
+        e.add_command(label="Find…", accelerator=f"{ACC}+F", command=self.open_find)
         e.add_separator()
-        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{acc}+Shift+F",
+        e.add_command(label="Fix selected files to real resolution…", accelerator=f"{ACC}+Shift+F",
                       command=self.fix_selected)
         e.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
         e.add_separator()
-        e.add_command(label="Download synced lyrics for selected songs…", accelerator=f"{acc}+L",
+        e.add_command(label="Download synced lyrics for selected songs…", accelerator=f"{ACC}+L",
                       command=self.lyrics_selected)
         e.add_command(label="Download synced lyrics for all songs…", command=self.lyrics_all)
         e.add_separator()
         e.add_command(label="Re-scan selected files", command=self.rescan_selected)
         e.add_command(label="Re-scan files checked by older rules", command=self.rescan_outdated)
         e.add_separator()
-        e.add_command(label="Settings…", accelerator=f"{acc}+,", command=self.open_settings)
+        e.add_command(label="Settings…", accelerator=f"{ACC}+,", command=self.open_settings)
         m.add_cascade(label="Edit", menu=e)
         v = tk.Menu(m, tearoff=False)
         v.add_command(label="Files", command=lambda: self.set_view("Files"))
@@ -1605,123 +1715,190 @@ class App(ttk.Frame):
         v.add_command(label="Show problem files only", command=lambda: self.set_filters(PROBLEM_VERDICTS))
         v.add_command(label="Show all files", command=lambda: self.set_filters(VERDICT_ORDER))
         m.add_cascade(label="View", menu=v)
-        self.view_menu = v
         h = tk.Menu(m, tearoff=False)
         h.add_command(label=f"About {APP_NAME}", command=self.about)
         m.add_cascade(label="Help", menu=h)
+        theme_menu(self.theme, m)
         self.menubar = m
-        if not self.embedded:
-            self.root.configure(menu=m)
+        self.root.configure(menu=m)
 
+    def _build_more_menu(self) -> None:
+        """The More button's menu (docs/player-spec.md, 2.1): what the menu bar had,
+        except what is a button on the page."""
+        m = tk.Menu(self.root, tearoff=False)
+        m.add_command(label="Export listed files as CSV…", command=lambda: self.export("csv"))
+        m.add_command(label="Export listed files as JSON…", command=lambda: self.export("json"))
+        m.add_separator()
+        m.add_command(label="Fix selected files to real resolution…", accelerator=f"{ACC}+Shift+F",
+                      command=self.fix_selected)
+        m.add_command(label="Fix all fake files to real resolution…", command=self.fix_all)
+        m.add_separator()
+        m.add_command(label="Download synced lyrics for selected songs…", accelerator=f"{ACC}+L",
+                      command=self.lyrics_selected)
+        m.add_command(label="Download synced lyrics for all songs…", command=self.lyrics_all)
+        m.add_separator()
+        m.add_command(label="Re-scan selected files", command=self.rescan_selected)
+        m.add_command(label="Re-scan files checked by older rules", command=self.rescan_outdated)
+        m.add_separator()
+        m.add_command(label="Select all listed files", accelerator=f"{ACC}+A", command=self.select_all)
+        m.add_command(label="Copy path", accelerator=f"{ACC}+C", command=self.copy_path)
+        m.add_command(label="Open file location", accelerator="Enter", command=self.reveal)
+        m.add_command(label="Open file", accelerator=f"{ACC}+Enter", command=self.open_file)
+        m.add_command(label="Find…", accelerator=f"{ACC}+F", command=self.open_find)
+        m.add_separator()
+        m.add_command(label="Scan summary…", command=self.show_summary)
+        m.add_command(label="Show problem files only", command=lambda: self.set_filters(PROBLEM_VERDICTS))
+        m.add_command(label="Show all files", command=lambda: self.set_filters(VERDICT_ORDER))
+        m.add_separator()
+        m.add_command(label="Delete all saved results…", command=self.forget_saved)
+        theme_menu(self.theme, m)
+        self.more_menu = m
+
+    def show_more_menu(self) -> None:
+        b, m = self.more_btn, self.more_menu
+        m.update_idletasks()
+        x = b.winfo_rootx() + b.winfo_width() - m.winfo_reqwidth()
+        m.tk_popup(max(0, x), b.winfo_rooty() + b.winfo_height() + 2)
+
+    def _bind_keys(self) -> None:
         def key(fn):  # embedded: the shortcuts belong to the player while another page is shown
             return lambda e: fn(e) if self.active else None
 
-        self.root.bind_all(f"<{mod}-o>", key(lambda e: self.add_folder()))
-        self.root.bind_all(f"<{mod}-q>", lambda e: self.quit_app())
-        self.root.bind_all(f"<{mod}-comma>", key(lambda e: self.open_settings()))
-        self.root.bind_all(f"<{mod}-f>", key(lambda e: self.open_find()))
-        self.root.bind_all(f"<{mod}-F>", key(lambda e: self.fix_selected()))  # Shift+F
-        self.root.bind_all(f"<{mod}-a>", key(self.select_all))
-        self.root.bind_all(f"<{mod}-l>", key(self.lyrics_selected))
+        self.root.bind_all(f"<{MOD}-o>", key(lambda e: self.add_folder()))
+        self.root.bind_all(f"<{MOD}-q>", lambda e: self.quit_app())
+        self.root.bind_all(f"<{MOD}-comma>", key(lambda e: self.open_settings()))
+        self.root.bind_all(f"<{MOD}-f>", key(lambda e: self.open_find()))
+        self.root.bind_all(f"<{MOD}-F>", key(lambda e: self.fix_selected()))  # Shift+F
+        self.root.bind_all(f"<{MOD}-a>", key(self.select_all))
+        self.root.bind_all(f"<{MOD}-l>", key(self.lyrics_selected))
         self.root.bind_all("<F3>", key(lambda e: self.find_step(1)))
         self.root.bind_all("<Shift-F3>", key(lambda e: self.find_step(-1)))
 
+    # ---------- layout ---------------------------------------------------
     def _build(self) -> None:
+        t, P = self.theme, self.PADX
         self.columnconfigure(0, weight=1)
+        # the page title, and the status line under it (with the time left and saved results)
+        head = ttk.Frame(self)
+        head.grid(row=0, column=0, sticky="ew", padx=(P + 4, P), pady=(18, 0))
+        head.columnconfigure(0, weight=1)
+        self.title_label = ttk.Label(head, text="Quality Check", font=t.f("title"))
+        self.title_label.grid(row=0, column=0, sticky="w")
+        status = ttk.Frame(head)
+        status.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        status.columnconfigure(1, weight=1)
+        self.status_row = status
+        self.progress = ttk.Progressbar(status, length=150, mode="determinate")  # shown while scanning
+        self.status_label = ttk.Label(status, textvariable=self.status_var, style="Muted.TLabel")
+        self.status_label.grid(row=0, column=1, sticky="w")
+        self.outdated_var = tk.StringVar(value="")
+        self.outdated_label = ttk.Label(status, textvariable=self.outdated_var, style="Warn.TLabel")
+        self.outdated_btn = Button(status, t, "Re-scan them", command=self.rescan_outdated, height=26)
+
+        # the toolbar: sources and the quick-scan switch; Scan (or Stop), Settings… and More
         bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, sticky="ew")
-        ttk.Button(bar, text="Add Folder…", command=self.add_folder).pack(side="left")
-        ttk.Button(bar, text="Add Files…", command=self.add_files).pack(side="left", padx=(4, 0))
-        ttk.Button(bar, text="Clear", command=self.clear).pack(side="left", padx=(4, 12))
+        bar.grid(row=1, column=0, sticky="ew", padx=P, pady=(12, 0))
+        # the right side first: in a narrow window the quick-scan switch gives way, not Scan
+        self.more_btn = IconButton(bar, t, "dots", command=self.show_more_menu, size=32, icon_size=17,
+                                   tooltip=lambda: "More")
+        self.more_btn.pack(side="right")
+        Button(bar, t, "Settings…", command=self.open_settings, icon="gear").pack(side="right", padx=(8, 6))
+        slot = ttk.Frame(bar)
+        slot.pack(side="right", padx=(12, 0))
+        self.scan_btn = Button(slot, t, "Scan", command=self.start_scan, kind="accent", icon="check")
+        self.stop_btn = Button(slot, t, "Stop", command=self.stop_scan, kind="accent", state="disabled")
+        self.scan_btn.pack()
+        Button(bar, t, "Add Folder…", command=self.add_folder, icon="folder").pack(side="left")
+        Button(bar, t, "Add Files…", command=self.add_files, icon="note").pack(side="left", padx=(8, 0))
+        Button(bar, t, "Clear", command=self.clear).pack(side="left", padx=(8, 16))
         self.quick_cb = ttk.Checkbutton(bar, variable=self.quick_var)
         self.quick_cb.pack(side="left")
         self._update_quick_label()
-        ttk.Button(bar, text="⚙ Settings…", command=self.open_settings).pack(side="right")
-        self.stop_btn = ttk.Button(bar, text="Stop", command=self.stop_scan, state="disabled")
-        self.stop_btn.pack(side="right", padx=(0, 12))
-        self.scan_btn = ttk.Button(bar, text="Scan", command=self.start_scan)
-        self.scan_btn.pack(side="right", padx=(0, 4))
 
-        src = ttk.LabelFrame(self, text="Sources to scan", padding=(6, 4))
-        src.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        # Sources to scan: a rounded panel with rows like a song table
+        src = RoundFrame(self, t, bg_role="lcd")
+        src.grid(row=2, column=0, sticky="ew", padx=P, pady=(12, 0))
         src.columnconfigure(0, weight=1)
-        self.src_tree = ttk.Treeview(src, columns=("kind", "files", "problems"), height=3,
+        self.src_panel = src
+        self.src_tree = ttk.Treeview(src, columns=("kind", "files", "problems"), height=1, style="Panel.Treeview",
                                      show="tree headings", selectmode="extended")
-        self.src_tree.heading("#0", text="Folder / file", anchor="w")
+        self.src_tree.heading("#0", text="Sources to scan", anchor="w")
         self.src_tree.heading("kind", text="Type")
         self.src_tree.heading("files", text="Audio files")
         self.src_tree.heading("problems", text="Fake / suspicious")
-        self.src_tree.column("#0", width=560, stretch=True)
+        self.src_tree.column("#0", width=300, stretch=True)
         self.src_tree.column("kind", width=70, anchor="center", stretch=False)
-        self.src_tree.column("files", width=150, anchor="center", stretch=False)
+        self.src_tree.column("files", width=130, anchor="center", stretch=False)
         self.src_tree.column("problems", width=130, anchor="center", stretch=False)
-        self.src_tree.tag_configure("empty", foreground="#c62828")
-        self.src_tree.tag_configure("busy", foreground="#808080")
-        sys_ = ttk.Scrollbar(src, orient="vertical", command=self.src_tree.yview)
-        self.src_tree.configure(yscrollcommand=sys_.set)
-        self.src_tree.grid(row=0, column=0, sticky="ew")
-        sys_.grid(row=0, column=1, sticky="ns")
-        side = ttk.Frame(src)
-        side.grid(row=0, column=2, sticky="n", padx=(6, 0))
-        self.remove_btn = ttk.Button(side, text="Remove", command=self.remove_sources)
-        self.remove_btn.pack(fill="x")
-        self.src_hint = ttk.Label(src, foreground="#666",
+        sys_ = ttk.Scrollbar(src, orient="vertical", command=self.src_tree.yview, style="PanelHide.Vertical.TScrollbar")
+        self.src_tree.configure(yscrollcommand=lambda a, b: autohide(sys_, a, b, panel=True))
+        self.src_tree.grid(row=0, column=0, sticky="ew", padx=(10, 0), pady=(4, 4))
+        sys_.grid(row=0, column=1, sticky="ns", pady=(4, 4))
+        self.remove_btn = Button(src, t, "Remove", command=self.remove_sources, height=26, fill="field",
+                                 hover_fill="sep", bg_role="lcd", font="small_b")
+        self.remove_btn.grid(row=0, column=2, sticky="ne", padx=(8, 10), pady=(5, 0))
+        self.src_hint = ttk.Label(src, style="Panel.Muted.TLabel",
                                   text="Nothing added yet. Click “Add Folder…” or “Add Files…”: the files "
                                        "found are listed below straight away, then press Scan.")
-        self.src_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.src_hint.grid(row=1, column=0, columnspan=3, sticky="w", padx=14, pady=(0, 10))
         self.src_tree.bind("<Delete>", lambda e: self.remove_sources())
         self.src_tree.bind("<BackSpace>", lambda e: self.remove_sources())
 
+        # the view switch, the card options or the album chip, and the search field
         vbar = ttk.Frame(self)
-        vbar.grid(row=2, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(vbar, text="View:").pack(side="left")
-        for label in ("Files", "By album", "By artist"):
-            ttk.Radiobutton(vbar, text=label, value=label, variable=self.view_var, style="Toolbutton",
-                            command=self.switch_view).pack(side="left", padx=(4, 0))
+        vbar.grid(row=3, column=0, sticky="ew", padx=P, pady=(12, 0))
+        self.view_seg = Segmented(vbar, t, ["Files", "By album", "By artist"], variable=self.view_var,
+                                  command=self.switch_view)
+        self.view_seg.pack(side="left")
         self.grid_opts = ttk.Frame(vbar)
-        ttk.Label(self.grid_opts, text="Rings show:").pack(side="left", padx=(16, 4))
+        ttk.Label(self.grid_opts, text="Rings show", style="Muted.TLabel").pack(side="left", padx=(18, 6))
         self.card_label_var = tk.StringVar(value=self.cfg.card_label)
         ttk.Combobox(self.grid_opts, textvariable=self.card_label_var, values=["Percentage", "Songs (x of n)"],
-                     state="readonly", width=14).pack(side="left")
-        ttk.Label(self.grid_opts, text="Sort:").pack(side="left", padx=(12, 4))
+                     state="readonly", width=14, font=t.f("body")).pack(side="left")
+        ttk.Label(self.grid_opts, text="Sort", style="Muted.TLabel").pack(side="left", padx=(14, 6))
         self.group_sort_var = tk.StringVar(value=self.cfg.group_sort)
         ttk.Combobox(self.grid_opts, textvariable=self.group_sort_var, values=["Most fake first", "Name"],
-                     state="readonly", width=14).pack(side="left")
+                     state="readonly", width=14, font=t.f("body")).pack(side="left")
         self.card_label_var.trace_add("write", lambda *a: self._grid_option_changed())
         self.group_sort_var.trace_add("write", lambda *a: self._grid_option_changed())
         self.chip = ttk.Frame(vbar)
-        self.chip_label = ttk.Label(self.chip, foreground="#0b62c4", font=("TkDefaultFont", 9, "bold"))
-        self.chip_label.pack(side="left", padx=(16, 6))
-        self.chip_back = ttk.Button(self.chip, command=self.close_group)
-        self.chip_back.pack(side="left")
-
-        filt = ttk.Frame(self)
-        filt.grid(row=3, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(filt, text="Show:").pack(side="left")
-        self.filter_checks: Dict[str, ttk.Checkbutton] = {}
-        for v in VERDICT_ORDER:
-            cb = ttk.Checkbutton(filt, text=VERDICT_STYLE[v][0], variable=self.show_vars[v],
-                                 command=self.refresh)
-            cb.pack(side="left", padx=(6, 0))
-            self.filter_checks[v] = cb
-        entry = ttk.Entry(filt, textvariable=self.search_var, width=24)
-        entry.pack(side="right")
-        ttk.Label(filt, text="Search:").pack(side="right", padx=(0, 4))
+        self.chip_back = Button(self.chip, t, "", command=self.close_group, icon="back", height=30)
+        self.chip_back.pack(side="left", padx=(18, 10))
+        self.chip_label = ttk.Label(self.chip, style="Bold.TLabel")
+        self.chip_label.pack(side="left")
+        self.search_box = SearchBox(vbar, t, self.search_var, placeholder="Search", width=230)
+        self.search_box.pack(side="right")
         self.search_var.trace_add("write", lambda *a: self._search_changed())
 
+        # the verdict filters: chips with the verdict's colour and its count
+        self.filt = ttk.Frame(self)
+        self.filt.grid(row=4, column=0, sticky="ew", padx=P, pady=(8, 0))
+        self.filter_checks: Dict[str, Chip] = {}
+        for v in VERDICT_ORDER:
+            self.filter_checks[v] = Chip(self.filt, t, VERDICT_STYLE[v][0], VERDICT_STYLE[v][1], self.show_vars[v],
+                                         command=self.refresh)
+        self.filt.bind("<Configure>", lambda e: self._flow_chips(e.width) if e.width != self._chips_width else None)
+        self._flow_chips(0)
+
         # browser-style find bar (Ctrl/Cmd+F)
-        self.find_frame = ttk.Frame(self, padding=(4, 3))
-        self.find_frame.grid(row=4, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(self.find_frame, text="Find:").pack(side="left")
-        self.find_entry = ttk.Entry(self.find_frame, textvariable=self.find_var, width=34)
-        self.find_entry.pack(side="left", padx=(4, 4))
-        ttk.Button(self.find_frame, text="▲", width=3, command=lambda: self.find_step(-1)).pack(side="left")
-        ttk.Button(self.find_frame, text="▼", width=3, command=lambda: self.find_step(1)).pack(side="left", padx=(2, 0))
-        self.find_count = ttk.Label(self.find_frame, text="", foreground="#555")
-        self.find_count.pack(side="left", padx=(8, 0))
-        ttk.Button(self.find_frame, text="✕", width=3, command=self.close_find).pack(side="right")
-        ttk.Label(self.find_frame, text="Enter = next, Shift+Enter = previous, Esc = close",
-                  foreground="#888", font=("TkDefaultFont", 8)).pack(side="right", padx=8)
+        self.find_frame = RoundFrame(self, t, bg_role="lcd")
+        self.find_frame.grid(row=5, column=0, sticky="ew", padx=P, pady=(10, 0))
+        ff = self.find_frame
+        ttk.Label(ff, text="Find", style="Panel.Bold.TLabel").pack(side="left", padx=(14, 8), pady=7)
+        self.find_box = SearchBox(ff, t, self.find_var, placeholder="Find in the list", width=300, bg_role="lcd")
+        self.find_box.pack(side="left", pady=7)
+        self.find_entry = self.find_box.entry
+        IconButton(ff, t, "up", command=lambda: self.find_step(-1), size=30, icon_size=14, bg_role="lcd",
+                   tooltip=lambda: "Previous (Shift+Enter)").pack(side="left", padx=(8, 0))
+        IconButton(ff, t, "down", command=lambda: self.find_step(1), size=30, icon_size=14, bg_role="lcd",
+                   tooltip=lambda: "Next (Enter)").pack(side="left")
+        self.find_count = tk.Label(ff, text="", font=t.f("body"), bd=0)
+        t.reg(self.find_count, bg="lcd", fg="text2")
+        self.find_count.pack(side="left", padx=(10, 0))
+        IconButton(ff, t, "close", command=self.close_find, size=30, icon_size=14, bg_role="lcd",
+                   tooltip=lambda: "Close (Esc)").pack(side="right", padx=(0, 8))
+        ttk.Label(ff, text="Enter = next, Shift+Enter = previous, Esc = close", style="Panel.Small.TLabel").pack(
+            side="right", padx=8)
         self.find_entry.bind("<Return>", lambda e: self.find_step(1))
         self.find_entry.bind("<KP_Enter>", lambda e: self.find_step(1))
         self.find_entry.bind("<Shift-Return>", lambda e: self.find_step(-1))
@@ -1730,131 +1907,132 @@ class App(ttk.Frame):
         self.find_frame.grid_remove()
 
         panes = ttk.PanedWindow(self, orient="vertical")
-        panes.grid(row=5, column=0, sticky="nsew")
-        self.rowconfigure(5, weight=1)
+        panes.grid(row=6, column=0, sticky="nsew", padx=P, pady=(4, 14))
+        self.rowconfigure(6, weight=1)
+        self.panes = panes
+        self._split_done = False
+        panes.bind("<Configure>", lambda e: self._first_split(e.height), add="+")
 
-        # result list
+        # result list: like the player's song tables
         table = ttk.Frame(panes)
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended",
-                                 height=7)
-        widths = {"verdict": 105, "why": 400, "claimed": 70, "estimated": 85, "bandwidth": 82,
+                                 height=5)
+        widths = {"verdict": 110, "why": 400, "claimed": 74, "estimated": 90, "bandwidth": 90,
                   "fix": 262, "name": 230, "folder": 220}
         for c in self.COLUMNS:
-            self.tree.heading(c, text=self.HEADINGS[c], command=lambda c=c: self.sort_by(c))
+            self.tree.heading(c, text=self.HEADINGS[c], command=lambda c=c: self.sort_by(c),
+                              anchor="w" if c in ("name", "folder", "verdict", "why", "fix") else "center")
             self.tree.column(c, width=widths[c], stretch=c in ("why", "name", "folder"),
                              anchor="w" if c in ("name", "folder", "verdict", "why", "fix") else "center")
-        for v, (_, color, _) in VERDICT_STYLE.items():
-            self.tree.tag_configure(v, foreground=color)
-        self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
-        self.tree.tag_configure(RUNNING, foreground=RUNNING_STYLE[1])
-        self.tree.tag_configure("found", background="#fff59d")
-        self.tree.tag_configure("found_cur", background="#ffb74d")
         ys = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         xs = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
+        self.tree.configure(yscrollcommand=lambda a, b: autohide(ys, a, b),
+                            xscrollcommand=lambda a, b: autohide(xs, a, b))
         self.tree.grid(row=0, column=0, sticky="nsew")
         ys.grid(row=0, column=1, sticky="ns")
         xs.grid(row=1, column=0, sticky="ew")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_details())
         self.tree.bind("<Double-1>", lambda e: self._primary_action())
         self.tree.bind("<Return>", lambda e: self._primary_action())
-        mod = "Command" if sys.platform == "darwin" else "Control"
-        self.tree.bind(f"<{mod}-Return>", lambda e: self._secondary_action())
-        self.tree.bind(f"<{mod}-c>", lambda e: self.copy_path())
+        self.tree.bind(f"<{MOD}-Return>", lambda e: self._secondary_action())
+        self.tree.bind(f"<{MOD}-c>", lambda e: self.copy_path())
         self.tree.bind("<Button-3>", self._context_menu)
         self.tree.bind("<Button-2>", self._context_menu)  # macOS right click
+        self.tree.bind("<Motion>", lambda e: self._tree_hover(self.tree.identify_row(e.y)))
+        self.tree.bind("<Leave>", lambda e: self._tree_hover(None))
         self.cards = CardGrid(table, self)
         self.cards.grid(row=0, column=0, columnspan=2, rowspan=2, sticky="nsew")
         self.cards.grid_remove()
         self._table_widgets = (self.tree, ys, xs)
         panes.add(table, weight=3)
 
-        # dashboard
-        dash = ttk.PanedWindow(panes, orient="horizontal")
-        info = ttk.Frame(dash, padding=(4, 6, 8, 4))
+        # dashboard: a rounded panel with the verdict, the facts, the actions and the plots
+        board = RoundFrame(panes, t, bg_role="lcd", radius=12)
+        dash = ttk.PanedWindow(board, orient="horizontal", style="Panel.TPanedwindow")
+        dash.pack(fill="both", expand=True, padx=14, pady=(12, 8))
+        self.dash = dash
+        self._dash_split_done = False
+        dash.bind("<Configure>", lambda e: self._first_dash_split(e.width), add="+")
+        info = ttk.Frame(dash, style="Panel.TFrame", padding=(2, 0, 10, 0))
         info.columnconfigure(1, weight=1)
-        info.rowconfigure(5, weight=1)
-        self.badge = tk.Label(info, text="", fg="white", bg="#9e9e9e", padx=10, pady=3,
-                              font=("TkDefaultFont", 11, "bold"))
+        info.rowconfigure(4, weight=1)
+        self.badge = VerdictBadge(info, t)
         self.badge.grid(row=0, column=0, sticky="w")
         self.name_var = tk.StringVar(value="Select a file in the list")
-        ttk.Label(info, textvariable=self.name_var, font=("TkDefaultFont", 10, "bold")).grid(
-            row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(info, textvariable=self.name_var, style="Panel.Bold.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(10, 0))
         self.why_var = tk.StringVar(value="")
         self.why_label = ttk.Label(info, textvariable=self.why_var, wraplength=420, justify="left",
-                                   font=("TkDefaultFont", 10))
-        self.why_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 6))
-        facts = ttk.Frame(info)
+                                   style="Panel.TLabel")
+        self.why_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        facts = ttk.Frame(info, style="Panel.TFrame")
         facts.grid(row=2, column=0, columnspan=2, sticky="ew")
         self.fact_vars: Dict[str, tk.StringVar] = {}
         for i, key in enumerate(("Claimed", "Real (estimated)", "Bandwidth", "Bits used", "Format",
                                  "Duration", "After fix")):
-            ttk.Label(facts, text=key + ":", foreground="#666").grid(row=i // 2, column=(i % 2) * 2,
-                                                                       sticky="w", padx=(0, 4))
+            ttk.Label(facts, text=key, style="Panel.Muted.TLabel").grid(row=i // 2, column=(i % 2) * 2,
+                                                                       sticky="w", padx=(0, 10), pady=1)
             var = tk.StringVar(value="–")
             self.fact_vars[key] = var
             # "After fix" is the last and longest: it spans the second pair of columns too
-            ttk.Label(facts, textvariable=var).grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w",
-                                                    padx=(0, 18), columnspan=3 if key == "After fix" else 1)
-        btns = ttk.Frame(info)
-        btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 6))
-        self.open_folder_btn = ttk.Button(btns, text="Open Folder", command=self.reveal, state="disabled")
-        self.open_folder_btn.pack(side="left")
-        self.open_file_btn = ttk.Button(btns, text="Open File", command=self.open_file, state="disabled")
-        self.open_file_btn.pack(side="left", padx=4)
-        self.copy_btn = ttk.Button(btns, text="Copy Path", command=self.copy_path, state="disabled")
-        self.copy_btn.pack(side="left")
-        self.fix_btn = ttk.Button(btns, text="Fix to real resolution…", command=self.fix_selected, state="disabled")
-        self.fix_btn.pack(side="left", padx=(12, 0))
-        self.lyrics_btn = ttk.Button(btns, text="Get lyrics…", command=self.lyrics_selected, state="disabled")
-        self.lyrics_btn.pack(side="left", padx=(4, 0))
-        ttk.Label(info, text="Details", foreground="#666").grid(row=4, column=0, columnspan=2, sticky="w")
-        txt_frame = ttk.Frame(info)
-        txt_frame.grid(row=5, column=0, columnspan=2, sticky="nsew")
+            ttk.Label(facts, textvariable=var, style="Panel.TLabel").grid(
+                row=i // 2, column=(i % 2) * 2 + 1, sticky="w", padx=(0, 22), pady=1,
+                columnspan=3 if key == "After fix" else 1)
+        btns = ttk.Frame(info, style="Panel.TFrame")
+        btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        kw = dict(height=30, fill="field", hover_fill="sep", bg_role="lcd", state="disabled")
+        self.open_folder_btn = Button(btns, t, "Open Folder", command=self.reveal, **kw)
+        self.open_file_btn = Button(btns, t, "Open File", command=self.open_file, **kw)
+        self.copy_btn = Button(btns, t, "Copy Path", command=self.copy_path, **kw)
+        self.fix_btn = Button(btns, t, "Fix to real resolution…", command=self.fix_selected, **kw)
+        self.lyrics_btn = Button(btns, t, "Get lyrics…", command=self.lyrics_selected, **kw)
+        self.dash_buttons = (self.open_folder_btn, self.open_file_btn, self.copy_btn, self.fix_btn, self.lyrics_btn)
+        btns.bind("<Configure>", lambda e: self._flow(btns, self.dash_buttons, e.width))  # wraps when narrow
+        self._flow(btns, self.dash_buttons, 0)
+        txt_frame = ttk.Frame(info, style="Panel.TFrame")  # Details: the reasons, notes and the path
+        txt_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
         txt_frame.rowconfigure(0, weight=1)
         txt_frame.columnconfigure(0, weight=1)
-        self.text = tk.Text(txt_frame, wrap="word", height=4, relief="flat", padx=6, pady=4,
-                            background="#fafafa", foreground="#1f2328", font=("TkDefaultFont", 9))
-        tys = ttk.Scrollbar(txt_frame, orient="vertical", command=self.text.yview)
-        self.text.configure(yscrollcommand=tys.set, state="disabled")
+        self.text = tk.Text(txt_frame, wrap="word", height=4, relief="flat", bd=0, highlightthickness=0, padx=0,
+                            pady=2, font=t.f("body"), spacing1=1, spacing3=2)
+        t.reg(self.text, bg="lcd", fg="text", selectbackground="accent", selectforeground="on_accent",
+              insertbackground="text")
+        tys = ttk.Scrollbar(txt_frame, orient="vertical", command=self.text.yview,
+                            style="PanelHide.Vertical.TScrollbar")
+        self.text.configure(yscrollcommand=lambda a, b: autohide(tys, a, b, panel=True), state="disabled")
         self.text.grid(row=0, column=0, sticky="nsew")
         tys.grid(row=0, column=1, sticky="ns")
         dash.add(info, weight=2)
         info.bind("<Configure>", lambda e: self.why_label.configure(wraplength=max(200, e.width - 20)))
 
-        plots = ttk.Notebook(dash)
+        # the plots: a segmented switch above a notebook without tabs
+        pside = ttk.Frame(dash, style="Panel.TFrame", padding=(10, 0, 0, 0))
+        pside.rowconfigure(1, weight=1)
+        pside.columnconfigure(0, weight=1)
+        self.plot_tabs = Segmented(pside, t, list(self.PLOT_TABS), command=self._plot_tab, bg_role="lcd")
+        self.plot_tabs.grid(row=0, column=0, sticky="w")
+        plots = ttk.Notebook(pside, style="Tabless.TNotebook")
+        plots.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         self.spectrogram = SpectrogramCanvas(plots, self, height=200)
-        self.spectrum = SpectrumCanvas(plots, height=200)
+        self.spectrum = SpectrumCanvas(plots, self, height=200)
         plots.add(self.spectrogram, text="Spectrogram")
         plots.add(self.spectrum, text="Average spectrum")
-        lyr = ttk.Frame(plots)
+        lyr = RoundFrame(plots, t, bg_role="bg", outer_role="lcd")
         lyr.rowconfigure(0, weight=1)
         lyr.columnconfigure(0, weight=1)
-        self.lyrics_text = tk.Text(lyr, wrap="word", height=8, width=30, relief="flat", padx=10, pady=6,
-                                   background="#fafafa", foreground="#1f2328", font=("TkDefaultFont", 10))
-        lys = ttk.Scrollbar(lyr, orient="vertical", command=self.lyrics_text.yview)
-        self.lyrics_text.configure(yscrollcommand=lys.set, state="disabled")
-        self.lyrics_text.tag_configure("time", foreground="#9aa0a6", font=("TkFixedFont", 9))
-        self.lyrics_text.tag_configure("muted", foreground="#666", font=("TkDefaultFont", 9))
-        self.lyrics_text.grid(row=0, column=0, sticky="nsew")
-        lys.grid(row=0, column=1, sticky="ns")
+        self.lyrics_text = tk.Text(lyr, wrap="word", height=8, width=30, relief="flat", bd=0, highlightthickness=0,
+                                   padx=8, pady=6, font=t.f("body"), spacing1=1, spacing3=1)
+        t.reg(self.lyrics_text, bg="bg", fg="text", selectbackground="accent", selectforeground="on_accent")
+        lys = ttk.Scrollbar(lyr, orient="vertical", command=self.lyrics_text.yview, style="Hide.Vertical.TScrollbar")
+        self.lyrics_text.configure(yscrollcommand=lambda a, b: autohide(lys, a, b), state="disabled")
+        self.lyrics_text.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
+        lys.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=8)
         plots.add(lyr, text="Lyrics")
         self.plots = plots
-        dash.add(plots, weight=3)
-        panes.add(dash, weight=2)
-
-        status = ttk.Frame(self)
-        status.grid(row=6, column=0, sticky="ews", pady=(6, 0))
-        self.rowconfigure(6, weight=0, minsize=24)
-        status.columnconfigure(1, weight=1)
-        self.progress = ttk.Progressbar(status, length=220, mode="determinate")
-        self.progress.grid(row=0, column=0, padx=(0, 8))
-        ttk.Label(status, textvariable=self.status_var).grid(row=0, column=1, sticky="w")
-        self.outdated_var = tk.StringVar(value="")
-        self.outdated_label = ttk.Label(status, textvariable=self.outdated_var, foreground="#8a5a00")
-        self.outdated_btn = ttk.Button(status, text="Re-scan them", command=self.rescan_outdated)
+        dash.add(pside, weight=3)
+        panes.add(board, weight=2)
 
         self.menu = tk.Menu(self.root, tearoff=False)
         self.menu.add_command(label="Open file location", command=self.reveal)
@@ -1864,6 +2042,95 @@ class App(ttk.Frame):
         self.menu.add_command(label="Fix to real resolution…", command=self.fix_selected)
         self.menu.add_command(label="Download synced lyrics…", command=self.lyrics_selected)
         self.menu.add_command(label="Re-scan", command=self.rescan_selected)
+        theme_menu(self.theme, self.menu)
+        self._retheme()
+
+    def _retheme(self) -> None:
+        """Colours that are not ttk styles or registered widgets: the list's tags, the
+        lyrics text, the source states (and again whenever the theme changes)."""
+        t = self.theme
+        for v, (_, color, _) in VERDICT_STYLE.items():
+            self.tree.tag_configure(v, foreground=ink(t, color))
+        self.tree.tag_configure(PENDING, foreground=t.c("text2"))
+        self.tree.tag_configure(RUNNING, foreground=ink(t, RUNNING_STYLE[1]))
+        self.tree.tag_configure("hover", background=t.c("hover"))
+        self.tree.tag_configure("found", background="#5c4d00" if t.dark else "#fff3a6")
+        self.tree.tag_configure("found_cur", background="#8a5a00" if t.dark else "#ffc46b")
+        self.src_tree.tag_configure("empty", foreground=t.c("error"))
+        self.src_tree.tag_configure("busy", foreground=t.c("text2"))
+        self.lyrics_text.tag_configure("time", foreground=t.c("text2"), font=t.f("small"))
+        self.lyrics_text.tag_configure("muted", foreground=t.c("text2"), font=t.f("small"))
+        if self.find_open:
+            self._apply_find_highlight()
+
+    def _flow_chips(self, width: int) -> None:
+        """The verdict chips in as many rows as the page's width needs."""
+        self._chips_width = width
+        self._flow(self.filt, self.filter_checks.values(), width)
+
+    @staticmethod
+    def _flow(container, widgets, width: int, gap: int = 6, vgap: int = 6) -> None:
+        """Canvas widgets (chips, buttons) placed in rows in `container`, as many per row
+        as `width` holds (all in one row while the width is not known yet)."""
+        widgets = list(widgets)
+        if width <= 1:
+            width = sum(int(w.cget("width")) + gap for w in widgets)
+        x = y = row_h = 0
+        for w in widgets:
+            ww, wh = int(w.cget("width")), int(w.cget("height"))
+            if x and x + ww > width:
+                x, y, row_h = 0, y + row_h + vgap, 0
+            w.place(x=x, y=y)
+            x += ww + gap
+            row_h = max(row_h, wh)
+        one_row = sum(int(w.cget("width")) + gap for w in widgets) - gap
+        container.configure(height=y + row_h, width=min(one_row, max(width, 1)))
+
+    def _fit_sources(self) -> None:
+        """The source list grows with the sources, from one row to four."""
+        self.src_tree.configure(height=max(1, min(4, len(self.sources))))
+
+    def _show_scan_button(self) -> None:
+        """Stop takes Scan's place while a scan runs; the progress bar shows only then."""
+        show, hide = (self.stop_btn, self.scan_btn) if self.scanning else (self.scan_btn, self.stop_btn)
+        hide.pack_forget()
+        show.pack()
+        if self.scanning:
+            self.progress.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        else:
+            self.progress.grid_remove()
+
+    def _first_split(self, height: int) -> None:
+        """The list gets about 40 % of the room at first (the dashboard asks for more than
+        it needs); after that the sash stays where the user puts it."""
+        if self._split_done or height < 200:
+            return
+        self._split_done = True
+        self.after_idle(lambda: self.panes.sashpos(0, int(height * 0.4)))
+
+    def _first_dash_split(self, width: int) -> None:
+        """The dashboard's facts get about 62 % of its width at first (the five buttons in one
+        row in a window of 1280 pixels), the plots the rest."""
+        if self._dash_split_done or width < 400:
+            return
+        self._dash_split_done = True
+        self.after_idle(lambda: self.dash.sashpos(0, int(width * 0.62)))
+
+    def _plot_tab(self) -> None:
+        self.plots.select(self.PLOT_TABS.index(self.plot_tabs.get()))
+
+    def _tree_hover(self, row: Optional[str]) -> None:
+        """The row under the pointer, in the theme's highlight colour (as in the song tables)."""
+        row = row or None
+        if row == self._hover_row:
+            return
+        for iid, action in ((self._hover_row, "remove"), (row, "add")):
+            if iid:
+                try:
+                    self.tree.tk.call(self.tree._w, "tag", action, "hover", (iid,))  # a list: paths have spaces
+                except tk.TclError:
+                    pass
+        self._hover_row = row
 
     def _update_quick_label(self) -> None:
         self.quick_cb.configure(text=f"Quick scan (first {self.cfg.quick_scan_seconds:g} s)")
@@ -1913,8 +2180,15 @@ class App(ttk.Frame):
             self.set_filters(new.shown_verdicts)
         self._update_quick_label()
         self.spectrogram.redraw()
-        self.status_var.set("Settings saved. Files without a result for the new detection settings are "
-                            "analysed when you press Scan." if detection else "Settings saved.")
+        if detection:
+            self.status_var.set("Settings saved. Files without a result for the new detection settings are "
+                                "analysed when you press Scan.")
+        elif self.embedded and self.results:
+            # the player's Settings page saves every change at once (theme, volume, ...): the
+            # page's status line keeps saying what the scan found
+            self._update_status(final=not self.scanning, stopped=self._last_stopped)
+        elif not self.embedded:
+            self.status_var.set("Settings saved.")
 
     # ---------- sources --------------------------------------------------
     def _add_source(self, path: str) -> None:
@@ -1935,7 +2209,7 @@ class App(ttk.Frame):
                              tags=("busy",))
         self.src_tree.see(path)
         self.src_hint.grid_remove()
-        self.src_tree.configure(height=min(max(len(self.sources), 2), 5))
+        self._fit_sources()
         cancel = threading.Event()
         self.listing[path] = cancel
         self.source_files[path] = []
@@ -2043,7 +2317,7 @@ class App(ttk.Frame):
         n = sum(1 for r in self.results.values() if r.saved and r.saved.get("outdated"))
         if n and not self.scanning:
             self.outdated_var.set(f"{n} saved result{'s were' if n != 1 else ' was'} made by older detection rules.")
-            self.outdated_label.grid(row=0, column=2, sticky="e", padx=(8, 4))
+            self.outdated_label.grid(row=0, column=2, sticky="e", padx=(12, 8))
             self.outdated_btn.grid(row=0, column=3, sticky="e")
         else:
             self.outdated_label.grid_remove()
@@ -2146,6 +2420,7 @@ class App(ttk.Frame):
             del self.results[path]
         if not self.sources:
             self.src_hint.grid()
+        self._fit_sources()
         self.refresh()
         self.show_details()
         n = len(keep)
@@ -2186,11 +2461,13 @@ class App(ttk.Frame):
         self._update_outdated_notice()
         self.src_tree.delete(*self.src_tree.get_children())
         self.src_hint.grid()
+        self._fit_sources()
         self.refresh()
         self.show_details()
         self.progress["value"] = 0
-        for v, cb in self.filter_checks.items():
-            cb.configure(text=VERDICT_STYLE[v][0])
+        for chip in self.filter_checks.values():
+            chip.set_count(None)
+        self._flow_chips(self._chips_width)
         self.status_var.set("Add a folder or files, then press Scan.")
 
     # ---------- scanning -------------------------------------------------
@@ -2243,6 +2520,7 @@ class App(ttk.Frame):
         self.status_var.set(f"Scanning {len(files)} files…")
         self.scan_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        self._show_scan_button()
         max_seconds = self.cfg.quick_scan_seconds if self.quick_var.get() else (self.cfg.max_seconds or None)
         self.scanner = Scanner(files, self.cfg, max_seconds, self.queue, force=force)
         self.scanner.start()
@@ -2361,6 +2639,7 @@ class App(ttk.Frame):
         self.progress.configure(mode="determinate", maximum=max(self.total, 1), value=self.done)
         self.scan_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
+        self._show_scan_button()
         self._update_status(final=True, stopped=stopped)
         self.refresh()
         self._update_source_counts()
@@ -2415,8 +2694,9 @@ class App(ttk.Frame):
 
     def _update_filter_counts(self) -> Dict[str, int]:
         c = self._counts()
-        for v, cb in self.filter_checks.items():
-            cb.configure(text=f"{VERDICT_STYLE[v][0]} ({c[v]})")
+        for v, chip in self.filter_checks.items():
+            chip.set_count(c[v])
+        self._flow_chips(self._chips_width)
         return c
 
     def _update_status(self, final: bool = False, stopped: bool = False) -> None:
@@ -2533,7 +2813,7 @@ class App(ttk.Frame):
         self.view_var.set("Files")
         self.switch_view()
         self.chip_label.configure(text=label)
-        self.chip_back.configure(text=f"◀ Back to {'albums' if mode == 'album' else 'artists'}")
+        self.chip_back.configure(text=f"Back to {'albums' if mode == 'album' else 'artists'}")
         self.chip.pack(side="left")
         self.sort_col, self.sort_rev = "track", False
         self.refresh()
@@ -2615,7 +2895,7 @@ class App(ttk.Frame):
         if self.find_open:
             self.find_count.configure(
                 text=(f"{self.find_index + 1} of {n}" if n else ("No matches" if q else "")),
-                foreground="#555" if n or not q else "#c62828")
+                foreground=self.theme.c("text2") if n or not q else self.theme.c("error"))
         current = self.find_matches[self.find_index] if 0 <= self.find_index < n else None
         if self.view_var.get() == "Files":
             found = set(self.find_matches)
@@ -2797,7 +3077,7 @@ class App(ttk.Frame):
                       for i in self.tree.selection())
         self.fix_btn.configure(state="normal" if fixable and not self.scanning else "disabled")
         if r is None and path:  # listed but not scanned yet
-            self.badge.configure(text=PENDING_STYLE[0].upper(), bg=PENDING_STYLE[1])
+            self.badge.set(PENDING_STYLE[0].upper(), PENDING_STYLE[1])
             self.name_var.set(os.path.basename(path))
             self.why_var.set("Waiting in the scan queue…" if self.scanning else
                              "This file will be analysed when you press Scan.")
@@ -2808,7 +3088,7 @@ class App(ttk.Frame):
             self.spectrum.show(None, None)
             return
         if r is None:
-            self.badge.configure(text="", bg="#9e9e9e")
+            self.badge.set("", "")
             self.name_var.set("Select a file in the list")
             self.why_var.set("")
             for v in self.fact_vars.values():
@@ -2818,7 +3098,7 @@ class App(ttk.Frame):
             self.spectrum.show(None, None)
             return
         label, color, _ = VERDICT_STYLE[r.verdict]
-        self.badge.configure(text=label.upper(), bg=color)
+        self.badge.set(label.upper(), color)
         self.name_var.set(os.path.basename(r.path))
         self.why_var.set(r.summary or (r.reasons[0] if r.reasons else ""))
         bits = r.effective_bits
@@ -3078,9 +3358,13 @@ def main(argv=None) -> int:
 
 
 def scanner_main(argv=None) -> int:
-    """The 1.x scanner on its own, in a window of its own."""
+    """The 1.x scanner on its own, in a window of its own (with its menu bar), in the
+    player's look."""
+    from .player_theme import load_bundled_font
+
     multiprocessing.freeze_support()
     args = list(sys.argv[1:] if argv is None else argv)
+    load_bundled_font()  # before Tk creates its fonts
     try:
         root = tk.Tk()
     except tk.TclError as exc:  # e.g. started over SSH or on a server without a desktop
@@ -3097,13 +3381,7 @@ def scanner_main(argv=None) -> int:
         root.iconphoto(True, tk.PhotoImage(file=icon))
     except (tk.TclError, OSError):
         pass  # icon is cosmetic only
-    style = ttk.Style(root)
-    if sys.platform.startswith("linux") and "clam" in style.theme_names():
-        style.theme_use("clam")
-        # clam paints the bar in the window colour, which makes it invisible.
-        style.configure("Horizontal.TProgressbar", background="#4a90d9")
-    style.configure("Treeview", rowheight=22)
-    App(root, initial=[a for a in args if not a.startswith("-")])
+    App(root, initial=[a for a in args if not a.startswith("-")])  # its Theme sets clam and the colours
     root.mainloop()
     return 0
 

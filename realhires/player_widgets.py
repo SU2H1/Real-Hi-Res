@@ -351,6 +351,25 @@ class SongList(tk.Frame):
         show_scrollbar(self.sb, total > body_h, self.bg_role)
 
 
+def rounded_photo(master: tk.Misc, data: bytes, size: int) -> Optional[tk.PhotoImage]:
+    """A PNG cover as a PhotoImage whose corners are transparent (rounded, as the
+    player draws covers), or None when Tk cannot read it."""
+    try:
+        img = tk.PhotoImage(master=master, data=base64.b64encode(data).decode("ascii"), format="png")
+    except tk.TclError:
+        return None
+    w, h = img.width(), img.height()
+    r = max(3, int(round(min(w, h) * (0.06 if size <= 64 else 0.045))))
+    call, name = img.tk.call, img.name
+    for y in range(r):
+        for x in range(r):
+            dx, dy = r - x - 0.5, r - y - 0.5
+            if dx * dx + dy * dy > r * r:
+                for px, py in ((x, y), (w - 1 - x, y), (x, h - 1 - y), (w - 1 - x, h - 1 - y)):
+                    call(name, "transparency", "set", px, py, 1)
+    return img
+
+
 class CoverCache:
     """Album covers as PhotoImages with rounded corners, made by FFmpeg
     (covers.cover_png) in one background thread, newest requests first."""
@@ -402,20 +421,7 @@ class CoverCache:
             self.images.popitem(last=False)
 
     def _image(self, data: bytes, size: int) -> Optional[tk.PhotoImage]:
-        try:
-            img = tk.PhotoImage(master=self.root, data=base64.b64encode(data).decode("ascii"), format="png")
-        except tk.TclError:
-            return None
-        w, h = img.width(), img.height()
-        r = max(3, int(round(min(w, h) * (0.06 if size <= 64 else 0.045))))
-        call, name = img.tk.call, img.name
-        for y in range(r):
-            for x in range(r):
-                dx, dy = r - x - 0.5, r - y - 0.5
-                if dx * dx + dy * dy > r * r:
-                    for px, py in ((x, y), (w - 1 - x, y), (x, h - 1 - y), (w - 1 - x, h - 1 - y)):
-                        call(name, "transparency", "set", px, py, 1)
-        return img
+        return rounded_photo(self.root, data, size)
 
     def _work(self) -> None:
         from .covers import cover_png
@@ -637,4 +643,4 @@ class AlbumGrid(tk.Frame):
 
 
 __all__ = ["SongList", "Column", "AlbumGrid", "CoverCache", "draw_cover", "draw_mosaic", "fmt_time", "bind_wheel",
-           "scroll_units", "show_scrollbar"]
+           "scroll_units", "show_scrollbar", "rounded_photo"]

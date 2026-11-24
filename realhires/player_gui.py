@@ -11,7 +11,9 @@
   through playqueue.py, and likes, volume, modes and EQ are kept in
   player.json (playerstate.py).
 * The 1.x app (scanner, Fix, lyrics download, saved results) is the
-  Quality check page, unchanged (gui.App inside this window).
+  Quality check page (gui.App inside this window, in the player's look).
+* There is no menu bar (docs/player-spec.md, 2.1): everything is on the pages,
+  the sidebar and the Settings page, and every shortcut is a key binding.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from .player_collections import (FoldersPage, LibraryPage, PlaylistPage, Playlis
 from .player_pages import (AlbumPage, AlbumsPage, GroupPage, NowPlayingPage, Page, SearchPage, SettingsPage,
                            SongsPage, album_order, frame, label)
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
-                           system_is_dark)
+                           system_is_dark, theme_menu)
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
 from .player_windows import EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
@@ -53,18 +55,17 @@ ACC = "Cmd" if sys.platform == "darwin" else "Ctrl"
 
 # ------------------------------------------------------ the 1.x scanner ---
 class QualityCheck(gui.App):
-    """The 1.x app as the Quality check page: unchanged, except that it lives in the
-    player's window, tells the player about saved lyrics and settings, and that
-    the background check of the library at start shows no pop-ups."""
+    """The 1.x app as the Quality check page: it lives in the player's window, in the
+    player's theme and fonts, without a menu bar (its More button holds the menu's
+    entries), tells the player about saved lyrics and settings, and the background
+    check of the library at start shows no pop-ups."""
 
     def __init__(self, root, player: "PlayerApp", parent, initial=None, cfg=None):
         self.player = player
         self.quiet_scan = False      # the check of the library at start (Settings → Library)
         self._quiet_finished = False
-        super().__init__(root, initial=initial, cfg=cfg, parent=parent)
+        super().__init__(root, initial=initial, cfg=cfg, parent=parent, theme=player.theme)
         self.quit_callback = player.quit
-        self.view_menu.add_separator()
-        self.view_menu.add_command(label="Back to the music library", command=lambda: player.show_page("library"))
 
     def lyrics_saved(self, path: str) -> None:
         super().lyrics_saved(path)
@@ -92,7 +93,8 @@ class QualityCheck(gui.App):
 class Sidebar(tk.Frame):
     """Search; Library (the start page); "Library": All Songs ... Composers;
     "Playlists": Liked Songs, Disliked Songs, the playlists and New Playlist…;
-    "History": Recently Played, Recently Added, Your Stats; Settings at the bottom."""
+    "History": Recently Played, Recently Added, Your Stats; at the bottom Quality
+    Check and Settings (FOOT)."""
 
     WIDTH = 220
     ROW, HEAD = 28, 26
@@ -101,7 +103,8 @@ class Sidebar(tk.Frame):
                ("genres", "Genres", "genre"), ("years", "Years", "calendar"), ("composers", "Composers", "piano")]
     HISTORY = [("played", "Recently Played", "history"), ("recent", "Recently Added", "clock"),
                ("stats", "Your Stats", "stats")]
-    PAGES = {"library"} | {k for k, _, _ in LIBRARY + HISTORY} | {"liked", "disliked", "settings"}
+    FOOT = [("quality", "Quality Check", "check"), ("settings", "Settings", "gear")]
+    PAGES = {"library"} | {k for k, _, _ in LIBRARY + HISTORY} | {"liked", "disliked"} | {k for k, _, _ in FOOT}
 
     def __init__(self, master, app: "PlayerApp"):
         super().__init__(master, width=self.WIDTH, bd=0, highlightthickness=0)
@@ -133,11 +136,11 @@ class Sidebar(tk.Frame):
                                wraplength=self.WIDTH - 32, bd=0)
         t.reg(self.status, bg="sidebar", fg="text2")
         self.status.pack(side="bottom", fill="x", padx=10, pady=(6, 0))
-        self.foot = tk.Canvas(bottom, height=32, highlightthickness=0, bd=0)
+        self.foot = tk.Canvas(bottom, height=self.ROW * len(self.FOOT) + 4, highlightthickness=0, bd=0)
         t.reg(self.foot, bg="sidebar")
         self.foot.pack(side="bottom", fill="x")
-        self.foot.bind("<Button-1>", lambda e: self.app.show_page("settings"))
-        self.foot.bind("<Motion>", lambda e: self._hover("settings"))
+        self.foot.bind("<Button-1>", lambda e: self._foot_click(e.y))
+        self.foot.bind("<Motion>", lambda e: self._hover(self._foot_key(e.y)))
         self.foot.bind("<Leave>", lambda e: self._hover(None))
         # the pages (scrolls when there are many playlists)
         self.nav = tk.Canvas(self, highlightthickness=0, bd=0, height=200)
@@ -222,6 +225,15 @@ class Sidebar(tk.Frame):
         elif key:
             self.app.show_page(key)
 
+    def _foot_key(self, y: float) -> Optional[str]:
+        i = int((y - 2) // self.ROW)
+        return self.FOOT[i][0] if 0 <= i < len(self.FOOT) and y >= 2 else None
+
+    def _foot_click(self, y: float) -> None:
+        key = self._foot_key(y)
+        if key:
+            self.app.show_page(key)
+
     def select(self, key: Optional[str]) -> None:
         self.selected = key or ""
         self.redraw()
@@ -251,7 +263,8 @@ class Sidebar(tk.Frame):
         f = self.foot
         f.delete("all")
         if f.winfo_width() > 1:
-            self._item(f, "settings", "Settings", "gear", 1, 30, f.winfo_width())
+            for i, (key, text, icon) in enumerate(self.FOOT):
+                self._item(f, key, text, icon, 2 + i * self.ROW, self.ROW, f.winfo_width())
 
     def set_status(self, text: str) -> None:
         self.status.configure(text=text)
@@ -515,9 +528,7 @@ class PlayerApp:
         cfg = settings_mod.load()
         self.theme = Theme(root)
         self.theme.configure(cfg.theme, cfg.font_family)
-        self.theme.styles()
-        self.theme.style.configure("Treeview", rowheight=22)                      # the Quality check page,
-        self.theme.style.configure("Horizontal.TProgressbar", background="#4a90d9")  # as 1.x had them
+        self.theme.styles()  # the player's styles, and the standard ones for the Quality check page
         self.theme.reg(root, bg="bg")
         self.fit_cache: dict = {}
         self.state = playerstate.load()
@@ -564,12 +575,14 @@ class PlayerApp:
         self.last_menu: Optional[tk.Menu] = None    # the song menu shown last
         self.lib = musiclib.Library()                # the main thread's connection (index, play history)
         self.lib_pending = False
+        self._quitting = False
         self._build()
         self.qc = QualityCheck(root, self, parent=self.pages["quality"], initial=initial, cfg=cfg)
         self.qc.pack(fill="both", expand=True)
-        self._build_menu()
+        self._build_popups()
         root.protocol("WM_DELETE_WINDOW", self.quit)
         self._bind_keys()
+        self._mac_app_menu()
         try:
             self.set_tracks(self.lib.tracks())
         except Exception as exc:  # noqa: BLE001 - a broken index must not stop the app
@@ -602,7 +615,8 @@ class PlayerApp:
         self.content.columnconfigure(0, weight=1)
         self.up_next_sep = frame(body, t, bg="sep", width=1)
         self.up_next = UpNextPanel(body, self)
-        quality = tk.Frame(self.content, bd=0, highlightthickness=0)  # the 1.x look, unchanged
+        quality = tk.Frame(self.content, bd=0, highlightthickness=0, width=400, height=300)  # gui.App inside
+        self.theme.reg(quality, bg="bg")
         self.pages["quality"] = quality
         self.factories: Dict[str, Callable[[], Page]] = {
             "library": lambda: LibraryPage(self),
@@ -628,71 +642,34 @@ class PlayerApp:
             "settings": lambda: SettingsPage(self),
         }
 
-    def _build_menu(self) -> None:
-        m = tk.Menu(self.root)
-        f = tk.Menu(m, tearoff=False)
-        f.add_command(label="New Playlist…", command=lambda: self.new_playlist())
-        f.add_separator()
-        f.add_command(label="Add Music Folder…", command=self.choose_music_folder)
-        f.add_command(label="Update the Library Now", command=self.refresh_library)
-        f.add_command(label="Scan Library", command=lambda: self.check_library(switch=True))
-        f.add_command(label="Download Lyrics for the Whole Library…", command=self.lyrics_for_library)
-        f.add_command(label="Clear the Play History…", command=self.clear_history)
-        f.add_separator()
-        f.add_command(label="Settings…", accelerator=f"{ACC}+,", command=lambda: self.show_page("settings"))
-        f.add_separator()
-        f.add_command(label="Quit", accelerator=f"{ACC}+Q", command=self.quit)
-        m.add_cascade(label="File", menu=f)
-        c = tk.Menu(m, tearoff=False)
-        c.add_command(label="Play / Pause", accelerator="Space", command=self.play_pause)
-        c.add_command(label="Next", accelerator=f"{ACC}+Right", command=self.next)
-        c.add_command(label="Previous", accelerator=f"{ACC}+Left", command=self.previous)
-        c.add_separator()
-        c.add_cascade(label="Shuffle", menu=self._mode_menu(c, True))
-        c.add_cascade(label="Repeat", menu=self._mode_menu(c, False))
-        c.add_separator()
-        c.add_command(label="Volume Up", accelerator=f"{ACC}+Up", command=lambda: self.volume_step(0.05))
-        c.add_command(label="Volume Down", accelerator=f"{ACC}+Down", command=lambda: self.volume_step(-0.05))
-        c.add_command(label="Mute", command=self.toggle_mute)
-        c.add_separator()
-        c.add_command(label="Equalizer…", command=self.open_eq)
-        c.add_command(label="Playback Info…", command=self.open_info)
-        m.add_cascade(label="Controls", menu=c)
-        v = tk.Menu(m, tearoff=False)
-        v.add_command(label="Library", command=lambda: self.show_page("library"))
-        v.add_separator()
-        from .player_collections import TILES
-        for key, text, _ in TILES:
-            v.add_command(label=text, command=lambda k=key: self.show_page(k))
-        v.add_separator()
-        v.add_command(label="Now Playing and Lyrics", accelerator=f"{ACC}+L", command=self.toggle_now_playing)
-        v.add_command(label="Up Next", command=self.toggle_up_next)
-        v.add_separator()
-        v.add_command(label="Quality Check", command=lambda: self.show_page("quality"))
-        v.add_command(label="Settings", command=lambda: self.show_page("settings"))
-        m.add_cascade(label="View", menu=v)
-        h = tk.Menu(m, tearoff=False)
-        h.add_command(label=f"About {APP_NAME}", command=self.about)
-        m.add_cascade(label="Help", menu=h)
-        self.menubar = m
+    def _build_popups(self) -> None:
+        """The shuffle and repeat menus of the playback bar.  There is no menu bar
+        (docs/player-spec.md, 2.1): New Playlist… is in the sidebar, the library actions
+        on Settings → Library, About on the Settings page, Quit is closing the window
+        (or Ctrl/Cmd+Q), the playback controls are the bar and the keys."""
         self.shuffle_popup = self._mode_menu(self.root, True)
         self.repeat_popup = self._mode_menu(self.root, False)
-        for menu in (m, self.qc.menubar, self.qc.menu, self.shuffle_popup, self.repeat_popup):
+        for menu in (self.shuffle_popup, self.repeat_popup):
             self._theme_menu(menu)
+
+    def _mac_app_menu(self) -> None:
+        """macOS shows Tk's own application menu when a window has no menu bar: its About,
+        Settings… and Quit open ours."""
+        if sys.platform != "darwin":
+            return
+        try:
+            self.root.createcommand("tkAboutDialog", self.about)
+            self.root.createcommand("::tk::mac::ShowPreferences", lambda *a: self.show_page("settings"))
+            self.root.createcommand("::tk::mac::Quit", self.quit)
+        except tk.TclError:
+            pass
 
     def theme_menu(self, menu: tk.Menu) -> None:
         self._theme_menu(menu)
 
     def _theme_menu(self, menu: tk.Menu) -> None:
         """Menus in the theme's colours (X11 draws them itself; Windows and macOS keep theirs)."""
-        menu.configure(relief="flat", bd=0, activeborderwidth=0)
-        self.theme.reg(menu, bg="bg", fg="text", activebackground="accent", activeforeground="on_accent",
-                       selectcolor="accent", disabledforeground="disabled")
-        last = menu.index("end")
-        for i in range(0 if last is None else last + 1):
-            if menu.type(i) == "cascade":
-                sub = self.root.nametowidget(menu.entrycget(i, "menu"))
-                self._theme_menu(sub)
+        theme_menu(self.theme, menu)
 
     def _mode_menu(self, parent, shuffle: bool) -> tk.Menu:
         menu = tk.Menu(parent, tearoff=False)
@@ -748,10 +725,8 @@ class PlayerApp:
         self.page_name = name
         if name == "quality":
             self.qc.active = True
-            self.root.configure(menu=self.qc.menubar)
         else:
             self.qc.active = False
-            self.root.configure(menu=self.menubar)
             if name in self.dirty:
                 self.dirty.discard(name)
                 page.refresh()
@@ -1786,6 +1761,9 @@ class PlayerApp:
             "Andersson, under the SIL Open Font License.\n\n" + PROJECT_URL, parent=self.root)
 
     def quit(self) -> None:
+        if self._quitting:  # Ctrl/Cmd+Q and the macOS application menu can both ask
+            return
+        self._quitting = True
         if self.eq_window is not None:
             try:
                 self.eq_window.close()

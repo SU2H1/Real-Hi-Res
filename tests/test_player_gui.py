@@ -299,6 +299,10 @@ def settings_page():
     page._set("theme", "Dark")
     assert app.theme.dark and root.cget("bg").upper() == "#1E1E1E"
     assert app.page("albums").grid_w.canvas.cget("bg").upper() == "#1E1E1E"
+    # the Quality check page follows the theme (2.1: drawn like the player's pages)
+    assert app.theme.style.lookup("Treeview", "background").upper() == "#1E1E1E"
+    assert app.qc.text.cget("bg").upper() == app.theme.c("lcd").upper() == "#2C2C2E"
+    assert app.qc.cards.canvas.cget("bg").upper() == "#1E1E1E"
     from realhires import settings
     assert settings.load().theme == "Dark"
     page._set("theme", "Light")
@@ -307,10 +311,49 @@ def settings_page():
     assert "Please enter a number from 5 to 150" in page.help_labels["cliff_db"].cget("text")
     page.show(group="Playback")
     assert "output_device" in page.help_labels
-    # the Quality check page: the 1.x scanner with its own menus
+    # no menu bar (2.1): what the File and Help menus held is on Settings → Library and the
+    # Settings page, and every shortcut of the menus is a key binding
+    assert not str(root.cget("menu"))
+    page.show(group="Library")
+    root.update()
+    assert {{"Add folder…", "Update the library now", "Scan library", "Download lyrics for the whole library…",
+             "Clear the play history…"}} <= set(button_texts(page)), button_texts(page)
+    assert page.about_btn.text == "About Universal Music Player" and page.about_btn.command == app.about
+    mod = "Command" if sys.platform == "darwin" else "Control"
+    for seq in ("<space>", f"<{{mod}}-Right>", f"<{{mod}}-Left>", f"<{{mod}}-Up>", f"<{{mod}}-Down>", f"<{{mod}}-l>",
+                f"<{{mod}}-comma>", f"<{{mod}}-f>"):
+        assert root.bind(seq), seq
+    for seq in (f"<{{mod}}-o>", f"<{{mod}}-q>", f"<{{mod}}-comma>", f"<{{mod}}-f>", f"<{{mod}}-F>", f"<{{mod}}-a>",
+                f"<{{mod}}-l>", "<F3>", "<Shift-F3>"):
+        assert root.bind_all(seq), seq
+    assert app.qc.tree.bind("<Return>") and app.qc.tree.bind(f"<{{mod}}-Return>") and app.qc.tree.bind(f"<{{mod}}-c>")
+    # the Quality check page: no menu bar either; Quality Check in the sidebar, More on the page
     app.check_library(switch=True)
-    assert app.page_name == "quality" and app.qc.active and str(root.cget("menu")) == str(app.qc.menubar)
+    assert app.page_name == "quality" and app.qc.active and not str(root.cget("menu"))
+    assert app.qc.menubar is None and app.sidebar.selected == "quality"
+    assert ("quality", "Quality Check", "check") in app.sidebar.FOOT and app.sidebar.FOOT[-1][0] == "settings"
+    assert app.qc.title_label.cget("text") == "Quality Check"
+    m = app.qc.more_menu
+    entries = [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
+    assert entries == ["Export listed files as CSV…", "Export listed files as JSON…", "-",
+                       "Fix selected files to real resolution…", "Fix all fake files to real resolution…", "-",
+                       "Download synced lyrics for selected songs…", "Download synced lyrics for all songs…", "-",
+                       "Re-scan selected files", "Re-scan files checked by older rules", "-",
+                       "Select all listed files", "Copy path", "Open file location", "Open file", "Find…", "-",
+                       "Scan summary…", "Show problem files only", "Show all files", "-",
+                       "Delete all saved results…"], entries
+    if sys.platform.startswith("linux"):  # native pop-up menus (Windows, macOS) wait until closed
+        app.qc.show_more_menu(); root.update(); m.unpost()
+    assert str(app.qc.stop_btn.cget("state")) == "disabled" or app.qc.scanning
     wait(lambda: len(app.qc.results) == N_SONGS and not app.qc.scanning, scanned, timeout=150, what="scan")
+
+def button_texts(widget):
+    out = []
+    for w in widget.winfo_children():
+        if hasattr(w, "text") and isinstance(getattr(w, "text"), str) and hasattr(w, "command"):
+            out.append(w.text)
+        out += button_texts(w)
+    return out
 
 def scanned():
     root.update()
@@ -319,7 +362,10 @@ def scanned():
         if isinstance(w, gui.SummaryDialog):
             w.destroy()
     app.show_page("albums")
-    assert not app.qc.active and str(root.cget("menu")) == str(app.menubar)
+    assert not app.qc.active and not str(root.cget("menu")) and app.sidebar.selected == "albums"
+    # the page shows its results like a song table, Scan back in Stop's place
+    assert app.qc.scan_btn.winfo_manager() == "pack" and not app.qc.stop_btn.winfo_manager()
+    assert app.qc.filter_checks["REAL HI-RES"].count is not None
     app.open_info()
     assert "Verdict: " in app.info_window.text() and "Not checked yet" not in app.info_window.text()
     app.info_window.close()
