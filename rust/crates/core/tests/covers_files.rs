@@ -151,7 +151,7 @@ fn covers_are_made_once_and_read_from_disk() {
     assert!(covers::is_cached(&bare, 64));
     // FFmpeg that cannot run leaves no mark
     let other = vec![song(&plain, "02.wav")];
-    assert!(covers::cached_cover_png_with(Path::new("/no/such/ffmpeg"), &other, 64).is_none());
+    assert!(covers::cached_cover_png_in(&cache, Path::new("/no/such/ffmpeg"), &other, 64).is_none());
     assert!(!covers::is_cached(&other, 64));
 
     // a changed song gives a new entry

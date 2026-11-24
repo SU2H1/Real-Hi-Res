@@ -232,13 +232,20 @@ fn write(file: &Path, data: &[u8]) {
 
 /// Whether the covers folder has this cover (or its "no cover" mark).
 pub fn is_cached(paths: &[String], size: u32) -> bool {
-    cache_file(paths, size).is_file()
+    is_cached_in(&cache_dir(), paths, size)
 }
 
-/// `cached_cover_png()` with a given FFmpeg (tests: one that cannot run).
-pub fn cached_cover_png_with(ffmpeg: &Path, paths: &[String], size: u32) -> Option<Vec<u8>> {
+/// `is_cached()` in a given covers folder.
+pub fn is_cached_in(dir: &Path, paths: &[String], size: u32) -> bool {
+    dir.join(cache_name(paths, size)).is_file()
+}
+
+/// `cached_cover_png()` in a given covers folder with a given FFmpeg (the
+/// player's worker keeps the folder it started with; tests: an FFmpeg that
+/// cannot run).
+pub fn cached_cover_png_in(dir: &Path, ffmpeg: &Path, paths: &[String], size: u32) -> Option<Vec<u8>> {
     let paths: Vec<String> = paths.iter().take(CACHE_PATHS).cloned().collect();
-    let file = cache_file(&paths, size);
+    let file = dir.join(cache_name(&paths, size));
     if let Some(found) = read_cached(&file) {
         return found;
     }
@@ -254,7 +261,7 @@ pub fn cached_cover_png_with(ffmpeg: &Path, paths: &[String], size: u32) -> Opti
 /// saved there.  A damaged or unreadable file is made again.  When FFmpeg could
 /// not run, nothing is saved, so the album is tried again next time.
 pub fn cached_cover_png(paths: &[String], size: u32) -> Option<Vec<u8>> {
-    cached_cover_png_with(&tool("ffmpeg"), paths, size)
+    cached_cover_png_in(&cache_dir(), &tool("ffmpeg"), paths, size)
 }
 
 fn usage(n: u64) -> u64 {

@@ -2570,6 +2570,7 @@ mod tests {
         std::fs::create_dir_all(&music).unwrap();
         std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
         std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
         let p = |n: &str| music.join(n).to_string_lossy().into_owned();
         let noise = |rate: u32| format!("anoisesrc=r={rate}:a=0.2:c=pink:d=4:seed=7");
         ffmpeg(&["-f", "lavfi", "-i", &noise(96000), "-c:a", "pcm_s24le", "-ac", "2", &p("01 real.wav")]);
