@@ -1,8 +1,9 @@
 """Writes the Python answers the Rust player core is tested against:
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
-python_eqfiles.json, python_themes.json, python_playerstate.json and
-python_tagedit.json (the tag editor and the themes folder).  Run from
-the repository root:
+python_eqfiles.json, python_themes.json, python_playerstate.json,
+python_tagedit.json (the tag editor and the themes folder) and
+python_bitperfect.json (bit-perfect playback's decisions and texts).  Run
+from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -13,7 +14,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 import time  # noqa: E402
 
-from realhires import eq, musiclib, playerstate, stats, tagedit, themes  # noqa: E402
+from realhires import bitperfect, eq, musiclib, playerstate, stats, tagedit, themes  # noqa: E402
 from realhires.musiclib import Track  # noqa: E402
 from realhires.playqueue import PlayQueue, Song, SplitMix64, shuffled  # noqa: E402
 
@@ -456,3 +457,79 @@ with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh
                "folder": {"own": own, "files": folder_files, "loaded": loaded},
                "ogg_inputs": {name: data.hex() for name, data in oggs.items()}, "ogg": ogg_cases,
                "crc": crcs}, fh, indent=0, ensure_ascii=False)
+
+# ---- bit-perfect playback (2.1) ----
+bp = bitperfect
+bp_songs = [bp.Song(44100, 2, 16), bp.Song(48000, 1, 16), bp.Song(96000, 2, 24), bp.Song(192000, 2, 24),
+            bp.Song(88200, 2, 24), bp.Song(176400, 2, 24), bp.Song(96000, 2, 32), bp.Song(48000, 2, 32, True),
+            bp.Song(44100, 2, 64, True), bp.Song(44100, 2, 0, False, True), bp.Song(48000, 6, 24),
+            bp.Song(44100, 2, 0), bp.Song(22050, 2, 8), bp.Song(352800, 2, 24), bp.Song(11025, 1, 16)]
+ladder = (44100, 48000, 88200, 96000, 176400, 192000)
+bp_mode_sets = [
+    [],
+    [bp.Mode(f, r, r, 2) for f in bp.FORMATS for r in ladder],
+    [bp.Mode(bp.I16, r, r, 2) for r in (44100, 48000)],
+    [bp.Mode(bp.F32, 8000, 384000, 0)],
+    [bp.Mode(f, r, r, 2) for f in (bp.I24, bp.I16) for r in (48000, 96000)],
+    [bp.Mode(bp.I32, 48000, 48000, 8)],
+    [bp.Mode(bp.I16, 44100, 44100, 1)],
+    [bp.Mode(bp.I32, 44100, 96000, 2), bp.Mode(bp.I16, 44100, 192000, 2)],
+    [bp.Mode(bp.I24, 44100, 44100, 2)],
+    [bp.Mode(bp.F32, r, r, 6) for r in (44100, 48000)] + [bp.Mode(bp.I32, 48000, 48000, 4)],
+    [bp.Mode("u8", 48000, 48000, 2), bp.Mode(bp.I32, 96000, 96000, 0), bp.Mode(bp.F32, 0, 0, 2)],
+]
+accesses = [(bp.WASAPI, "Speakers"), (bp.ALSA, "hw:1,3"), (bp.COREAUDIO, "MacBook Speakers"),
+            (bp.DIRECT, "Test output")]
+bp_cases = []
+for si, song in enumerate(bp_songs):
+    for mi, ms in enumerate(bp_mode_sets):
+        for failure in ("", bp.BUSY):
+            if failure and mi not in (0, 1, 3):
+                continue
+            pl = bp.plan(song, ms, failure)
+            access, dev = accesses[(si + mi) % len(accesses)]
+            bp_cases.append({"song": si, "modes": mi, "failure": failure, "rate": pl.rate, "format": pl.format,
+                             "channels": pl.channels, "reasons": pl.reasons, "resampled": pl.resampled,
+                             "access": access, "device": dev, "status": bp.status(song, pl, access, dev),
+                             "output": bp.output_label(pl.rate, pl.format, bp.song_bits(song), pl.channels)})
+cards_text = (" 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n"
+              "                      HDA Intel PCH at 0xf7f10000 irq 32\n"
+              " 1 [DAC            ]: USB-Audio - USB Audio DAC\n"
+              "                      Manufacturer USB Audio DAC at usb-0000:00:14.0-1, high speed\n"
+              "  2 [NVidia         ]: HDA-Intel - HDA NVidia\n"
+              " 3 [Loopback]: Loopback - Loopback\n"
+              "x [bad]: no - number\n 4 [Odd] no colon\n 5 [NoDash         ]: just a name\n")
+cards = bp.alsa_cards(cards_text)
+devices = ["", "default", "hw:1", "hw:1,0", "hw:CARD=DAC,DEV=0", "plughw:CARD=PCH,DEV=3", "front:CARD=NVidia",
+           "sysdefault:CARD=dac", "hw:CARD=Unknown,DEV=2", "hw:", "hw:x,y", "USB Audio DAC Analog Stereo",
+           "HDA Intel PCH, ALC897 Analog", "HDA NVidia, HDMI 0", "Built-in Audio Analog Stereo",
+           "Default ALSA Output (currently PipeWire Media Server)", "hw:2,7", "dmix:CARD=1,DEV=0", "Loopback",
+           "loop", "HW:1", "Name with: colon"]
+floats = [0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, -3.0, 1.5 / 32768, 2.5 / 32768, -1.5 / 32768, 32767 / 32768,
+          8388607 / 8388608, -8388608 / 8388608, 0.123456789, -0.987654321, 1e-9, 4.656612873077393e-10,
+          float("nan"), float("inf"), float("-inf")]
+with open(os.path.join(OUT, "python_bitperfect.json"), "w", encoding="utf-8") as fh:
+    json.dump({"songs": [s.__dict__ for s in bp_songs],
+               "mode_sets": [[m.__dict__ for m in ms] for ms in bp_mode_sets],
+               "cases": bp_cases,
+               "preferred": [bp.preferred_formats(s) for s in bp_songs],
+               "rates": [bp.rates_offered(ms) for ms in bp_mode_sets],
+               "pick": [{"song": r, "rates": rs, "rate": bp.pick_rate(r, rs)}
+                        for r in (11025, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 0)
+                        for rs in ([], [48000], [44100, 48000], [48000, 96000], [44100, 48000, 88200, 96000],
+                                   [8000, 16000, 32000], [192000, 384000], [44100])],
+               "ints": [{"x": x, "i16": bp.int_sample(x, bp.I16), "i24": bp.int_sample(x, bp.I24),
+                         "i32": bp.int_sample(x, bp.I32)} for x in floats],
+               "labels": [{"format": f, "bits": b, "label": bp.format_label(f, b)}
+                          for f in bp.FORMATS for b in (0, 8, 16, 24, 32)],
+               "khz": [{"hz": hz, "text": bp.fmt_khz(hz)} for hz in (0, 8000, 11025, 22050, 44100, 48000, 88200,
+                                                                     96000, 352800, 705600, 12345)],
+               "failures": [{"detail": d, "text": bp.failure_reason(d)}
+                            for d in ("", "  ", "ALSA: Device or resource busy", "it did not switch to 96 kHz.")],
+               "idle": [bp.status(None, None, enabled=False), bp.status(None, None)],
+               "cards_text": cards_text, "cards": cards,
+               "devices": [{"device": d, "hw": bp.alsa_device(d, cards)} for d in devices],
+               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq": bp.EQ_BYPASSED, "wasapi": bp.WASAPI_FORMAT_NOTE,
+                         "off": bp.OFF,
+                         "idle": bp.ON_IDLE},
+               "standard_rates": list(bp.STANDARD_RATES)}, fh, indent=0, ensure_ascii=False)

@@ -1,0 +1,4866 @@
+{
+"songs": [
+{
+"rate": 44100,
+"channels": 2,
+"bits": 16,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 48000,
+"channels": 1,
+"bits": 16,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 96000,
+"channels": 2,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 192000,
+"channels": 2,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 88200,
+"channels": 2,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 176400,
+"channels": 2,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 96000,
+"channels": 2,
+"bits": 32,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 48000,
+"channels": 2,
+"bits": 32,
+"is_float": true,
+"is_lossy": false
+},
+{
+"rate": 44100,
+"channels": 2,
+"bits": 64,
+"is_float": true,
+"is_lossy": false
+},
+{
+"rate": 44100,
+"channels": 2,
+"bits": 0,
+"is_float": false,
+"is_lossy": true
+},
+{
+"rate": 48000,
+"channels": 6,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 44100,
+"channels": 2,
+"bits": 0,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 22050,
+"channels": 2,
+"bits": 8,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 352800,
+"channels": 2,
+"bits": 24,
+"is_float": false,
+"is_lossy": false
+},
+{
+"rate": 11025,
+"channels": 1,
+"bits": 16,
+"is_float": false,
+"is_lossy": false
+}
+],
+"mode_sets": [
+[],
+[
+{
+"format": "i16",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 88200,
+"max_rate": 88200,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 176400,
+"max_rate": 176400,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 192000,
+"max_rate": 192000,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 88200,
+"max_rate": 88200,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 176400,
+"max_rate": 176400,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 192000,
+"max_rate": 192000,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 88200,
+"max_rate": 88200,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 176400,
+"max_rate": 176400,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 192000,
+"max_rate": 192000,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 88200,
+"max_rate": 88200,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 176400,
+"max_rate": 176400,
+"channels": 2
+},
+{
+"format": "f32",
+"min_rate": 192000,
+"max_rate": 192000,
+"channels": 2
+}
+],
+[
+{
+"format": "i16",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+}
+],
+[
+{
+"format": "f32",
+"min_rate": 8000,
+"max_rate": 384000,
+"channels": 0
+}
+],
+[
+{
+"format": "i24",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i24",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 2
+}
+],
+[
+{
+"format": "i32",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 8
+}
+],
+[
+{
+"format": "i16",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 1
+}
+],
+[
+{
+"format": "i32",
+"min_rate": 44100,
+"max_rate": 96000,
+"channels": 2
+},
+{
+"format": "i16",
+"min_rate": 44100,
+"max_rate": 192000,
+"channels": 2
+}
+],
+[
+{
+"format": "i24",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 2
+}
+],
+[
+{
+"format": "f32",
+"min_rate": 44100,
+"max_rate": 44100,
+"channels": 6
+},
+{
+"format": "f32",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 6
+},
+{
+"format": "i32",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 4
+}
+],
+[
+{
+"format": "u8",
+"min_rate": 48000,
+"max_rate": 48000,
+"channels": 2
+},
+{
+"format": "i32",
+"min_rate": 96000,
+"max_rate": 96000,
+"channels": 0
+},
+{
+"format": "f32",
+"min_rate": 0,
+"max_rate": 0,
+"channels": 2
+}
+]
+],
+"cases": [
+{
+"song": 0,
+"modes": 0,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 16-bit, 44.1 kHz, exclusive mode (WASAPI)",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1,3",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 3,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 16-bit, 44.1 kHz, Test output",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 0,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 0,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 16-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 0,
+"modes": 6,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 16-bit, 44.1 kHz, Test output",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 0,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 16-bit, 44.1 kHz, exclusive mode (WASAPI)",
+"output": "44.1 kHz, 16-bit integer in 24-bit, stereo"
+},
+{
+"song": 0,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1,3",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 0,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 16-bit integer in 32-bit, stereo"
+},
+{
+"song": 1,
+"modes": 0,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 16-bit, 48 kHz, ALSA hardware device hw:1,3",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 1,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 16-bit, 48 kHz, Test output",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 3,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 16-bit, 48 kHz, exclusive mode (WASAPI)",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 1,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 1,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 16-bit, 48 kHz, ALSA hardware device hw:1,3",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+"output": "48 kHz, 16-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 1,
+"modes": 6,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 16-bit, 48 kHz, Test output",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 7,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 16-bit, 48 kHz, exclusive mode (WASAPI)",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 1,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 16-bit integer in 24-bit, stereo"
+},
+{
+"song": 1,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 4,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+"output": "48 kHz, 16-bit integer in 32-bit, 4 channels"
+},
+{
+"song": 1,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 16-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 0,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 24-bit, 96 kHz, the device runs at 96 kHz (CoreAudio)",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 1,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 96 kHz, Test output",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 2,
+"modes": 3,
+"failure": "",
+"rate": 96000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 96 kHz, ALSA hardware device hw:1,3",
+"output": "96 kHz, 32-bit float, stereo"
+},
+{
+"song": 2,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "96 kHz, 32-bit float, stereo"
+},
+{
+"song": 2,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 24-bit, 96 kHz, the device runs at 96 kHz (CoreAudio)",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 2,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 2,
+"modes": 6,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 7,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 96 kHz, ALSA hardware device hw:1,3",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 2,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 2,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 4,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 4 channels"
+},
+{
+"song": 2,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 0,
+"failure": "",
+"rate": 192000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 192 kHz, Test output",
+"output": "192 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 192000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "192 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 1,
+"failure": "",
+"rate": 192000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 192 kHz, exclusive mode (WASAPI)",
+"output": "192 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 192000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "192 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 48 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 48 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 3,
+"modes": 3,
+"failure": "",
+"rate": 192000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 24-bit, 192 kHz, the device runs at 192 kHz (CoreAudio)",
+"output": "192 kHz, 32-bit float, stereo"
+},
+{
+"song": 3,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 192000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "192 kHz, 32-bit float, stereo"
+},
+{
+"song": 3,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 3,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 3,
+"modes": 6,
+"failure": "",
+"rate": 192000,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 192 kHz, ALSA hardware device hw:1,3",
+"output": "192 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 3,
+"modes": 7,
+"failure": "",
+"rate": 192000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device has no 24-bit format, so the samples are converted.",
+"output": "192 kHz, 16-bit integer, stereo"
+},
+{
+"song": 3,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 3,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 4,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 4 channels"
+},
+{
+"song": 3,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 192 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 192 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 0,
+"failure": "",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 88.2 kHz, exclusive mode (WASAPI)",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 1,
+"failure": "",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 88.2 kHz, ALSA hardware device hw:1,3",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 4,
+"modes": 3,
+"failure": "",
+"rate": 88200,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 88.2 kHz, Test output",
+"output": "88.2 kHz, 32-bit float, stereo"
+},
+{
+"song": 4,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 88200,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "88.2 kHz, 32-bit float, stereo"
+},
+{
+"song": 4,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 4,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 4,
+"modes": 6,
+"failure": "",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 24-bit, 88.2 kHz, the device runs at 88.2 kHz (CoreAudio)",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 7,
+"failure": "",
+"rate": 88200,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 88.2 kHz, Test output",
+"output": "88.2 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 4,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 4,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 4,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 88.2 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 88.2 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 0,
+"failure": "",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 176.4 kHz, ALSA hardware device hw:1,3",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 1,
+"failure": "",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 24-bit, 176.4 kHz, the device runs at 176.4 kHz (CoreAudio)",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 5,
+"modes": 3,
+"failure": "",
+"rate": 176400,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 176.4 kHz, exclusive mode (WASAPI)",
+"output": "176.4 kHz, 32-bit float, stereo"
+},
+{
+"song": 5,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 176400,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "176.4 kHz, 32-bit float, stereo"
+},
+{
+"song": 5,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 5,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 5,
+"modes": 6,
+"failure": "",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 176.4 kHz, Test output",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 5,
+"modes": 7,
+"failure": "",
+"rate": 176400,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device has no 24-bit format, so the samples are converted.",
+"output": "176.4 kHz, 16-bit integer, stereo"
+},
+{
+"song": 5,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 5,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 5,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 176.4 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 176.4 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 6,
+"modes": 0,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 1,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"The device has no 32-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device has no 32-bit format, so the samples are converted.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 3,
+"failure": "",
+"rate": 96000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit float, stereo"
+},
+{
+"song": 6,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 96000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit float, stereo"
+},
+{
+"song": 6,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The 32-bit samples are played with 24-bit precision.",
+"output": "48 kHz, 32-bit integer, 8 channels"
+},
+{
+"song": 6,
+"modes": 6,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 7,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 44.1 kHz.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 44.1 kHz. The 32-bit samples are played with 24-bit precision.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 6,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 4,
+"reasons": [
+"The device cannot play 96 kHz, so the song is resampled to 48 kHz.",
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The 32-bit samples are played with 24-bit precision.",
+"output": "48 kHz, 32-bit integer, 4 channels"
+},
+{
+"song": 6,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The 32-bit samples are played with 24-bit precision."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The 32-bit samples are played with 24-bit precision.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 7,
+"modes": 0,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 32-bit float, 48 kHz, Test output",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 1,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 32-bit float, 48 kHz, exclusive mode (WASAPI)",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 7,
+"modes": 3,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 32-bit float, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 24-bit integer, stereo"
+},
+{
+"song": 7,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 32-bit integer, 8 channels"
+},
+{
+"song": 7,
+"modes": 6,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 32-bit float, 48 kHz, ALSA hardware device hw:1,3",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 7,
+"modes": 7,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 32-bit integer, stereo"
+},
+{
+"song": 7,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 44.1 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 44.1 kHz. The device has no 32-bit float format, so the samples are converted.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 7,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 6,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 32-bit float, 48 kHz, exclusive mode (WASAPI)",
+"output": "48 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 7,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 96 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 96 kHz. The device has no 32-bit float format, so the samples are converted.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 8,
+"modes": 0,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 8,
+"modes": 3,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz. The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 24-bit integer, stereo"
+},
+{
+"song": 8,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz. The device has no 32-bit float format, so the samples are converted.",
+"output": "48 kHz, 32-bit integer, 8 channels"
+},
+{
+"song": 8,
+"modes": 6,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 8,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "44.1 kHz, 32-bit integer, stereo"
+},
+{
+"song": 8,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device has no 32-bit float format, so the samples are converted.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 8,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The 64-bit float samples are played as 32-bit float."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The 64-bit float samples are played as 32-bit float.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 8,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 96 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 96 kHz. The device has no 32-bit float format, so the samples are converted.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 9,
+"modes": 0,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, ALSA hardware device hw:1,3",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 9,
+"modes": 3,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, exclusive mode (WASAPI)",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz. The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "48 kHz, 24-bit integer, stereo"
+},
+{
+"song": 9,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz. The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "48 kHz, 32-bit integer, 8 channels"
+},
+{
+"song": 9,
+"modes": 6,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, Test output",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 9,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 32-bit integer, stereo"
+},
+{
+"song": 9,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 9,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 9,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 96 kHz.",
+"The device has no 32-bit float format, so the samples are converted."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 96 kHz. The device has no 32-bit float format, so the samples are converted. The song is decoded from a lossy format, so it is played as decoded.",
+"output": "96 kHz, 32-bit integer, stereo"
+},
+{
+"song": 10,
+"modes": 0,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 1,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 2,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 24-bit format, so the samples are converted.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device has no 24-bit format, so the samples are converted. This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 10,
+"modes": 3,
+"failure": "",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 10,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 48000,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system. This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 32-bit float, stereo"
+},
+{
+"song": 10,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer, stereo"
+},
+{
+"song": 10,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 10,
+"modes": 6,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 7,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 10,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 44.1 kHz.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 44.1 kHz. This 6-channel song is mixed down to stereo.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 10,
+"modes": 9,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 4,
+"reasons": [
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: This 6-channel song is mixed down to stereo.",
+"output": "48 kHz, 24-bit integer in 32-bit, 4 channels"
+},
+{
+"song": 10,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 48 kHz, so the song is resampled to 96 kHz.",
+"This 6-channel song is mixed down to stereo."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 48 kHz, so the song is resampled to 96 kHz. This 6-channel song is mixed down to stereo.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 0,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 32-bit integer, 44.1 kHz, Test output",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 32-bit integer, 44.1 kHz, exclusive mode (WASAPI)",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device has no 24-bit format, so the samples are converted.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 11,
+"modes": 3,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 32-bit float, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 11,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 32-bit float, stereo"
+},
+{
+"song": 11,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer, stereo"
+},
+{
+"song": 11,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 11,
+"modes": 6,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 32-bit integer, 44.1 kHz, ALSA hardware device hw:1,3",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 32-bit integer, 44.1 kHz, the device runs at 44.1 kHz (CoreAudio)",
+"output": "44.1 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 11,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit integer, 44.1 kHz, Test output",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 11,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 32-bit float, 44.1 kHz, exclusive mode (WASAPI)",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 11,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 44.1 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 44.1 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 12,
+"modes": 0,
+"failure": "",
+"rate": 22050,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 8-bit, 22.05 kHz, exclusive mode (WASAPI)",
+"output": "22.05 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 22050,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "22.05 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz. The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 3,
+"failure": "",
+"rate": 22050,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 8-bit, 22.05 kHz, Test output",
+"output": "22.05 kHz, 32-bit float, stereo"
+},
+{
+"song": 12,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 22050,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "22.05 kHz, 32-bit float, stereo"
+},
+{
+"song": 12,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 8-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 12,
+"modes": 6,
+"failure": "",
+"rate": 22050,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 8-bit, 22.05 kHz, the device runs at 22.05 kHz (CoreAudio)",
+"output": "22.05 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 8-bit integer in 16-bit, stereo"
+},
+{
+"song": 12,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 8-bit integer in 24-bit, stereo"
+},
+{
+"song": 12,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 12,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 22.05 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 22.05 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 8-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 0,
+"failure": "",
+"rate": 352800,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 24-bit, 352.8 kHz, ALSA hardware device hw:1,3",
+"output": "352.8 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 352800,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "352.8 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 1,
+"failure": "",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz.",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 176400,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz.",
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz. The device is in use by another program, so the sound is mixed by the system.",
+"output": "176.4 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 13,
+"modes": 3,
+"failure": "",
+"rate": 352800,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 24-bit, 352.8 kHz, exclusive mode (WASAPI)",
+"output": "352.8 kHz, 32-bit float, stereo"
+},
+{
+"song": 13,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 352800,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "352.8 kHz, 32-bit float, stereo"
+},
+{
+"song": 13,
+"modes": 4,
+"failure": "",
+"rate": 96000,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer, stereo"
+},
+{
+"song": 13,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 24-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 13,
+"modes": 6,
+"failure": "",
+"rate": 352800,
+"format": "i32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "direct",
+"device": "Test output",
+"status": "Yes: 24-bit, 352.8 kHz, Test output",
+"output": "352.8 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 13,
+"modes": 7,
+"failure": "",
+"rate": 176400,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz.",
+"The device has no 24-bit format, so the samples are converted."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 176.4 kHz. The device has no 24-bit format, so the samples are converted.",
+"output": "176.4 kHz, 16-bit integer, stereo"
+},
+{
+"song": 13,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 24-bit integer, stereo"
+},
+{
+"song": 13,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 13,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 352.8 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 352.8 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 24-bit integer in 32-bit, stereo"
+},
+{
+"song": 14,
+"modes": 0,
+"failure": "",
+"rate": 11025,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "Yes: 16-bit, 11.025 kHz, the device runs at 11.025 kHz (CoreAudio)",
+"output": "11.025 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 0,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 11025,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "11.025 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 1,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 1,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz. The device is in use by another program, so the sound is mixed by the system.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 2,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 3,
+"failure": "",
+"rate": 11025,
+"format": "f32",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "Yes: 16-bit, 11.025 kHz, ALSA hardware device hw:1,3",
+"output": "11.025 kHz, 32-bit float, stereo"
+},
+{
+"song": 14,
+"modes": 3,
+"failure": "The device is in use by another program, so the sound is mixed by the system.",
+"rate": 11025,
+"format": "f32",
+"channels": 2,
+"reasons": [
+"The device is in use by another program, so the sound is mixed by the system."
+],
+"resampled": false,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device is in use by another program, so the sound is mixed by the system.",
+"output": "11.025 kHz, 32-bit float, stereo"
+},
+{
+"song": 14,
+"modes": 4,
+"failure": "",
+"rate": 48000,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 5,
+"failure": "",
+"rate": 48000,
+"format": "i32",
+"channels": 8,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 48 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 48 kHz.",
+"output": "48 kHz, 16-bit integer in 32-bit, 8 channels"
+},
+{
+"song": 14,
+"modes": 6,
+"failure": "",
+"rate": 11025,
+"format": "i16",
+"channels": 2,
+"reasons": [],
+"resampled": false,
+"access": "wasapi",
+"device": "Speakers",
+"status": "Yes: 16-bit, 11.025 kHz, exclusive mode (WASAPI)",
+"output": "11.025 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 7,
+"failure": "",
+"rate": 44100,
+"format": "i16",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "alsa",
+"device": "hw:1,3",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 16-bit integer, stereo"
+},
+{
+"song": 14,
+"modes": 8,
+"failure": "",
+"rate": 44100,
+"format": "i24",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "coreaudio",
+"device": "MacBook Speakers",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 16-bit integer in 24-bit, stereo"
+},
+{
+"song": 14,
+"modes": 9,
+"failure": "",
+"rate": 44100,
+"format": "f32",
+"channels": 6,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz."
+],
+"resampled": true,
+"access": "direct",
+"device": "Test output",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 44.1 kHz.",
+"output": "44.1 kHz, 32-bit float, 6 channels"
+},
+{
+"song": 14,
+"modes": 10,
+"failure": "",
+"rate": 96000,
+"format": "i32",
+"channels": 2,
+"reasons": [
+"The device cannot play 11.025 kHz, so the song is resampled to 96 kHz."
+],
+"resampled": true,
+"access": "wasapi",
+"device": "Speakers",
+"status": "No: The device cannot play 11.025 kHz, so the song is resampled to 96 kHz.",
+"output": "96 kHz, 16-bit integer in 32-bit, stereo"
+}
+],
+"preferred": [
+[
+"i16",
+"i32",
+"i24",
+"f32"
+],
+[
+"i16",
+"i32",
+"i24",
+"f32"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i32",
+"f32",
+"i24",
+"i16"
+],
+[
+"f32",
+"i32",
+"i24",
+"i16"
+],
+[
+"f32",
+"i32",
+"i24",
+"i16"
+],
+[
+"f32",
+"i32",
+"i24",
+"i16"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i16",
+"i32",
+"i24",
+"f32"
+],
+[
+"i32",
+"i24",
+"f32",
+"i16"
+],
+[
+"i16",
+"i32",
+"i24",
+"f32"
+]
+],
+"rates": [
+[],
+[
+44100,
+48000,
+88200,
+96000,
+176400,
+192000
+],
+[
+44100,
+48000
+],
+[
+8000,
+11025,
+16000,
+22050,
+24000,
+32000,
+44100,
+48000,
+88200,
+96000,
+176400,
+192000,
+352800,
+384000
+],
+[
+48000,
+96000
+],
+[
+48000
+],
+[],
+[
+44100,
+48000,
+88200,
+96000,
+176400,
+192000
+],
+[
+44100
+],
+[
+44100,
+48000
+],
+[
+96000
+]
+],
+"pick": [
+{
+"song": 11025,
+"rates": [],
+"rate": 11025
+},
+{
+"song": 11025,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 11025,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 11025,
+"rates": [
+48000,
+96000
+],
+"rate": 48000
+},
+{
+"song": 11025,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 44100
+},
+{
+"song": 11025,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 16000
+},
+{
+"song": 11025,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 11025,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 22050,
+"rates": [],
+"rate": 22050
+},
+{
+"song": 22050,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 22050,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 22050,
+"rates": [
+48000,
+96000
+],
+"rate": 48000
+},
+{
+"song": 22050,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 44100
+},
+{
+"song": 22050,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 22050,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 22050,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 44100,
+"rates": [],
+"rate": 44100
+},
+{
+"song": 44100,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 44100,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 44100,
+"rates": [
+48000,
+96000
+],
+"rate": 48000
+},
+{
+"song": 44100,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 44100
+},
+{
+"song": 44100,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 44100,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 44100,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 48000,
+"rates": [],
+"rate": 48000
+},
+{
+"song": 48000,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 48000,
+"rates": [
+44100,
+48000
+],
+"rate": 48000
+},
+{
+"song": 48000,
+"rates": [
+48000,
+96000
+],
+"rate": 48000
+},
+{
+"song": 48000,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 48000
+},
+{
+"song": 48000,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 16000
+},
+{
+"song": 48000,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 48000,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 88200,
+"rates": [],
+"rate": 88200
+},
+{
+"song": 88200,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 88200,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 88200,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 88200,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 88200
+},
+{
+"song": 88200,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 88200,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 88200,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 96000,
+"rates": [],
+"rate": 96000
+},
+{
+"song": 96000,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 96000,
+"rates": [
+44100,
+48000
+],
+"rate": 48000
+},
+{
+"song": 96000,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 96000,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 96000
+},
+{
+"song": 96000,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 96000,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 96000,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 176400,
+"rates": [],
+"rate": 176400
+},
+{
+"song": 176400,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 176400,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 176400,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 176400,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 88200
+},
+{
+"song": 176400,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 176400,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 176400,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 192000,
+"rates": [],
+"rate": 192000
+},
+{
+"song": 192000,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 192000,
+"rates": [
+44100,
+48000
+],
+"rate": 48000
+},
+{
+"song": 192000,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 192000,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 96000
+},
+{
+"song": 192000,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 192000,
+"rates": [
+192000,
+384000
+],
+"rate": 192000
+},
+{
+"song": 192000,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 352800,
+"rates": [],
+"rate": 352800
+},
+{
+"song": 352800,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 352800,
+"rates": [
+44100,
+48000
+],
+"rate": 44100
+},
+{
+"song": 352800,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 352800,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 88200
+},
+{
+"song": 352800,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 352800,
+"rates": [
+192000,
+384000
+],
+"rate": 384000
+},
+{
+"song": 352800,
+"rates": [
+44100
+],
+"rate": 44100
+},
+{
+"song": 0,
+"rates": [],
+"rate": 0
+},
+{
+"song": 0,
+"rates": [
+48000
+],
+"rate": 48000
+},
+{
+"song": 0,
+"rates": [
+44100,
+48000
+],
+"rate": 48000
+},
+{
+"song": 0,
+"rates": [
+48000,
+96000
+],
+"rate": 96000
+},
+{
+"song": 0,
+"rates": [
+44100,
+48000,
+88200,
+96000
+],
+"rate": 96000
+},
+{
+"song": 0,
+"rates": [
+8000,
+16000,
+32000
+],
+"rate": 32000
+},
+{
+"song": 0,
+"rates": [
+192000,
+384000
+],
+"rate": 384000
+},
+{
+"song": 0,
+"rates": [
+44100
+],
+"rate": 44100
+}
+],
+"ints": [
+{
+"x": 0.0,
+"i16": 0,
+"i24": 0,
+"i32": 0
+},
+{
+"x": -0.0,
+"i16": 0,
+"i24": 0,
+"i32": 0
+},
+{
+"x": 1.0,
+"i16": 32767,
+"i24": 8388607,
+"i32": 2147483647
+},
+{
+"x": -1.0,
+"i16": -32768,
+"i24": -8388608,
+"i32": -2147483648
+},
+{
+"x": 0.5,
+"i16": 16384,
+"i24": 4194304,
+"i32": 1073741824
+},
+{
+"x": -0.5,
+"i16": -16384,
+"i24": -4194304,
+"i32": -1073741824
+},
+{
+"x": 2.0,
+"i16": 32767,
+"i24": 8388607,
+"i32": 2147483647
+},
+{
+"x": -3.0,
+"i16": -32768,
+"i24": -8388608,
+"i32": -2147483648
+},
+{
+"x": 4.57763671875e-05,
+"i16": 2,
+"i24": 384,
+"i32": 98304
+},
+{
+"x": 7.62939453125e-05,
+"i16": 2,
+"i24": 640,
+"i32": 163840
+},
+{
+"x": -4.57763671875e-05,
+"i16": -2,
+"i24": -384,
+"i32": -98304
+},
+{
+"x": 0.999969482421875,
+"i16": 32767,
+"i24": 8388352,
+"i32": 2147418112
+},
+{
+"x": 0.9999998807907104,
+"i16": 32767,
+"i24": 8388607,
+"i32": 2147483392
+},
+{
+"x": -1.0,
+"i16": -32768,
+"i24": -8388608,
+"i32": -2147483648
+},
+{
+"x": 0.123456789,
+"i16": 4045,
+"i24": 1035631,
+"i32": 265121436
+},
+{
+"x": -0.987654321,
+"i16": -32363,
+"i24": -8285045,
+"i32": -2120971504
+},
+{
+"x": 1e-09,
+"i16": 0,
+"i24": 0,
+"i32": 2
+},
+{
+"x": 4.656612873077393e-10,
+"i16": 0,
+"i24": 0,
+"i32": 1
+},
+{
+"x": NaN,
+"i16": 0,
+"i24": 0,
+"i32": 0
+},
+{
+"x": Infinity,
+"i16": 32767,
+"i24": 8388607,
+"i32": 2147483647
+},
+{
+"x": -Infinity,
+"i16": -32768,
+"i24": -8388608,
+"i32": -2147483648
+}
+],
+"labels": [
+{
+"format": "i16",
+"bits": 0,
+"label": "16-bit integer"
+},
+{
+"format": "i16",
+"bits": 8,
+"label": "8-bit integer in 16-bit"
+},
+{
+"format": "i16",
+"bits": 16,
+"label": "16-bit integer"
+},
+{
+"format": "i16",
+"bits": 24,
+"label": "16-bit integer"
+},
+{
+"format": "i16",
+"bits": 32,
+"label": "16-bit integer"
+},
+{
+"format": "i24",
+"bits": 0,
+"label": "24-bit integer"
+},
+{
+"format": "i24",
+"bits": 8,
+"label": "8-bit integer in 24-bit"
+},
+{
+"format": "i24",
+"bits": 16,
+"label": "16-bit integer in 24-bit"
+},
+{
+"format": "i24",
+"bits": 24,
+"label": "24-bit integer"
+},
+{
+"format": "i24",
+"bits": 32,
+"label": "24-bit integer"
+},
+{
+"format": "i32",
+"bits": 0,
+"label": "32-bit integer"
+},
+{
+"format": "i32",
+"bits": 8,
+"label": "8-bit integer in 32-bit"
+},
+{
+"format": "i32",
+"bits": 16,
+"label": "16-bit integer in 32-bit"
+},
+{
+"format": "i32",
+"bits": 24,
+"label": "24-bit integer in 32-bit"
+},
+{
+"format": "i32",
+"bits": 32,
+"label": "32-bit integer"
+},
+{
+"format": "f32",
+"bits": 0,
+"label": "32-bit float"
+},
+{
+"format": "f32",
+"bits": 8,
+"label": "32-bit float"
+},
+{
+"format": "f32",
+"bits": 16,
+"label": "32-bit float"
+},
+{
+"format": "f32",
+"bits": 24,
+"label": "32-bit float"
+},
+{
+"format": "f32",
+"bits": 32,
+"label": "32-bit float"
+}
+],
+"khz": [
+{
+"hz": 0,
+"text": "—"
+},
+{
+"hz": 8000,
+"text": "8 kHz"
+},
+{
+"hz": 11025,
+"text": "11.025 kHz"
+},
+{
+"hz": 22050,
+"text": "22.05 kHz"
+},
+{
+"hz": 44100,
+"text": "44.1 kHz"
+},
+{
+"hz": 48000,
+"text": "48 kHz"
+},
+{
+"hz": 88200,
+"text": "88.2 kHz"
+},
+{
+"hz": 96000,
+"text": "96 kHz"
+},
+{
+"hz": 352800,
+"text": "352.8 kHz"
+},
+{
+"hz": 705600,
+"text": "705.6 kHz"
+},
+{
+"hz": 12345,
+"text": "12.345 kHz"
+}
+],
+"failures": [
+{
+"detail": "",
+"text": "The device could not be opened for this app alone, so the sound is mixed by the system."
+},
+{
+"detail": "  ",
+"text": "The device could not be opened for this app alone, so the sound is mixed by the system."
+},
+{
+"detail": "ALSA: Device or resource busy",
+"text": "The device could not be opened for this app alone (ALSA: Device or resource busy), so the sound is mixed by the system."
+},
+{
+"detail": "it did not switch to 96 kHz.",
+"text": "The device could not be opened for this app alone (it did not switch to 96 kHz), so the sound is mixed by the system."
+}
+],
+"idle": [
+"Off",
+"On"
+],
+"cards_text": " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xf7f10000 irq 32\n 1 [DAC            ]: USB-Audio - USB Audio DAC\n                      Manufacturer USB Audio DAC at usb-0000:00:14.0-1, high speed\n  2 [NVidia         ]: HDA-Intel - HDA NVidia\n 3 [Loopback]: Loopback - Loopback\nx [bad]: no - number\n 4 [Odd] no colon\n 5 [NoDash         ]: just a name\n",
+"cards": [
+[
+0,
+"PCH",
+"HDA Intel PCH"
+],
+[
+1,
+"DAC",
+"USB Audio DAC"
+],
+[
+2,
+"NVidia",
+"HDA NVidia"
+],
+[
+3,
+"Loopback",
+"Loopback"
+],
+[
+5,
+"NoDash",
+"just a name"
+]
+],
+"devices": [
+{
+"device": "",
+"hw": "hw:0"
+},
+{
+"device": "default",
+"hw": "hw:0"
+},
+{
+"device": "hw:1",
+"hw": "hw:1"
+},
+{
+"device": "hw:1,0",
+"hw": "hw:1"
+},
+{
+"device": "hw:CARD=DAC,DEV=0",
+"hw": "hw:1"
+},
+{
+"device": "plughw:CARD=PCH,DEV=3",
+"hw": "hw:0,3"
+},
+{
+"device": "front:CARD=NVidia",
+"hw": "hw:2"
+},
+{
+"device": "sysdefault:CARD=dac",
+"hw": "hw:1"
+},
+{
+"device": "hw:CARD=Unknown,DEV=2",
+"hw": "hw:0,2"
+},
+{
+"device": "hw:",
+"hw": "hw:0"
+},
+{
+"device": "hw:x,y",
+"hw": "hw:0"
+},
+{
+"device": "USB Audio DAC Analog Stereo",
+"hw": "hw:1"
+},
+{
+"device": "HDA Intel PCH, ALC897 Analog",
+"hw": "hw:0"
+},
+{
+"device": "HDA NVidia, HDMI 0",
+"hw": "hw:2"
+},
+{
+"device": "Built-in Audio Analog Stereo",
+"hw": "hw:0"
+},
+{
+"device": "Default ALSA Output (currently PipeWire Media Server)",
+"hw": "hw:0"
+},
+{
+"device": "hw:2,7",
+"hw": "hw:2,7"
+},
+{
+"device": "dmix:CARD=1,DEV=0",
+"hw": "hw:1"
+},
+{
+"device": "Loopback",
+"hw": "hw:3"
+},
+{
+"device": "loop",
+"hw": "hw:0"
+},
+{
+"device": "HW:1",
+"hw": "hw:1"
+},
+{
+"device": "Name with: colon",
+"hw": "hw:0"
+}
+],
+"texts": {
+"busy": "The device is in use by another program, so the sound is mixed by the system.",
+"lossy": "The song is decoded from a lossy format, so it is played as decoded.",
+"eq": "Bypassed while bit-perfect playback is on.",
+"wasapi": "Windows gives the device to this app alone only in the format chosen in its Sound settings (the device's Properties, Advanced, Default Format).",
+"off": "Off",
+"idle": "On"
+},
+"standard_rates": [
+8000,
+11025,
+16000,
+22050,
+24000,
+32000,
+44100,
+48000,
+88200,
+96000,
+176400,
+192000,
+352800,
+384000,
+705600,
+768000
+]
+}

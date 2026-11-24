@@ -69,6 +69,13 @@ class Settings:
         True, "Playback", "Gapless playback",
         "Start the next song without a pause, so albums that flow from track to track play as one.",
         kind="bool")
+    bit_perfect: bool = _f(
+        False, "Playback", "Bit-perfect playback",
+        "Send each song's samples to the sound device exactly as they are in the file: at the song's own sample "
+        "rate, without the equalizer, the volume control or resampling, and with the device to this app alone "
+        "where the system allows it (exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the "
+        "device is switched to the song's rate). Set the volume on your amplifier or DAC. While a song plays "
+        "this way, other programs may not be heard.", kind="bool")
 
     # ---- Appearance (2.0) ---------------------------------------------------
     font_family: str = _f(

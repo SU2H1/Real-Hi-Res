@@ -31,6 +31,7 @@ from tkinter import filedialog, messagebox
 from typing import Callable, Dict, List, Optional
 
 from . import APP_NAME, PROJECT_URL, __version__, gui, musiclib, playerstate, stats, themes
+from . import bitperfect
 from . import lyrics as lyrics_mod
 from . import settings as settings_mod
 from .musiclib import Track
@@ -487,9 +488,12 @@ class PlaybackBar(tk.Frame):
         self.more.set(enabled=has)
         self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden)
         self.queue.set(on=app.up_next_shown)
-        self.eq.set(on=bool(st.eq.get("enabled")))
-        self.speaker.set(level=0.0 if st.muted else st.volume)
-        self.volume.set(st.volume, enabled=True)
+        # bit-perfect playback: the equalizer is bypassed and the gain is exactly 1, so the slider shows
+        # full volume and cannot move
+        bit_perfect = app.cfg.bit_perfect
+        self.eq.set(on=bool(st.eq.get("enabled")) and not bit_perfect)
+        self.speaker.set(level=0.0 if st.muted else 1.0 if bit_perfect else st.volume)
+        self.volume.set(1.0 if bit_perfect else st.volume, enabled=not bit_perfect)
 
 
 class UpNextPanel(tk.Frame):
@@ -535,6 +539,7 @@ class PlayerApp:
         self.engine = Player(device=cfg.output_device, gapless=cfg.gapless)
         self.engine.set_volume(self.state.volume, self.state.muted)
         self.engine.set_eq(self.state.eq)
+        self.engine.set_bit_perfect(cfg.bit_perfect)
         self.covers = CoverCache(root)
         self.q: queue.Queue = queue.Queue()
         self.tracks: List[Track] = []
@@ -935,6 +940,13 @@ class PlayerApp:
         if old.gapless != new.gapless:
             self.engine.set_gapless(new.gapless)
             self._update_next()
+        if old.bit_perfect != new.bit_perfect:
+            self.engine.set_bit_perfect(new.bit_perfect)  # the song playing restarts where it is
+            self.bar.update_controls()
+            if self.eq_window is not None and self.eq_window.win.winfo_exists():
+                self.eq_window.show_bypass()
+            if self.info_window is not None and self.info_window.win.winfo_exists():
+                self.info_window.refresh()
         if (list(old.library_folders), old.extension_set(), old.recursive) != (
                 list(new.library_folders), new.extension_set(), new.recursive):
             if new.library_folders:
@@ -1366,8 +1378,8 @@ class PlayerApp:
             self.root.after_cancel(self._skip_job)
             self._skip_job = None
         t = self.by_path.get(path)
-        info = SongInfo(path, t.sample_rate, t.channels or 2, t.duration) if t is not None and t.sample_rate \
-            else None
+        info = SongInfo(path, t.sample_rate, t.channels or 2, t.duration, t.bits, t.is_float, t.is_lossy) \
+            if t is not None and t.sample_rate else None
         self._listen_start(path)
         self.current, self.error, self.resume_pos = path, "", 0.0
         self.engine.play(path, position, info)
@@ -1595,6 +1607,8 @@ class PlayerApp:
             self.save_state()
 
     def volume_step(self, d: float) -> None:
+        if self.cfg.bit_perfect:  # the volume is not used then: set it on the amplifier or DAC
+            return
         self.volume_changed(self.state.volume + d, True)
         self.bar.volume.set(self.state.volume)
 
@@ -1684,13 +1698,16 @@ class PlayerApp:
         info = self.engine.output_info()
         playing = self.engine.active and self.engine.current == t.path
         rate = info["rate"] if playing else 0
+        bit_perfect = self.cfg.bit_perfect
+        gain = 0.0 if self.state.muted else 1.0 if bit_perfect else self.state.volume ** 2
         output = [("Device", info["device"] or "System default"),
-                  ("Output", player_mod.output_label(rate)),
+                  ("Output", player_mod.output_label(rate, info["channels"], info["format"])),
+                  ("Bit-perfect", info["bit_perfect"] if playing else
+                   bitperfect.status(None, None, enabled=bit_perfect)),
                   ("Resampling", player_mod.resampling_label(t.sample_rate, rate, player_mod.resampler_name())
                    if rate else dash),
-                  ("Volume", player_mod.fmt_gain(0.0 if self.state.muted else self.state.volume ** 2,
-                                                 self.state.muted)),
-                  ("Equalizer", player_mod.eq_summary(self.state.eq)),
+                  ("Volume", player_mod.fmt_gain(gain, self.state.muted)),
+                  ("Equalizer", bitperfect.EQ_BYPASSED if bit_perfect else player_mod.eq_summary(self.state.eq)),
                   ("Gapless", "On" if self.cfg.gapless else "Off")]
         quality = [("Verdict", "Not checked yet")]
         store = self.qc.store

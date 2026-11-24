@@ -273,3 +273,214 @@ def test_miniaudio_null_backend_plays_in_real_time(tmp_path):
     assert wait_for(lambda: events.extend(p.poll()) or events, 10)
     assert events == [("finished", a)] and time.monotonic() - t0 > 0.6, "not played in real time"
     p.close()
+
+
+# ------------------------------------------------------------ bit-perfect (2.1) ---
+def int_song(path, seconds, rate, bits, channels=2, seed=5):
+    """Noise at -6 dBFS as a `bits`-bit FLAC (16 or 24)."""
+    rng = np.random.default_rng(seed)
+    x = rng.uniform(-0.5, 0.5, (int(rate * seconds), channels))
+    fmt = ["-sample_fmt", "s16"] if bits == 16 else ["-sample_fmt", "s32", "-bits_per_raw_sample", "24"]
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "f64le", "-ar", str(rate), "-ac", str(channels), "-i", "-",
+                    "-c:a", "flac", *fmt, str(path)], input=x.astype("<f8").tobytes(), check=True)
+    return str(path)
+
+
+def ints(path, bits):
+    """What FFmpeg decodes the file to as integers (s16le, or s32le with 24-bit files left-justified)."""
+    fmt, dtype = ("s16le", "<i2") if bits == 16 else ("s32le", "<i4")
+    out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", fmt, "-"], capture_output=True,
+                         check=True).stdout
+    return np.frombuffer(out, dtype)
+
+
+def rock():
+    state = eq.apply_preset(eq.default_state(), "Rock")
+    state["enabled"] = True
+    return state
+
+
+@pytest.mark.parametrize("bits,rate,channels,fmt", [(16, 44100, 2, "i16"), (24, 96000, 2, "i32"),
+                                                   (16, 48000, 1, "i16")])
+def test_bit_perfect_flacs_reach_the_device_as_the_files_integers(tmp_path, bits, rate, channels, fmt):
+    path = int_song(tmp_path / f"s{bits}_{channels}.flac", 0.6, rate, bits, channels)
+    out = ManualOutput()  # takes every rate and format
+    p = Player(out)
+    p.set_volume(0.5)     # neither the volume ...
+    p.set_eq(rock())      # ... nor the equalizer may touch the samples
+    p.set_bit_perfect(True)
+    assert p.gain == 1.0 and p.bit_perfect
+    p.play(path)
+    got, events = pull_all(p, out, block=999)
+    assert events[-1] == ("finished", path)
+    assert out.opened == [rate] and out.opened_formats == [fmt] and out.exclusive_opened == [True]
+    want = ints(path, bits)
+    dtype = np.int16 if fmt == "i16" else np.int32
+    assert got.dtype == dtype
+    if channels == 1:
+        assert np.array_equal(got[:, 0], want) and np.array_equal(got[:, 1], want), "mono not copied exactly"
+    else:
+        assert np.array_equal(got.reshape(-1), want), "the samples were changed on the way"
+    p.play(path)
+    out.pull(1000)
+    info = p.output_info()
+    assert info["bit_perfect"] == f"Yes: {bits}-bit, {player.fmt_khz(rate)}, Test output"
+    assert info["format"] == ("16-bit integer" if bits == 16 else "24-bit integer in 32-bit")
+    assert player.output_label(info["rate"], info["channels"], info["format"]).startswith(player.fmt_khz(rate))
+    # the saved volume and equalizer are kept for when the setting is off again
+    assert p.eq_state["enabled"] and p.set_bit_perfect(False) is None and p.gain == 0.25
+    p.close()
+
+
+def test_bit_perfect_decodes_without_ar_or_filters():
+    cmd = player.decode_command("x.flac", 0.0, 96000, None, native=True)
+    assert "-ar" not in cmd and "-af" not in cmd and cmd[-1] == "pipe:1"
+    mono = player.SongInfo("m.flac", 48000, 1, 1.0, 16)
+    assert player.filter_chain(mono, 48000, None) == "pan=stereo|c0=c0|c1=c0"
+    assert "-ar" in player.decode_command("x.flac", 0.0, 48000, None)
+
+
+def test_exact_float_to_integer_conversion():
+    x = np.array([[0.0, -1.0], [1.0, 0.5], [-0.25, 32767 / 32768], [np.nan, 2.0]], np.float32)
+    assert player.device_samples(x, "i16").tolist() == [[0, -32768], [32767, 16384], [-8192, 32767], [0, 32767]]
+    assert player.device_samples(x, "i32")[1].tolist() == [2147483647, 1073741824]
+    for fmt in ("i16", "i24", "i32"):
+        flat = [bp_int(v, fmt) for v in x.reshape(-1)]
+        assert player.device_samples(x, fmt).reshape(-1).tolist() == flat
+    assert player.device_bytes(player.device_samples(x[:1], "i24"), "i24") == b"\0\0\0\0\0\x80"
+    wide = player.device_samples(x[:2], "f32", channels=4)
+    assert wide.shape == (2, 4) and not wide[:, 2:].any()
+
+
+def bp_int(v, fmt):
+    from realhires import bitperfect
+
+    return bitperfect.int_sample(float(v), fmt)
+
+
+def test_bit_perfect_resamples_when_the_device_lacks_the_rate(tmp_path):
+    path = int_song(tmp_path / "hi.flac", 0.5, 96000, 24)
+    out = ManualOutput(rates=[44100, 48000])
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(path)
+    got, _ = pull_all(p, out)
+    assert out.opened == [48000] and abs(len(got) - 24000) <= 64
+    p.play(path)
+    out.pull(500)
+    assert p.output_info()["bit_perfect"] == "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz."
+    p.close()
+
+
+def test_bit_perfect_joins_songs_gaplessly_only_at_the_same_rate_and_format(tmp_path):
+    a = int_song(tmp_path / "a.flac", 0.4, 44100, 16, seed=1)
+    b = int_song(tmp_path / "b.flac", 0.3, 44100, 16, seed=2)
+    c = int_song(tmp_path / "c.flac", 0.3, 48000, 16, seed=3)
+    d = int_song(tmp_path / "d.flac", 0.3, 48000, 24, seed=4)
+    out = ManualOutput()
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(a)
+    p.set_next(b, after=a)
+    got, events = [], []
+    order = {a: b, b: c, c: d}
+    while not any(e[0] in ("finished", "error") for e in events):
+        got.append(out.pull(800))
+        for e in p.poll():
+            events.append(e)
+            if e[0] == "advanced" and e[1] in order:
+                p.set_next(order[e[1]], after=e[1])
+    assert [e for e in events] == [("advanced", b), ("advanced", c), ("advanced", d), ("finished", d)]
+    # a and b share one device; c needs 48 kHz, d a 32-bit format: the device is reopened each time
+    assert out.opened == [44100, 48000, 48000] and out.opened_formats == ["i16", "i16", "i32"]
+    first = np.concatenate([g for g in got if g.dtype == np.int16])
+    assert np.array_equal(first.reshape(-1)[:len(ints(a, 16)) + len(ints(b, 16))],
+                          np.concatenate([ints(a, 16), ints(b, 16)])), "a gap between a and b"
+    p.close()
+
+
+def test_a_busy_device_plays_the_normal_way_and_says_why(tmp_path):
+    path = int_song(tmp_path / "s.flac", 0.3, 44100, 16)
+    out = ManualOutput(busy=True)
+    p = Player(out)
+    p.set_volume(0.5)
+    p.set_bit_perfect(True)
+    p.play(path)
+    first = out.pull(1000)
+    assert out.opened_formats == ["f32"] and out.exclusive_opened == [False]
+    assert first.dtype == np.float32 and np.array_equal(first, decoded(path)[:1000]), "gain 1, no EQ even so"
+    assert p.output_info()["bit_perfect"] == ("No: The device is in use by another program, so the sound is "
+                                               "mixed by the system.")
+    p.close()
+
+
+def test_turning_bit_perfect_on_restarts_the_song_at_its_position(tmp_path):
+    path = int_song(tmp_path / "s.flac", 1.0, 44100, 16)
+    out = ManualOutput()
+    p = Player(out)
+    p.set_volume(1.0)
+    p.play(path)
+    out.pull(4410)
+    assert out.opened_formats == ["f32"] and p.output_info()["bit_perfect"] == "Off"
+    p.set_bit_perfect(True)
+    assert p.position() == pytest.approx(0.1)
+    got = out.pull(2000)
+    assert out.opened_formats == ["f32", "i16"] and np.array_equal(got.reshape(-1), ints(path, 16)[8820:12820])
+    p.set_bit_perfect(False)
+    assert out.pull(100).dtype == np.float32 and out.opened_formats[-1] == "f32"
+    p.close()
+
+
+def test_bit_perfect_lossy_song_says_it_is_decoded(tmp_path):
+    try:
+        path = song(tmp_path / "l.m4a", 0.4, rate=44100, codec=("-c:a", "aac", "-b:a", "128k"))
+    except subprocess.CalledProcessError:
+        pytest.skip("no AAC encoder")
+    out = ManualOutput()
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(path)
+    out.pull(500)
+    assert out.opened_formats == ["f32"]
+    assert p.output_info()["bit_perfect"] == "Yes (decoded lossy audio): 32-bit float, 44.1 kHz, Test output"
+    p.close()
+
+
+@pytest.mark.skipif(_null_backend() is None, reason="miniaudio not installed")
+def test_bit_perfect_through_miniaudio_builds_the_device_in_the_songs_format(tmp_path):
+    path = int_song(tmp_path / "s24.flac", 0.6, 96000, 24)
+    out = player.MiniaudioOutput(backends=[_null_backend()])
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(path)
+    assert wait_for(lambda: p.position() > 0.2, 5)
+    info = p.output_info()
+    assert info["rate"] == 96000 and info["sample_format"] == "i32" and info["format"] == "24-bit integer in 32-bit"
+    assert info["bit_perfect"] == "Yes: 24-bit, 96 kHz, NULL Playback Device"
+    assert out._device.format.name == "SIGNED32" and out._device.nchannels == 2
+    events = []
+    assert wait_for(lambda: events.extend(p.poll()) or events, 10)
+    assert events == [("finished", path)]
+    p.close()
+
+
+def test_windows_note_when_the_exclusive_format_is_fixed(tmp_path):
+    """The Python app on Windows gets an exclusive stream only in the device's Default Format
+    (miniaudio 0.11), so a song in another rate says where that format is set."""
+    from realhires import bitperfect
+
+    class FixedFormat(ManualOutput):
+        def exclusive(self, device):
+            ex = super().exclusive(device)
+            ex.note = bitperfect.WASAPI_FORMAT_NOTE
+            return ex
+
+    path = int_song(tmp_path / "s.flac", 0.3, 44100, 16)
+    out = FixedFormat(rates=[48000], formats=["i32"])
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(path)
+    out.pull(500)
+    assert p.output_info()["bit_perfect"] == ("No: The device cannot play 44.1 kHz, so the song is resampled to "
+                                               "48 kHz. " + bitperfect.WASAPI_FORMAT_NOTE)
+    p.close()

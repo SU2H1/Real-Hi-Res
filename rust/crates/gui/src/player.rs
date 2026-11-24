@@ -340,16 +340,41 @@ pub fn gain_of(state: &PlayerState) -> f32 {
     }
 }
 
+/// The gain the engine gets: exactly 1 (0 when muted) with bit-perfect playback,
+/// which keeps the saved volume for when it is turned off.
+pub fn engine_gain(state: &PlayerState, bit_perfect: bool) -> f32 {
+    if bit_perfect && !state.muted {
+        1.0
+    } else {
+        gain_of(state)
+    }
+}
+
+/// What bit-perfect playback needs to know about a library song (rate 0: the engine reads the file).
+pub fn song_of(t: Option<&Track>) -> realhires::bitperfect::Song {
+    match t {
+        Some(t) => realhires::bitperfect::Song {
+            rate: t.sample_rate.max(0) as u32,
+            channels: t.channels.max(0) as u32,
+            bits: t.bits.max(0) as u32,
+            is_float: t.is_float,
+            is_lossy: t.is_lossy,
+        },
+        None => Default::default(),
+    }
+}
+
 impl Player {
     pub fn new(ctx: &egui::Context, cfg: Settings, initial: Vec<String>) -> Player {
         let quality_first = !initial.is_empty();
         let scanner = App::new(ctx, cfg, initial);
         let state = playerstate::load(None);
         let tracks = Library::open(None).map(|l| l.tracks()).unwrap_or_default();
-        let engine = Engine::new();
-        engine.set_gain(gain_of(&state));
+        let mut engine = Engine::new();
+        engine.set_gain(engine_gain(&state, scanner.cfg.bit_perfect));
         engine.set_eq(&state.eq);
         engine.set_gapless(scanner.cfg.gapless);
+        engine.set_bit_perfect(scanner.cfg.bit_perfect);
         let mut p = Player {
             covers: Covers::new(ctx),
             ctx: ctx.clone(),
@@ -425,8 +450,8 @@ impl Player {
             if let Some(q) = p.queue.as_mut() {
                 q.start(&last);
             }
-            let rate = p.lib.track(&last).map(|t| t.sample_rate as u32).unwrap_or(0);
-            let token = p.engine.cue(&last, pos, rate);
+            let song = song_of(p.lib.track(&last));
+            let token = p.engine.cue(&last, pos, song);
             p.now = Some(NowPlaying { token, path: last, active: true });
             p.update_next();
         }
@@ -556,8 +581,8 @@ impl Player {
     }
 
     fn play_path(&mut self, path: &str) {
-        let rate = self.lib.track(path).map(|t| t.sample_rate as u32).unwrap_or(0);
-        let token = self.engine.play(path, 0.0, rate);
+        let song = song_of(self.lib.track(path));
+        let token = self.engine.play(path, 0.0, song);
         self.now = Some(NowPlaying { token, path: path.to_string(), active: true });
         self.message = None;
         self.update_next();
@@ -599,8 +624,8 @@ impl Player {
         let next = q.clone().next(true);
         match next {
             Some(p) => {
-                let rate = self.lib.track(&p).map(|t| t.sample_rate as u32).unwrap_or(0);
-                self.engine.set_next(Some((&p, rate)));
+                let song = song_of(self.lib.track(&p));
+                self.engine.set_next(Some((&p, song)));
             }
             None => self.engine.set_next(None),
         }
@@ -693,14 +718,17 @@ impl Player {
     }
 
     pub fn set_volume(&mut self, v: f64) {
+        if self.scanner.cfg.bit_perfect {
+            return; // the volume is not used then: it is set on the amplifier or DAC
+        }
         self.state.volume = v.clamp(0.0, 1.0);
-        self.engine.set_gain(gain_of(&self.state));
+        self.engine.set_gain(engine_gain(&self.state, false));
         self.state_dirty = true;
     }
 
     pub fn toggle_mute(&mut self) {
         self.state.muted = !self.state.muted;
-        self.engine.set_gain(gain_of(&self.state));
+        self.engine.set_gain(engine_gain(&self.state, self.scanner.cfg.bit_perfect));
         self.state_dirty = true;
     }
 
@@ -727,6 +755,12 @@ impl Player {
     }
 
     fn poll_engine(&mut self) {
+        // bit-perfect playback may also be switched in the Quality check page's Settings window
+        if self.engine.bit_perfect() != self.scanner.cfg.bit_perfect {
+            let on = self.scanner.cfg.bit_perfect;
+            self.engine.set_gain(engine_gain(&self.state, on));
+            self.engine.set_bit_perfect(on);
+        }
         for ev in self.engine.take_events() {
             match ev {
                 Event::Started { token, path } => {
@@ -1226,6 +1260,11 @@ impl Player {
         if new.output_device != old.output_device {
             self.engine.set_device(&new.output_device);
         }
+        if new.bit_perfect != old.bit_perfect {
+            // the song playing restarts where it is, the device opened the new way
+            self.engine.set_gain(engine_gain(&self.state, new.bit_perfect));
+            self.engine.set_bit_perfect(new.bit_perfect);
+        }
         if new.library_folders != old.library_folders || new.extension_set() != old.extension_set() {
             self.lib_stop.store(true, Ordering::Relaxed);
             self.lib_rx = None;
@@ -1570,8 +1609,19 @@ impl Player {
             self.lcd(ui, pal, lcd_w);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let mut v = self.state.volume as f32;
-                let slider = ui.add_sized([96.0, 20.0], egui::Slider::new(&mut v, 0.0..=1.0).show_value(false));
+                // bit-perfect playback: the gain is exactly 1, so the slider shows full volume and cannot move
+                let bit_perfect = self.scanner.cfg.bit_perfect;
+                let mut v = if bit_perfect { 1.0 } else { self.state.volume as f32 };
+                let slider = ui
+                    .add_enabled_ui(!bit_perfect, |ui| {
+                        ui.add_sized([96.0, 20.0], egui::Slider::new(&mut v, 0.0..=1.0).show_value(false))
+                    })
+                    .inner;
+                let slider = if bit_perfect {
+                    slider.on_disabled_hover_text("Bit-perfect playback is on: set the volume on your amplifier or DAC")
+                } else {
+                    slider
+                };
                 if slider.changed() {
                     self.set_volume(v as f64);
                 }
@@ -1580,7 +1630,7 @@ impl Player {
                     self.toggle_mute();
                 }
                 ui.add_space(6.0);
-                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled, true, "Equalizer").clicked() {
+                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled && !bit_perfect, true, "Equalizer").clicked() {
                     self.eq_open = !self.eq_open;
                 }
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, "Up Next").clicked() {
@@ -2165,7 +2215,7 @@ mod tests {
         p.set_eq();
         frame(&ctx, &mut p);
         let t = p.lib.track(&a1).unwrap().clone();
-        let secs = crate::eqwin::info_sections(&t, 2, p.engine.info().as_ref(), &p.state, true, None);
+        let secs = crate::eqwin::info_sections(&t, 2, p.engine.info().as_ref(), &p.state, true, false, None);
         let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
         assert!(flat.contains(&"Sample rate=44.1 kHz".to_string()), "{flat:?}");
         assert!(flat.contains(&"Track=1 of 2".to_string()), "{flat:?}");
@@ -2333,6 +2383,72 @@ mod tests {
         });
         assert_eq!(p.lib.album_of(&a1).unwrap().tracks.len(), 2, "the album stays one album");
         assert_eq!(p.lib.track(&a2).unwrap().title, "Paper in the Rain");
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bit_perfect_playback_controls() {
+        // Settings, Playback, Bit-perfect playback (2.1): the song restarts where it was in its own
+        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is bypassed, and
+        // the Playback info has the Bit-perfect line and the device's real format
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-bitperfect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a = song(&music, "Night Train", "Coastline", "Ada Lux", "Pop", 1, 96_000, 3.0);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg.clone(), vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 1 && p.lib_rx.is_none());
+        p.set_volume(0.5);
+        p.state.eq.enabled = true;
+        p.state.eq.apply_preset("Rock");
+        p.set_eq();
+        p.play_list(vec![a.clone()], Some(&a), "Night Train");
+        run_until(&ctx, &mut p, "playback", |p| p.engine.position().unwrap_or(0.0) > 0.5);
+        assert_eq!(p.engine.gain(), 0.25);
+        assert_eq!(p.engine.info().unwrap().bit_perfect, "Off");
+        let before = p.engine.position().unwrap();
+        p.settings_draft().bit_perfect = true;
+        p.settings_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+        assert!(p.scanner.cfg.bit_perfect && realhires::settings::load(None).bit_perfect);
+        assert!(p.engine.bit_perfect() && p.engine.gain() == 1.0 && p.state.volume == 0.5);
+        run_until(&ctx, &mut p, "the restart", |p| p.engine.position().unwrap_or(0.0) > before + 0.1);
+        assert_eq!(p.now.as_ref().unwrap().path, a, "the same song goes on");
+        let info = p.engine.info().unwrap();
+        assert_eq!((info.rate, info.sample_format), (96_000, realhires::bitperfect::Format::I16));
+        let t = p.lib.track(&a).unwrap().clone();
+        let secs = crate::eqwin::info_sections(&t, 1, Some(&info), &p.state, true, true, None);
+        let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
+        for want in [
+            "Output=96 kHz, 16-bit integer, stereo",
+            "Bit-perfect=Yes: 16-bit, 96 kHz, Null output (no sound)",
+            "Volume=0.0 dB",
+            "Equalizer=Bypassed while bit-perfect playback is on.",
+        ] {
+            assert!(flat.contains(&want.to_string()), "{want}: {flat:?}");
+        }
+        p.eq_open = true;
+        frame(&ctx, &mut p);
+        p.set_volume(0.1); // the slider is disabled, and nothing else changes the volume either
+        assert_eq!(p.state.volume, 0.5);
+        p.settings_draft().bit_perfect = false;
+        p.settings_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+        assert!(!p.engine.bit_perfect() && p.engine.gain() == 0.25);
+        run_until(&ctx, &mut p, "the normal path", |p| {
+            p.engine.info().is_some_and(|i| i.sample_format == realhires::bitperfect::Format::F32)
+        });
         drop(p);
         let _ = std::fs::remove_dir_all(&tmp);
     }
