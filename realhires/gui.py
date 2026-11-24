@@ -1371,8 +1371,9 @@ class CardGrid(ttk.Frame):
         self.canvas.bind("<Leave>", lambda e: self._set_hover(None))
         for w in (self.canvas,):
             w.bind("<MouseWheel>", self._wheel)
-            w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
-            w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+            if w.tk.call("tk", "windowingsystem") == "x11":  # elsewhere 4 and 5 are the back/forward buttons
+                w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
+                w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
         t.on_change(self.relayout, self)
 
     @staticmethod
