@@ -4,6 +4,11 @@ The cover is taken from the first track that has an embedded picture, or else
 from a cover image in the album folder (cover.jpg, folder.jpg, front.jpg ...).
 FFmpeg scales and crops it to a square PNG, which Tk can show directly (Tk
 cannot decode JPEG by itself).
+
+For the Cover window (2.1), cover_source() says where that cover comes from and
+gives the picture as it is stored, image_info() reads a JPEG or PNG header as
+metaflac does, fit_png() makes the picture to show, and save_folder_cover()
+writes cover.jpg (cover.png) into the album's folder.
 """
 
 from __future__ import annotations

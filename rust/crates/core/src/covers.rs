@@ -1,6 +1,7 @@
 //! Album cover thumbnails for the album/artist views (FFmpeg only): the
 //! picture embedded in a track, or a cover image in the album folder, scaled
-//! and cropped to a square PNG.
+//! and cropped to a square PNG.  For the Cover window (2.1): `cover_source()`,
+//! `image_info()`, `fit_png()` and `save_folder_cover()`, as in Python.
 
 use std::process::Stdio;
 use std::time::{Duration, Instant};

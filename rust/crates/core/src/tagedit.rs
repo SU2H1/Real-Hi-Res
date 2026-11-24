@@ -5,7 +5,10 @@
 //! the ID3v2 tag or the Ogg comment header pages change); other formats are
 //! copied by FFmpeg with `-c copy` and the same arguments, and the copy must
 //! decode to exactly the original's samples before it replaces the file.  The saved results move to the new size and time with the new
-//! tags, and the library reads the file again.
+//! tags, and the library reads the file again.  The cover (2.1, `set_cover()`,
+//! `remove_cover()`, at the end) is written the same way: a FLAC PICTURE block,
+//! an ID3v2 APIC frame or an Ogg METADATA_BLOCK_PICTURE comment natively, an
+//! attached picture through FFmpeg's stream copy for M4A and AIFF.
 
 use std::path::Path;
 
