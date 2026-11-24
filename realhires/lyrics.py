@@ -678,12 +678,27 @@ def save_lyrics(path: str, lyr: Lyrics, cfg, track: Optional[Track] = None, dry_
         written.append(target)
     if inside is not None:
         try:
+            before = os.stat(path)
             embed.embed_lyrics(path, *inside)
         except (OSError, embed.EmbedError) as exc:
             return LyricsOutcome(path, FAILED, f"Could not embed the lyrics in {name}: {exc}", track, written,
                                  lyr.how)
         written.append(path)
+        _keep_saved_results(path, before, cfg)
     return LyricsOutcome(path, status, msg, track, written, lyr.how)
+
+
+def _keep_saved_results(path: str, before: os.stat_result, cfg) -> None:
+    """Writing lyrics into a file changes its size and time but not its audio,
+    so its saved scan results stay valid (`ResultStore.retag()`)."""
+    from . import store as store_mod
+    st = store_mod.open_store(cfg)
+    if st is None:
+        return
+    try:
+        st.retag(path, before.st_size, before.st_mtime_ns)
+    finally:
+        st.close()
 
 
 def fetch_for_file(path: str, client: LrclibClient, cfg, result=None, dry_run: bool = False) -> LyricsOutcome:

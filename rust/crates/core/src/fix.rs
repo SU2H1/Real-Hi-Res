@@ -648,7 +648,7 @@ pub fn plan_fixes(results: &[FileResult], cfg: &Settings) -> (Vec<FixPlan>, Vec<
     (plans, skipped)
 }
 
-fn has_soxr() -> bool {
+pub fn has_soxr() -> bool {
     static SOXR: OnceLock<bool> = OnceLock::new();
     *SOXR.get_or_init(|| {
         command(tool("ffmpeg"))

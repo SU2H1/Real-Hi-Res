@@ -293,6 +293,22 @@ class ResultStore:
                 self.trim_graphs()
         return True
 
+    def retag(self, path: str, old_size: int, old_mtime_ns: int) -> int:
+        """The file's tags changed but its audio did not (lyrics were written
+        into it, 2.0): move its saved results to the file's new size and time,
+        so it is not analysed again.  Returns the number of rows moved."""
+        path = os.path.abspath(path)
+        try:
+            st = os.stat(path)
+            fp = fingerprint(path, st.st_size)
+            cur = self.db.execute("UPDATE results SET size=?, mtime_ns=?, fp=? WHERE path=? AND size=? AND mtime_ns=?",
+                                  (st.st_size, st.st_mtime_ns, fp, path, old_size, old_mtime_ns))
+            self.db.commit()
+            return cur.rowcount
+        except (OSError, sqlite3.Error):
+            self._rollback()
+            return 0
+
     def put_plot(self, path: str, skey: str, plot: dict) -> None:
         """Add graphs to a saved result (they were drawn later, on demand)."""
         if not plot or self.graphs_limit <= 0:

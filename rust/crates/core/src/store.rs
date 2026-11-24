@@ -513,6 +513,21 @@ impl ResultStore {
         }
     }
 
+    /// The file's tags changed but its audio did not (lyrics were written into
+    /// it, 2.0): move its saved results to its new size and time, so it is not
+    /// analysed again (Python `ResultStore.retag`).  Returns the rows moved.
+    pub fn retag(&self, path: &str, old_size: i64, old_mtime_ns: i64) -> usize {
+        let path = abspath(path);
+        let Ok((size, mtime)) = stat(&path) else { return 0 };
+        let Ok(fp) = fingerprint(&path, size) else { return 0 };
+        self.db
+            .execute(
+                "UPDATE results SET size=?1, mtime_ns=?2, fp=?3 WHERE path=?4 AND size=?5 AND mtime_ns=?6",
+                params![size, mtime, fp, path, old_size, old_mtime_ns],
+            )
+            .unwrap_or(0)
+    }
+
     /// Drop the least recently viewed graphs above the size limit.
     pub fn trim_graphs(&self) {
         let res = (|| -> rusqlite::Result<()> {

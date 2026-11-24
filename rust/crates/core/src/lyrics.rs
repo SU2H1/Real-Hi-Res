@@ -1371,6 +1371,7 @@ pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track
         written.push(target.clone());
     }
     if let Some((synced, plain)) = &inside {
+        let before = crate::store::stat(path).ok();
         if let Err(e) = crate::embed::embed_lyrics(path, synced, plain) {
             let mut o = LyricsOutcome::new(path, Status::Failed, format!("Could not embed the lyrics in {name}: {e}"))
                 .with(track, how);
@@ -1378,6 +1379,10 @@ pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track
             return o;
         }
         written.push(path.to_string());
+        // the audio is unchanged, so its saved scan results stay valid
+        if let (Some((size, mtime)), Some(st)) = (before, crate::store::open_store(cfg)) {
+            st.retag(path, size, mtime);
+        }
     }
     let mut o = LyricsOutcome::new(path, status, msg).with(track, how);
     o.written = written;
