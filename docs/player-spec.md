@@ -417,3 +417,25 @@ While it is on:
   plain .txt beat synced lyrics inside the file, which is what LRCGET's "plain text" and "embed" exports together
   leave behind. LRC kept in a .txt or in the plain-lyrics tag (USLT, UNSYNCEDLYRICS), recognised by
   `embed.looks_synced()` (at least half of the non-empty lines start with a timestamp), counts as synced.
+
+### Album covers are kept (asked for later on 2026-11-24)
+
+"When user scrolls down album or artist, it loads as it goes. Should be cached so it doesn't load in every time
+user goes down their library." Covers were made by FFmpeg from the songs whenever a card first came into view,
+after every start (and the Python app forgot all but 600 images). Now, in both versions:
+
+- **On disk**, shared by both versions: `covers/` in the data folder (`store.data_dir()`; `$REALHIRES_COVERS`
+  overrides it, and the tests point it at a temporary folder), one PNG per album and size. The name is the SHA-1
+  of a key made from the size, the album's track paths as given to `covers.cover_png()` (the first four), each
+  one's file size and `mtime_ns`, and the `mtime_ns` of their folders, so a changed song or a new folder image
+  gives a new entry; an album without a cover is remembered as an empty file. Both versions compute the same name
+  (`covers.cache_name()` / `covers::cache_name()`, checked by a parity vector). Files are written through a temp
+  file and `os.replace`; a damaged or unreadable file is made again. The folder is kept under 500 MB: when it grows
+  past that, the least recently used files (their modification time is touched when read) are deleted.
+- **In memory**, a cover once shown stays for the session (Python: no eviction of the grid size, a generous limit
+  for the large sizes; Rust: textures are kept, and the library refresh no longer drops them unless the songs
+  changed).
+- **Made ahead**: once the library index is ready, one background worker makes the grid-size covers of every album
+  that has none on disk yet, after the covers asked for on screen (those always go first), so the next scroll finds
+  them ready; it stops when the app quits.
+- The sizes are the same in both apps where they can be, so the disk entries are shared.
