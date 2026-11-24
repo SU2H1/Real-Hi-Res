@@ -1,0 +1,323 @@
+{
+"builtin": {
+"Light": {
+"dark": false,
+"colors": {
+"background": "#ffffff",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#f2f2f4",
+"hover": "#e8e8ed"
+}
+},
+"Dark": {
+"dark": true,
+"colors": {
+"background": "#1e1e1e",
+"sidebar": "#262628",
+"text": "#f5f5f7",
+"secondary": "#a1a1a6",
+"separator": "#3a3a3c",
+"accent": "#fa2d48",
+"panel": "#2c2c2e",
+"hover": "#333336"
+}
+},
+"Midnight": {
+"dark": true,
+"colors": {
+"background": "#0f1221",
+"sidebar": "#161a2e",
+"text": "#e8eaf6",
+"secondary": "#9aa0c3",
+"separator": "#2a2f4a",
+"accent": "#7c8cff",
+"panel": "#1c2138",
+"hover": "#23294a"
+}
+},
+"Graphite": {
+"dark": true,
+"colors": {
+"background": "#1b1b1d",
+"sidebar": "#232326",
+"text": "#ececec",
+"secondary": "#9a9a9f",
+"separator": "#38383c",
+"accent": "#ff9f0a",
+"panel": "#2a2a2d",
+"hover": "#313135"
+}
+},
+"Forest": {
+"dark": true,
+"colors": {
+"background": "#121a15",
+"sidebar": "#18231c",
+"text": "#e6efe8",
+"secondary": "#9db3a3",
+"separator": "#2b3a30",
+"accent": "#4cc38a",
+"panel": "#1d2a22",
+"hover": "#24342a"
+}
+},
+"Ocean": {
+"dark": false,
+"colors": {
+"background": "#f4f8fb",
+"sidebar": "#e8f0f6",
+"text": "#102a43",
+"secondary": "#52677c",
+"separator": "#c8d6e2",
+"accent": "#0a84ff",
+"panel": "#e9f1f7",
+"hover": "#dbe7f1"
+}
+},
+"Sepia": {
+"dark": false,
+"colors": {
+"background": "#f6efe2",
+"sidebar": "#ece2cf",
+"text": "#3b2f22",
+"secondary": "#7a6a55",
+"separator": "#d9cbb1",
+"accent": "#c0673a",
+"panel": "#efe5d2",
+"hover": "#e3d6bd"
+}
+},
+"Rose": {
+"dark": false,
+"colors": {
+"background": "#fff7f9",
+"sidebar": "#fbeaf0",
+"text": "#3a1d2a",
+"secondary": "#8a6574",
+"separator": "#efd3de",
+"accent": "#e0457b",
+"panel": "#f9e6ee",
+"hover": "#f3dbe5"
+}
+}
+},
+"custom": [
+{
+"name": "My Theme",
+"dark": true,
+"colors": {
+"background": "#1e1e1e",
+"sidebar": "#262628",
+"text": "#f5f5f7",
+"secondary": "#a1a1a6",
+"separator": "#3a3a3c",
+"accent": "#00ff00",
+"panel": "#2c2c2e",
+"hover": "#333336"
+}
+},
+{
+"name": "Paper",
+"dark": false,
+"colors": {
+"background": "#fafafa",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#f2f2f4",
+"hover": "#e8e8ed"
+}
+}
+],
+"names": [
+"Match the system",
+"Light",
+"Dark",
+"Midnight",
+"Graphite",
+"Forest",
+"Ocean",
+"Sepia",
+"Rose",
+"My Theme",
+"Paper"
+],
+"cases": [
+{
+"input": {
+"name": " My  Theme ",
+"dark": true,
+"colors": {
+"accent": "#00FF00",
+"text": "red"
+}
+},
+"output": {
+"name": "My Theme",
+"dark": true,
+"colors": {
+"background": "#1e1e1e",
+"sidebar": "#262628",
+"text": "#f5f5f7",
+"secondary": "#a1a1a6",
+"separator": "#3a3a3c",
+"accent": "#00ff00",
+"panel": "#2c2c2e",
+"hover": "#333336"
+}
+}
+},
+{
+"input": {
+"name": ""
+},
+"output": null
+},
+{
+"input": "x",
+"output": null
+},
+{
+"input": {
+"name": "Paper",
+"colors": {
+"background": "#fafafa",
+"panel": " #ABCDEF "
+}
+},
+"output": {
+"name": "Paper",
+"dark": false,
+"colors": {
+"background": "#fafafa",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#abcdef",
+"hover": "#e8e8ed"
+}
+}
+},
+{
+"input": {
+"name": "N",
+"colors": 5
+},
+"output": {
+"name": "N",
+"dark": false,
+"colors": {
+"background": "#ffffff",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#f2f2f4",
+"hover": "#e8e8ed"
+}
+}
+}
+],
+"imports": [
+{
+"text": "{\n  \"colors\": {\n    \"accent\": \"#00ff00\",\n    \"background\": \"#1e1e1e\",\n    \"hover\": \"#333336\",\n    \"panel\": \"#2c2c2e\",\n    \"secondary\": \"#a1a1a6\",\n    \"separator\": \"#3a3a3c\",\n    \"sidebar\": \"#262628\",\n    \"text\": \"#f5f5f7\"\n  },\n  \"dark\": true,\n  \"format\": \"real-hi-res-theme\",\n  \"name\": \"My Theme\",\n  \"version\": 1\n}\n",
+"theme": {
+"name": "My Theme 2",
+"dark": true,
+"colors": {
+"background": "#1e1e1e",
+"sidebar": "#262628",
+"text": "#f5f5f7",
+"secondary": "#a1a1a6",
+"separator": "#3a3a3c",
+"accent": "#00ff00",
+"panel": "#2c2c2e",
+"hover": "#333336"
+}
+}
+},
+{
+"text": "{\n  \"colors\": {\n    \"accent\": \"#fa2d48\",\n    \"background\": \"#fafafa\",\n    \"hover\": \"#e8e8ed\",\n    \"panel\": \"#f2f2f4\",\n    \"secondary\": \"#6e6e73\",\n    \"separator\": \"#d2d2d7\",\n    \"sidebar\": \"#f5f5f7\",\n    \"text\": \"#1d1d1f\"\n  },\n  \"dark\": false,\n  \"format\": \"real-hi-res-theme\",\n  \"name\": \"Dark\",\n  \"version\": 1\n}\n",
+"theme": {
+"name": "Dark 2",
+"dark": false,
+"colors": {
+"background": "#fafafa",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#f2f2f4",
+"hover": "#e8e8ed"
+}
+}
+},
+{
+"text": "{}",
+"error": "This file is not a theme of Universal Music Player."
+},
+{
+"text": "nope",
+"error": "This file is not a theme of Universal Music Player."
+},
+{
+"text": "{\"name\": \"Paper\", \"colors\": {}}",
+"theme": {
+"name": "Paper 2",
+"dark": false,
+"colors": {
+"background": "#ffffff",
+"sidebar": "#f5f5f7",
+"text": "#1d1d1f",
+"secondary": "#6e6e73",
+"separator": "#d2d2d7",
+"accent": "#fa2d48",
+"panel": "#f2f2f4",
+"hover": "#e8e8ed"
+}
+}
+}
+],
+"checks": [
+[
+"dark",
+null,
+"“dark” is the name of a built-in theme; choose another one."
+],
+[
+"My theme",
+null,
+"You already have a theme called “My theme”."
+],
+[
+" New  one ",
+"New one",
+null
+],
+[
+"",
+null,
+"Give the theme a name."
+],
+[
+"Match the system",
+null,
+"“Match the system” is the name of a built-in theme; choose another one."
+]
+],
+"copy": [
+"Midnight copy",
+"My Theme copy"
+],
+"export": "{\n  \"colors\": {\n    \"accent\": \"#00ff00\",\n    \"background\": \"#1e1e1e\",\n    \"hover\": \"#333336\",\n    \"panel\": \"#2c2c2e\",\n    \"secondary\": \"#a1a1a6\",\n    \"separator\": \"#3a3a3c\",\n    \"sidebar\": \"#262628\",\n    \"text\": \"#f5f5f7\"\n  },\n  \"dark\": true,\n  \"format\": \"real-hi-res-theme\",\n  \"name\": \"My Theme\",\n  \"version\": 1\n}\n"
+}

@@ -1,0 +1,154 @@
+# Scan the files of a release with VirusTotal, Kaspersky and Hybrid Analysis and
+# keep the results, with an explanation of any detection, in the release notes.
+#
+# * Before every release (called by build.yml with prerelease: true): scans the
+#   packages that run built, writes the release notes with the results and
+#   hands them to the release job as the "release-notes" artifact.  It fails,
+#   which holds the release back, unless VirusTotal finished every file.
+# * Every day for the latest release, and on demand (Actions -> "Antivirus
+#   scan" -> Run workflow): scans the published files again and replaces the
+#   section in the release notes.
+# * On demand with notes_only: only makes the release page describe its own
+#   version (drops the "What's new" sections of other versions and takes this
+#   version's from packaging/RELEASE_NOTES.md); nothing is scanned.
+#
+# API keys are repository secrets (Settings -> Secrets and variables -> Actions):
+#   VT_API_KEY, HYBRID_ANALYSIS_API_KEY, KASPERSKY_OPENTIP_API_KEY (optional).
+# Without a key that service is skipped and the table links to its public report.
+name: Antivirus scan
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: ""
+      build_url:
+        type: string
+        default: ""
+      prerelease:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to scan (empty = the latest release)"
+        default: ""
+      notes_only:
+        description: "Only clean up the release notes (no scan)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 4 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Refreshes of published releases queue behind each other; a pre-release
+    # scan or a notes-only clean-up never waits for (or is replaced by) one of them.
+    concurrency:
+      group: ${{ (inputs.prerelease || inputs.notes_only) && format('av-scan-{0}', github.run_id) || 'av-scan' }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download this run's packages
+        if: inputs.prerelease
+        uses: actions/download-artifact@v6
+        with:
+          pattern: UniversalMusicPlayer-*
+          path: assets
+          merge-multiple: true
+      - name: Prepare the files
+        id: rel
+        shell: bash
+        run: |
+          mkdir -p assets inner
+          TAG="${{ inputs.tag }}"
+          BUILD_URL="${{ inputs.build_url }}"
+          if [ "${{ inputs.prerelease }}" = true ]; then
+            echo "Scanning the packages of $TAG before it is released"
+            # The release notes name the downloads with a <version> placeholder.
+            sed "s/<version>/${TAG#v}/g" packaging/RELEASE_NOTES.md > notes.md
+          else
+            [ -n "$TAG" ] || TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName)
+            echo "Release $TAG"
+            [ "${{ inputs.notes_only }}" = true ] || gh release download "$TAG" --repo "$REPO" -D assets
+            gh release view "$TAG" --repo "$REPO" --json body -q .body > notes.md
+            if [ -z "$BUILD_URL" ]; then
+              SHA=$(gh api "repos/$REPO/commits/$TAG" -q .sha || true)
+              [ -z "$SHA" ] || BUILD_URL=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" \
+                --event push --limit 10 --json url,headBranch -q 'map(select(.headBranch=="main"))[0].url // ""' || true)
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "build_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+          # The Windows programs inside the zips are what antivirus programs judge:
+          # the launchers of the Python version and the two Rust programs.
+          INNER=()
+          for z in assets/*windows-x64.zip; do
+            [ -f "$z" ] || continue
+            case "$(basename "$z")" in
+              UniversalMusicPlayer-Rust-*) DIR=UniversalMusicPlayer-Rust; EXES=(universal-music-player.exe realhires.exe) ;;
+              *) DIR=UniversalMusicPlayer; EXES=(UniversalMusicPlayer.exe realhires-cli.exe) ;;
+            esac
+            for e in "${EXES[@]}"; do
+              unzip -j -o "$z" "$DIR/$e" -d inner
+              INNER+=(--inner "$e=$(basename "$z")")
+            done
+          done
+          : > inner-args.txt
+          [ ${#INNER[@]} -eq 0 ] || printf '%s\n' "${INNER[@]}" > inner-args.txt
+          ls -la assets inner
+      - name: Scan
+        shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
+          KASPERSKY_OPENTIP_API_KEY: ${{ secrets.KASPERSKY_OPENTIP_API_KEY }}
+          PYTHONUNBUFFERED: "1"   # log each service's reply when it arrives
+        run: |
+          shopt -s nullglob
+          mapfile -t INNER < inner-args.txt
+          # The page describes only this version; its section comes from RELEASE_NOTES.md.
+          NOTES=(--tag "${{ steps.rel.outputs.tag }}" --notes-in notes.md --notes-out release-notes.md
+                 --whats-new packaging/RELEASE_NOTES.md)
+          if [ "${{ inputs.notes_only }}" = true ]; then
+            python3 packaging/av_scan.py "${NOTES[@]}" --notes-only
+            exit 0
+          fi
+          EXTRA=()
+          if [ "${{ inputs.prerelease }}" = true ]; then
+            # a release waits for VirusTotal on every file; with the Python and the Rust
+            # packages there are about 20 files at 4 requests a minute
+            EXTRA=(--require-results --minutes 75)
+          else
+            EXTRA=(--opentip-upload-all)     # refreshes have time to send the archives to Kaspersky too
+          fi
+          python3 packaging/av_scan.py "${NOTES[@]}" --json av-results.json \
+            --build-url "${{ steps.rel.outputs.build_url }}" "${EXTRA[@]}" "${INNER[@]}" inner/*.exe assets/*
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Update the release notes
+        if: ${{ !inputs.prerelease }}
+        run: gh release edit "${{ steps.rel.outputs.tag }}" --repo "$REPO" --notes-file release-notes.md
+      - name: Hand the notes to the release job
+        if: inputs.prerelease
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          overwrite: true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: av-results-${{ steps.rel.outputs.tag }}
+          path: av-results.json
+          if-no-files-found: ignore
+          overwrite: true

@@ -1,0 +1,386 @@
+{
+"messy": {
+"liked": [
+"/a",
+"/b",
+5
+],
+"disliked": [
+"/b",
+"/c",
+"/c",
+""
+],
+"volume": "0.4",
+"eq_presets": [
+{
+"name": " Night  Mode ",
+"eq": {
+"enabled": true,
+"prevent_clipping": false,
+"graphic": {
+"enabled": true,
+"preset": "Vocal",
+"preamp": -2.5,
+"gains": [
+-2.0,
+-2.0,
+-1.0,
+1.0,
+3.0,
+3.5,
+3.0,
+1.5,
+0.0,
+-1.0
+]
+},
+"parametric": {
+"enabled": true,
+"preamp": 1.5,
+"bands": [
+{
+"type": "low_shelf",
+"freq": 80.0,
+"gain": 3.0,
+"q": 0.707,
+"on": true
+},
+{
+"type": "notch",
+"freq": 60.0,
+"gain": 0.0,
+"q": 8.0,
+"on": true
+},
+{
+"type": "peak",
+"freq": 2500.0,
+"gain": -2.0,
+"q": 2.0,
+"on": false
+}
+]
+}
+}
+},
+{
+"name": "night mode",
+"eq": {}
+},
+{
+"name": ""
+},
+7
+],
+"playlists": [
+{
+"id": "a1",
+"name": "  Road ",
+"created": "12.5",
+"songs": [
+"/a",
+"/a",
+3,
+"/b"
+]
+},
+{
+"id": "a1",
+"name": "dupe"
+},
+{
+"name": "no id"
+},
+{
+"id": "b2",
+"name": "",
+"songs": "x"
+}
+]
+},
+"messy_out": {
+"_version": 1,
+"liked": [
+"/a",
+"/b"
+],
+"volume": 0.4,
+"muted": false,
+"shuffle": "off",
+"repeat": "off",
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Flat",
+"preamp": 0.0,
+"gains": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+},
+"last": {
+"path": "",
+"position": 0.0
+},
+"disliked": [
+"/c"
+],
+"eq_presets": [
+{
+"name": "Night Mode",
+"eq": {
+"enabled": true,
+"prevent_clipping": false,
+"graphic": {
+"enabled": true,
+"preset": "Vocal",
+"preamp": -2.5,
+"gains": [
+-2.0,
+-2.0,
+-1.0,
+1.0,
+3.0,
+3.5,
+3.0,
+1.5,
+0.0,
+-1.0
+]
+},
+"parametric": {
+"enabled": true,
+"preamp": 1.5,
+"bands": [
+{
+"type": "low_shelf",
+"freq": 80.0,
+"gain": 3.0,
+"q": 0.707,
+"on": true
+},
+{
+"type": "notch",
+"freq": 60.0,
+"gain": 0.0,
+"q": 8.0,
+"on": true
+},
+{
+"type": "peak",
+"freq": 2500.0,
+"gain": -2.0,
+"q": 2.0,
+"on": false
+}
+]
+}
+}
+}
+],
+"playlists": [
+{
+"id": "a1",
+"name": "Road",
+"created": 12.5,
+"songs": [
+"/a",
+"/b"
+]
+},
+{
+"id": "b2",
+"name": "Playlist",
+"created": 0.0,
+"songs": []
+}
+]
+},
+"ops_out": {
+"_version": 1,
+"liked": [],
+"volume": 0.8,
+"muted": false,
+"shuffle": "off",
+"repeat": "off",
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Flat",
+"preamp": 0.0,
+"gains": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+},
+"last": {
+"path": "",
+"position": 0.0
+},
+"disliked": [
+"/m/a",
+"/m/z"
+],
+"eq_presets": [
+{
+"name": "My Jazz",
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Jazz",
+"preamp": 0.0,
+"gains": [
+3.0,
+2.0,
+1.0,
+2.0,
+-1.5,
+-1.5,
+0.0,
+1.0,
+2.0,
+3.0
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+}
+},
+{
+"name": "Bright",
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Flat",
+"preamp": 0.0,
+"gains": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+}
+}
+],
+"playlists": [
+{
+"id": "f4240",
+"name": "Road Trip",
+"created": 1000.0,
+"songs": [
+"/m/c",
+"/m/a",
+"/m/b"
+]
+},
+{
+"id": "f4241",
+"name": "Night Drive",
+"created": 1000.0,
+"songs": []
+}
+]
+},
+"name_errors": [
+[
+"rock",
+"“rock” is the name of a built-in preset; choose another one."
+],
+[
+"my jazz",
+"You already have a preset called “my jazz”."
+],
+[
+"",
+"Give the preset a name."
+],
+[
+"  ",
+"Give the preset a name."
+]
+]
+}

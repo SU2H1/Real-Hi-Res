@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+realhires-report*/
+out/
+pkg/
+rust/target/
+# working copies of helper agents
+.claude/worktrees/

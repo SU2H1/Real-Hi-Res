@@ -1,0 +1,177 @@
+"""The 2.0 additions to the player's core: the library's groupings (album
+artists, years, composers, folders), the play history and "Your Stats",
+playlists, dislikes, named EQ presets with their files, and themes."""
+
+import os
+import time
+
+import pytest
+
+from realhires import eq, musiclib, playerstate, stats, themes
+from realhires.musiclib import Track
+from realhires.playqueue import PlayQueue
+
+
+def P(path: str) -> str:
+    """A path as the library holds it on this system ("/m/A" is "D:\\m\\A" on Windows)."""
+    return os.path.abspath(path)
+
+
+def _t(path, **kw):
+    return Track(path=P(path), **kw)
+
+
+LIB = [
+    _t("/m/A/01.flac", title="One", artist="Ann", album="Alpha", album_artist="Ann", genre="Pop", year="2001",
+       composer="Zed", track=1, duration=200.0),
+    _t("/m/A/02.flac", title="Two", artist="Ann feat. Bo", album="Alpha", album_artist="Ann", genre="pop",
+       year="2001", track=2, duration=180.0),
+    _t("/m/B/sub/03.flac", title="Three", artist="Cy", album="Beta", genre="Jazz", year="1999", composer="zed",
+       track=1, duration=20.0),
+    _t("/m/B/04.mp3", title="Four", artist="Cy", album="", year="x", duration=240.0, is_lossy=True, codec="mp3"),
+]
+
+
+def test_groupings():
+    assert [g["name"] for g in musiclib.artists(LIB)] == ["Ann", "Ann feat. Bo", "Cy"]
+    assert [(g["name"], len(g["tracks"])) for g in musiclib.album_artists(LIB)] == [("Ann", 2), ("Cy", 2)]
+    assert [g["name"] for g in musiclib.genres(LIB)] == ["Jazz", "Pop", "Unknown Genre"]
+    assert [(g["name"], len(g["tracks"])) for g in musiclib.composers(LIB)] == [("Unknown Composer", 2), ("Zed", 2)]
+    assert [g["name"] for g in musiclib.years(LIB)] == ["2001", "1999", "Unknown Year"]
+    folders, songs = musiclib.folder_view(LIB, P("/m"))
+    assert folders == [(P("/m/A"), "A", 2), (P("/m/B"), "B", 2)] and songs == []
+    folders, songs = musiclib.folder_view(LIB, P("/m/B"))
+    assert folders == [(P("/m/B/sub"), "sub", 1)] and [t.title for t in songs] == ["Four"]
+
+
+def test_play_history_and_stats(tmp_path):
+    lib = musiclib.Library(str(tmp_path / "library.sqlite"))
+    t0 = 1_700_000_000.0  # 2023-11-14 22:13:20 UTC
+    assert not lib.add_play(LIB[0], t0, 0.5)          # too short to log
+    lib.add_play(LIB[0], t0, 200.0)
+    lib.add_play(LIB[0], t0 + 3600, 40.0)
+    lib.add_play(LIB[2], t0 + 86400, 10.0)              # half of a 20 s song: counts
+    lib.add_play(LIB[1], t0 + 2 * 86400, 5.0)           # skipped: logged, not a play
+    plays = lib.plays()
+    assert [p.path for p in plays] == [P("/m/A/01.flac"), P("/m/A/01.flac"), P("/m/B/sub/03.flac"),
+                                       P("/m/A/02.flac")]
+    assert lib.recently_played() == [P("/m/A/02.flac"), P("/m/B/sub/03.flac"), P("/m/A/01.flac")]
+    assert len(lib.plays(since=t0 + 1000)) == 3
+
+    utc = time.gmtime
+    st = stats.compute(plays, localtime=utc)
+    assert (st["plays"], st["logged"], st["songs"], st["artists"]) == (3, 4, 3, 3)
+    assert st["seconds"] == 255.0
+    assert st["top_songs"][0]["key"] == P("/m/A/01.flac") and st["top_songs"][0]["plays"] == 2
+    assert st["top_artists"][0]["name"] == "Ann" and st["top_artists"][0]["songs"] == 1
+    assert st["by_hour"][22] == 215.0 and st["by_hour"][23] == 40.0
+    assert st["days"] == 3 and st["streak"] == 3 and st["busiest_day"] == ["2023-11-14", 240.0]
+    cards = stats.cards(st)
+    labels = [c[0] for c in cards]
+    assert labels[:3] == ["Minutes listened", "Your top song", "Your top artist"]
+    assert cards[0][1] == "4" and cards[1][2] == "Ann · 2 plays"
+    assert ("Your listening hour", "10 PM", "when you listen most") in cards
+    assert ("Longest streak", "3 days", "in a row with music") in cards
+    assert stats.cards(stats.compute([], localtime=utc)) == []
+    start, end = stats.period_range("Last year", t0, localtime=utc,
+                                    mktime=lambda tt: __import__("calendar").timegm(tt))
+    assert (start, end) == (1640995200.0, 1672531200.0)
+    lib.close()
+
+    ls = stats.library_stats(LIB)
+    assert (ls["songs"], ls["albums"], ls["seconds"]) == (4, 3, 640.0)
+    assert ls["qualities"] == [["Hi-Res Lossless", 0], ["Lossless", 3], ["Lossy", 1]]
+
+
+def test_playlists_dislikes_and_eq_presets(tmp_path):
+    st = playerstate.PlayerState()
+    pid = st.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)
+    assert st.playlist(pid)["songs"] == ["/m/a", "/m/b"]
+    pid2 = st.create_playlist("road trip", now=1000.0)
+    assert st.playlist(pid2)["name"] == "road trip 2" and pid2 != pid
+    assert st.add_to_playlist(pid, ["/m/b", "/m/c"]) == 1
+    st.move_in_playlist(pid, "/m/c", -2)
+    assert st.playlist(pid)["songs"] == ["/m/c", "/m/a", "/m/b"]
+    st.remove_from_playlist(pid, ["/m/a"])
+    st.rename_playlist(pid2, "Night")
+    st.delete_playlist(pid2)
+    st.set_liked("/m/a", True)
+    st.set_disliked("/m/a", True)
+    assert not st.is_liked("/m/a") and st.is_disliked("/m/a")
+    st.set_liked("/m/a", True)
+    assert st.is_liked("/m/a") and not st.is_disliked("/m/a")
+    st.set_disliked("/m/z", True)
+    with pytest.raises(playerstate.InvalidName):
+        st.save_eq_preset("rock", eq.default_state())
+    st.eq = eq.apply_preset(eq.default_state(), "Jazz")
+    st.save_eq_preset("  My   Jazz ", st.eq)
+    assert st.matching_eq_preset() == "My Jazz"
+    with pytest.raises(playerstate.InvalidName):
+        st.save_eq_preset("my jazz", st.eq)
+    st.rename_eq_preset("My Jazz", "Late Jazz")
+    path = str(tmp_path / "player.json")
+    playerstate.save(st, path)
+    again = playerstate.load(path)
+    assert again.playlists == st.playlists and again.disliked == ["/m/z"]
+    assert [p["name"] for p in again.eq_presets] == ["Late Jazz"] and again.matching_eq_preset() == "Late Jazz"
+    again.delete_eq_preset("Late Jazz")
+    assert again.eq_presets == []
+
+
+def test_shuffle_leaves_out_disliked_songs():
+    songs = [t.song() for t in LIB]
+    paths = [t.path for t in LIB]
+    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={P("/m/A/02.flac"), P("/m/B/04.mp3")})
+    q.start(P("/m/A/01.flac"))
+    assert q.order == [P("/m/A/01.flac"), P("/m/B/sub/03.flac")]
+    q = PlayQueue(songs, paths, shuffle="songs", seed=7, disliked={P("/m/A/01.flac")})
+    assert q.start(P("/m/A/01.flac")) == P("/m/A/01.flac") and P("/m/A/01.flac") not in q.order[1:]
+    q = PlayQueue(songs, paths, shuffle="off", disliked={P("/m/A/02.flac")})
+    q.start(P("/m/A/01.flac"))
+    assert q.order == paths  # in order: nothing is left out
+
+
+def test_eq_preset_files():
+    s = eq.apply_preset(eq.default_state(), "Rock")
+    s["parametric"] = {"enabled": True, "preamp": -1.5,
+                       "bands": [{"type": "high_shelf", "freq": 8000, "gain": -3, "q": 0.71, "on": True},
+                                 {"type": "notch", "freq": 3000, "gain": 0, "q": 5, "on": False}]}
+    name, back, notes = eq.import_eq(eq.export_json("Mine", s), "File")
+    assert name == "Mine" and back == eq.normalize(s) and notes == []
+    apo = eq.export_apo("Mine", s)
+    assert "Filter 11: ON HSC Fc 8000.0 Hz Gain -3.0 dB Q 0.71" in apo
+    assert "Filter 12: OFF NO Fc 3000.0 Hz Q 5.00" in apo
+    auto = ("Preamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 3.5 dB Q 0.70\n"
+            "Filter 2: ON LSC Fc 105 Hz Gain 4.1 dB Q 0.71\nFilter 3: ON BP Fc 1 Hz\n")
+    name, st, notes = eq.import_eq(auto, "HD 600")
+    assert name == "HD 600" and st["enabled"] and not st["graphic"]["enabled"]
+    assert st["parametric"]["preamp"] == -6.2 and len(st["parametric"]["bands"]) == 2
+    assert st["parametric"]["bands"][1] == {"type": "low_shelf", "freq": 105.0, "gain": 4.1, "q": 0.71, "on": True}
+    assert notes == ["Filters of the type BP are not supported and were left out."]
+    _, st, _ = eq.import_eq("GraphicEQ: 20 -1; 1000 0; 20000 -6", "G")
+    assert st["graphic"]["enabled"] and st["graphic"]["gains"][5] == 0.0 and st["graphic"]["gains"][0] < 0
+    with pytest.raises(eq.EqFileError):
+        eq.import_eq("hello", "x")
+
+
+def test_themes(tmp_path, monkeypatch):
+    monkeypatch.setenv(themes.THEMES_ENV, str(tmp_path / "themes.json"))
+    assert themes.load_custom() == []
+    assert themes.names([])[:3] == ["Match the system", "Light", "Dark"]
+    assert themes.resolve("Match the system", True, [])["name"] == "Dark"
+    assert themes.resolve("Nope", False, [])["name"] == "Light"
+    mine = dict(themes.BUILTIN["Midnight"], name=themes.copy_name("Midnight", []))
+    mine["colors"] = dict(mine["colors"], accent="#00FF00", text="nope")
+    mine = themes.normalize(mine)
+    assert mine["name"] == "Midnight copy" and mine["colors"]["accent"] == "#00ff00"
+    assert mine["colors"]["text"] == themes.BUILTIN["Dark"]["colors"]["text"]
+    themes.save_custom([mine])
+    loaded = themes.load_custom()
+    assert loaded == [mine] and themes.resolve("Midnight copy", False, loaded) == mine
+    with pytest.raises(themes.ThemeError):
+        themes.check_name("dark", loaded)
+    again = themes.import_theme(themes.export_theme(mine), loaded)
+    assert again["name"] == "Midnight copy 2" and again["colors"] == mine["colors"]
+    with pytest.raises(themes.ThemeError):
+        themes.import_theme("{}", loaded)
+    assert os.path.exists(tmp_path / "themes.json")
