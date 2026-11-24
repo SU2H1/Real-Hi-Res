@@ -490,3 +490,67 @@ The user's words, then what both apps do:
     album artist or composer: a mosaic of up to four of their album covers, or the one cover when there is one; a
     genre or year: the same mosaic of its albums) with the name in bold and "N albums · M songs" in grey under it,
     sorted as the list was. A click opens the same page as before. Unknown names keep their "Unknown …" label.
+
+### Play Next and Add to Queue (asked for later on 2026-11-24)
+
+"When user right clicks on song, user should have the option to add to queue or play next." Every song menu
+(right-click, and "…") starts with **Play Next** and **Add to Queue**. The play queue (`playqueue.PlayQueue`, both
+versions, parity vectors `user_runs` in `python_queue.json`) keeps the songs the user queued in `queued`: Play Next
+puts the song before the songs queued earlier, Add to Queue after them. When the current song ends (or Next is
+pressed), the first queued song plays before the list goes on, whatever the shuffle and repeat modes; repeat album
+treats a queued song as an interruption (`inserted`: after it the album being repeated goes on). After Previous,
+Next first walks back up through the songs already played (`top`). Up Next lists those songs, then the queued ones,
+then the rest of the list; a double-click there (`jump()`) plays that song, dropping the queued songs listed before
+it (or all of them when the chosen song comes from the list). With nothing playing, both items start playing the
+song. The queue lasts for the session. The gapless look-ahead asks a copy of the queue in both apps, so the queued
+song follows without a gap.
+
+### Eight more requests (later on 2026-11-24)
+
+1. "Near the lyrics, user should be able to choose lyrics or queue for the songs that'll be playing or
+   description": on Now Playing, the right half has a segmented switch at its top: **Lyrics** | **Up Next** |
+   **Details**. Lyrics is what was there (with the label, size buttons and Back button of the earlier requests);
+   Up Next is the queue as in the Up Next panel (`up_next()`, Play Next / Add to Queue songs first, double-click
+   jumps); Details is the song's description: title, artist, album, album artist, composer, genre, year, track and
+   disc, duration, the format line ("FLAC · 24-bit/96 kHz · 2,304 kbps"), the file's path, the comment tag when
+   there is one, and the Quality check verdict with its summary when the results store has one. The choice is kept
+   for the session; the Lyrics button and Ctrl/Cmd+L select Lyrics (and hide/show it as before when it is selected).
+2. "Add calendar on top of the current stats page, user can click on date to see what songs they played at what
+   time": Your Stats starts with a month calendar (‹ month ›, Monday first, days with plays tinted by minutes
+   played, today outlined); a click on a day lists that day's plays under the calendar: time (local, "14:05"),
+   title, artist, minutes listened, newest first; a click on a song plays it. Uses `Library.plays(since, until)`
+   with the day's local midnight bounds (`stats` gets a pure helper for the month's per-day minutes, with parity
+   vectors).
+3. "When user clicks on album, there's a list of songs but unlike the list on All Songs, it doesn't display artist,
+   album, genre and quality but only time": the album page's track list uses the same columns as All Songs (number
+   first, then Title, Artist, Album, Genre, Time, Quality, the heart), sortable the same way, in track order by
+   default.
+4. "Make it so default display for Quality is Lossless etc. but when user hovers over it, it displays the bit/Hz":
+   this replaces item 2 of "Ten more requests": the Quality column shows `musiclib.quality()` ("Hi-Res Lossless",
+   "Lossless", "MP3 320 kbps") and hovering a cell shows `musiclib.resolution()` as a tooltip ("24-bit/96 kHz",
+   lossy songs "MP3 · 320 kbps · 44.1 kHz"). Sorting by the column sorts by bits, then rate.
+5. "Mouse 4 and 5 should be usable": the mouse's back and forward buttons go back and forward between pages, like a
+   browser. Both apps keep a forward list (cleared when a new page is opened); Alt+Left / Alt+Right (Cmd+[ / Cmd+]
+   on macOS) do the same. Tk: X11 buttons 8/9, Windows and macOS buttons 4/5 (not the wheel); egui:
+   `PointerButton::Extra1`/`Extra2`.
+6. "User should be able to make edit window big or small": the song information window can be resized; the fields
+   grow with its width, and its size is kept for the session.
+7. "Instead of edit info, should be labeled as properties": the menu items read **Properties…** (a song) and
+   **Album Properties…** (an album page), and the window's title is "Properties". (Names in the code may stay.)
+8. A new app icon from the user's picture of a maki roll: the roll cut out of its (painted) checkerboard background
+   onto transparency, centred with a small margin, as `realhires/assets/icon.png` (which every package, window and
+   menu entry uses); `packaging/make_icon.py` makes it from `packaging/icon-source.png`.
+
+### Several artists in one field (asked for later on 2026-11-24)
+
+"When there are several artists, as an example 'Mariah Carey, Michael Bublé', and they click 'Michael Bublé', it
+should send the user to their library's Michael Bublé page." `musiclib.split_artists(name, known)` (both versions,
+vectors `python_artists.json`) gives the artists of an artist field: it always splits at ';' (how FFmpeg joins
+several ARTIST tags) and at "feat." / "ft." / "featuring" (also in brackets), and splits at ", ", " & ", " x " and
+" / " only when one of the names it gives stands on its own somewhere in the library (`known_artists()`: the
+artist and album artist fields of every song, split at the first kind only), so "Earth, Wind & Fire" and "Simon &
+Garfunkel" stay whole. Artists and Album Artists list every artist of the field on its own, and a song is on the
+page of each of its artists. Wherever an artist is shown as a link (the album page's artist line, Now Playing, the
+LCD, the Details view), each artist of the field is its own link, with the separators between them as plain text,
+and a click opens that artist's page (`open_artist(name)`; a name that is not an artist of the library opens the
+first artist it splits into).

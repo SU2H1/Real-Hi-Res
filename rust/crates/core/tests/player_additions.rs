@@ -294,3 +294,41 @@ fn player_state_matches_python() {
     let _ = strings(&Value::Null);
     let _ = playerstate::clean_name("x");
 }
+
+
+/// Several artists in one field (2.1): the split and the groupings it gives equal Python's.
+#[test]
+fn several_artists_split_as_in_python() {
+    let path = format!("{}/tests/python_artists.json", env!("CARGO_MANIFEST_DIR"));
+    let data = realhires::json::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let tracks: Vec<musiclib::Track> =
+        data.get("tracks").unwrap().as_array().unwrap().iter().filter_map(musiclib::Track::from_json).collect();
+    let known = musiclib::known_artists(&tracks);
+    let mut want_known: Vec<String> =
+        data.get("known").unwrap().as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let mut got_known: Vec<String> = known.iter().cloned().collect();
+    want_known.sort();
+    got_known.sort();
+    assert_eq!(got_known, want_known);
+    for case in data.get("split").unwrap().as_array().unwrap() {
+        let c = case.as_array().unwrap();
+        let want: Vec<String> = c[1].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(musiclib::split_artists(c[0].as_str().unwrap(), &known), want, "{:?}", c[0]);
+    }
+    for (name, groups) in [("artists", musiclib::artists(&tracks)), ("album_artists", musiclib::album_artists(&tracks))] {
+        let got: Vec<(String, Vec<String>)> =
+            groups.iter().map(|g| (g.name.clone(), g.tracks.iter().map(|t| t.path.clone()).collect())).collect();
+        let want: Vec<(String, Vec<String>)> = data
+            .get(name)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| {
+                let g = g.as_array().unwrap();
+                (g[0].as_str().unwrap().to_string(), g[1].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect())
+            })
+            .collect();
+        assert_eq!(got, want, "{name}");
+    }
+}

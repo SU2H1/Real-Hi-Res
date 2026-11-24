@@ -33,7 +33,8 @@ LIB = [
 
 
 def test_groupings():
-    assert [g["name"] for g in musiclib.artists(LIB)] == ["Ann", "Ann feat. Bo", "Cy"]
+    # 2.1: "Ann feat. Bo" is two artists, and the song is on both pages
+    assert [g["name"] for g in musiclib.artists(LIB)] == ["Ann", "Bo", "Cy"]
     assert [(g["name"], len(g["tracks"])) for g in musiclib.album_artists(LIB)] == [("Ann", 2), ("Cy", 2)]
     assert [g["name"] for g in musiclib.genres(LIB)] == ["Jazz", "Pop", "Unknown Genre"]
     assert [(g["name"], len(g["tracks"])) for g in musiclib.composers(LIB)] == [("Unknown Composer", 2), ("Zed", 2)]
@@ -175,3 +176,26 @@ def test_themes(tmp_path, monkeypatch):
     with pytest.raises(themes.ThemeError):
         themes.import_theme("{}", loaded)
     assert os.path.exists(tmp_path / "themes.json")
+
+
+def test_several_artists_in_one_field():
+    """2.1, the user's example: "Mariah Carey, Michael Bublé" is two artists when either
+    has songs of their own; band names with a comma or '&' stay whole."""
+    T = musiclib.Track
+    lib = [T("/a", title="Duet", artist="Mariah Carey, Michael Bublé"), T("/b", title="Solo", artist="Michael Bublé"),
+           T("/c", title="Band", artist="Earth, Wind & Fire"), T("/d", title="Duo", artist="Simon & Garfunkel"),
+           T("/e", title="Feat", artist="Drake (feat. Rihanna)"), T("/f", title="Tags", artist="One;Two"),
+           T("/g", title="Many", artist="Michael Bublé & Someone x Other / More", album_artist="Michael Bublé")]
+    known = musiclib.known_artists(lib)
+    assert musiclib.split_artists("Mariah Carey, Michael Bublé", known) == ["Mariah Carey", "Michael Bublé"]
+    assert musiclib.split_artists("Earth, Wind & Fire", known) == ["Earth, Wind & Fire"]
+    assert musiclib.split_artists("Simon & Garfunkel", known) == ["Simon & Garfunkel"]
+    assert musiclib.split_artists("Drake (feat. Rihanna)", known) == ["Drake", "Rihanna"]
+    assert musiclib.split_artists("One;Two", known) == ["One", "Two"]
+    assert musiclib.split_artists("Michael Bublé & Someone x Other / More", known) == [
+        "Michael Bublé", "Someone", "Other", "More"]
+    assert musiclib.split_artists("A FEAT. b, B", set()) == ["A", "b, B"]
+    groups = {g["name"]: [t.path for t in g["tracks"]] for g in musiclib.artists(lib)}
+    assert groups["Michael Bublé"] == ["/a", "/g", "/b"] and groups["Mariah Carey"] == ["/a"]
+    assert "Earth, Wind & Fire" in groups and "Mariah Carey, Michael Bublé" not in groups
+    assert [g["name"] for g in musiclib.album_artists(lib)][:3] == ["Drake", "Earth, Wind & Fire", "Mariah Carey"]
