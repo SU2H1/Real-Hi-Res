@@ -249,6 +249,43 @@ Midnight, Graphite, Forest, Ocean, Sepia, Rose) and the user's own. Under it the
 `COLOR_LABELS`/`color_label()`), which change the app at once; **Import…** and **Export…** (.json). Built-in themes
 cannot be edited; editing one offers to make a copy. The user's themes are saved in `themes.json`.
 
+### Theme files (asked for later on 2026-11-24: "import custom theme … via files")
+
+A theme is a file: **Export…** writes one (`export_theme()`, format `real-hi-res-theme`) and **Import…** reads one
+into the user's own themes. Besides that, the **themes folder** (`themes.folder()`: "themes" next to
+`themes.json`) holds theme files that are used as they are: every `.json` file in it that is a theme appears in the
+theme menu after the user's own themes (`themes.load_folder()`, in file-name order; a taken name gets " 2", " 3"…;
+other files are ignored). Under the theme menu a line says "Theme files (.json) put into the themes folder appear
+in this menu." with **Open themes folder** (creates the folder when needed and opens it in the file manager) and
+**Import theme…**. The folder is read again whenever the menu can change: Python each time the menu opens (the
+combobox's `postcommand`) and the Settings page is built, Rust when the Settings page is shown and then every two
+seconds while it is. A theme from the folder is not edited in the app: the editor says "“Neon” comes from the file
+neon.json in the themes folder. Change that file, or make a copy you can change here with New theme…", and offers
+New theme… and Export…. The editor's row no longer has Import…: importing is the Import theme… button of that
+line. If its file goes away, the theme falls back to "Match the system" (`resolve()`).
+The Rust app also imports a theme `.json` dropped onto its window (into the user's own themes, selected at once,
+as Import… does); Tk has no drag and drop, so the Python app has only the folder and Import….
+
+### Song information (asked for later on 2026-11-24: "edit meta data ie album author, author release date")
+
+**Edit info…** in every song's menu (right-click in a song table, and the playback bar's **…** for the song
+playing) and **Edit album info…** on an album page (all of its songs) open the **Edit Info** window, one at a time
+(titled "Edit Info"; at its top the song's title with "artist · album" under it, or the album's title with "artist ·
+12 songs"; the cursor starts in Title for one song and in Album for an album, and Enter saves).
+Its fields are `tagedit.FIELDS` with `tagedit.LABELS`: Title, Artist, Album, Album artist, Genre, Release date,
+Track, Disc, Composer; Release date, Track and Disc have the grey hints of `tagedit.HINTS`. The window first reads
+the songs' tags with ffprobe in a background thread ("Reading the information of 12 songs…", fields disabled),
+then fills each field with `common_values()`: the songs' value, or, where they differ, an empty field with the
+grey note "Several values: kept unless you type here". A field counts as changed when its `clean_value()` differs
+from that of what it started with (for a "several values" field: when anything was typed, so emptying such a field
+leaves it as it is). **Save** checks the changes
+(`check_changes()`, its message in red under the fields, the window stays open), closes the window when nothing
+changed, and otherwise saves in a background thread with `save_tags()` ("Saving 3 of 12…"): FLAC and MP3 natively,
+other formats through FFmpeg's stream copy, saved results moved with the new tags, the library index updated.
+Then the app refreshes the library (its pages and the LCD show the new values). When every song was saved without a
+note the window closes; otherwise it shows `save_summary()` (headline and sentences) with a Close button.
+**Cancel** (or Esc) closes it without saving; while saving it cannot be closed.
+
 ### Settings → Library
 
 The buttons are: Update the library now; **Scan library** (opens the Quality check page, as in the first version,

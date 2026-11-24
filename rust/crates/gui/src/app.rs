@@ -1530,6 +1530,7 @@ impl App {
             i.raw
                 .dropped_files
                 .iter()
+                .filter(|f| !is_theme_file(f.path()))
                 .map(|f| f.path().to_string_lossy().into_owned())
                 .filter(|p| !p.is_empty())
                 .collect()
@@ -2744,4 +2745,10 @@ mod tests {
         });
         url
     }
+}
+
+/// A .json file dropped onto the window is a theme for the player, not a
+/// source to scan.
+pub fn is_theme_file(path: &std::path::Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) && path.is_file()
 }

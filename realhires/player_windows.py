@@ -1,15 +1,18 @@
-"""The 2.0 player's windows: Playback info (track, decoder, output, quality check)
-and the equalizer (graphic and parametric)."""
+"""The 2.0 player's windows: Playback info (track, decoder, output, quality check),
+the equalizer (graphic and parametric), and Edit Info (a song's information)."""
 
 from __future__ import annotations
 
 import copy
 import math
+import os
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from . import eq
+from . import eq, tagedit
 from .player import fmt_db
 from .player_theme import PillButton, Slider
 from .player_pages import frame, label
@@ -620,4 +623,195 @@ class EqualizerWindow:
         self.win.destroy()
 
 
-__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "NameDialog", "ask_name"]
+class EditInfoWindow:
+    """Edit Info: title, artist, album, album artist, genre, release date, track, disc
+    and composer of one song or of an album's songs (tagedit.FIELDS).  The tags are
+    read with ffprobe in a thread first; where the songs differ a field starts empty
+    with a note and is kept unless something is typed into it.  Save checks the
+    changes (tagedit.check_changes()), writes them in a thread (tagedit.save_tags())
+    and refreshes the library; it closes when everything was saved without a note,
+    else it shows tagedit.save_summary().  Results reach Tk through `self.q`."""
+
+    SEVERAL = "Several values: kept unless you type here"
+
+    def __init__(self, app: "PlayerApp", tracks: list, heading: str = "", subheading: str = ""):
+        from .settings import Settings
+
+        self.app, t = app, app.theme
+        self.paths: List[str] = [tr.path for tr in tracks]
+        self.cfg = Settings.from_dict(app.cfg.to_dict())  # the threads get their own copy
+        self.q: "queue.Queue" = queue.Queue()
+        self.ready = self.saving = self.done = False
+        self.initial: Dict[str, Optional[str]] = {}
+        self.outcomes: list = []
+        self.win = _window(app, "Edit Info")
+        self.win.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.win.bind("<<Close>>", lambda e: self.cancel())
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=24, pady=18)
+        if not heading and len(tracks) == 1:
+            heading = tracks[0].display_title
+            subheading = " · ".join(x for x in (tracks[0].artist, tracks[0].album) if x)
+        label(box, t, heading or f"{len(tracks):,} songs", "h2", wraplength=520, justify="left").pack(anchor="w")
+        if subheading:
+            label(box, t, subheading, "body", fg="text2", wraplength=520, justify="left").pack(anchor="w")
+        n = len(self.paths)
+        self.status = label(box, t, f"Reading the information of {n:,} song{'s' if n != 1 else ''}…", "small",
+                            fg="text2")
+        self.status.pack(anchor="w", pady=(6, 0))
+        grid = frame(box, t)
+        grid.pack(fill="x", pady=(8, 0))
+        self.vars: Dict[str, tk.StringVar] = {}
+        self.entries: Dict[str, ttk.Entry] = {}
+        self.notes: Dict[str, tk.Label] = {}
+        for i, f in enumerate(tagedit.FIELDS):
+            label(grid, t, tagedit.LABELS[f], "body", fg="text2").grid(row=2 * i, column=0, sticky="w",
+                                                                       padx=(0, 16), pady=(7, 0))
+            var = tk.StringVar()
+            e = ttk.Entry(grid, textvariable=var, width=44, style="P.TEntry", font=t.f("body"))
+            e.grid(row=2 * i, column=1, sticky="we", pady=(7, 0))
+            e.state(["disabled"])
+            e.bind("<Return>", lambda ev: self.save())
+            e.bind("<KP_Enter>", lambda ev: self.save())
+            note = label(grid, t, tagedit.HINTS.get(f, ""), "small", fg="text2", wraplength=440, justify="left")
+            note.grid(row=2 * i + 1, column=1, sticky="w")
+            if not tagedit.HINTS.get(f):
+                note.grid_remove()
+            self.vars[f], self.entries[f], self.notes[f] = var, e, note
+        grid.columnconfigure(1, weight=1)
+        self.error = label(box, t, "", "small", fg="error", wraplength=520, justify="left")
+        self.error.pack(anchor="w", pady=(10, 0))
+        self.summary = label(box, t, "", "body", wraplength=520, justify="left")
+        self.summary.pack(anchor="w")
+        self.btns = frame(box, t)
+        self.btns.pack(fill="x", pady=(12, 0))
+        self.save_b = PillButton(self.btns, t, "Save", command=self.save)
+        self.save_b.pack(side="right")
+        self.cancel_b = PillButton(self.btns, t, "Cancel", kind="plain", command=self.cancel)
+        self.cancel_b.pack(side="right", padx=(0, 8))
+        self.win.minsize(560, 0)
+        threading.Thread(target=self._read, daemon=True, name="realhires-edit-read").start()
+        self.win.after(100, self._poll)
+
+    # ---- threads ------------------------------------------------------------
+    def _read(self) -> None:
+        from .probe import probe
+
+        tags = []
+        for p in self.paths:
+            try:
+                tags.append(probe(p).tags or {})
+            except Exception:  # noqa: BLE001 (an unreadable file has no tags to show)
+                tags.append({})
+        self.q.put(("tags", tags))
+
+    def _write(self, changes: Dict[str, str]) -> None:
+        try:
+            out = tagedit.save_tags(self.paths, changes, self.cfg,
+                                    progress=lambda i, n, p: self.q.put(("progress", i, n)))
+        except Exception as exc:  # noqa: BLE001 (save_tags never raises; this is a last resort)
+            out = [tagedit.TagOutcome(p, False, f"Could not save the information: {exc}") for p in self.paths]
+        self.q.put(("saved", out))
+
+    def _poll(self) -> None:
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            while True:
+                kind, *rest = self.q.get_nowait()
+                if kind == "tags":
+                    self._fill(rest[0])
+                elif kind == "progress":
+                    i, n = rest
+                    if i < n:
+                        self.status.configure(text=f"Saving {i + 1:,} of {n:,}…")
+                elif kind == "saved":
+                    self._saved(rest[0])
+                    return
+        except queue.Empty:
+            pass
+        self.win.after(100, self._poll)
+
+    # ---- the window ---------------------------------------------------------
+    def _fill(self, tags: List[dict]) -> None:
+        self.initial = tagedit.common_values(tags)
+        for f in tagedit.FIELDS:
+            value = self.initial[f]
+            self.vars[f].set(value or "")
+            self.entries[f].state(["!disabled"])
+            hint = tagedit.HINTS.get(f, "")
+            if value is None:
+                self.notes[f].configure(text=self.SEVERAL + (f". {hint[0].upper()}{hint[1:]}" if hint else ""))
+                self.notes[f].grid()
+        self.status.configure(text="")
+        self.ready = True
+        first = self.entries["title" if len(self.paths) == 1 else "album"]
+        first.focus_set()
+        first.select_range(0, "end")
+
+    def changes(self) -> Dict[str, str]:
+        """The fields whose text differs from what they started with (a "several
+        values" field: when something was typed)."""
+        out = {}
+        for f in tagedit.FIELDS:
+            text, start = self.vars[f].get(), self.initial.get(f)
+            if start is None:
+                if tagedit.clean_value(text):
+                    out[f] = text
+            elif tagedit.clean_value(text) != tagedit.clean_value(start):
+                out[f] = text
+        return out
+
+    def save(self) -> None:
+        if not self.ready or self.saving or self.done:
+            return
+        changes = self.changes()
+        try:
+            changes = tagedit.check_changes(changes)
+        except tagedit.TagError as exc:
+            self.error.configure(text=str(exc))
+            return
+        self.error.configure(text="")
+        if not changes:
+            self.close()
+            return
+        self.saving = True
+        for e in self.entries.values():
+            e.state(["disabled"])
+        self.save_b.pack_forget()
+        self.cancel_b.pack_forget()
+        n = len(self.paths)
+        self.status.configure(text=f"Saving 1 of {n:,}…" if n > 1 else "Saving…")
+        threading.Thread(target=self._write, args=(changes,), daemon=True, name="realhires-edit-save").start()
+
+    def _saved(self, outcomes: list) -> None:
+        self.saving, self.done = False, True
+        self.outcomes = outcomes
+        self.app.tags_saved([o.path for o in outcomes if o.ok])
+        head, lines = tagedit.save_summary(outcomes)
+        if all(o.ok for o in outcomes) and not lines:
+            self.close()
+            return
+        self.status.configure(text="")
+        self.summary.configure(text="\n\n".join([head] + lines))
+        PillButton(self.btns, self.app.theme, "Close", command=self.close).pack(side="right")
+
+    def cancel(self) -> None:
+        if not self.saving:
+            self.close()
+
+    def close(self) -> None:
+        if self.saving:
+            return
+        if self.app.edit_window is self:
+            self.app.edit_window = None
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+
+
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "NameDialog", "ask_name"]

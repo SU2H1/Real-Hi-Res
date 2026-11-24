@@ -551,6 +551,161 @@ root.mainloop()
 
 
 @needs_ffmpeg
+@pytest.mark.skipif(not _has_miniaudio(), reason="miniaudio not installed")
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_theme_files_and_edit_info(tmp_path):
+    """Theme files in the themes folder appear in the theme menu, read-only in the
+    editor; Edit Info changes one song's album artist and release date, an album's
+    genre for all its songs, and refuses a bad track number without writing."""
+    lib = make_library(tmp_path, seconds=2, mp3=False)
+    from realhires import settings
+
+    cfg = settings.Settings()
+    cfg.library_folders = [lib["music"]]
+    cfg.theme = "Light"
+    settings.save(cfg, str(tmp_path / "settings.json"))
+    env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
+               REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
+               REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_THEMES=str(tmp_path / "themes.json"),
+               REALHIRES_AUDIO_BACKEND="null")
+    body = f"""
+LIB = {json.dumps(lib)}
+TMP = {str(tmp_path)!r}
+S = LIB["songs"]
+import tkinter as tk
+from realhires import player_gui, themes
+from realhires.probe import probe
+
+def fail(exc, val, tb):
+    import traceback
+    traceback.print_exception(exc, val, tb)
+    os._exit(1)
+
+def wait(cond, then, timeout=30.0, what="", start=None):
+    start = start or time.monotonic()
+    if cond():
+        return root.after(50, then)
+    assert time.monotonic() - start < timeout, "timed out: " + what
+    root.after(100, lambda: wait(cond, then, timeout, what, start))
+
+def menu_labels(m):
+    return [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"]
+
+root = tk.Tk()
+root.geometry("1280x800")
+root.report_callback_exception = fail
+app = player_gui.PlayerApp(root)
+opened = []
+
+def loaded():
+    # a theme file put into the themes folder appears in the menu and can be chosen
+    folder = themes.folder()
+    assert folder == os.path.join(TMP, "themes")
+    assert app.open_themes_folder(opener=opened.append) == folder and opened == [folder] and os.path.isdir(folder)
+    with open(os.path.join(folder, "neon.json"), "w", encoding="utf-8") as fh:
+        fh.write(themes.export_theme({{"name": "Neon", "dark": True, "colors": {{"accent": "#39ff14"}}}}))
+    app.show_page("settings", group="Appearance")
+    root.update()
+    page = app.page("settings")
+    assert "Neon" in page.theme_values() and "Neon" in page.theme_box.cget("values")
+    app.select_theme("Neon")
+    root.update()
+    assert app.theme.name == "Neon" and app.theme.dark and app.theme.c("accent") == "#39ff14"
+    assert app.theme_file("Neon").endswith("neon.json") and not app.is_custom_theme("Neon")
+    ed = app.page("settings").theme_editor
+    assert not ed.own and ed.file.endswith("neon.json"), ed.file
+    assert "comes from the file neon.json in the themes folder" in ed.note_l.cget("text")
+    assert ed.actions == ["New theme…", "Export…"], ed.actions
+    exported = app.export_theme_file("Neon", os.path.join(TMP, "neon-out.json"))
+    assert '"#39ff14"' in open(exported, encoding="utf-8").read()
+    with open(os.path.join(folder, "zed.json"), "w", encoding="utf-8") as fh:
+        fh.write(themes.export_theme({{"name": "Zed", "dark": False, "colors": {{}}}}))
+    assert "Zed" in page.theme_values()  # read again when the menu opens
+    os.remove(os.path.join(folder, "neon.json"))
+    app.select_theme("Light")
+    # Edit info… is in a song's menu; one Edit Info window at a time
+    taxi = app.track(S["Taxi Lights"])
+    assert "Edit info…" in menu_labels(app.song_menu(taxi))
+    w = app.edit_info([taxi])
+    assert app.edit_info([app.track(S["Blue Kettle"])]) is w
+    state["w"] = w
+    wait(lambda: w.ready, one_ready, what="tags read")
+
+state = {{}}
+
+def one_ready():
+    w = state["w"]
+    assert w.vars["title"].get() == "Taxi Lights" and w.vars["album_artist"].get() == "The Paper Boats"
+    assert w.vars["date"].get() == "2019" and w.vars["track"].get() == "2/3"
+    w.vars["album_artist"].set("Paper Boats Collective")
+    w.vars["date"].set("2019-04-02")
+    assert w.changes() == {{"album_artist": "Paper Boats Collective", "date": "2019-04-02"}}
+    w.save()
+    assert w.saving
+    w.cancel()  # cannot be closed while saving
+    assert app.edit_window is w
+    wait(lambda: app.edit_window is None and not app.library_busy(), one_saved, what="one song saved")
+
+def one_saved():
+    tags = probe(S["Taxi Lights"]).tags
+    assert tags["album_artist"] == "Paper Boats Collective" and tags["date"] == "2019-04-02", tags
+    assert tags["title"] == "Taxi Lights" and tags["artist"] == "The Paper Boats"
+    tr = app.track(S["Taxi Lights"])
+    assert tr.album_artist == "Paper Boats Collective" and tr.year == "2019"
+    app.show_page("album_artists")
+    root.update()
+    names = [g["name"] for g in app.page("album_artists").items]
+    assert "Paper Boats Collective" in names, names
+    # a bad track number: the error is shown and nothing is written
+    before = os.stat(S["Blue Kettle"]).st_mtime_ns
+    w = app.edit_info([app.track(S["Blue Kettle"])])
+    state["w"] = w
+    state["before"] = before
+    wait(lambda: w.ready, bad_ready, what="tags read again")
+
+def bad_ready():
+    w = state["w"]
+    w.vars["track"].set("three")
+    w.save()
+    assert not w.saving and "must be a number" in w.error.cget("text"), w.error.cget("text")
+    assert os.stat(S["Blue Kettle"]).st_mtime_ns == state["before"]
+    w.cancel()
+    assert app.edit_window is None
+    # Edit album info…: every song of the album
+    album = next(a for a in app.albums if a["title"] == "Small Hours")
+    app.open_album(album)
+    root.update()
+    w = app.page("album").edit_info()
+    state["w"] = w
+    wait(lambda: w.ready, album_ready, what="album tags read")
+
+def album_ready():
+    w = state["w"]
+    assert w.initial["title"] is None and w.SEVERAL in w.notes["title"].cget("text")
+    assert w.vars["title"].get() == "" and w.vars["album"].get() == "Small Hours"
+    w.vars["genre"].set("Bossa Nova")
+    assert w.changes() == {{"genre": "Bossa Nova"}}
+    w.save()
+    wait(lambda: app.edit_window is None and not app.library_busy(), album_saved, what="album saved")
+
+def album_saved():
+    for title in ("Blue Kettle", "Porch Lamp"):
+        tags = probe(S[title]).tags
+        assert tags["genre"] == "Bossa Nova" and tags["title"] == title, tags
+    page = app.page("album")
+    root.update()
+    assert app.page_name == "album" and page.album["genre"] == "Bossa Nova"
+    assert "Bossa Nova" in page.meta_l.cget("text")
+    print("OK")
+    app.quit()
+
+wait(lambda: len(app.tracks) == len(S) and not app.library_busy(), loaded, what="library")
+root.mainloop()
+"""
+    run_script(tmp_path, body, env, timeout=180)
+
+
+@needs_ffmpeg
 @pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
 def test_check_new_songs_when_the_app_starts(tmp_path):
     """Settings → Library → Check new songs when the app starts: after the library index

@@ -187,10 +187,12 @@ class Theme:
 
     def configure(self, theme_setting: str, family_setting: str) -> None:
         """Choose the palette and the font family (without repainting): the theme of that
-        name (built-in or the user's own, themes.resolve()); unknown names follow the system."""
+        name (built-in, the user's own or from the themes folder, themes.resolve()); unknown names follow
+        the system."""
         from . import themes
 
-        custom = themes.load_custom()
+        own = themes.load_custom()
+        custom = own + themes.load_folder(own)  # and the theme files of the themes folder
         known = theme_setting in themes.BUILTIN or any(t["name"] == theme_setting for t in custom)
         theme = themes.resolve(theme_setting, False if known else system_is_dark(), custom)
         self.name = theme["name"]

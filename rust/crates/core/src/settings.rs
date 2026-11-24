@@ -238,7 +238,8 @@ settings! {
            only be used on Apple systems). Any font installed on your computer can be chosen."), Str, None, None, NUMS;
     theme: String = s("Match the system"), "Appearance", "Theme",
         s("The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme (Light, \
-           Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose) or one of your own themes."), Str, None, None, NUMS;
+           Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), one of your own themes, or a theme file put into \
+           the themes folder."), Str, None, None, NUMS;
 
     // ---- Detection ------------------------------------------------------
     cliff_db: f64 = 25.0, "Detection", "Upsampling cliff (dB)",

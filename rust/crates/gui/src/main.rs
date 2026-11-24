@@ -6,6 +6,7 @@
 mod app;
 mod audio;
 mod dialogs;
+mod editinfo;
 mod eqwin;
 mod icons;
 mod look;

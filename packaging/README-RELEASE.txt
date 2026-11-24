@@ -37,8 +37,13 @@ and your own (Save as preset..., Rename..., Delete...); Import... and
 Export... read and write the app's own .json files and Equalizer APO / AutoEQ
 .txt files.  Your Stats sums up your listening like a yearly music review;
 Details shows the full numbers.  Settings > Appearance has the font, the
-theme (8 built-in themes, or your own: New theme... and the colour editor)
-and theme Import/Export.  Every other function is in Settings too:
+theme (8 built-in themes, or your own: New theme... and the colour editor),
+Import theme..., Export... and "Open themes folder": theme .json files put
+into that folder appear in the theme menu as they are.  "Edit info..." in a
+song's menu and "Edit album info..." on an album page change the title,
+artist, album, album artist, genre, release date, track, disc and composer
+(only the tags change, never the audio).  Every other function is in
+Settings too:
 Settings > Library > "Scan library" checks your library for fake files in
 the quality checker described below.
 

@@ -79,7 +79,8 @@ class Settings:
     theme: str = _f(
         "Match the system", "Appearance", "Theme",
         "The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme "
-        "(Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose) or one of your own themes.", kind="str")
+        "(Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), one of your own themes, or a theme file "
+        "put into the themes folder.", kind="str")
 
     # ---- Detection ------------------------------------------------------
     cliff_db: float = _f(

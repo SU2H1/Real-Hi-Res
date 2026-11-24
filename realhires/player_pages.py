@@ -4,6 +4,7 @@ Quality check page is the 1.x scanner, `gui.App`)."""
 
 from __future__ import annotations
 
+import os
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -225,6 +226,8 @@ class AlbumPage(Page):
         PillButton(btns, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="left")
         PillButton(btns, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="left",
                                                                                               padx=(10, 0))
+        self.edit_b = PillButton(btns, t, "Edit album info…", kind="plain", command=self.edit_info)
+        self.edit_b.pack(side="left", padx=(10, 0))
         cols = [Column("num", "", 34, anchor="e", kind="num"), Column("title", "", 400, True),
                 Column("like", "", 30, kind="heart"), Column("time", "", 52, anchor="e")]
         self.table = song_table(self, self, cols, header=False, sortable=False,
@@ -241,9 +244,18 @@ class AlbumPage(Page):
     def refresh(self) -> None:
         if self.album is not None:
             fresh = self.app.album_by_key.get(self.album["key"])
+            if fresh is None and self.album["tracks"]:  # its title or album artist was edited
+                first = self.app.track(self.album["tracks"][0].path)
+                fresh = self.app.album_of(first) if first is not None else None
             if fresh is not None:
                 self.album = fresh
         self._fill()
+
+    def edit_info(self):
+        """Edit album info…: the Edit Info window for every song of the album."""
+        if self.album is not None:
+            return self.app.edit_album_info(self.album)
+        return None
 
     def _fill(self) -> None:
         a = self.album
@@ -705,9 +717,10 @@ class NowPlayingPage(Page):
 
 # ------------------------------------------------------------- settings ---
 class ThemeEditor(tk.Frame):
-    """Settings → Appearance: New theme…, Import…, Export…, and for the user's own
-    themes Rename…, Delete…, "Dark theme" and a colour button for each of the eight
-    colours, which change the app at once.  Built-in themes cannot be edited."""
+    """Settings → Appearance: New theme…, Export…, and for the user's own themes
+    Rename…, Delete…, "Dark theme" and a colour button for each of the eight
+    colours, which change the app at once.  Built-in themes and those of the theme
+    files in the themes folder cannot be edited here."""
 
     def __init__(self, master, app: "PlayerApp"):
         from . import themes
@@ -719,21 +732,25 @@ class ThemeEditor(tk.Frame):
         theme = app.current_theme()
         own = app.is_custom_theme(theme["name"])
         self.name = theme["name"]
+        self.file = "" if own else app.theme_file(theme["name"])
         label(self, t, "Theme colours", "body_b").pack(anchor="w")
         if own:
             note = f"“{theme['name']}” is your own theme: a click on a colour changes it, and the app at once."
+        elif self.file:
+            note = (f"“{theme['name']}” comes from the file {os.path.basename(self.file)} in the themes folder. "
+                    "Change that file, or make a copy you can change here with New theme…")
         else:
             note = (f"“{theme['name']}” is a built-in theme and cannot be changed. “New theme…” makes a copy of "
                     "it that you can change.")
-        label(self, t, note, "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH, justify="left").pack(
-            anchor="w", pady=(2, 8))
+        self.note_l = label(self, t, note, "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH, justify="left")
+        self.note_l.pack(anchor="w", pady=(2, 8))
         btns = frame(self, t)
         btns.pack(anchor="w")
-        acts = [("New theme…", app.new_theme)]
+        acts = [("New theme…", app.new_theme), ("Export…", lambda: app.export_theme_file(self.name))]
         if own:
             acts += [("Rename…", lambda: app.rename_theme(self.name)),
                      ("Delete…", lambda: app.delete_theme(self.name))]
-        acts += [("Import…", app.import_theme_file), ("Export…", lambda: app.export_theme_file(self.name))]
+        self.actions = [text for text, _ in acts]
         for i, (text, cmd) in enumerate(acts):
             PillButton(btns, t, text, kind="accent" if i == 0 else "plain", command=cmd).pack(
                 side="left", padx=(0 if i == 0 else 8, 0))
@@ -766,8 +783,10 @@ class ThemeEditor(tk.Frame):
 
         app = self.app
         if not self.own:
-            if not messagebox.askyesno("Built-in theme", f"Built-in themes cannot be changed. Make a copy of "
-                                       f"“{self.name}” and change that?", parent=app.root):
+            what = ("Themes from the themes folder are changed in their files." if self.file else
+                    "Built-in themes cannot be changed.")
+            if not messagebox.askyesno("Theme file" if self.file else "Built-in theme",
+                                       f"{what} Make a copy of “{self.name}” and change that?", parent=app.root):
                 return
             name = app.new_theme()
             if not name:
@@ -913,6 +932,14 @@ class SettingsPage(Page):
         help_l.pack(anchor="w", pady=(3, 0))
         self.help_labels[name] = help_l
         if name == "theme":
+            files = frame(row, t)
+            files.pack(anchor="w", fill="x", pady=(10, 0))
+            label(files, t, "Theme files (.json) put into the themes folder appear in this menu.", "small",
+                  fg="text2").pack(side="left")
+            PillButton(files, t, "Import theme…", kind="plain", command=self.app.import_theme_file).pack(
+                side="left", padx=(12, 0))
+            PillButton(files, t, "Open themes folder", kind="plain", command=self.app.open_themes_folder).pack(
+                side="left", padx=(8, 0))
             self.theme_editor = ThemeEditor(row, self.app)
             self.theme_editor.pack(anchor="w", fill="x", pady=(12, 0))
 
@@ -921,9 +948,18 @@ class SettingsPage(Page):
         names = self.app.theme_names()
         var = tk.StringVar(value=value if value in names else names[0])
         cb = ttk.Combobox(parent, textvariable=var, values=names, state="readonly",
-                          width=max(24, max(len(n) for n in names) + 2), style="P.TCombobox", font=t.f("body"))
+                          width=max(24, max(len(n) for n in names) + 2), style="P.TCombobox", font=t.f("body"),
+                          postcommand=self.theme_values)
         cb.pack(anchor="w")
         cb.bind("<<ComboboxSelected>>", lambda e: self.app.select_theme(var.get()))
+        self.theme_box = cb
+
+    def theme_values(self) -> List[str]:
+        """The theme menu again, when it opens: theme files may have been put into the
+        themes folder or taken out of it."""
+        names = self.app.theme_names()
+        self.theme_box.configure(values=names, width=max(24, max(len(n) for n in names) + 2))
+        return names
 
     def _paths(self, parent, name: str, value: List[str]) -> None:
         t = self.theme

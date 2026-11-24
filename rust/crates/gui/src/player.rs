@@ -305,7 +305,12 @@ pub struct Player {
     seed: u64,
     // 2.0 additions
     pub custom_themes: Vec<realhires::themes::Theme>,
+    /// the themes of the files in the themes folder (read again every 2 s on the Settings page)
+    pub file_themes: Vec<realhires::themes::FileTheme>,
+    pub file_themes_read: Instant,
     themes_gen: u64,
+    /// the Edit Info window (one at a time)
+    pub edit_info: Option<crate::editinfo::EditInfo>,
     /// the play history (`library.sqlite`)
     pub history: Option<Library>,
     pub history_gen: u64,
@@ -379,7 +384,10 @@ impl Player {
             check_after_update: false,
             group_sel: HashMap::new(),
             custom_themes: realhires::themes::load_custom(None),
+            file_themes: vec![],
+            file_themes_read: Instant::now(),
             themes_gen: 0,
+            edit_info: None,
             history: Library::open(None).ok(),
             history_gen: 0,
             listening: None,
@@ -396,6 +404,8 @@ impl Player {
             state_saved: Instant::now(),
             scanner,
         };
+        p.file_themes = realhires::themes::load_folder(&p.custom_themes, None);
+        p.fill_choices();
         p.engine.set_device(&p.scanner.cfg.output_device.clone());
         p.update_library();
         p.check_after_update = p.scanner.cfg.scan_library_on_start && p.lib_rx.is_some();
@@ -847,7 +857,7 @@ impl Player {
             if self.applied_look.as_ref().is_none_or(|a| a.0 != want.0) {
                 self.font_used = look::install_fonts(ctx, &want.0);
             }
-            look::install_theme(ctx, &want.1, &self.custom_themes);
+            look::install_theme(ctx, &want.1, &self.all_themes());
             self.applied_look = Some(want);
         }
     }
@@ -857,8 +867,80 @@ impl Player {
         if let Err(e) = realhires::themes::save_custom(&self.custom_themes, None) {
             self.scanner.info = Some(("Themes".into(), format!("The themes could not be saved: {e}.")));
         }
+        self.file_themes = realhires::themes::load_folder(&self.custom_themes, None);
         self.themes_gen += 1;
         self.fill_choices();
+    }
+
+    /// The user's own themes, then those of the themes folder.
+    pub fn all_themes(&self) -> Vec<realhires::themes::Theme> {
+        let mut all = self.custom_themes.clone();
+        all.extend(self.file_themes.iter().map(|f| f.theme.clone()));
+        all
+    }
+
+    /// The file a theme of the themes folder comes from.
+    pub fn theme_file(&self, name: &str) -> Option<&std::path::Path> {
+        self.file_themes.iter().find(|f| f.theme.name == name).map(|f| f.file.as_path())
+    }
+
+    /// Read the themes folder again; true when its themes changed.
+    pub fn reload_file_themes(&mut self) -> bool {
+        self.file_themes_read = Instant::now();
+        let now = realhires::themes::load_folder(&self.custom_themes, None);
+        if now == self.file_themes {
+            return false;
+        }
+        self.file_themes = now;
+        self.themes_gen += 1;
+        self.fill_choices();
+        true
+    }
+
+    /// Import a theme file into the user's own themes and use it (Import theme…,
+    /// or a .json dropped onto the window).
+    pub fn import_theme_path(&mut self, path: &std::path::Path) {
+        let all = self.all_themes();
+        match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| {
+            realhires::themes::import_theme(&String::from_utf8_lossy(&b), &all).map_err(|e| e.0)
+        }) {
+            Ok(t) => {
+                let name = t.name.clone();
+                self.custom_themes.push(t);
+                self.themes_changed();
+                self.set_theme(&name);
+            }
+            Err(e) => self.scanner.info = Some(("Import theme".into(), e)),
+        }
+    }
+
+    /// Open the Edit Info window for one song (one at a time).
+    pub fn edit_song_info(&mut self, path: &str) {
+        let (heading, sub) = match self.lib.track(path) {
+            Some(t) => (
+                t.display_title(),
+                [t.artist.as_str(), t.album.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · "),
+            ),
+            None => (realhires::paths::file_name(path), String::new()),
+        };
+        self.edit_info(vec![path.to_string()], heading, sub);
+    }
+
+    /// Open the Edit Info window for every song of an album.
+    pub fn edit_album_info(&mut self, album: &Album) {
+        let n = album.tracks.len();
+        let count = format!("{} song{}", realhires::stats::thousands(n as i64), if n == 1 { "" } else { "s" });
+        let sub = [album.artist.as_str(), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
+        self.edit_info(album.tracks.iter().map(|t| t.path.clone()).collect(), album.title.clone(), sub);
+    }
+
+    /// Open the Edit Info window for these songs; while one is open nothing happens.
+    pub fn edit_info(&mut self, paths: Vec<String>, heading: String, subheading: String) {
+        let paths: Vec<String> = paths.into_iter().filter(|p| std::path::Path::new(p).is_file()).collect();
+        if self.edit_info.is_some() || paths.is_empty() {
+            return;
+        }
+        self.edit_info = Some(crate::editinfo::EditInfo::new(&self.ctx, paths, heading, subheading));
     }
 
     /// Use the theme called `name` (saved in the settings at once).
@@ -1022,15 +1104,16 @@ impl Player {
                 self.save_state();
             }
             NameAction::NewTheme(base) => {
-                let name = realhires::themes::check_name(text, &self.custom_themes, "").map_err(|e| e.0)?;
-                let mut t = realhires::themes::resolve(&base, self.ctx.global_style().visuals.dark_mode, &self.custom_themes);
+                let all = self.all_themes();
+                let name = realhires::themes::check_name(text, &all, "").map_err(|e| e.0)?;
+                let mut t = realhires::themes::resolve(&base, self.ctx.global_style().visuals.dark_mode, &all);
                 t.name = name.clone();
                 self.custom_themes.push(t);
                 self.themes_changed();
                 self.set_theme(&name);
             }
             NameAction::RenameTheme(old) => {
-                let name = realhires::themes::check_name(text, &self.custom_themes, &old).map_err(|e| e.0)?;
+                let name = realhires::themes::check_name(text, &self.all_themes(), &old).map_err(|e| e.0)?;
                 if let Some(t) = self.custom_themes.iter_mut().find(|t| t.name == old) {
                     t.name = name.clone();
                 }
@@ -1144,7 +1227,7 @@ impl Player {
         let mut devices = vec![String::new()];
         devices.extend(crate::audio::output_devices());
         self.scanner.choices.insert("output_device", devices);
-        self.scanner.choices.insert("theme", realhires::themes::names(&self.custom_themes));
+        self.scanner.choices.insert("theme", realhires::themes::names(&self.all_themes()));
     }
 
     pub fn add_library_folder(&mut self) {
@@ -1229,6 +1312,12 @@ impl Player {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| crate::app::is_theme_file(p)).collect()
+        });
+        for p in dropped {
+            self.import_theme_path(&p);
+        }
         self.apply_look(&ctx);
         self.scanner.background(&ctx);
         self.covers.poll(&ctx);
@@ -1626,6 +1715,22 @@ impl Player {
 
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
         self.dialogs(ctx, pal);
+        if let Some(mut w) = self.edit_info.take() {
+            let cfg = self.scanner.cfg.clone();
+            match w.show(ctx, pal, &cfg) {
+                crate::editinfo::Outcome::Open => self.edit_info = Some(w),
+                crate::editinfo::Outcome::Closed => {}
+                crate::editinfo::Outcome::Saved { close } => {
+                    self.update_library();
+                    if !close {
+                        self.edit_info = Some(w);
+                    }
+                }
+            }
+            if self.edit_info.is_some() {
+                return; // Esc belongs to the Edit Info window while it is open
+            }
+        }
         // Esc closes the topmost of the player's windows
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() {
             if self.eq_open {
@@ -2050,5 +2155,128 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = b1;
+    }
+
+    #[test]
+    fn edit_info_and_theme_files() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 1.0);
+        let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.0);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 2 && p.lib_rx.is_none());
+
+        // a theme file put into the themes folder appears in the menu, as it is
+        let folder = realhires::themes::folder(None);
+        assert_eq!(folder, tmp.join("themes"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let neon = realhires::themes::normalize(&realhires::json::parse(
+            r##"{"name": "Neon", "dark": true, "colors": {"accent": "#39ff14"}}"##).unwrap()).unwrap();
+        std::fs::write(folder.join("neon.json"), realhires::themes::export_theme(&neon)).unwrap();
+        std::fs::write(folder.join("broken.json"), "{").unwrap();
+        assert!(p.reload_file_themes());
+        assert!(p.scanner.choices["theme"].contains(&"Neon".to_string()));
+        p.set_theme("Neon");
+        p.go(Page::Settings);
+        frame(&ctx, &mut p);
+        assert_eq!(p.theme_file("Neon"), Some(folder.join("neon.json").as_path()));
+        assert_eq!(look::current(&ctx).accent, look::parse_hex("#39ff14"));
+        assert!(realhires::themes::load_custom(None).is_empty(), "a folder theme is not copied into themes.json");
+        // a dropped (or imported) theme file becomes one of the user's own themes
+        let sunset = tmp.join("sunset.json");
+        let mut t = neon.clone();
+        t.name = "Sunset".into();
+        std::fs::write(&sunset, realhires::themes::export_theme(&t)).unwrap();
+        assert!(crate::app::is_theme_file(&sunset) && !crate::app::is_theme_file(&tmp.join("missing.json")));
+        p.import_theme_path(&sunset);
+        assert_eq!(p.scanner.cfg.theme, "Sunset");
+        assert_eq!(realhires::themes::load_custom(None)[0].name, "Sunset");
+        // a second file called Neon gets a free name
+        std::fs::write(folder.join("other.json"), realhires::themes::export_theme(&neon)).unwrap();
+        p.reload_file_themes();
+        assert!(p.scanner.choices["theme"].contains(&"Neon 2".to_string()));
+
+        // Edit Info on one song: the composer and the release date
+        p.go(Page::AllSongs);
+        p.edit_song_info(&a1);
+        run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        assert_eq!(p.edit_info.as_ref().unwrap().text[0], "Lanterns Over Water");
+        {
+            let cfg = p.scanner.cfg.clone();
+            let w = p.edit_info.as_mut().unwrap();
+            w.set("composer", "Lena Frost");
+            w.set("date", "2004-05-28");
+            assert!(w.save(&ctx, &cfg));
+        }
+        run_until(&ctx, &mut p, "saving", |p| p.edit_info.is_none());
+        run_until(&ctx, &mut p, "the library", |p| {
+            p.lib_rx.is_none() && p.lib.track(&a1).is_some_and(|t| t.composer == "Lena Frost")
+        });
+        let tags = realhires::probe::probe(&a1).unwrap().tags;
+        assert_eq!(realhires::probe::tag(&tags, "date"), Some("2004-05-28"));
+        assert_eq!(realhires::probe::tag(&tags, "title"), Some("Lanterns Over Water"), "an unchanged field stays");
+
+        // a bad track number is refused and nothing is written
+        p.edit_song_info(&a2);
+        run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        {
+            let cfg = p.scanner.cfg.clone();
+            let w = p.edit_info.as_mut().unwrap();
+            w.set("track", "two");
+            assert!(w.save(&ctx, &cfg));
+            assert!(w.error.contains("must be a number"), "{}", w.error);
+        }
+        frame(&ctx, &mut p);
+        assert!(p.edit_info.is_some());
+        assert_eq!(realhires::probe::tag(&realhires::probe::probe(&a2).unwrap().tags, "track"), Some("2"));
+        p.edit_info = None;
+
+        // Edit album info: the album artist and the genre of every song of the album
+        let key = p.lib.track(&a1).unwrap().song().album_key();
+        p.go(Page::Album(key));
+        frame(&ctx, &mut p);
+        let album = p.lib.album_of(&a1).unwrap().clone();
+        p.edit_album_info(&album);
+        assert_eq!(p.edit_info.as_ref().unwrap().subheading, "Mira Calloway · 2 songs");
+        run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        {
+            let w = p.edit_info.as_ref().unwrap();
+            assert_eq!(w.text[2], "Paper Lanterns");
+            assert_eq!(w.text[0], "", "the titles differ, so the field starts empty");
+            assert!(w.changes().is_empty());
+        }
+        frame(&ctx, &mut p);
+        {
+            let cfg = p.scanner.cfg.clone();
+            let w = p.edit_info.as_mut().unwrap();
+            w.set("genre", " Jazz ");
+            w.set("album_artist", "Various Lanterns");
+            assert_eq!(
+                w.changes(),
+                vec![("album_artist".to_string(), "Various Lanterns".to_string()), ("genre".to_string(), " Jazz ".to_string())]
+            );
+            assert!(w.save(&ctx, &cfg));
+        }
+        run_until(&ctx, &mut p, "saving the album", |p| p.edit_info.is_none());
+        run_until(&ctx, &mut p, "the library", |p| {
+            p.lib_rx.is_none()
+                && [&a1, &a2].iter().all(|a| p.lib.track(a).is_some_and(|t| t.genre == "Jazz" && t.album_artist == "Various Lanterns"))
+        });
+        assert_eq!(p.lib.album_of(&a1).unwrap().tracks.len(), 2, "the album stays one album");
+        assert_eq!(p.lib.track(&a2).unwrap().title, "Paper in the Rain");
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

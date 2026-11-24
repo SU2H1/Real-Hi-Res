@@ -252,6 +252,14 @@ impl Player {
                     if pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
                         self.shuffle_list(paths.clone(), &a.title);
                     }
+                    ui.add_space(6.0);
+                    if ui
+                        .add_enabled(self.edit_info.is_none(), egui::Button::new("Edit album info…"))
+                        .on_hover_text("Change the album, album artist, genre, release date… of all its songs")
+                        .clicked()
+                    {
+                        self.edit_album_info(&a);
+                    }
                 });
             });
         });
@@ -383,6 +391,10 @@ impl Player {
         }
         if ui.button("Get lyrics…").clicked() {
             self.scanner.download_lyrics(vec![path.to_string()]);
+            ui.close();
+        }
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new("Edit info…")).clicked() {
+            self.edit_song_info(path);
             ui.close();
         }
         if ui.button("Check its quality").clicked() {
@@ -902,32 +914,41 @@ impl Player {
 }
 
 impl Player {
-    /// Settings → Appearance: make, edit, import and export themes.
+    /// Settings → Appearance: the themes folder, and make, edit and export themes.
     fn theme_editor(&mut self, ui: &mut Ui, pal: &Palette) {
         use realhires::themes;
+        if self.file_themes_read.elapsed() > std::time::Duration::from_secs(2) {
+            self.reload_file_themes();
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
         let chosen = self.settings_draft().theme.clone();
         let dark_now = ui.ctx().global_style().visuals.dark_mode;
-        let current = themes::resolve(&chosen, dark_now, &self.custom_themes);
+        let all = self.all_themes();
+        let current = themes::resolve(&chosen, dark_now, &all);
         let custom = self.custom_themes.iter().position(|t| t.name == chosen);
+        let file = self.theme_file(&chosen).map(|p| p.to_path_buf());
+        ui.label(RichText::new("Theme files (.json) put into the themes folder appear in this menu.").color(pal.secondary));
         ui.horizontal_wrapped(|ui| {
-            if ui.button("New theme…").on_hover_text("A copy of the theme in use, to change as you like").clicked() {
-                let name = themes::copy_name(&current.name, &self.custom_themes);
-                let _ = self.apply_name(crate::player::NameAction::NewTheme(current.name.clone()), &name);
-            }
-            if ui.button("Import…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Universal Music Player theme", &["json"]).pick_file() {
-                    match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| {
-                        themes::import_theme(&String::from_utf8_lossy(&b), &self.custom_themes).map_err(|e| e.0)
-                    }) {
-                        Ok(t) => {
-                            let name = t.name.clone();
-                            self.custom_themes.push(t);
-                            self.themes_changed();
-                            self.set_theme(&name);
-                        }
-                        Err(e) => self.scanner.info = Some(("Import theme".into(), e)),
+            if ui.button("Open themes folder").on_hover_text(themes::folder(None).to_string_lossy()).clicked() {
+                let dir = themes::folder(None);
+                match std::fs::create_dir_all(&dir) {
+                    Ok(()) => crate::style::open_with_default_app(&dir.to_string_lossy()),
+                    Err(e) => {
+                        self.scanner.info = Some(("Themes folder".into(), format!("The themes folder could not be made: {e}.")))
                     }
                 }
+            }
+            if ui.button("Import theme…").clicked() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Universal Music Player theme", &["json"]).pick_file() {
+                    self.import_theme_path(&path);
+                }
+            }
+        });
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("New theme…").on_hover_text("A copy of the theme in use, to change as you like").clicked() {
+                let name = themes::copy_name(&current.name, &all);
+                let _ = self.apply_name(crate::player::NameAction::NewTheme(current.name.clone()), &name);
             }
             if ui.button("Export…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -950,6 +971,18 @@ impl Player {
                 }
             }
         });
+        if let Some(f) = file {
+            ui.add_space(6.0);
+            let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            ui.label(
+                RichText::new(format!(
+                    "“{chosen}” comes from the file {name} in the themes folder. Change that file, or make a copy you can \
+                     change here with New theme…"
+                ))
+                .color(pal.secondary),
+            );
+            return;
+        }
         ui.add_space(6.0);
         let Some(i) = custom else {
             ui.label(

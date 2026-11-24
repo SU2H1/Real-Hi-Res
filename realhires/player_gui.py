@@ -41,7 +41,7 @@ from .player_pages import (AlbumPage, AlbumsPage, GroupPage, NowPlayingPage, Pag
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
                            system_is_dark)
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
-from .player_windows import EqualizerWindow, PlaybackInfoWindow, ask_name
+from .player_windows import EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
 SEARCH_DELAY_MS = 200
@@ -546,6 +546,7 @@ class PlayerApp:
         self.up_next_shown = False
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
+        self.edit_window: Optional[EditInfoWindow] = None  # one Edit Info window at a time
         self._info_time = 0.0
         self._search_job: Optional[str] = None
         self._search_from: Optional[tuple] = None
@@ -1013,12 +1014,44 @@ class PlayerApp:
         if album is not None:
             m.add_command(label="Show album", command=lambda: self.open_album(album))
         if os.path.exists(path):
+            m.add_command(label="Edit info…", command=lambda: self.edit_info([track]))
             m.add_command(label="Show in folder", command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
             m.add_command(label="Playback Info…", command=self.open_info)
         self._theme_menu(m)
         self.last_menu = m
         return m
+
+    # ---- song information ------------------------------------------------------
+    def edit_info(self, tracks: List[Track], heading: str = "", subheading: str = "") -> Optional[EditInfoWindow]:
+        """The Edit Info window for these songs; while one is open it is brought to the
+        front instead (one at a time)."""
+        w = self.edit_window
+        if w is not None:
+            try:
+                if w.win.winfo_exists():
+                    w.win.lift()
+                    w.win.focus_force()
+                    return w
+            except tk.TclError:
+                pass
+            self.edit_window = None
+        tracks = [t for t in tracks if not getattr(t, "missing", False)]
+        if not tracks:
+            return None
+        self.edit_window = EditInfoWindow(self, tracks, heading, subheading)
+        return self.edit_window
+
+    def edit_album_info(self, album: dict) -> Optional[EditInfoWindow]:
+        n = len(album["tracks"])
+        return self.edit_info(album["tracks"], album["title"],
+                              " · ".join(x for x in (album["artist"], f"{n:,} song{'s' if n != 1 else ''}") if x))
+
+    def tags_saved(self, paths: List[str]) -> None:
+        """Edit Info saved new information into these files (the library index already
+        holds it): read the library again, so every page and the LCD show it."""
+        if paths:
+            self.refresh_library()
 
     def more_menu(self) -> None:
         if not self.current:
@@ -1183,12 +1216,33 @@ class PlayerApp:
         self._refresh_pages({"played", "library", "stats", "stats_details"})
 
     # ---- themes ----------------------------------------------------------------
+    def all_themes(self) -> List[dict]:
+        """The user's own themes, then those of the files in the themes folder (read
+        again each time, so a file put there appears at once)."""
+        own = themes.load_custom()
+        return own + themes.load_folder(own)
+
     def theme_names(self) -> List[str]:
-        return themes.names(themes.load_custom())
+        return themes.names(self.all_themes())
+
+    def theme_file(self, name: str) -> str:
+        """The file of a theme from the themes folder, or ''."""
+        return next((t.get("file", "") for t in self.all_themes() if t["name"] == name), "")
+
+    def open_themes_folder(self, opener: Optional[Callable[[str], None]] = None) -> str:
+        """Settings → Appearance → Open themes folder (made when it does not exist yet)."""
+        folder = themes.folder()
+        try:
+            os.makedirs(folder, exist_ok=True)
+            (opener or gui.open_with_default_app)(folder)
+        except OSError as exc:
+            messagebox.showerror("Open themes folder", f"The themes folder {folder} could not be opened: {exc}",
+                                 parent=self.root)
+        return folder
 
     def current_theme(self) -> dict:
         """The theme drawn now (its name, dark, and the eight colours)."""
-        custom = themes.load_custom()
+        custom = self.all_themes()
         name = self.cfg.theme
         known = name in themes.BUILTIN or any(t["name"] == name for t in custom)
         return themes.resolve(name, False if known else system_is_dark(), custom)
@@ -1253,7 +1307,7 @@ class PlayerApp:
         self._edit_theme(name, lambda t: t.__setitem__("dark", bool(dark)))
 
     def export_theme_file(self, name: str, path: Optional[str] = None) -> Optional[str]:
-        theme = next((t for t in themes.load_custom() if t["name"] == name), None) or self.current_theme()
+        theme = next((t for t in self.all_themes() if t["name"] == name), None) or self.current_theme()
         if path is None:
             path = filedialog.asksaveasfilename(parent=self.root, title="Export the theme",
                                                 initialfile=f"{theme['name']}.json", defaultextension=".json",
