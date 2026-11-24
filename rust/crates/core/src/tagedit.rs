@@ -5,7 +5,10 @@
 //! the ID3v2 tag or the Ogg comment header pages change); other formats are
 //! copied by FFmpeg with `-c copy` and the same arguments, and the copy must
 //! decode to exactly the original's samples before it replaces the file.  The saved results move to the new size and time with the new
-//! tags, and the library reads the file again.
+//! tags, and the library reads the file again.  The cover (2.1, `set_cover()`,
+//! `remove_cover()`, at the end) is written the same way: a FLAC PICTURE block,
+//! an ID3v2 APIC frame or an Ogg METADATA_BLOCK_PICTURE comment natively, an
+//! attached picture through FFmpeg's stream copy for M4A and AIFF.
 
 use std::path::Path;
 
@@ -355,6 +358,12 @@ fn parse_comment_body(b: &[u8], start: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>, 
 /// The Ogg Vorbis or Opus file with the (checked) changes in its comment
 /// header (Python `ogg_with_tags`).
 pub fn ogg_with_tags(data: &[u8], changes: &Changes) -> Result<Vec<u8>, TagError> {
+    ogg_rewrite(data, |comments| edit_comments(comments, changes))
+}
+
+/// The Ogg Vorbis or Opus file with its comments replaced by `edit(comments)`
+/// (Python `ogg_rewrite`; see `ogg_with_tags()`).
+pub fn ogg_rewrite(data: &[u8], edit: impl FnOnce(Vec<Vec<u8>>) -> Vec<Vec<u8>>) -> Result<Vec<u8>, TagError> {
     let err = |m: &str| Err(TagError(m.to_string()));
     let p0 = ogg_page_at(data, 0)?;
     let (serial, first, first_end) = (p0.serial, p0.body.to_vec(), p0.end);
@@ -402,7 +411,7 @@ pub fn ogg_with_tags(data: &[u8], changes: &Changes) -> Result<Vec<u8>, TagError
     }
     let (vendor, comments, end) = parse_comment_body(&packets[1], magic.len())?;
     let mut new_tags = magic.to_vec();
-    new_tags.extend_from_slice(&embed::vorbis_body(&vendor, &edit_comments(comments, changes)));
+    new_tags.extend_from_slice(&embed::vorbis_body(&vendor, &edit(comments)));
     new_tags.extend_from_slice(&packets[1][end..]);
     let mut header = vec![new_tags];
     header.extend(packets[2..].iter().cloned());
@@ -566,6 +575,12 @@ fn ffmpeg_copy(path: &str, changes: &Changes) -> Result<(), TagError> {
     if !why.is_empty() {
         return Err(TagError(why));
     }
+    ffmpeg_replace(path, |tmp| ffmpeg_args(path, tmp, changes), "information")
+}
+
+/// Run FFmpeg with `make_args(temporary file)` and put the copy in the file's
+/// place when it decodes to exactly the same samples (Python `_ffmpeg_replace`).
+fn ffmpeg_replace(path: &str, make_args: impl FnOnce(&str) -> Vec<String>, what: &str) -> Result<(), TagError> {
     let ext = extension(&file_name(path));
     let folder = crate::paths::parent(&crate::paths::abspath(path));
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -579,7 +594,7 @@ fn ffmpeg_copy(path: &str, changes: &Changes) -> Result<(), TagError> {
         .into_owned();
     let res = (|| -> Result<(), TagError> {
         let out = probe::command(probe::tool("ffmpeg"))
-            .args(ffmpeg_args(path, &tmp, changes))
+            .args(make_args(&tmp))
             .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| TagError(format!("FFmpeg could not be started: {e}.")))?;
@@ -588,7 +603,7 @@ fn ffmpeg_copy(path: &str, changes: &Changes) -> Result<(), TagError> {
             let last = text.trim().lines().last().map(str::to_string);
             let code = out.status.code().map(|c| format!("exit code {c}")).unwrap_or_else(|| "it was stopped".into());
             return Err(TagError(format!(
-                "FFmpeg could not copy the file with the new information: {}.",
+                "FFmpeg could not copy the file with the new {what}: {}.",
                 last.unwrap_or(code)
             )));
         }
@@ -866,4 +881,494 @@ pub fn save_summary(outcomes: &[TagOutcome]) -> (String, Vec<String>) {
         }
     }
     (head, lines)
+}
+
+// -------------------------------------------------------------- the cover ---
+// The Cover window (2.1, docs/player-spec.md "Inspecting and changing a
+// cover"), as Python `tagedit.py` writes it: a FLAC PICTURE block, an ID3v2
+// APIC frame or an Ogg METADATA_BLOCK_PICTURE comment of type 3 (front cover)
+// at the place of the file's first picture, the earlier covers (types 3 and 0,
+// "Other") removed and other pictures kept; M4A and AIFF through FFmpeg's
+// stream copy as an attached picture, kept only when the copy decodes to the
+// same samples.  `python_covers_embed.json` holds Python's bytes.
+
+pub const FRONT_COVER: u32 = 3;
+/// replaced and removed: the front cover, and "Other", which iTunes and FFmpeg write for a cover
+pub const COVER_TYPES: [i64; 2] = [3, 0];
+pub const MAX_PICTURE: usize = 16_000_000;
+pub const PICTURE_FFMPEG: [&str; 7] = [".m4a", ".m4b", ".mp4", ".alac", ".aif", ".aiff", ".aifc"];
+pub const NO_PICTURE: [&str; 12] =
+    [".wav", ".wave", ".w64", ".rf64", ".caf", ".au", ".snd", ".aac", ".adts", ".ac3", ".dts", ".amr"];
+pub const MBP: &str = "METADATA_BLOCK_PICTURE";
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// The picture's `PictureInfo`, or why it cannot be a cover (Python `check_picture`).
+pub fn check_picture(image: &[u8], mime: &str) -> Result<crate::covers::PictureInfo, TagError> {
+    let mut m = mime.trim().to_lowercase();
+    if m == "image/jpg" {
+        m = "image/jpeg".into();
+    }
+    if !m.is_empty() && m != "image/jpeg" && m != "image/png" {
+        return Err(TagError("Only JPEG and PNG pictures can be used as a cover.".into()));
+    }
+    if image.len() > MAX_PICTURE {
+        return Err(TagError(format!(
+            "The picture is too large: a cover can have at most {} MB.",
+            MAX_PICTURE / 1_000_000
+        )));
+    }
+    crate::covers::image_info(image)
+        .ok_or_else(|| TagError("The picture is not a JPEG or PNG image that could be read.".into()))
+}
+
+/// The FLAC picture structure of a front cover (Python `flac_picture`).
+pub fn flac_picture(image: &[u8]) -> Result<Vec<u8>, TagError> {
+    let info = check_picture(image, "")?;
+    let mut out = FRONT_COVER.to_be_bytes().to_vec();
+    out.extend_from_slice(&(info.mime.len() as u32).to_be_bytes());
+    out.extend_from_slice(info.mime.as_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes());
+    for v in [info.width, info.height, info.depth, info.colors, image.len() as u32] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(image);
+    Ok(out)
+}
+
+/// The items without the covers, with `new` (unless None) at the place of the
+/// first picture or else at the end; and how many covers were left out.
+fn put_picture<T>(items: Vec<T>, is_picture: impl Fn(&T) -> bool, is_cover: impl Fn(&T) -> bool, new: Option<T>) -> (Vec<T>, usize) {
+    let mut out = Vec::with_capacity(items.len() + 1);
+    let mut new = new;
+    let mut removed = 0;
+    for it in items {
+        if is_picture(&it) {
+            if let Some(n) = new.take() {
+                out.push(n);
+            }
+            if is_cover(&it) {
+                removed += 1;
+                continue;
+            }
+        }
+        out.push(it);
+    }
+    if let Some(n) = new {
+        out.push(n);
+    }
+    (out, removed)
+}
+
+/// The picture type of a FLAC picture structure (-1 when it is too short).
+pub fn picture_type(structure: &[u8]) -> i64 {
+    match structure.get(..4) {
+        Some(b) => u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as i64,
+        None => -1,
+    }
+}
+
+/// The FLAC file with `image` as its front cover, or without its covers when
+/// `image` is None; and how many covers were replaced or removed.
+pub fn flac_with_cover(data: &[u8], image: Option<&[u8]>) -> Result<(Vec<u8>, usize), TagError> {
+    let new = match image {
+        Some(img) => Some((6u8, flac_picture(img)?)),
+        None => None,
+    };
+    let mut removed = 0;
+    let out = embed::flac_rewrite_blocks(
+        data,
+        |blocks| {
+            let (out, n) = put_picture(blocks, |b| b.0 == 6, |b| COVER_TYPES.contains(&picture_type(&b.1)), new);
+            removed = n;
+            Ok(out)
+        },
+        "The picture is too large for a FLAC file.",
+    )?;
+    Ok((out, removed))
+}
+
+/// An ID3v2.3/2.4 APIC frame's body: Latin-1, the MIME type, type 3, no description.
+pub fn apic_body(image: &[u8]) -> Result<Vec<u8>, TagError> {
+    let info = check_picture(image, "")?;
+    let mut out = vec![0u8];
+    out.extend_from_slice(info.mime.as_bytes());
+    out.extend_from_slice(&[0, FRONT_COVER as u8, 0]);
+    out.extend_from_slice(image);
+    Ok(out)
+}
+
+/// The picture type of an APIC frame (-1 when its body cannot be read).
+pub fn apic_type(major: u8, flags: &[u8], body: &[u8]) -> i64 {
+    if flags.len() > 1 && flags[1] & (if major == 3 { 0xE0 } else { 0x4F }) != 0 {
+        return -1;
+    }
+    match body.iter().skip(1).position(|b| *b == 0).map(|i| i + 1) {
+        Some(i) if i + 1 < body.len() => body[i + 1] as i64,
+        _ => -1,
+    }
+}
+
+/// The MP3 file with `image` as its front cover (APIC), or without its covers
+/// when `image` is None; and how many covers were replaced or removed.
+pub fn mp3_with_cover(data: &[u8], image: Option<&[u8]>) -> Result<(Vec<u8>, usize), TagError> {
+    let new: Option<Frame> = match image {
+        Some(img) => Some((*b"APIC", [0, 0], apic_body(img)?)),
+        None => None,
+    };
+    let mut removed = 0;
+    let out = embed::mp3_rewrite(
+        data,
+        |major, frames| {
+            let (out, n) = put_picture(
+                frames,
+                |f| &f.0 == b"APIC",
+                |f| COVER_TYPES.contains(&apic_type(major, &f.1, &f.2)),
+                new,
+            );
+            removed = n;
+            out
+        },
+        "The picture is too large for an ID3 tag.",
+    )?;
+    Ok((out, removed))
+}
+
+/// Standard base64 with padding (Python `base64.b64encode`).
+pub fn b64encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The picture type of a METADATA_BLOCK_PICTURE comment, from the first eight
+/// base64 characters of its value (-1 when they cannot be read).
+pub fn mbp_type(comment: &[u8]) -> i64 {
+    let value = match comment.iter().position(|b| *b == b'=') {
+        Some(i) => &comment[i + 1..],
+        None => &[][..],
+    };
+    if value.len() < 8 {
+        return -1;
+    }
+    let mut n: u64 = 0;
+    for c in &value[..8] {
+        let Some(v) = B64.iter().position(|x| x == c) else { return -1 };
+        n = (n << 6) | v as u64;
+    }
+    (n >> 16) as i64
+}
+
+/// The Ogg Vorbis or Opus file with `image` as its front cover (a
+/// METADATA_BLOCK_PICTURE comment), or without its covers when `image` is None.
+pub fn ogg_with_cover(data: &[u8], image: Option<&[u8]>) -> Result<(Vec<u8>, usize), TagError> {
+    let new = match image {
+        Some(img) => Some(format!("{MBP}={}", b64encode(&flac_picture(img)?)).into_bytes()),
+        None => None,
+    };
+    let mut removed = 0;
+    let out = ogg_rewrite(data, |comments| {
+        let (out, n) = put_picture(comments, |c| comment_key(c) == MBP, |c| COVER_TYPES.contains(&mbp_type(c)), new);
+        removed = n;
+        out
+    })?;
+    Ok((out, removed))
+}
+
+/// Whether a video stream FFmpeg shows is a cover (Python `cover_stream`).
+pub fn cover_stream(attached_pic: bool, comment: &str) -> bool {
+    attached_pic && matches!(clean_value(comment).to_lowercase().as_str(), "" | "other" | "cover (front)")
+}
+
+/// (index, `cover_stream()`) of every video stream in the file, by ffprobe.
+pub fn picture_streams(path: &str) -> Result<Vec<(i64, bool)>, TagError> {
+    let failed = || TagError("FFmpeg could not read the file's streams.".into());
+    let out = probe::command(probe::tool("ffprobe"))
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=index,codec_type:stream_disposition=attached_pic:stream_tags=comment",
+            "-of",
+            "json",
+            path,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|_| failed())?;
+    if !out.status.success() {
+        return Err(failed());
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let doc = crate::json::parse(if text.trim().is_empty() { "{}" } else { &text }).map_err(|_| failed())?;
+    let mut streams = vec![];
+    for st in doc.get("streams").and_then(|s| s.as_array()).map(|a| a.as_slice()).unwrap_or(&[]) {
+        if st.get("codec_type").and_then(|v| v.as_str()) != Some("video") {
+            continue;
+        }
+        let attached = st.get("disposition").and_then(|d| d.get("attached_pic")).and_then(|v| v.as_i64()) == Some(1);
+        let comment = st
+            .get("tags")
+            .and_then(|t| t.as_object())
+            .and_then(|o| o.iter().find(|(k, _)| k.to_lowercase() == "comment"))
+            .and_then(|(_, v)| v.as_str())
+            .unwrap_or("");
+        let index = st.get("index").and_then(|v| v.as_i64()).unwrap_or(0);
+        streams.push((index, cover_stream(attached, comment)));
+    }
+    Ok(streams)
+}
+
+/// The arguments (after the program) that copy `src` to `dst` with the picture
+/// file `image` as its front cover, or without its covers when `image` is None
+/// (Python `ffmpeg_cover_args`).
+pub fn ffmpeg_cover_args(src: &str, image: Option<&str>, dst: &str, streams: &[(i64, bool)]) -> Vec<String> {
+    let mut args: Vec<String> = ["-v", "error", "-nostdin", "-y", "-i", src].iter().map(|s| s.to_string()).collect();
+    match image {
+        Some(img) => {
+            args.extend(["-i", img, "-map", "0", "-map", "-0:v?", "-map", "1"].iter().map(|s| s.to_string()));
+            for (i, cover) in streams {
+                if !cover {
+                    args.extend(["-map".to_string(), format!("0:{i}")]);
+                }
+            }
+        }
+        None => {
+            args.extend(["-map".to_string(), "0".to_string()]);
+            for (i, cover) in streams {
+                if *cover {
+                    args.extend(["-map".to_string(), format!("-0:{i}")]);
+                }
+            }
+        }
+    }
+    args.extend(
+        ["-c", "copy", "-map_metadata", "0", "-map_chapters", "0", "-fflags", "+bitexact"].iter().map(|s| s.to_string()),
+    );
+    if image.is_some() {
+        args.extend(
+            ["-disposition:v:0", "attached_pic", "-metadata:s:v:0", "comment=Cover (front)"].iter().map(|s| s.to_string()),
+        );
+    }
+    if ID3_CHUNK.contains(&ext_of(src).as_str()) {
+        args.extend(["-write_id3v2".to_string(), "1".to_string()]);
+    }
+    args.push(dst.into());
+    args
+}
+
+/// Why the cover of this file cannot be changed, or "" (Python `cannot_hold_cover`).
+pub fn cannot_hold_cover(path: &str) -> String {
+    let ext = ext_of(path);
+    let name = if ext.len() > 1 { ext[1..].to_uppercase() } else { "These".to_string() };
+    let e = ext.as_str();
+    if NO_MUXER.contains(&e) {
+        format!("The cover of {name} files cannot be changed here, because FFmpeg can read them but not write them.")
+    } else if NO_PICTURE.contains(&e) {
+        format!("{name} files have no place for a cover picture, so they were left as they are.")
+    } else if !NATIVE.contains(&e) && !PICTURE_FFMPEG.contains(&e) {
+        format!("The cover of {name} files cannot be changed here, because FFmpeg cannot write pictures into them.")
+    } else {
+        String::new()
+    }
+}
+
+fn ffmpeg_cover(path: &str, image: Option<&[u8]>) -> Result<&'static str, TagError> {
+    let streams = picture_streams(path)?;
+    if image.is_none() && !streams.iter().any(|(_, c)| *c) {
+        return Ok("none");
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let picture = image.map(|img| {
+        let ext = if crate::covers::image_format(img) == "PNG" { "png" } else { "jpg" };
+        std::env::temp_dir()
+            .join(format!(
+                "realhires-cover-{}-{}.{ext}",
+                std::process::id(),
+                N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    });
+    let res = (|| {
+        if let (Some(p), Some(img)) = (&picture, image) {
+            std::fs::write(p, img).map_err(|e| TagError(e.to_string()))?;
+        }
+        ffmpeg_replace(path, |tmp| ffmpeg_cover_args(path, picture.as_deref(), tmp, &streams), "cover")
+    })();
+    if let Some(p) = &picture {
+        let _ = std::fs::remove_file(p);
+    }
+    res.map(|_| "ffmpeg")
+}
+
+/// Make `image` the file's front cover, or remove its covers when it is None;
+/// "native", "ffmpeg", or "none" when there was no cover to remove (Python
+/// `write_cover`).
+pub fn write_cover(path: &str, image: Option<&[u8]>) -> Result<&'static str, TagError> {
+    let why = cannot_hold_cover(path);
+    if !why.is_empty() {
+        return Err(TagError(why));
+    }
+    if let Some(img) = image {
+        check_picture(img, "")?;
+    }
+    let ext = ext_of(path);
+    if NATIVE.contains(&ext.as_str()) {
+        let data = std::fs::read(path).map_err(|e| TagError(e.to_string()))?;
+        let res = match ext.as_str() {
+            ".flac" => flac_with_cover(&data, image),
+            ".mp3" => mp3_with_cover(&data, image),
+            _ => ogg_with_cover(&data, image),
+        };
+        let (new, n) = match res {
+            Ok(r) => r,
+            // ID3v2.2 or unsynchronised tags: FFmpeg copies the file
+            Err(_) if ext == ".mp3" => return ffmpeg_cover(path, image),
+            Err(e) => return Err(e),
+        };
+        if image.is_none() && n == 0 {
+            return Ok("none");
+        }
+        embed::replace_file(path, &new).map_err(|e| TagError(e.to_string()))?;
+        return Ok("native");
+    }
+    ffmpeg_cover(path, image)
+}
+
+fn cover_files(
+    paths: &[String],
+    image: Option<&[u8]>,
+    cfg: Option<&Settings>,
+    mut progress: impl FnMut(usize, usize, &str),
+) -> Vec<TagOutcome> {
+    let verb = if image.is_none() { "remove" } else { "change" };
+    let store = cfg.and_then(crate::store::open_store);
+    let lib = crate::musiclib::Library::open(None).ok();
+    let mut out = vec![];
+    for (i, path) in paths.iter().enumerate() {
+        progress(i, paths.len(), path);
+        let name = file_name(path);
+        let fail = |message: String| TagOutcome { path: path.clone(), ok: false, message, tags: vec![] };
+        let why = cannot_hold_cover(path);
+        if !why.is_empty() {
+            out.push(fail(why));
+            continue;
+        }
+        let done = crate::store::stat(path).map_err(|e| TagError(e.to_string())).and_then(|st| Ok((st, write_cover(path, image)?)));
+        let ((size, mtime), how) = match done {
+            Ok(d) => d,
+            Err(e) => {
+                out.push(fail(format!("Could not {verb} the cover of {name}: {e}")));
+                continue;
+            }
+        };
+        if how == "none" {
+            out.push(TagOutcome { path: path.clone(), ok: true, message: format!("{name} had no cover inside."), tags: vec![] });
+            continue;
+        }
+        let tags = probe::probe(path).map(|i| i.tags).unwrap_or_default();
+        if let Some(st) = &store {
+            st.retag_with(path, size, mtime, Some(&tags));
+        }
+        if let Some(lib) = &lib {
+            lib.update_file(path);
+        }
+        out.push(TagOutcome { path: path.clone(), ok: true, message: String::new(), tags });
+    }
+    progress(paths.len(), paths.len(), "");
+    out
+}
+
+/// Make the JPEG or PNG `image` the front cover of every file, keep their saved
+/// results and update the library (Python `set_cover`).  Never fails; one
+/// outcome per file.
+pub fn set_cover(
+    paths: &[String],
+    image: &[u8],
+    mime: &str,
+    cfg: Option<&Settings>,
+    progress: impl FnMut(usize, usize, &str),
+) -> Vec<TagOutcome> {
+    if let Err(e) = check_picture(image, mime) {
+        return paths.iter().map(|p| TagOutcome { path: p.clone(), ok: false, message: e.0.clone(), tags: vec![] }).collect();
+    }
+    cover_files(paths, Some(image), cfg, progress)
+}
+
+/// Remove the covers inside every file (Python `remove_cover`; ok with a
+/// message: the file had no cover inside and was not touched).
+pub fn remove_cover(paths: &[String], cfg: Option<&Settings>, progress: impl FnMut(usize, usize, &str)) -> Vec<TagOutcome> {
+    cover_files(paths, None, cfg, progress)
+}
+
+/// (headline, sentences) for the Cover window (Python `cover_summary`).
+pub fn cover_summary(outcomes: &[TagOutcome], removing: bool, notes: &[String]) -> (String, Vec<String>) {
+    use crate::stats::thousands;
+    let changed = outcomes.iter().filter(|o| o.ok && o.message.is_empty()).count();
+    let empty: Vec<&TagOutcome> = outcomes.iter().filter(|o| o.ok && !o.message.is_empty()).collect();
+    let bad: Vec<&TagOutcome> = outcomes.iter().filter(|o| !o.ok).collect();
+    let (n, total) = (changed, outcomes.len());
+    let s = if n != 1 { "s" } else { "" };
+    let head = if removing {
+        if n > 0 && n == total {
+            format!("Removed the cover from {} song{s}.", thousands(n as i64))
+        } else if n > 0 {
+            format!("Removed the cover from {} of {} songs.", thousands(n as i64), thousands(total as i64))
+        } else if !empty.is_empty() && bad.is_empty() {
+            if total == 1 { "The song had no cover inside.".into() } else { "None of the songs had a cover inside.".into() }
+        } else {
+            "No cover was removed.".into()
+        }
+    } else if n > 0 && n == total {
+        format!("Changed the cover of {} song{s}.", thousands(n as i64))
+    } else if n > 0 {
+        format!("Changed the cover of {} of {} songs.", thousands(n as i64), thousands(total as i64))
+    } else {
+        "No song was changed.".into()
+    };
+    let mut lines: Vec<String> = vec![];
+    if !empty.is_empty() && (n > 0 || !bad.is_empty()) {
+        lines.push(if empty.len() == 1 {
+            empty[0].message.clone()
+        } else {
+            format!("{} of the songs had no cover inside.", thousands(empty.len() as i64))
+        });
+    }
+    for o in bad {
+        if !lines.contains(&o.message) {
+            lines.push(o.message.clone());
+        }
+    }
+    for note in notes {
+        if !note.is_empty() && !lines.contains(note) {
+            lines.push(note.clone());
+        }
+    }
+    (head, lines)
+}
+
+pub fn folder_saved_note(path: &str) -> String {
+    format!("The picture was also saved as {} in the album's folder.", file_name(path))
+}
+
+pub fn folder_failed_note(path: &str, error: &str) -> String {
+    format!("Could not save {} in the album's folder: {error}", file_name(path))
+}
+
+pub fn folder_kept_note(path: &str) -> String {
+    format!(
+        "{} in the album's folder was not deleted; it is shown for the songs that have no cover inside.",
+        file_name(path)
+    )
 }

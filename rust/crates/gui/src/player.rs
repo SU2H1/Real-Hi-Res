@@ -520,6 +520,8 @@ pub struct Player {
     themes_gen: u64,
     /// the Edit Info window (one at a time)
     pub edit_info: Option<crate::editinfo::EditInfo>,
+    /// the Cover window (one at a time)
+    pub cover_win: Option<crate::coverwin::CoverWin>,
     /// the play history (`library.sqlite`)
     pub history: Option<Library>,
     pub history_gen: u64,
@@ -641,6 +643,7 @@ impl Player {
             file_themes_read: Instant::now(),
             themes_gen: 0,
             edit_info: None,
+            cover_win: None,
             history: Library::open(None).ok(),
             history_gen: 0,
             listening: None,
@@ -1470,6 +1473,20 @@ impl Player {
         self.edit_info = Some(crate::editinfo::EditInfo::new(&self.ctx, paths, heading, subheading));
     }
 
+    /// Open the Cover window of this song's cover (a click on Now Playing's
+    /// cover, Cover… in the song menus); one at a time, and not while it works.
+    pub fn open_cover_window(&mut self, path: &str) {
+        if self.cover_win.as_ref().is_some_and(|w| w.busy || w.path == path) {
+            return;
+        }
+        if !std::path::Path::new(path).is_file() {
+            return;
+        }
+        let album = self.lib.album_of(path).cloned();
+        let track = self.lib.track(path).cloned();
+        self.cover_win = Some(crate::coverwin::CoverWin::new(&self.ctx, path, album.as_ref(), track.as_ref(), &self.scanner.cfg));
+    }
+
     /// Use the theme called `name` (saved in the settings at once).
     pub fn set_theme(&mut self, name: &str) {
         let mut cfg = self.scanner.cfg.clone();
@@ -2247,9 +2264,6 @@ impl Player {
         }
     }
 
-    /// A click on Now Playing's cover: the Cover window (another branch).
-    pub fn open_cover_window(&mut self, _path: &str) {}
-
     /// Up Next (Now Playing): play that song now; the queue continues after it.
     pub fn jump_up_next(&mut self, i: usize) {
         // PlayQueue::jump() also handles the songs queued with Play Next / Add to Queue
@@ -2406,6 +2420,7 @@ impl Player {
 
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
         self.dialogs(ctx, pal);
+        let cover_open = crate::coverwin::cover_window(self, ctx, pal);
         if let Some(mut w) = self.edit_info.take() {
             let cfg = self.scanner.cfg.clone();
             match w.show(ctx, pal, &cfg) {
@@ -2432,7 +2447,7 @@ impl Player {
             }
         }
         // Esc closes the topmost of the player's windows
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() && !cover_open {
             if self.eq_open {
                 self.eq_open = false;
                 self.save_state();
@@ -3477,6 +3492,9 @@ mod tests {
         frame(&ctx, &mut p);
         click(&ctx, &mut p, cover.center());
         assert_eq!(p.page, Page::NowPlaying);
+        assert!(p.cover_win.is_some(), "the Now Playing cover opens the Cover window");
+        p.cover_win = None;
+        frame(&ctx, &mut p);
         // the LCD: the title and the album name open the album, the artist the artist
         let lcd = p.lcd_links.clone();
         assert_eq!(lcd.iter().filter(|(_, l)| *l == Link::Album).count(), 2, "{lcd:?}");

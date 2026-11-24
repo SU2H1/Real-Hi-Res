@@ -19,6 +19,11 @@ After a file has been written, its saved quality-check results are moved to
 its new size and time with the new tags (`ResultStore.retag()`), because its
 audio did not change, and the library reads it again.
 
+The cover (2.1, `set_cover()`, `remove_cover()`, at the end of this module) is
+written the same way: a FLAC PICTURE block, an ID3v2 APIC frame or an Ogg
+METADATA_BLOCK_PICTURE comment natively, an attached picture through FFmpeg's
+stream copy for M4A and AIFF.
+
 The Rust version (`rust/crates/core/src/tagedit.rs`) writes the same bytes and
 runs the same FFmpeg command; `rust/tools/gen_player_vectors.py` writes the
 Python answers it is tested against.
@@ -261,6 +266,12 @@ def ogg_with_tags(data: bytes, changes: Dict[str, str]) -> bytes:
     The first page and every audio page keep their bytes (only their sequence
     numbers and checksums change when the header takes a different number of
     pages).  TagError for anything else (Ogg FLAC, Speex, several streams...)."""
+    return ogg_rewrite(data, lambda comments: edit_comments(comments, changes))
+
+
+def ogg_rewrite(data: bytes, edit: Callable[[List[bytes]], List[bytes]]) -> bytes:
+    """The Ogg Vorbis or Opus file with its comments replaced by edit(comments) (see
+    ogg_with_tags())."""
     htype, granule, serial, _, segs, body, pos = _ogg_page_at(data, 0)
     first = body
     if not htype & 2 or any(v == 255 for v in segs) or len(segs) != 1:
@@ -296,7 +307,7 @@ def ogg_with_tags(data: bytes, changes: Dict[str, str]) -> bytes:
         raise TagError("The Ogg file's comment header is damaged.")
     vendor, comments, end = _parse_comment_body(tags, len(magic))
     rest = tags[end:]  # Vorbis: the framing bit; Opus: padding or binary data, kept
-    new_tags = magic + embed._vorbis_body(vendor, edit_comments(comments, changes)) + rest
+    new_tags = magic + embed._vorbis_body(vendor, edit(comments)) + rest
     pages = _ogg_pages_for([new_tags] + packets[2:], serial, 1)
     out = bytearray(data[:_ogg_page_at(data, 0)[6]])
     for p in pages:
@@ -397,21 +408,27 @@ def pcm_digest(path: str) -> str:
 
 
 def _ffmpeg_copy(path: str, changes: Dict[str, str]) -> None:
-    from .probe import _no_window, tool
-
     why = cannot_edit(path)
     if why:
         raise TagError(why)
+    _ffmpeg_replace(path, lambda tmp: ffmpeg_args(path, tmp, changes), "information")
+
+
+def _ffmpeg_replace(path: str, make_args: Callable[[str], List[str]], what: str) -> None:
+    """Run FFmpeg with make_args(temporary file) and put the copy in the file's place
+    when it decodes to exactly the same samples (TagError otherwise)."""
+    from .probe import _no_window, tool
+
     ext = os.path.splitext(path)[1]
     folder = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(prefix=".realhires-tags-", suffix=ext, dir=folder)
     os.close(fd)
     try:
-        proc = subprocess.run([tool("ffmpeg")] + ffmpeg_args(path, tmp, changes), capture_output=True,
+        proc = subprocess.run([tool("ffmpeg")] + make_args(tmp), capture_output=True,
                               stdin=subprocess.DEVNULL, **_no_window())
         if proc.returncode != 0:
             msg = proc.stderr.decode("utf-8", "replace").strip().splitlines()
-            raise TagError("FFmpeg could not copy the file with the new information: "
+            raise TagError(f"FFmpeg could not copy the file with the new {what}: "
                            f"{msg[-1] if msg else f'exit code {proc.returncode}'}.")
         if pcm_digest(tmp) != pcm_digest(path):
             raise TagError("FFmpeg's copy did not have exactly the same audio as the original, so the file was "
@@ -622,3 +639,394 @@ def save_summary(outcomes: List[TagOutcome]) -> Tuple[str, List[str]]:
         if o.message and o.message not in lines:
             lines.append(o.message)
     return head, lines
+
+
+# ------------------------------------------------------------- the cover ---
+# The Cover window (2.1, docs/player-spec.md "Inspecting and changing a cover"):
+# a JPEG or PNG picture becomes the songs' front cover, or their covers are
+# removed.  FLAC gets a PICTURE metadata block, MP3 an ID3v2 APIC frame, Ogg
+# Vorbis and Opus a METADATA_BLOCK_PICTURE comment (the FLAC picture structure in
+# base64), each of type 3 (front cover), at the place of the file's first picture,
+# and the earlier covers go: pictures of type 3, and of type 0 ("Other"), which
+# iTunes and FFmpeg write for a cover.  Other pictures (back cover, booklet...)
+# stay.  Only the tag changes, as for the information above.  M4A and AIFF get
+# the picture through FFmpeg's stream copy as an attached picture, kept only when
+# the copy decodes to the same samples; other formats have no place for a picture
+# that FFmpeg can write and are left as they are.  The Rust version writes the same
+# bytes (rust/crates/core/src/tagedit.rs, python_covers_embed.json).
+
+FRONT_COVER = 3
+COVER_TYPES = (3, 0)
+MAX_PICTURE = 16_000_000
+PICTURE_FFMPEG = (".m4a", ".m4b", ".mp4", ".alac", ".aif", ".aiff", ".aifc")
+NO_PICTURE = (".wav", ".wave", ".w64", ".rf64", ".caf", ".au", ".snd", ".aac", ".adts", ".ac3", ".dts", ".amr")
+MBP = "METADATA_BLOCK_PICTURE"
+_B64 = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def check_picture(image: bytes, mime: str = ""):
+    """The picture's covers.PictureInfo, or TagError when it cannot be a cover (not
+    a JPEG or PNG image, or over MAX_PICTURE bytes)."""
+    from . import covers
+
+    m = (mime or "").strip().lower()
+    if m and (m if m != "image/jpg" else "image/jpeg") not in ("image/jpeg", "image/png"):
+        raise TagError("Only JPEG and PNG pictures can be used as a cover.")
+    if len(image) > MAX_PICTURE:
+        raise TagError(f"The picture is too large: a cover can have at most {MAX_PICTURE // 1_000_000} MB.")
+    info = covers.image_info(image)
+    if info is None:
+        raise TagError("The picture is not a JPEG or PNG image that could be read.")
+    return info
+
+
+def flac_picture(image: bytes) -> bytes:
+    """The FLAC picture structure of a front cover: the body of a PICTURE block and,
+    in base64, the value of an Ogg METADATA_BLOCK_PICTURE comment (empty description;
+    size and depth from the image's header, as metaflac reads them)."""
+    info = check_picture(image)
+    mime = info.mime.encode("ascii")
+    return (struct.pack(">II", FRONT_COVER, len(mime)) + mime + struct.pack(">I", 0)
+            + struct.pack(">IIIII", info.width, info.height, info.depth, info.colors, len(image)) + image)
+
+
+def _put_picture(items: list, is_picture: Callable, is_cover: Callable, new) -> Tuple[list, int]:
+    """The items without the covers, with `new` (unless None) at the place of the
+    first picture or else at the end; and how many covers were left out."""
+    out, removed, placed = [], 0, new is None
+    for it in items:
+        if is_picture(it):
+            if not placed:
+                out.append(new)
+                placed = True
+            if is_cover(it):
+                removed += 1
+                continue
+        out.append(it)
+    if not placed:
+        out.append(new)
+    return out, removed
+
+
+def picture_type(structure: bytes) -> int:
+    """The picture type of a FLAC picture structure (-1 when it is too short)."""
+    return struct.unpack_from(">I", structure)[0] if len(structure) >= 4 else -1
+
+
+def flac_with_cover(data: bytes, image: Optional[bytes]) -> Tuple[bytes, int]:
+    """The FLAC file with `image` as its front cover, or without its covers when
+    `image` is None; and how many covers were replaced or removed."""
+    new = None if image is None else (6, flac_picture(image))
+    removed = 0
+
+    def edit(blocks):
+        nonlocal removed
+        out, removed = _put_picture(blocks, lambda b: b[0] == 6, lambda b: picture_type(b[1]) in COVER_TYPES, new)
+        return out
+
+    try:
+        return embed.flac_rewrite_blocks(data, edit, "The picture is too large for a FLAC file."), removed
+    except embed.EmbedError as exc:
+        raise TagError(str(exc)) from exc
+
+
+def apic_body(image: bytes) -> bytes:
+    """An ID3v2.3/2.4 APIC frame's body: Latin-1, the MIME type, type 3, no description."""
+    info = check_picture(image)
+    return b"\x00" + info.mime.encode("ascii") + b"\x00" + bytes([FRONT_COVER]) + b"\x00" + image
+
+
+def apic_type(major: int, flags: bytes, body: bytes) -> int:
+    """The picture type of an APIC frame (-1 when its body cannot be read: compressed,
+    encrypted, grouped or unsynchronised frames)."""
+    if len(flags) > 1 and flags[1] & (0xE0 if major == 3 else 0x4F):
+        return -1
+    i = body.find(b"\x00", 1)
+    return body[i + 1] if 0 < i and i + 1 < len(body) else -1
+
+
+def mp3_with_cover(data: bytes, image: Optional[bytes]) -> Tuple[bytes, int]:
+    """The MP3 file with `image` as its front cover (APIC), or without its covers when
+    `image` is None; and how many covers were replaced or removed."""
+    new = None if image is None else (b"APIC", b"\x00\x00", apic_body(image))
+    removed = 0
+
+    def edit(major, frames):
+        nonlocal removed
+        out, removed = _put_picture(frames, lambda f: f[0] == b"APIC",
+                                    lambda f: apic_type(major, f[1], f[2]) in COVER_TYPES, new)
+        return out
+
+    try:
+        return embed.mp3_rewrite(data, edit, "The picture is too large for an ID3 tag."), removed
+    except embed.EmbedError as exc:
+        raise TagError(str(exc)) from exc
+
+
+def b64encode(data: bytes) -> bytes:
+    """Standard base64 with padding (as the Rust version writes it)."""
+    import base64
+
+    return base64.b64encode(data)
+
+
+def mbp_type(comment: bytes) -> int:
+    """The picture type of a METADATA_BLOCK_PICTURE comment, from the first eight
+    base64 characters of its value (-1 when they cannot be read)."""
+    value = comment.split(b"=", 1)[1] if b"=" in comment else b""
+    head = value[:8]
+    if len(head) < 8 or any(c not in _B64 for c in head):
+        return -1
+    n = 0
+    for c in head:
+        n = (n << 6) | _B64.index(c)
+    return n >> 16
+
+
+def ogg_with_cover(data: bytes, image: Optional[bytes]) -> Tuple[bytes, int]:
+    """The Ogg Vorbis or Opus file with `image` as its front cover (a
+    METADATA_BLOCK_PICTURE comment), or without its covers when `image` is None; and
+    how many covers were replaced or removed."""
+    new = None if image is None else MBP.encode("ascii") + b"=" + b64encode(flac_picture(image))
+    removed = 0
+
+    def edit(comments):
+        nonlocal removed
+        out, removed = _put_picture(comments, lambda c: embed._comment_key(c) == MBP,
+                                    lambda c: mbp_type(c) in COVER_TYPES, new)
+        return out
+
+    return ogg_rewrite(data, edit), removed
+
+
+def cover_stream(attached_pic: bool, comment: str) -> bool:
+    """Whether a video stream FFmpeg shows is a cover: an attached picture whose
+    comment (FFmpeg's name of the picture type) is "Cover (front)", "Other" or none."""
+    return bool(attached_pic) and clean_value(comment).lower() in ("", "other", "cover (front)")
+
+
+def picture_streams(path: str) -> List[Tuple[int, bool]]:
+    """(index, cover_stream()) of every video stream in the file, by ffprobe."""
+    import json
+
+    from .probe import _no_window, tool
+
+    cmd = [tool("ffprobe"), "-v", "error", "-show_entries",
+           "stream=index,codec_type:stream_disposition=attached_pic:stream_tags=comment", "-of", "json", path]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=60, **_no_window())
+        streams = json.loads(proc.stdout or b"{}").get("streams", []) if proc.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        streams = None
+    if streams is None:
+        raise TagError("FFmpeg could not read the file's streams.")
+    out = []
+    for st in streams:
+        if st.get("codec_type") != "video":
+            continue
+        tags = {str(k).lower(): str(v) for k, v in (st.get("tags") or {}).items()}
+        attached = (st.get("disposition") or {}).get("attached_pic", 0) == 1
+        out.append((int(st.get("index", 0)), cover_stream(attached, tags.get("comment", ""))))
+    return out
+
+
+def ffmpeg_cover_args(src: str, image: Optional[str], dst: str, streams: List[Tuple[int, bool]]) -> List[str]:
+    """The arguments (after the program) that copy `src` to `dst` with the picture file
+    `image` as its front cover (the first video stream, after the audio; the file's
+    other pictures follow it), or without its covers when `image` is None."""
+    args = ["-v", "error", "-nostdin", "-y", "-i", src]
+    if image is not None:
+        args += ["-i", image, "-map", "0", "-map", "-0:v?", "-map", "1"]
+        for i, cover in streams:
+            if not cover:
+                args += ["-map", f"0:{i}"]
+    else:
+        args += ["-map", "0"]
+        for i, cover in streams:
+            if cover:
+                args += ["-map", f"-0:{i}"]
+    args += ["-c", "copy", "-map_metadata", "0", "-map_chapters", "0", "-fflags", "+bitexact"]
+    if image is not None:
+        args += ["-disposition:v:0", "attached_pic", "-metadata:s:v:0", "comment=Cover (front)"]
+    if os.path.splitext(src)[1].lower() in ID3_CHUNK:
+        args += ["-write_id3v2", "1"]
+    return args + [dst]
+
+
+def cannot_hold_cover(path: str) -> str:
+    """Why the cover of this file cannot be changed, or ''."""
+    ext = os.path.splitext(path)[1].lower()
+    name = ext[1:].upper() or "These"
+    if ext in NO_MUXER:
+        return f"The cover of {name} files cannot be changed here, because FFmpeg can read them but not write them."
+    if ext in NO_PICTURE:
+        return f"{name} files have no place for a cover picture, so they were left as they are."
+    if ext not in NATIVE and ext not in PICTURE_FFMPEG:
+        return f"The cover of {name} files cannot be changed here, because FFmpeg cannot write pictures into them."
+    return ""
+
+
+def _ffmpeg_cover(path: str, image: Optional[bytes]) -> str:
+    streams = picture_streams(path)
+    if image is None and not any(cover for _, cover in streams):
+        return "none"
+    picture = None
+    try:
+        if image is not None:
+            from .covers import image_format
+
+            fd, picture = tempfile.mkstemp(prefix="realhires-cover-",
+                                           suffix=".png" if image_format(image) == "PNG" else ".jpg")
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(image)
+        _ffmpeg_replace(path, lambda tmp: ffmpeg_cover_args(path, picture, tmp, streams), "cover")
+    finally:
+        if picture is not None:
+            try:
+                os.unlink(picture)
+            except OSError:
+                pass
+    return "ffmpeg"
+
+
+def write_cover(path: str, image: Optional[bytes]) -> str:
+    """Make `image` the file's front cover, or remove its covers when it is None.
+    Returns "native", "ffmpeg", or "none" when there was no cover to remove (the file
+    is not touched then).  Raises TagError or OSError, and leaves the file as it was then."""
+    why = cannot_hold_cover(path)
+    if why:
+        raise TagError(why)
+    if image is not None:
+        check_picture(image)
+    ext = os.path.splitext(path)[1].lower()
+    if ext in NATIVE:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        try:
+            if ext == ".flac":
+                new, n = flac_with_cover(data, image)
+            elif ext == ".mp3":
+                new, n = mp3_with_cover(data, image)
+            else:
+                new, n = ogg_with_cover(data, image)
+        except TagError:
+            if ext != ".mp3":
+                raise
+            return _ffmpeg_cover(path, image)  # ID3v2.2 or unsynchronised tags: FFmpeg copies the file
+        if image is None and n == 0:
+            return "none"
+        embed.replace_file(path, new)
+        return "native"
+    return _ffmpeg_cover(path, image)
+
+
+def _cover_files(paths: List[str], image: Optional[bytes], cfg,
+                 progress: Optional[Callable[[int, int, str], None]]) -> List[TagOutcome]:
+    from . import musiclib, store as store_mod
+    from .probe import probe
+
+    verb = "remove" if image is None else "change"
+    results = []
+    st = store_mod.open_store(cfg) if cfg is not None and getattr(cfg, "save_results", True) else None
+    try:
+        lib = musiclib.Library()
+    except Exception:  # noqa: BLE001
+        lib = None
+    try:
+        for i, path in enumerate(paths):
+            if progress is not None:
+                progress(i, len(paths), path)
+            name = os.path.basename(path)
+            why = cannot_hold_cover(path)
+            if why:
+                results.append(TagOutcome(path, False, why))
+                continue
+            try:
+                before = os.stat(path)
+                how = write_cover(path, image)
+            except (TagError, OSError) as exc:
+                results.append(TagOutcome(path, False, f"Could not {verb} the cover of {name}: {exc}"))
+                continue
+            if how == "none":
+                results.append(TagOutcome(path, True, f"{name} had no cover inside."))
+                continue
+            try:
+                tags = probe(path).tags or {}
+            except Exception:  # noqa: BLE001
+                tags = {}
+            if st is not None:
+                st.retag(path, before.st_size, before.st_mtime_ns, tags=tags)
+            if lib is not None:
+                lib.update_file(path)
+            results.append(TagOutcome(path, True, "", tags))
+        if progress is not None:
+            progress(len(paths), len(paths), "")
+    finally:
+        if st is not None:
+            st.close()
+        if lib is not None:
+            lib.close()
+    return results
+
+
+def set_cover(paths: List[str], image: bytes, mime: str = "", cfg=None,
+              progress: Optional[Callable[[int, int, str], None]] = None) -> List[TagOutcome]:
+    """Make the JPEG or PNG `image` the front cover of every file, keep their saved
+    results and update the library.  Never raises; one outcome per file (ok with no
+    message: changed; not ok: left as it was, the message says why)."""
+    try:
+        check_picture(image, mime)
+    except TagError as exc:
+        return [TagOutcome(p, False, str(exc)) for p in paths]
+    return _cover_files(list(paths), image, cfg, progress)
+
+
+def remove_cover(paths: List[str], cfg=None,
+                 progress: Optional[Callable[[int, int, str], None]] = None) -> List[TagOutcome]:
+    """Remove the covers inside every file (set_cover()'s outcomes; ok with a message:
+    the file had no cover inside and was not touched)."""
+    return _cover_files(list(paths), None, cfg, progress)
+
+
+def cover_summary(outcomes: List[TagOutcome], removing: bool = False,
+                  notes: Iterable[str] = ()) -> Tuple[str, List[str]]:
+    """(headline, sentences) for the Cover window after changing or removing covers;
+    `notes` (about the folder image) come last."""
+    changed = [o for o in outcomes if o.ok and not o.message]
+    empty = [o for o in outcomes if o.ok and o.message]
+    bad = [o for o in outcomes if not o.ok]
+    n, total = len(changed), len(outcomes)
+    s = "s" if n != 1 else ""
+    if removing:
+        head = (f"Removed the cover from {n:,} song{s}." if changed and n == total else
+                f"Removed the cover from {n:,} of {total:,} songs." if changed else
+                ("The song had no cover inside." if total == 1 else "None of the songs had a cover inside.")
+                if empty and not bad else
+                "No cover was removed.")
+    else:
+        head = (f"Changed the cover of {n:,} song{s}." if changed and n == total else
+                f"Changed the cover of {n:,} of {total:,} songs." if changed else
+                "No song was changed.")
+    lines: List[str] = []
+    if empty and (changed or bad):
+        lines.append(empty[0].message if len(empty) == 1 else f"{len(empty):,} of the songs had no cover inside.")
+    for o in bad:
+        if o.message not in lines:
+            lines.append(o.message)
+    for note in notes:
+        if note and note not in lines:
+            lines.append(note)
+    return head, lines
+
+
+def folder_saved_note(path: str) -> str:
+    return f"The picture was also saved as {os.path.basename(path)} in the album's folder."
+
+
+def folder_failed_note(path: str, error) -> str:
+    return f"Could not save {os.path.basename(path)} in the album's folder: {error}"
+
+
+def folder_kept_note(path: str) -> str:
+    return (f"{os.path.basename(path)} in the album's folder was not deleted; it is shown for the songs "
+            f"that have no cover inside.")

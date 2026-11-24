@@ -569,6 +569,10 @@ impl Player {
             self.edit_song_info(path);
             ui.close();
         }
+        if ui.button("Cover…").clicked() {
+            self.open_cover_window(path);
+            ui.close();
+        }
         if ui.button("Check its quality").clicked() {
             self.scanner.clear();
             self.scanner.add_source(path);

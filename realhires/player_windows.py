@@ -978,3 +978,402 @@ class TagJobWindow:
 
 
 __all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "TagJobWindow", "NameDialog", "ask_name"]
+
+
+def forget_covers(app: "PlayerApp", keys) -> None:
+    """Drop these albums' (and songs') covers from the player's cover cache, so every
+    page draws them again from the changed files; the cache's listeners redraw."""
+    keys = set(keys)
+    cache = app.covers
+    if hasattr(cache, "forget"):  # a cache that knows how
+        cache.forget(keys)
+        return
+    gone = set()
+    for store_ in (getattr(cache, "images", {}), getattr(cache, "png", {})):
+        for k in [k for k in store_ if isinstance(k, tuple) and k and k[0] in keys]:
+            del store_[k]
+            gone.add(k)
+    for key, size in gone:
+        for fn in list(getattr(cache, "listeners", [])):
+            try:
+                fn(key, size)
+            except tk.TclError:
+                pass
+
+
+class CoverWindow:
+    """The Cover window (2.1, docs/player-spec.md "Inspecting and changing a cover"):
+    the cover of a song's album as large as the window allows (FFmpeg makes a PNG that
+    fits, covers.fit_png(), because Tk cannot decode JPEG), its size in pixels, format
+    and where it comes from (covers.cover_source()), and Change cover…, Save image as…,
+    Remove cover, Show album and Close.  Changing and removing run in a thread
+    (tagedit.set_cover()/remove_cover()) for all the album's songs or this song only,
+    with a progress line and tagedit.cover_summary() afterwards; the player's covers
+    are drawn again and the library reads the songs again.  Results reach Tk through
+    `self.q`."""
+
+    MIN_SHOW = 120
+
+    def __init__(self, app: "PlayerApp", path: str):
+        from .musiclib import Track
+        from .settings import Settings
+
+        self.app, t = app, app.theme
+        self.path = path
+        track = app.track(path) or Track(path)
+        self.album = None if getattr(track, "missing", False) else app.album_of(track)
+        songs = self.album["tracks"] if self.album else [track]
+        self.album_paths: List[str] = [x.path for x in songs if not getattr(x, "missing", False)]
+        if path not in self.album_paths:
+            self.album_paths.insert(0, path)
+        self.cfg = Settings.from_dict(app.cfg.to_dict())  # the threads get their own copy
+        self.q: "queue.Queue" = queue.Queue()
+        self.source = None              # covers.CoverSource, or None when there is no cover
+        self.reading = True
+        self.busy = False
+        self.outcomes: list = []
+        self.summary_text = ""
+        self.photo: Optional[tk.PhotoImage] = None
+        self.previews: Dict[int, Optional[bytes]] = {}
+        self._asked: set = set()
+        self._gen = 0
+        self._resize_job: Optional[str] = None
+        self.win = _window(app, "Cover")
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.bind("<<Close>>", lambda e: self.close())
+        self.win.resizable(True, True)
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=24, pady=18)
+        if self.album:
+            n = len(self.album_paths)
+            heading = self.album["title"]
+            sub = " · ".join(x for x in (self.album["artist"], f"{n:,} song{'s' if n != 1 else ''}") if x)
+        else:
+            heading = track.display_title
+            sub = " · ".join(x for x in (track.artist, track.album) if x)
+        label(box, t, heading, "h2", wraplength=560, justify="left").pack(anchor="w")
+        if sub:
+            label(box, t, sub, "body", fg="text2", wraplength=560, justify="left").pack(anchor="w")
+        bottom = frame(box, t)  # packed before the picture, so a small window shrinks the picture, not this
+        bottom.pack(fill="x", side="bottom")
+        self.canvas = tk.Canvas(box, width=440, height=420, highlightthickness=0, bd=0)
+        t.reg(self.canvas, bg="bg")
+        self.canvas.pack(fill="both", expand=True, pady=(12, 10))
+        self.canvas.bind("<Configure>", self._resized)
+        t.on_change(self._draw, self.win)
+        self.details = label(bottom, t, "", "body")
+        self.details.pack(anchor="w")
+        self.where = label(bottom, t, "", "body", fg="text2")
+        self.where.pack(anchor="w")
+        opts = frame(bottom, t)
+        opts.pack(fill="x", pady=(10, 0))
+        n = len(self.album_paths)
+        self.scope = tk.StringVar(value="album" if n > 1 else "song")
+        if n > 1:
+            ttk.Radiobutton(opts, text=f"All {n:,} songs of this album", value="album", variable=self.scope,
+                            style="P.TRadiobutton").pack(anchor="w")
+            ttk.Radiobutton(opts, text="This song only", value="song", variable=self.scope,
+                            style="P.TRadiobutton").pack(anchor="w")
+        self.also_folder = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opts, text="Also save it as cover.jpg in the album's folder", variable=self.also_folder,
+                        style="P.TCheckbutton").pack(anchor="w", pady=(4, 0))
+        self.status = label(bottom, t, "Reading the cover…", "small", fg="text2")
+        self.status.pack(anchor="w", pady=(8, 0))
+        self.summary = label(bottom, t, "", "body", wraplength=600, justify="left")
+        self.summary.pack(anchor="w")
+        btns = frame(bottom, t)
+        btns.pack(fill="x", pady=(12, 0))
+        self.close_b = PillButton(btns, t, "Close", kind="plain", command=self.close)
+        self.close_b.pack(side="right")
+        self.album_b = PillButton(btns, t, "Show album", kind="plain", command=self.show_album)
+        self.album_b.pack(side="right", padx=(0, 8))
+        self.change_b = PillButton(btns, t, "Change cover…", command=self.change)
+        self.change_b.pack(side="left")
+        self.save_b = PillButton(btns, t, "Save image as…", kind="plain", command=self.save_image)
+        self.save_b.pack(side="left", padx=(8, 0))
+        self.remove_b = PillButton(btns, t, "Remove cover", kind="plain", command=self.remove)
+        self.remove_b.pack(side="left", padx=(8, 0))
+        self.win.minsize(700, 560)
+        self._buttons()
+        self._start_read()
+        self.win.after(100, self._poll)
+
+    # ---- which songs ----------------------------------------------------------
+    def shown_paths(self) -> List[str]:
+        """The songs whose cover is shown: this one first, then the album's."""
+        return [self.path] + [p for p in self.album_paths if p != self.path]
+
+    def target_paths(self) -> List[str]:
+        return list(self.album_paths) if self.scope.get() == "album" else [self.path]
+
+    def folder(self) -> str:
+        return os.path.dirname(os.path.abspath(self.path))
+
+    # ---- threads ------------------------------------------------------------
+    def _start_read(self) -> None:
+        self.reading = True
+        self._gen += 1
+        gen, paths = self._gen, self.shown_paths()
+
+        def work():
+            from . import covers
+
+            try:
+                src = covers.cover_source(paths)
+            except Exception:  # noqa: BLE001 (an unreadable cover is shown as none)
+                src = None
+            self.q.put(("source", gen, src))
+
+        threading.Thread(target=work, daemon=True, name="realhires-cover-read").start()
+
+    def _want_preview(self, size: int) -> None:
+        if self.source is None or size in self._asked:
+            return
+        self._asked.add(size)
+        gen, data = self._gen, self.source.data
+
+        def work():
+            from . import covers
+
+            try:
+                png = covers.fit_png(data, size, enlarge=True)
+            except Exception:  # noqa: BLE001
+                png = None
+            self.q.put(("preview", gen, size, png))
+
+        threading.Thread(target=work, daemon=True, name="realhires-cover-preview").start()
+
+    def _work(self, image: Optional[bytes], paths: List[str], also_folder: bool) -> None:
+        from . import covers
+
+        progress = lambda i, n, p: self.q.put(("progress", i, n))  # noqa: E731
+        notes: List[str] = []
+        try:
+            if image is None:
+                outcomes = tagedit.remove_cover(paths, self.cfg, progress)
+                kept = covers.folder_image(self.folder())
+                if kept:
+                    notes.append(tagedit.folder_kept_note(kept))
+            else:
+                outcomes = tagedit.set_cover(paths, image, "", self.cfg, progress)
+                if also_folder:
+                    try:
+                        notes.append(tagedit.folder_saved_note(covers.save_folder_cover(self.folder(), image)))
+                    except OSError as exc:
+                        notes.append(tagedit.folder_failed_note(covers.folder_cover_name(self.folder(), image), exc))
+        except Exception as exc:  # noqa: BLE001 (set_cover never raises; this is a last resort)
+            outcomes = [tagedit.TagOutcome(p, False, f"Could not change the cover: {exc}") for p in paths]
+        self.q.put(("done", image is None, outcomes, notes))
+
+    def _poll(self) -> None:
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            while True:
+                kind, *rest = self.q.get_nowait()
+                if kind == "source":
+                    gen, src = rest
+                    if gen == self._gen:
+                        self._got_source(src)
+                elif kind == "preview":
+                    gen, size, png = rest
+                    if gen == self._gen:
+                        self.previews[size] = png
+                        self._draw()
+                elif kind == "progress":
+                    i, n = rest
+                    if i < n:
+                        verb = "Removing the cover of" if self._removing else "Changing the cover of"
+                        self.status.configure(text=f"{verb} {i + 1:,} of {n:,}…" if n > 1 else f"{verb} the song…")
+                elif kind == "done":
+                    self._done(*rest)
+        except queue.Empty:
+            pass
+        self.win.after(100, self._poll)
+
+    # ---- the window ---------------------------------------------------------
+    def _got_source(self, src) -> None:
+        self.reading = False
+        self.source = src
+        self.previews, self._asked = {}, set()
+        if src is None:
+            self.details.configure(text="No cover")
+            self.where.configure(text="Neither the songs nor the album's folder hold a picture.")
+        else:
+            self.details.configure(text=src.details)
+            self.where.configure(text=src.where)
+        if not self.busy:
+            self.status.configure(text="")
+        self._buttons()
+        self._draw()
+
+    def _box(self) -> int:
+        try:
+            return max(self.MIN_SHOW, min(self.canvas.winfo_width(), self.canvas.winfo_height()) - 4)
+        except tk.TclError:
+            return self.MIN_SHOW
+
+    def _resized(self, event=None) -> None:
+        if self._resize_job is not None:
+            self.win.after_cancel(self._resize_job)
+        self._resize_job = self.win.after(150, self._draw)
+
+    def _draw(self) -> None:
+        self._resize_job = None
+        c = self.canvas
+        try:
+            c.delete("all")
+            w, h = c.winfo_width(), c.winfo_height()
+        except tk.TclError:
+            return
+        t = self.app.theme
+        if self.source is None:
+            text = "Reading the cover…" if self.reading else "No cover"
+            c.create_text(w / 2, h / 2, text=text, fill=t.c("text2"), font=t.f("h2"))
+            return
+        size = self._box()
+        step = size - size % 20  # a new picture every 20 pixels of window size
+        png = self.previews.get(step)
+        if png is None:
+            near = [s for s, p in self.previews.items() if p]
+            self._want_preview(step)
+            if not near:
+                c.create_text(w / 2, h / 2, text="Drawing…", fill=t.c("text2"), font=t.f("body"))
+                return
+            png = self.previews[min(near, key=lambda s: abs(s - step))]
+        try:
+            import base64
+
+            self.photo = tk.PhotoImage(master=c, data=base64.b64encode(png).decode("ascii"), format="png")
+        except tk.TclError:
+            c.create_text(w / 2, h / 2, text="The picture cannot be shown.", fill=t.c("text2"), font=t.f("body"))
+            return
+        pw, ph = self.photo.width(), self.photo.height()
+        if pw > size or ph > size:  # a bigger picture made earlier: shrink by whole steps
+            f = max(-(-pw // size), -(-ph // size))
+            self.photo = self.photo.subsample(f, f)
+        c.create_image(w / 2, h / 2, image=self.photo, anchor="center")
+
+    def _buttons(self) -> None:
+        idle = not self.busy and not self.reading
+        self.change_b.set(enabled=idle)
+        self.remove_b.set(enabled=idle)
+        self.save_b.set(enabled=idle and self.source is not None)
+        self.album_b.set(enabled=not self.busy and self.album is not None)
+        self.close_b.set(enabled=not self.busy)
+
+    _removing = False
+
+    def _start(self, image: Optional[bytes]) -> None:
+        self.busy, self._removing = True, image is None
+        self.summary.configure(text="")
+        self.summary_text = ""
+        n = len(self.target_paths())
+        verb = "Removing the cover" if image is None else "Changing the cover"
+        self.status.configure(text=f"{verb} of {n:,} songs…" if n > 1 else f"{verb}…")
+        self._buttons()
+        threading.Thread(target=self._work, args=(image, self.target_paths(), self.also_folder.get()), daemon=True,
+                         name="realhires-cover-save").start()
+
+    def _done(self, removing: bool, outcomes: list, notes: List[str]) -> None:
+        self.busy = False
+        self.outcomes = outcomes
+        head, lines = tagedit.cover_summary(outcomes, removing, notes)
+        self.summary_text = "\n".join([head] + lines)
+        self.summary.configure(text=self.summary_text)
+        self.status.configure(text="")
+        changed = [o.path for o in outcomes if o.ok and not o.message]
+        keys = set(self.album_paths)
+        if self.album:
+            keys.add(self.album["key"])
+        forget_covers(self.app, keys)
+        if changed:
+            self.app.tags_saved(changed)
+        self._start_read()
+        self._buttons()
+
+    def change(self) -> None:
+        """Change cover…: choose a JPEG or PNG image."""
+        from tkinter import filedialog
+
+        if self.busy or self.reading:
+            return
+        name = filedialog.askopenfilename(parent=self.win, title="Choose the new cover",
+                                          filetypes=[("JPEG or PNG images", "*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG"),
+                                                     ("All files", "*")])
+        if name:
+            self.change_to(name)
+
+    def change_to(self, image_path: str) -> bool:
+        """Make the picture in this file the cover (of the songs the choice names)."""
+        if self.busy:
+            return False
+        try:
+            with open(image_path, "rb") as fh:
+                data = fh.read()
+            tagedit.check_picture(data)
+        except (OSError, tagedit.TagError) as exc:
+            self.summary.configure(text=f"{os.path.basename(image_path)} cannot be used: {exc}")
+            return False
+        self._start(data)
+        return True
+
+    def remove(self, confirm: bool = True) -> bool:
+        """Remove cover: after a confirmation, the covers inside the songs go."""
+        from tkinter import messagebox
+
+        if self.busy or self.reading:
+            return False
+        n = len(self.target_paths())
+        which = f"all {n:,} songs of this album" if n > 1 else "this song"
+        if confirm and not messagebox.askyesno(
+                "Remove Cover", f"Remove the cover inside {which}? A picture in the album's folder is not deleted.",
+                parent=self.win):
+            return False
+        self._start(None)
+        return True
+
+    def save_image(self) -> None:
+        """Save image as…: the picture as it is stored."""
+        from tkinter import filedialog
+
+        if self.source is None:
+            return
+        name = filedialog.asksaveasfilename(parent=self.win, title="Save the cover as", initialfile="cover"
+                                            + self.source.ext, defaultextension=self.source.ext,
+                                            filetypes=[(f"{self.source.format or 'Image'} image", "*" + self.source.ext),
+                                                       ("All files", "*")])
+        if name:
+            self.save_image_to(name)
+
+    def save_image_to(self, path: str) -> bool:
+        if self.source is None:
+            return False
+        try:
+            with open(path, "wb") as fh:
+                fh.write(self.source.data)
+        except OSError as exc:
+            self.status.configure(text=f"Could not save the picture: {exc}")
+            return False
+        self.status.configure(text=f"Saved the picture as {os.path.basename(path)}.")
+        return True
+
+    def show_album(self) -> None:
+        if self.album is not None and not self.busy:
+            album = self.album
+            self.close()
+            self.app.open_album(album)
+
+    def close(self) -> None:
+        if self.busy:
+            return
+        if getattr(self.app, "cover_window", None) is self:
+            self.app.cover_window = None
+        close_window(self.win)
+
+
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "CoverWindow", "NameDialog", "ask_name",
+           "forget_covers"]
