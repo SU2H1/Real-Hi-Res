@@ -380,6 +380,8 @@ class CoverCache:
         self.listeners: List[Callable[[str, int], None]] = []
         self.pending: set = set()
         self.signatures: Dict[str, tuple] = {}   # album key -> its first songs (path, size, mtime)
+        self._gen = 0                            # bumped when covers are dropped; older answers are stale
+        self._dropped: Dict[str, int] = {}       # album key -> the generation it was dropped in
         self._cv = threading.Condition()
         self._front: List[tuple] = []            # asked for on screen (served newest first)
         self._back: "collections.deque" = collections.deque()  # made ahead (in album order)
@@ -428,7 +430,7 @@ class CoverCache:
             return None
         self.pending.add(k)
         with self._cv:
-            self._front.append((k, list(paths)[:CACHE_PATHS]))
+            self._front.append((k, list(paths)[:CACHE_PATHS], self._gen))
             self._cv.notify()
         if self.alive and not self._fast:
             self._schedule(self.FAST_POLL_MS)
@@ -437,7 +439,7 @@ class CoverCache:
     def prefetch(self, albums: Sequence[dict], size: int = GRID) -> None:
         """Make the covers of `albums` ({"key", "tracks"}) at `size` that the
         covers folder does not have yet, after everything asked for on screen."""
-        jobs = [((a["key"], size), [t.path for t in a["tracks"][:CACHE_PATHS]]) for a in albums
+        jobs = [((a["key"], size), [t.path for t in a["tracks"][:CACHE_PATHS]], self._gen) for a in albums
                 if (a["key"], size) not in self.images and (a["key"], size) not in self.none]
         with self._cv:
             self._back = collections.deque(jobs)
@@ -456,10 +458,13 @@ class CoverCache:
         self.signatures = new
         if not gone:
             return
+        self._gen += 1
         for k in [k for k in self.images if k[0] in gone]:
             del self.images[k]
             self._large.pop(k, None)
         self.none = {k for k in self.none if k[0] not in gone}
+        self.pending = {k for k in self.pending if k[0] not in gone}
+        self._dropped.update((key, self._gen) for key in gone)
 
     def _keep(self, k: tuple, img: tk.PhotoImage) -> None:
         self.images[k] = img
@@ -506,7 +511,7 @@ class CoverCache:
             job = self._next_job()
             if job is None:
                 break
-            k, paths, shown = job
+            k, paths, gen, shown = job
             try:
                 if not shown:  # made ahead: only on disk, the screen asks for it when it is shown
                     if not covers.is_cached(paths, k[1]):
@@ -517,7 +522,7 @@ class CoverCache:
                 if not shown:
                     continue
                 data = None
-            self.done.put((k, data))
+            self.done.put((k, gen, data))
 
     def _poll(self) -> None:
         self._job = None
@@ -529,7 +534,9 @@ class CoverCache:
                 if time.perf_counter() - t0 > self.POLL_BUDGET_S:
                     more = True
                     break
-                k, data = self.done.get_nowait()
+                k, gen, data = self.done.get_nowait()
+                if gen < self._dropped.get(k[0], -1):
+                    continue  # made from songs that have changed since
                 self.pending.discard(k)
                 img = self._image(data, k[1]) if data is not None else None
                 if img is None:
