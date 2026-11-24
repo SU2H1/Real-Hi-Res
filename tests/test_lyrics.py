@@ -297,6 +297,37 @@ def test_skip_rules(tmp_path):
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.INSTRUMENTAL
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_synced_lyrics_win_wherever_they_are(tmp_path):
+    """The user's LRCGET lyrics showed without timing (2026-11-24): LRCGET's "plain text"
+    and "embed" exports leave a .txt next to a file whose tag holds the synced lyrics, and
+    the .txt used to win.  Synced lyrics now come first wherever they are, and LRC kept in
+    a .txt or in the plain-lyrics tag counts as synced."""
+    from realhires import embed
+
+    lrc = "[ar: Someone]\n[00:00.50] First line\n[00:01.20] Second line\n[00:02.00] Third\n"
+    song = tmp_path / "Song.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", str(song)], check=True)
+    assert lyrics.read_lyrics_file(str(song)) is None
+    (tmp_path / "Song.txt").write_text("First line\nSecond line\nThird\n", encoding="utf-8")
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.PLAIN
+    embed.embed_lyrics(str(song), lrc, "First line\nSecond line\nThird")
+    kind, text, where = lyrics.read_lyrics_file(str(song))
+    assert (kind, where) == (lyrics.SYNCED, str(song)) and len(embed.lrc_entries(text)) == 3
+    (tmp_path / "Song.lrc").write_text("[00:00.10] From the file\n", encoding="utf-8")
+    assert lyrics.read_lyrics_file(str(song))[1] == "[00:00.10] From the file\n"  # the .lrc still comes first
+    os.remove(tmp_path / "Song.lrc")
+    embed.embed_lyrics(str(song), "", "First line\nSecond line\nThird")  # plain inside, plain .txt
+    assert lyrics.read_lyrics_file(str(song))[:2] == (lyrics.PLAIN, "First line\nSecond line\nThird\n")
+    (tmp_path / "Song.txt").write_text(lrc, encoding="utf-8")  # LRC saved as .txt
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
+    os.remove(tmp_path / "Song.txt")
+    embed.embed_lyrics(str(song), "", lrc)  # LRC in the plain tag (UNSYNCEDLYRICS)
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
+    assert embed.looks_synced(lrc) and not embed.looks_synced("Words\n[00:01] one\nmore\nwords")
+    assert not embed.looks_synced("") and not embed.looks_synced("[ar: x]\n[ti: y]")
+
+
 def test_lrclib_and_lrcget_are_credited():
     """The user asked for the lyrics code to be credited: LRCLIB and LRCGET (both MIT, by tranxuanthang)
     are named in both apps (lyrics window, About box), the packaged READMEs, the README and the

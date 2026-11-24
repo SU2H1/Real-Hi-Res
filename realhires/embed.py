@@ -60,6 +60,15 @@ def lrc_entries(synced: str) -> List[Tuple[int, str]]:
     return out
 
 
+def looks_synced(text: str) -> bool:
+    """Whether lyrics text is really LRC: at least half of its non-empty lines start with
+    a timestamp.  Some programs keep LRC in a .txt file or in the plain-lyrics tag (USLT,
+    UNSYNCEDLYRICS), and the player should still follow it line by line."""
+    lines = [ln for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if ln.strip()]
+    timed = sum(1 for ln in lines if _STAMP.match(ln.lstrip()))
+    return timed > 0 and timed * 2 >= len(lines)
+
+
 # ------------------------------------------------------------------ FLAC ---
 def _flac_blocks(data: bytes, start: int) -> Tuple[List[Tuple[int, bytes]], int]:
     """(type, body) of every metadata block, and the offset of the audio frames."""
@@ -408,15 +417,15 @@ def plain_from_synced(synced: str) -> str:
 
 
 def lyrics_of(path: str) -> Optional[Tuple[str, str, str]]:
-    """(kind, text, where) of a song's lyrics for display: the .lrc/.txt next to it
-    first (see lyrics.read_lyrics_file), else what is embedded in the file."""
+    """(kind, text, where) of the lyrics embedded in a song, for display (see
+    lyrics.read_lyrics_file for the order with the files next to it): the synced lyrics,
+    else the plain ones, which count as synced when they are LRC (`looks_synced`)."""
+    from .lyrics import INSTRUMENTAL, PLAIN, SYNCED, is_instrumental_lrc
+
     synced, plain = embedded_lyrics(path) if supported(path) else ("", "")
-    if synced:
-        from .lyrics import INSTRUMENTAL, SYNCED, is_instrumental_lrc
-
-        return (INSTRUMENTAL if is_instrumental_lrc(synced) else SYNCED), synced, "embedded"
-    if plain:
-        from .lyrics import INSTRUMENTAL, PLAIN, is_instrumental_lrc
-
-        return (INSTRUMENTAL if is_instrumental_lrc(plain) else PLAIN), plain, "embedded"
+    for text in (synced, plain):
+        if text:
+            if is_instrumental_lrc(text):
+                return INSTRUMENTAL, text, "embedded"
+            return (SYNCED if text is synced or looks_synced(text) else PLAIN), text, "embedded"
     return None

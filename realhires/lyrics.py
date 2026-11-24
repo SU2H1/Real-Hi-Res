@@ -530,27 +530,36 @@ def write_text(path: str, text: str) -> None:
 
 
 def read_lyrics_file(path: str) -> Optional[Tuple[str, str, str]]:
-    """(kind, text, file) of the lyrics next to a song, for display; kind is synced,
-    instrumental or plain.  None when there is none."""
-    lrc, txt = existing_lyrics(path)
-    for file in (lrc, txt):
-        if not file:
-            continue
-        try:
-            with open(file, "rb") as fh:
-                raw = fh.read(MAX_LYRICS_BYTES)
-        except OSError:
-            continue
-        text = raw.decode("utf-8-sig", "replace")
-        if file == lrc:
-            return (INSTRUMENTAL if is_instrumental_lrc(text) else SYNCED), text, file
-        return PLAIN, text, file
+    """(kind, text, file) of a song's lyrics, for display; kind is synced, instrumental or
+    plain.  None when there is none.  Synced lyrics win wherever they are: the .lrc next
+    to the song, then the lyrics inside the file (MP3, FLAC) when they are synced, then
+    the .txt next to it, then plain lyrics inside the file.  (LRCGET's "plain text" and
+    "embed" exports together leave a .txt beside a file whose tag holds synced lyrics.)
+    A .txt or plain tag that holds LRC (`embed.looks_synced`) counts as synced."""
     from . import embed  # 2.0: lyrics inside the file (MP3, FLAC)
 
-    found = embed.lyrics_of(path)
-    if found is not None:
-        kind, text, _ = found
-        return kind, text, path
+    lrc, txt = existing_lyrics(path)
+
+    def read(file: str) -> Optional[str]:
+        try:
+            with open(file, "rb") as fh:
+                return fh.read(MAX_LYRICS_BYTES).decode("utf-8-sig", "replace")
+        except OSError:
+            return None
+
+    text = read(lrc) if lrc else None
+    if text is not None:
+        return (INSTRUMENTAL if is_instrumental_lrc(text) else SYNCED), text, lrc
+    inside = embed.lyrics_of(path)
+    if inside is not None and inside[0] != PLAIN:
+        return inside[0], inside[1], path
+    text = read(txt) if txt else None
+    if text is not None:
+        if is_instrumental_lrc(text):
+            return INSTRUMENTAL, text, txt
+        return (SYNCED if embed.looks_synced(text) else PLAIN), text, txt
+    if inside is not None:
+        return inside[0], inside[1], path
     return None
 
 

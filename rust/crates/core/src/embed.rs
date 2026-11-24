@@ -68,6 +68,16 @@ pub fn lrc_entries(synced: &str) -> Vec<(u32, String)> {
     out
 }
 
+/// Whether lyrics text is really LRC: at least half of its non-empty lines start with a
+/// timestamp (Python `looks_synced`).  Some programs keep LRC in a .txt file or in the
+/// plain-lyrics tag (USLT, UNSYNCEDLYRICS), and the player should still follow it.
+pub fn looks_synced(text: &str) -> bool {
+    let norm = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = norm.split('\n').filter(|l| !crate::pyunicode::strip(l).is_empty()).collect();
+    let timed = lines.iter().filter(|l| stamp(l.trim_start_matches(crate::pyunicode::is_space)).is_some()).count();
+    timed > 0 && timed * 2 >= lines.len()
+}
+
 /// `\[(\d+):(\d{1,2})(?:[.:](\d{1,3}))?\]` at the start of `s`.
 fn stamp(s: &str) -> Option<(u32, &str)> {
     let b = s.as_bytes();
@@ -583,7 +593,8 @@ pub fn replace_file(path: &str, data: &[u8]) -> std::io::Result<()> {
     res
 }
 
-/// (kind, text) of the lyrics embedded in a song, for display (Python `lyrics_of`).
+/// (kind, text) of the lyrics embedded in a song, for display (Python `lyrics_of`): the
+/// synced lyrics, else the plain ones, which count as synced when they are LRC.
 pub fn lyrics_of(path: &str) -> Option<(crate::lyrics::Status, String)> {
     use crate::lyrics::{is_instrumental_lrc, Status};
     if !supported(path) {
@@ -595,7 +606,13 @@ pub fn lyrics_of(path: &str) -> Option<(crate::lyrics::Status, String)> {
         return Some((kind, synced));
     }
     if !plain.is_empty() {
-        let kind = if is_instrumental_lrc(&plain) { Status::Instrumental } else { Status::Plain };
+        let kind = if is_instrumental_lrc(&plain) {
+            Status::Instrumental
+        } else if looks_synced(&plain) {
+            Status::Synced
+        } else {
+            Status::Plain
+        };
         return Some((kind, plain));
     }
     None
