@@ -190,6 +190,18 @@ def lyrics_ok():
     assert np.lyrics.itemcget(item, "text") == "Blue ice under a silver sky"
     assert str(np.lyrics.itemcget(item, "font")) == str(app.theme.f("lyrics_b"))
     assert str(np.lyrics.itemcget(np.lyrics.items[1], "font")) == str(app.theme.f("lyrics"))
+    # 2.1: on Now Playing the Lyrics button hides the lyrics (the cover in the middle) and
+    # the page stays; pressed again it shows them; a click on the LCD's cover leaves the page
+    app.toggle_now_playing(); root.update()
+    assert app.page_name == "nowplaying" and app.lyrics_hidden and not np.lyrics.winfo_ismapped()
+    assert np.art.winfo_width() > root.winfo_width() / 2 and not app.bar.lyrics.on
+    assert "Glacier Song" in texts(np.art) and not np.get_btn.winfo_ismapped()
+    app.toggle_now_playing(); root.update()
+    assert app.page_name == "nowplaying" and np.lyrics.winfo_ismapped() and app.bar.lyrics.on
+    app.cover_clicked(); root.update()
+    assert app.page_name != "nowplaying"
+    app.cover_clicked(); root.update()
+    assert app.page_name == "nowplaying" and np.lyrics.winfo_ismapped()
     # paused while the windows and menus are checked: the songs last 3 s, and a slow runner
     # (macOS) took longer than that, so the next song had started before Up Next was read
     app.play_pause()

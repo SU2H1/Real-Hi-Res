@@ -405,7 +405,7 @@ class Lcd(tk.Canvas):
             self.app.seek(target)
             self._draw_seek()
         elif self._hit("cover", e.x, e.y):
-            self.app.toggle_now_playing()
+            self.app.cover_clicked()
         elif self._hit("badge", e.x, e.y):
             self.app.open_info()
 
@@ -472,7 +472,7 @@ class PlaybackBar(tk.Frame):
         self.heart.set(enabled=has, filled=bool(has and app.is_liked(app.current)))
         self.dislike.set(enabled=has, filled=bool(has and app.is_disliked(app.current)))
         self.more.set(enabled=has)
-        self.lyrics.set(on=app.page_name == "nowplaying")
+        self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden)
         self.queue.set(on=app.up_next_shown)
         self.eq.set(on=bool(st.eq.get("enabled")))
         self.speaker.set(level=0.0 if st.muted else st.volume)
@@ -544,6 +544,7 @@ class PlayerApp:
         self.dirty: set = set()
         self.history: List[tuple] = []
         self.up_next_shown = False
+        self.lyrics_hidden = False  # Now Playing without its lyrics column (the Lyrics button, 2.1)
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
         self.edit_window: Optional[EditInfoWindow] = None  # one Edit Info window at a time
@@ -789,6 +790,19 @@ class PlayerApp:
         self.page("artists").choose(name)
 
     def toggle_now_playing(self) -> None:
+        """The Lyrics button and Ctrl/Cmd+L: elsewhere they open Now Playing with the
+        lyrics; on Now Playing they hide or show the lyrics (hidden, the cover is in the
+        middle) and the page stays (2.1, as the user asked)."""
+        if self.page_name == "nowplaying":
+            self.lyrics_hidden = not self.lyrics_hidden
+            self.pages["nowplaying"].load_lyrics()
+            self.bar.update_controls()
+        elif self.current is not None:
+            self.lyrics_hidden = False
+            self.show_page("nowplaying")
+
+    def cover_clicked(self) -> None:
+        """A click on the LCD's cover opens Now Playing, or leaves it when it is shown."""
         if self.page_name == "nowplaying":
             self.go_back()
         elif self.current is not None:

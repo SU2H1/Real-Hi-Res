@@ -677,8 +677,8 @@ impl Player {
         let tex = self.covers.get(&key, &paths);
         let lyrics = self.lyrics_of_now();
         let area = ui.available_rect_before_wrap();
-        let show_lyrics = matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));
-        if !show_lyrics {
+        let has_lyrics = matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));
+        if !has_lyrics || self.lyrics_hidden {
             // the cover in the centre, with the title under it
             let size = (area.height() - 150.0).min(area.width() - 40.0).clamp(120.0, 480.0);
             let crect = Rect::from_center_size(pos2(area.center().x, area.top() + 20.0 + size / 2.0), vec2(size, size));
@@ -686,6 +686,9 @@ impl Player {
             let p = ui.painter();
             p.text(pos2(area.center().x, crect.bottom() + 26.0), Align2::CENTER_CENTER, track.display_title(), look::title(20.0), pal.text);
             p.text(pos2(area.center().x, crect.bottom() + 50.0), Align2::CENTER_CENTER, format!("{} — {}", track.display_artist(), track.display_album()), look::text(14.0), pal.secondary);
+            if has_lyrics {
+                return; // the lyrics are hidden (the Lyrics button): the cover, title and artist only
+            }
             let label_y = crect.bottom() + 70.0;
             ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(pos2(area.center().x, label_y + 22.0), vec2(320.0, 40.0))), |ui| {
                 ui.vertical_centered(|ui| {

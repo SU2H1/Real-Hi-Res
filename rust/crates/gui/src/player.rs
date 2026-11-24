@@ -286,6 +286,8 @@ pub struct Player {
     lyrics: Option<(String, u64, Option<ShownLyrics>)>,
     pub covers: Covers,
     pub show_up_next: bool,
+    /// Now Playing without its lyrics column (the Lyrics button on that page, 2.1)
+    pub lyrics_hidden: bool,
     pub eq_open: bool,
     pub eq_tab: usize,
     pub info: Option<InfoWindow>,
@@ -369,6 +371,7 @@ impl Player {
             fail_streak: 0,
             lyrics: None,
             show_up_next: false,
+            lyrics_hidden: false,
             eq_open: false,
             eq_tab: 0,
             info: None,
@@ -1384,14 +1387,18 @@ impl Player {
         if self.page == Page::Quality || ctx.egui_wants_keyboard_input() {
             return;
         }
-        let (space, right, left, cmd_f) = ctx.input(|i| {
+        let (space, right, left, cmd_f, cmd_l) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.modifiers.command && i.key_pressed(egui::Key::ArrowRight),
                 i.modifiers.command && i.key_pressed(egui::Key::ArrowLeft),
                 i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.modifiers.command && i.key_pressed(egui::Key::L),
             )
         });
+        if cmd_l {
+            self.lyrics_button();
+        }
         if space {
             self.toggle_play();
         }
@@ -1567,12 +1574,9 @@ impl Player {
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, "Up Next").clicked() {
                     self.show_up_next = !self.show_up_next;
                 }
-                if icons::button(ui, Icon::Lyrics, 28.0, self.page == Page::NowPlaying, true, "Lyrics").clicked() {
-                    if self.page == Page::NowPlaying {
-                        self.go_back_from_now();
-                    } else {
-                        self.go(Page::NowPlaying);
-                    }
+                let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden;
+                if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, "Lyrics").clicked() {
+                    self.lyrics_button();
                 }
                 let now_path = self.now.as_ref().map(|n| n.path.clone());
                 let r = icons::button(ui, Icon::More, 28.0, false, has, "More");
@@ -1601,6 +1605,27 @@ impl Player {
         self.page = back;
     }
 
+    /// The Lyrics button and Ctrl/Cmd+L: elsewhere they open Now Playing with the lyrics; on
+    /// Now Playing they hide or show the lyrics (hidden, the cover is in the middle) and the
+    /// page stays (2.1, as the user asked).
+    pub fn lyrics_button(&mut self) {
+        if self.page == Page::NowPlaying {
+            self.lyrics_hidden = !self.lyrics_hidden;
+        } else {
+            self.lyrics_hidden = false;
+            self.go(Page::NowPlaying);
+        }
+    }
+
+    /// A click on the LCD's cover opens Now Playing, or leaves it when it is shown.
+    pub fn cover_clicked(&mut self) {
+        if self.page == Page::NowPlaying {
+            self.go_back_from_now();
+        } else {
+            self.go(Page::NowPlaying);
+        }
+    }
+
     /// The panel in the middle of the playback bar.
     fn lcd(&mut self, ui: &mut Ui, pal: &Palette, width: f32) {
         let (rect, _) = ui.allocate_exact_size(vec2(width, 54.0), Sense::hover());
@@ -1620,7 +1645,7 @@ impl Player {
         cover(&p, cover_rect, tex.as_ref(), &track.display_album(), 5);
         let cover_resp = ui.interact(cover_rect, ui.id().with("lcd-cover"), Sense::click());
         if cover_resp.on_hover_text("Now Playing").clicked() {
-            self.go(Page::NowPlaying);
+            self.cover_clicked();
         }
         // texts
         let badge = musiclib::quality(&track);
@@ -1999,6 +2024,19 @@ mod tests {
             Some(ShownLyrics::Synced(lines)) => assert_eq!(lines.len(), 3),
             other => panic!("no synced lyrics: {other:?}"),
         }
+        // 2.1: on Now Playing the Lyrics button hides the lyrics and the page stays; pressed
+        // again it shows them; the LCD's cover leaves the page and opens it again
+        p.lyrics_button();
+        frame(&ctx, &mut p);
+        assert!(p.page == Page::NowPlaying && p.lyrics_hidden);
+        p.lyrics_button();
+        frame(&ctx, &mut p);
+        assert!(p.page == Page::NowPlaying && !p.lyrics_hidden);
+        p.cover_clicked();
+        assert!(p.page != Page::NowPlaying);
+        p.cover_clicked();
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::NowPlaying);
 
         // likes are saved at once
         p.toggle_like(&a1);

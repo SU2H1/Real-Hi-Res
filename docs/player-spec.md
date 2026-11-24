@@ -401,3 +401,19 @@ While it is on:
   `rust/crates/core/src/bitperfect.rs`), checked against Python's answers with parity vectors, so both apps say the
   same thing. The tests check bit-exact output through the manual output: 16-bit, 24-bit and mono FLACs come out of
   the engine as exactly the integers FFmpeg decodes, also with the volume at 50 % and the equalizer on.
+
+### Now Playing and lyrics (asked for later on 2026-11-24)
+
+- "When user is in full screen and unclicks lyric button, the album cover should be in the centered and the user
+  shouldn't be put back in All songs": on Now Playing the **Lyrics button** (and Ctrl/Cmd+L) hides the lyrics
+  column and the page stays, showing the cover in the middle with the title and the artist under it (no "Get
+  lyrics" button, since the song has lyrics); pressed again it shows the lyrics. On any other page it opens Now
+  Playing with the lyrics shown. The button is drawn "on" only while the lyrics are shown. The hidden state lasts
+  for the session (`lyrics_hidden`). A click on the **LCD's cover** opens Now Playing, or goes back to the page
+  before when Now Playing is shown. (The Rust app gained Ctrl/Cmd+L, which it lacked.)
+- "LRCGET lyrics aren't synced": the Rust app showed the user's lyrics as plain text. The order in which a song's
+  lyrics are found (`lyrics.read_lyrics_file()`, both versions) is now: the .lrc next to the song; the lyrics
+  inside the file when they are synced; the .txt next to the song; the plain lyrics inside the file. Before, a
+  plain .txt beat synced lyrics inside the file, which is what LRCGET's "plain text" and "embed" exports together
+  leave behind. LRC kept in a .txt or in the plain-lyrics tag (USLT, UNSYNCEDLYRICS), recognised by
+  `embed.looks_synced()` (at least half of the non-empty lines start with a timestamp), counts as synced.

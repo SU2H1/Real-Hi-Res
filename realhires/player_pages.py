@@ -629,7 +629,9 @@ class LyricsView(tk.Canvas):
 
 class NowPlayingPage(Page):
     """The cover on the left half and the lyrics on the right; without lyrics the
-    cover in the middle with the title, the artist and "Get lyrics"."""
+    cover in the middle with the title, the artist and "Get lyrics"; with the lyrics
+    hidden (the Lyrics button on this page, `app.lyrics_hidden`) the cover in the middle
+    with the title and the artist."""
 
     SIZES = (160, 200, 240, 280, 320, 360, 400, 440, 480)
 
@@ -669,8 +671,11 @@ class NowPlayingPage(Page):
         self.draw_art()
         self.update_position(self.app.position())
 
+    def showing_lyrics(self) -> bool:
+        return bool(self.kind) and not self.app.lyrics_hidden
+
     def _place(self) -> None:
-        if self.kind:
+        if self.showing_lyrics():
             self.art.place(relx=0, rely=0, relwidth=0.5, relheight=1)
             self.lyrics.place(relx=0.5, rely=0, relwidth=0.5, relheight=1)
         else:
@@ -687,7 +692,7 @@ class NowPlayingPage(Page):
         if tr is None:
             c.create_text(W / 2, H / 2, text="Nothing is playing", fill=t.c("text2"), font=t.f("h2"))
             return
-        text_h = 0 if self.kind else 120
+        text_h = 0 if self.showing_lyrics() else 120 if not self.kind else 80
         room = min(W - 80, H - 80 - text_h)
         size = max([s for s in self.SIZES if s <= room] or [self.SIZES[0]])
         album = self.app.album_of(tr)
@@ -697,17 +702,18 @@ class NowPlayingPage(Page):
         x = (W - size) / 2
         y = (H - size - text_h) / 2
         draw_cover(c, t, img, x, y, size)
-        if not self.kind:
+        if not self.showing_lyrics():
             fit = {}
             c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), tr.display_title, W - 60, fit),
                           fill=t.c("text"), font=t.f("h1"))
             c.create_text(W / 2, y + size + 58, text=fit_text(t.f("body"), f"{tr.display_artist} — "
                                                               f"{tr.display_album}", W - 60, fit),
                           fill=t.c("text2"), font=t.f("body"))
-            c.create_window(W / 2, y + size + 96, window=self.get_btn)
+            if not self.kind:  # no lyrics at all: offer to get them
+                c.create_window(W / 2, y + size + 96, window=self.get_btn)
 
     def update_position(self, seconds: float) -> None:
-        if self.kind:
+        if self.showing_lyrics():
             self.lyrics.update_position(seconds)
 
     def lyrics_changed(self, path: str) -> None:
