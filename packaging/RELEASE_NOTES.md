@@ -1,10 +1,21 @@
-## What's new in 1.12.1
+## What's new in 2.0.0
 
-Double-clicking the command-line tool now opens the app. The Windows packages contain two programs each: the desktop app (`realhires-gui.exe` in the Rust version, `RealHiRes.exe` in the Python version) and the command-line tool (`realhires.exe` and `realhires-cli.exe`), which checks the folders you name in a terminal. Double-clicked in Explorer, the command-line tool used to open a terminal window that showed a short usage message and nothing else. Now it opens the desktop app next to it instead. If the app is missing, the window says what to start and stays open until you press Enter.
+**Real-Hi-Res is now a music player.** The desktop app opens on your **Library**, in a window that looks and works much like Apple Music, and the fake-hi-res checker you know lives on inside it. Both versions, Python and Rust, are the same player.
 
-The Rust desktop app also shows a message box when it cannot open its window, for example on a computer whose graphics driver has no OpenGL 2.0, instead of closing without a word.
+- **The Library page** leads to All Songs, Folders, Albums, Artists, Album Artists, Genres, Years, Composers, Playlists, Liked Songs, Disliked Songs, Recently Played, Recently Added and **Your Stats**, each with a count. Choose your music folder once (Settings → Library); the tags are read in the background and kept, so the next start is instant.
+- **Playback** through FFmpeg at each song's own sample rate where the sound device allows it (otherwise with the SoX resampler, and the Playback info says so), **gapless** from song to song, with a remembered volume, mode and last song.
+- **The playback bar**: Shuffle (off, this list, the whole library, same genre, same artist or same album), Previous, Play/Pause, Next, Repeat (off, song, album, stop after this song), a seek bar, a quality badge (**Hi-Res Lossless**, **Lossless** or the codec) that opens the **Playback info** (track, decoder, output, resampling, volume, equalizer and the song's Real-Hi-Res verdict), Like, **Dislike** (disliked songs are left out of shuffles), "…" (add to a playlist and more), Lyrics, Up Next, the equalizer and the volume.
+- **Now Playing** shows the album cover on the left and the **synced lyrics** on the right, following the music line by line (a click on a line jumps there); without lyrics the cover is centred, with a **Get lyrics** button.
+- **Playlists** of your own: make, rename, delete, reorder, and add songs from any song's menu.
+- **Your Stats**: what you played this year (or the last 30 days, last year, all time) as colourful cards in the style of a yearly music review, minutes, top song, artist, album and genre, your listening hour and day, your longest streak, and **Details** with charts by hour, weekday and month, your top 50 songs, artists, albums and genres, and what your library holds.
+- **The equalizer**: a 10-band graphic equalizer with 17 presets and a parametric equalizer with up to 10 bands, a response curve and "prevent clipping". **Name your own presets**, and **import and export** them as Real-Hi-Res `.json` files or as Equalizer APO / AutoEQ `.txt` files (so AutoEQ's headphone corrections can be loaded).
+- **Themes**: Match the system, eight built-in themes (Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), and **your own**, with a colour editor, import and export. On a Mac the app uses SF Pro (SF Pro Display Bold for headings); Windows and Linux use the similar Inter typeface, now built in; any installed font can be chosen.
+- **Lyrics inside the file**: Settings → Lyrics → Save lyrics as can write synced lyrics into FLAC (`LYRICS`) and MP3 (`SYLT`) files, or plain lyrics, or both an `.lrc` file and the tags, as LRCGET does; only the tags are rewritten, and the file's saved check result stays valid. **Download lyrics while scanning** fetches them as the scan goes.
+- **Everything else is in Settings**: Settings → Library → **Scan library** opens the quality checker of earlier versions with your library folders and checks them for fake hi-res and fake lossless files; **Check new songs when the app starts** does it in the background. Fix, the lyrics window, saved results, the album and artist views and all the settings are where they were, on the **Quality check** page.
 
-Nothing else has changed since 1.12.0. Its release page describes the synced lyrics from LRCLIB, the After fix column, the pop-up after fixing and the new Rust version.
+The command-line tools are unchanged, apart from reading the composer tag.
+
+**New requirements.** The Python packages bundle [miniaudio](https://github.com/irmen/pyminiaudio) for the sound output. The Linux packages use the system's ALSA library for sound, which every Linux desktop has (it also reaches PulseAudio and PipeWire). Running from source needs `pip install miniaudio` (or `pip install .`), and building the Rust version needs Rust 1.95 or newer and, on Linux, the ALSA headers.
 
 ## Download
 
@@ -18,7 +29,7 @@ Pick the package for your computer, unpack it and run it. Python, NumPy and FFmp
 | Linux x86-64 | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh` adds a menu entry) |
 | Linux ARM64 (e.g. Raspberry Pi 4/5 with 64-bit OS) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh`) |
 
-**Rust version (preview).** The same app and command-line tool, rewritten in Rust (see "What's new" above), with FFmpeg bundled:
+**Rust version.** The same music player and command-line tool, written in Rust, with FFmpeg bundled; it shares your library, likes, playlists, play history, themes and saved results with the version above:
 
 | System | Download | Start the app |
 | --- | --- | --- |
@@ -37,5 +48,7 @@ The `.zip` files for macOS contain the same app as the `.dmg` files. The Linux p
 ## Credits
 
 Synced lyrics come from [LRCLIB](https://lrclib.net) and the people who contribute to it, and the lyrics feature is modelled on LRCGET by tranxuanthang ([github.com/tranxuanthang/lrcget](https://github.com/tranxuanthang/lrcget)), who also makes LRCLIB. Both are MIT-licensed, and Real-Hi-Res's own lyrics code contains no code from either. Both apps credit them in the lyrics window and in Help → About. Thank you to them.
+
+On Windows and Linux the apps use the [Inter](https://rsms.me/inter/) typeface by The Inter Project Authors (SIL Open Font License 1.1; its licence is in every package). The Python app plays sound through [miniaudio](https://github.com/irmen/pyminiaudio) (Irmen de Jong and David Reid, MIT License), the Rust app through [cpal](https://github.com/RustAudio/cpal) (Apache License 2.0).
 
 The bundled FFmpeg executables are licensed separately (LGPL on Windows and Linux, GPL on macOS). See `FFMPEG-NOTICE.txt` inside the package.

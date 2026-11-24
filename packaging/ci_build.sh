@@ -79,6 +79,7 @@ case "$OS" in
     rm -rf pkg && mkdir -p pkg/RealHiRes
     ditto "$APP" pkg/RealHiRes/RealHiRes.app
     cp packaging/README-RELEASE.txt pkg/RealHiRes/README.txt
+    cp realhires/assets/fonts/LICENSE-Inter.txt pkg/RealHiRes/
     # Zip (keeps symlinks and permissions inside the .app)
     ditto -c -k --keepParent pkg/RealHiRes "out/$ASSET.zip"
     # Disk image with the usual drag-to-Applications shortcut
@@ -92,6 +93,7 @@ case "$OS" in
     ;;
   Linux)
     cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
+    cp realhires/assets/fonts/LICENSE-Inter.txt dist/RealHiRes/
     cp packaging/linux/install.sh packaging/linux/uninstall.sh dist/RealHiRes/
     cp realhires/assets/icon.png dist/RealHiRes/realhires.png
     chmod +x dist/RealHiRes/install.sh dist/RealHiRes/uninstall.sh
@@ -99,6 +101,7 @@ case "$OS" in
     ;;
   *)
     cp packaging/README-RELEASE.txt dist/RealHiRes/README.txt
+    cp realhires/assets/fonts/LICENSE-Inter.txt dist/RealHiRes/
     (cd dist && 7z a -tzip "../out/$ASSET.zip" RealHiRes > /dev/null)
     ;;
 esac

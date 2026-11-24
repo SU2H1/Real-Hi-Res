@@ -80,6 +80,12 @@ EXCLUDES = ["matplotlib", "scipy", "pandas", "PIL", "IPython", "pytest", "setupt
 # imports _cffi_backend, which PyInstaller cannot see; realhires.player imports miniaudio
 # inside a function.
 PLAYER_IMPORTS = ["miniaudio", "_miniaudio", "_cffi_backend"]
+# miniaudio is MIT-licensed: its licence notice (in its package metadata) travels with it
+try:
+    from PyInstaller.utils.hooks import copy_metadata
+    assets += copy_metadata("miniaudio")
+except Exception:  # noqa: BLE001 - building without the player's sound output
+    pass
 gui_a = Analysis([os.path.join(SPECPATH, "entry_gui.py")], pathex=[ROOT],
                  binaries=ffmpeg_bins, datas=ffmpeg_docs + assets, excludes=EXCLUDES,
                  hiddenimports=PLAYER_IMPORTS)

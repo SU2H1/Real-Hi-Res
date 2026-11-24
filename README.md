@@ -1,8 +1,8 @@
 # Real-Hi-Res
 
-Real-Hi-Res is a music player that also checks your music: since version 2.0 the desktop app plays your library with an Apple Music-like window (albums, artists, songs, genres, liked songs, synced lyrics next to the cover, a graphic and a parametric equalizer, gapless playback), and its quality checker, also available as a command-line tool, tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
+Real-Hi-Res is a music player that also checks your music. Since version 2.0 the desktop app plays your library in an Apple Music-like window: a Library page with your songs, folders, albums, artists, album artists, genres, years, composers, playlists, liked and disliked songs, recently played and added music and "Your Stats", synced lyrics next to the cover, a graphic and a parametric equalizer with presets you can name, import and export, gapless playback, and themes you can make yourself. Its quality checker, also available as a command-line tool, tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
 
-![Real-Hi-Res desktop app: list of fake and suspicious files with an After fix column, and the dashboard showing a fake FLAC with its spectrogram, a one-line reason and what Fix would do with it](docs/gui-screenshot.png)
+![The Real-Hi-Res music player: Now Playing with the album cover on the left and synced lyrics on the right, the current line in bold](docs/gui-player-nowplaying.png)
 
 ## Download and run (no installation needed)
 
@@ -64,35 +64,79 @@ Every release page has an **Antivirus scan results** section. It lists each down
 
 ## Music player
 
-Since version 2.0 the desktop app opens as a music player. Its window looks and works much like Apple Music:
+Since version 2.0 the desktop app opens as a music player. Its window looks and works much like Apple Music. The first time, choose your music folder (the Library page offers a button, or use **Settings → Library**); Real-Hi-Res reads the tags of its songs in the background and keeps them, so the next start shows your library at once.
 
-- **The sidebar** lists your library: **Recently Added**, **Artists**, **Albums**, **Songs** and **Genres**, then **Liked Songs**, with **Settings** at the bottom. The **Search** box at the top finds albums and songs by title, artist, album or genre as you type.
-- **Albums** are shown as cover cards (the picture embedded in a track, or a `cover.jpg`/`folder.jpg` in the album folder). Click a card for the album page with its cover, artist, genre and year, the **Play** and **Shuffle** buttons and the track list; double-click a song (or select it and press Enter) to play from there. **Artists** and **Genres** list the names on the left and that artist's albums or that genre's songs on the right. **Songs** is a table you can sort by any column. Right-click a song to like it, go to its album, get its lyrics, check its quality or show it in its folder.
-- **The playback bar** at the top has **Shuffle**, **Previous**, **Play/Pause**, **Next** and **Repeat** on the left, the "LCD" in the middle (cover, title, artist and album, a seek bar you can click or drag, the elapsed and remaining time, and a quality badge such as **Hi-Res Lossless**, **Lossless** or **AAC 256 kbps**), and on the right the heart that likes the song playing, **Lyrics**, **Up Next**, the **equalizer** and the volume (click the speaker to mute). Space plays and pauses; Ctrl/Cmd+Left and Right go to the previous and next song.
+![The Library page: fourteen tiles from All Songs to Your Stats, the albums added last, and a banner with this year's listening](docs/gui-player-library.png)
+
+**The Library page** is where the app starts. Its tiles, each with a count, open:
+
+1. **All Songs**: every song as a table you can sort by any column, with Play and Shuffle.
+2. **Folders**: your music folders as they are on disk, with their subfolders, the songs in each, and a path you can click back along.
+3. **Albums**: cover cards; a click opens the album page with its cover, artist, genre and year, **Play**, **Shuffle** and the track list.
+4. **Artists**: the performing artist of each song.
+5. **Album Artists**: the album artist of each album.
+6. **Genres**, 7. **Years** and 8. **Composers**: like Artists, the names on the left with their counts, and the chosen one's albums or songs on the right.
+9. **Playlists**: your own playlists, with a cover mosaic. Make one with **New Playlist…**, add songs with **Add to playlist** in any song's menu (right-click, or the **…** button in the playback bar), and rename, delete, reorder (Move up / Move down) or remove songs on the playlist's page.
+10. **Liked Songs** and 11. **Disliked Songs**: the songs you marked with the heart or the thumbs-down. Disliked songs are left out whenever the music is shuffled.
+12. **Recently Played**: the last 200 songs you played, with when.
+13. **Recently Added**: the newest albums.
+14. **Your Stats**: a yearly-review style summary of your listening (below).
+
+The sidebar lists the same pages, your playlists by name, and **Settings** at the bottom; the **Search** box at its top finds albums and songs by title, artist, album or genre as you type.
+
+![An album page: the cover, the title, artist, genre and year, Play and Shuffle, and the track list with the song playing marked](docs/gui-player-album.png)
+
+**The playback bar** at the top has **Shuffle**, **Previous**, **Play/Pause**, **Next** and **Repeat** on the left, the "LCD" in the middle (cover, title, artist and album, a seek bar you can click or drag, the elapsed and remaining time, and a quality badge such as **Hi-Res Lossless**, **Lossless** or **AAC 256 kbps**), and on the right the heart (like), the thumbs-down (dislike), **…** (add to a playlist, go to the album, get lyrics, check its quality, show in folder), **Lyrics**, **Up Next**, the **equalizer** and the volume (click the speaker to mute). Space plays and pauses; Ctrl/Cmd+Left and Right go to the previous and next song.
+
 - **Shuffle** opens a menu: **Off**, **Songs in this list**, **All songs in the library**, **Same genre**, **Same artist** or **Same album** (as the song playing). **Repeat** offers **Off**, **Repeat song**, **Repeat album** and **Stop after this song**. A mode that is on is drawn in the accent colour.
-- **Like songs** with the heart in the playback bar, or next to any song in a list; **Liked Songs** in the sidebar lists them, ready to play or shuffle.
-- **Now Playing** (the **Lyrics** button, or a click on the cover in the LCD) shows the album picture on the left and the lyrics on the right. Synced lyrics follow the music line by line, with the current line highlighted, and a click on a line jumps there. A song without lyrics shows its cover in the centre, with a **Get lyrics** button that downloads them from LRCLIB. Lyrics come from the `.lrc` or `.txt` next to the song, or from the lyrics written inside the file.
-- **Playback info**: click the quality badge in the LCD to see everything about the song playing: the track's tags, file and size; the decoder (format, sample rate, bit depth, channels, bit rate, FFmpeg's version); the output (the sound device, the rate and sample format it runs at, whether the audio is resampled and from what rate, the volume in dB, the equalizer and gapless playback); and the song's Real-Hi-Res verdict, if it has been checked.
-- **Up Next** shows where the music comes from ("Playing from Paper Lanterns") and the next 50 songs; double-click one to jump to it.
-- **The equalizer** has a **graphic** equalizer with ten bands (32 Hz to 16 kHz, ±12 dB, 17 presets such as Bass Boost, Vocal, Loudness, Late Night, Rock or Spoken Word) and a **parametric** equalizer with up to ten bands of any type (peak, low and high shelf, low and high pass, notch) with their own frequency, gain and Q. Both can be used together, each has a pre-amp, and the curve above them shows what they do. **Prevent clipping** lowers the level by exactly as much as the equalizer raises it at its highest point, so loud passages never distort. Changes are heard at once.
+- **Now Playing** (the **Lyrics** button, or a click on the cover in the LCD) shows the album picture on the left and the lyrics on the right, as at the top of this page. Synced lyrics follow the music line by line, with the current line highlighted, and a click on a line jumps there. A song without lyrics shows its cover in the centre, with a **Get lyrics** button that downloads them from LRCLIB. Lyrics come from the `.lrc` or `.txt` next to the song, or from the lyrics written inside the file.
+- **Playback info**: click the quality badge to see everything about the song playing: its tags, file and size; the decoder (format, sample rate, bit depth, channels, bit rate, FFmpeg's version); the output (the sound device, the rate and sample format it runs at, whether the audio is resampled and from what rate, the volume in dB, the equalizer and gapless playback); and the song's Real-Hi-Res verdict, if it has been checked.
+- **Up Next** shows where the music comes from ("Playing from Northern Lights") and the next 50 songs; double-click one to jump to it.
 
-**What it plays and how.** Everything FFmpeg can decode, which covers FLAC, ALAC, WAV, AIFF, WavPack, APE, DSD (DSF/DFF), MP3, AAC/M4A, Ogg Vorbis, Opus and more. The sound device is opened at each song's own sample rate when it supports that rate, so a 96 kHz file reaches the device at 96 kHz; otherwise FFmpeg's high-quality SoX resampler converts it to the device's rate, and the Playback info says so. Albums play **gaplessly**: the next song is decoded while the current one ends and joins it without a pause (Settings → Playback → Gapless playback). The volume, the equalizer and the shuffle and repeat modes are remembered, and so is the song you were listening to, which the next start shows paused where you left it.
+![Playback info: the track, the decoder, the output and the quality check of the song playing](docs/gui-player-info.png)
 
-**Your library.** Choose your music folder in **Settings → Library** (or with the button the empty library shows at the first start). Real-Hi-Res reads the tags of its songs in the background and keeps them in `library.sqlite` next to the saved results, so the next start shows your library at once and only reads new and changed files. The likes, volume, modes, equalizer and the last song are kept in `player.json` in the same folder (`REALHIRES_LIBRARY` and `REALHIRES_PLAYER` point elsewhere). Both versions of the app (Python and Rust) share these files.
+**Your Stats.** Real-Hi-Res keeps a history of what you play (a song counts as a play once you have heard 30 seconds of it, or half of a shorter song; seeking does not count as listening). **Your Stats** sums it up for the last 30 days, this year, last year or all time, in colourful cards: the minutes you listened, your top song, artist, album and genre, how many songs and artists you played, the hour and the day of the week you listen most, your longest streak of days with music, and your biggest day. **Details** shows the totals, bar charts of your listening by hour, weekday and month, your top 50 songs, artists, albums and genres with plays and minutes, and what your library holds (songs, length, size, formats, and how many are Hi-Res Lossless, Lossless or lossy, by sample rate and bit depth). **Settings → Library → Clear the play history…** starts it again from nothing. The history stays on your computer.
+
+![Your Stats: cards with the minutes listened, the top song, artist, album and genre, the listening hour and day, the longest streak and the biggest day](docs/gui-player-stats.png)
+
+![Your Stats details: totals, listening by hour, weekday and month, and the top songs, artists, albums and genres](docs/gui-player-stats-details.png)
+
+![A playlist page with its cover mosaic, Play and Shuffle, Rename and Delete, and the songs in the playlist's order](docs/gui-player-playlist.png)
+
+**The equalizer** has a **graphic** equalizer with ten bands (32 Hz to 16 kHz, ±12 dB, 17 built-in presets such as Bass Boost, Vocal, Loudness, Late Night, Rock or Spoken Word) and a **parametric** equalizer with up to ten bands of any type (peak, low and high shelf, low and high pass, notch) with their own frequency, gain and Q. Both can be used together, each has a pre-amp, and the curve above them shows what they do. **Prevent clipping** lowers the level by exactly as much as the equalizer raises it at its highest point, so loud passages never distort. Changes are heard at once.
+
+- **Your own presets.** **Save as preset…** keeps the whole equalizer (graphic and parametric) under a name of your choice; your presets appear under "My presets" in the preset menu, with **Rename…** and **Delete…**.
+- **Import and export.** **Export…** saves a preset as a Real-Hi-Res `.json` file, or as an Equalizer APO / AutoEQ `.txt` file for other programs. **Import…** reads both, including the headphone corrections that AutoEQ publishes ("ParametricEQ.txt": its pre-amp and filters go into the parametric equalizer; a "GraphicEQ" curve is sampled onto the ten graphic bands). An imported preset is applied at once and kept under its name, and the window says if anything had to be left out (filter types Real-Hi-Res does not have, more than ten filters, a pre-amp beyond 12 dB).
+
+![The equalizer's preset row: built-in presets, your own ones, Save as preset, Rename, Delete, Import and Export](docs/gui-player-eq-presets.png)
+
+![The parametric equalizer with its bands and the response curve](docs/gui-player-eq-parametric.png)
+
+**Themes.** **Settings → Appearance → Theme** offers **Match the system** (light or dark as your system is), eight built-in themes (Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia and Rose) and your own. **New theme…** makes a copy of the theme in use that you can change: whether it is dark, and its eight colours (background, sidebar, text, secondary text, lines, accent, playback panel and highlight), each with a colour picker, and the app changes as you pick. Your themes can be renamed, deleted, exported as a `.json` file and imported on another computer. The font can be changed there too: on a Mac the app uses the system's San Francisco font, with SF Pro Display Bold for headings; Windows and Linux use the similar Inter typeface, which is built in; any font installed on the computer can be chosen instead.
+
+![Settings → Appearance with the theme menu and the theme editor](docs/gui-player-themes.png)
+
+**What it plays and how.** Everything FFmpeg can decode, which covers FLAC, ALAC, WAV, AIFF, WavPack, APE, DSD (DSF/DFF), MP3, AAC/M4A, Ogg Vorbis, Opus and more. The sound device is opened at each song's own sample rate when it supports that rate, so a 96 kHz file reaches the device at 96 kHz; otherwise FFmpeg's high-quality SoX resampler converts it to the device's rate, and the Playback info says so. Albums play **gaplessly**: the next song is decoded while the current one ends and joins it without a pause (Settings → Playback → Gapless playback). The volume, the equalizer, the shuffle and repeat modes and the song you were listening to are remembered; the next start shows that song paused where you left it, with its album as the list.
+
+**Your files.** The tag index (`library.sqlite`, which also holds the play history), the player's state (`player.json`: likes, dislikes, playlists, volume, modes, the equalizer and your presets) and your themes (`themes.json`) are kept next to the saved results, in `%LOCALAPPDATA%\RealHiRes` on Windows, `~/Library/Application Support/RealHiRes` on macOS and `~/.local/share/realhires` on Linux (`REALHIRES_LIBRARY`, `REALHIRES_PLAYER` and `REALHIRES_THEMES` point elsewhere). Both versions of the app (Python and Rust) share these files.
 
 **Everything else is in Settings.** The **Settings** page in the sidebar holds every function of the app, also those of earlier versions:
 
-- **Library**: the music folders, **Update the library now**, **Check the library for fake files** (scans the library folders for fake hi-res and fake lossless files in the quality checker), **Download lyrics for the whole library…**, **Open the quality checker**, and two switches: **Check new songs when the app starts** (scans new songs for fakes in the background each time the app starts; songs checked before are answered from the saved results at once) and **Download lyrics while scanning** (each song's synced lyrics are fetched as soon as the scan has analysed it, one song at a time as LRCLIB asks; the scanner's status line counts them).
+- **Library**: the music folders, **Update the library now**, **Scan library** (opens the quality checker with your library folders and checks them for fake hi-res and fake lossless files), **Download lyrics for the whole library…**, **Open the quality checker**, **Clear the play history…**, and two switches: **Check new songs when the app starts** (checks new songs for fakes in the background each time the app starts; songs checked before are answered from the saved results at once, and no pop-up appears) and **Download lyrics while scanning** (each song's synced lyrics are fetched as soon as the scan has analysed it, one song at a time as LRCLIB asks; the scanner's status line counts them).
 - **Playback**: the output device, gapless playback and the equalizer.
-- **Appearance**: the font and the theme (match the system, light or dark). On a Mac the app uses the system's San Francisco font, with SF Pro Display Bold for headings; Windows and Linux use the similar Inter typeface, which is built in. Any font installed on the computer can be chosen instead.
+- **Appearance**: the font, the theme and the theme editor.
 - **Lyrics**: where downloaded lyrics go (**Save lyrics as**: an `.lrc` file next to the song, inside the audio file, both, or plain lyrics without timing inside the file; see below) and the options of the lyrics download.
 - **Detection**, **Scanning**, **Saved results**, **Display** and **Fixing**: the quality checker's settings, as described below.
+
+![The Settings page on its Library section](docs/gui-player-settings.png)
 
 **Lyrics inside the audio file.** Besides an `.lrc` file next to the song, **Settings → Lyrics → Save lyrics as** can write the lyrics into the file itself, as LRCGET does: into FLAC files as `LYRICS` (synced) or `UNSYNCEDLYRICS` (plain) Vorbis comments, and into MP3 files as ID3 `SYLT` (synced, with the time of every line) and `USLT` frames. Only the tags are rewritten, never the audio, and the file's saved check result stays valid. Other formats get an `.lrc` file instead, and the download says so.
 
 ## Quality check (finding fakes)
 
-The **Quality check** page holds the scanner of earlier versions with all its functions. Open it with **Settings → Library → Open the quality checker** (or **Check the library for fake files**, which also adds your library folders and starts a scan), or right-click a song and choose **Check its quality**. Folders or files given on the command line (`realhires-gui D:\Music`) open it and scan them at once.
+The **Quality check** page holds the scanner of earlier versions with all its functions. Open it with **Settings → Library → Scan library** (which adds your library folders and starts a scan) or **Open the quality checker**, or right-click a song and choose **Check its quality**. Folders or files given on the command line (`realhires-gui D:\Music`) open it and scan them at once. Its menu bar (File, Edit, View, Help) has **Back to the music library**.
+
+![The Quality check page: list of fake and suspicious files with an After fix column, and the dashboard showing a fake FLAC with its spectrogram, a one-line reason and what Fix would do with it](docs/gui-screenshot.png)
 
 Click **Add Folder…** (or **Add Files…**). Each folder or file you add appears straight away in the **Sources to scan** panel with the number of audio files found in it. A folder without audio files is shown in red ("no audio files found"), so you know immediately whether it was added correctly. All files that were found are listed below as **Not scanned**, and you can select one and open its folder before scanning. Adding the same folder twice is ignored, and **Remove** (or the Delete key) takes a selected source out again.
 
@@ -220,7 +264,7 @@ On the command line, `--lyrics-only` downloads lyrics without analysing the file
 
 ## Running from source
 
-You need Python 3.9 or newer, NumPy, and FFmpeg (both `ffmpeg` and `ffprobe` must be on your `PATH`). FFmpeg does the decoding, so every format it understands works: FLAC, WAV, AIFF, ALAC/M4A, APE, WavPack, DSF/DFF (DSD), TTA, MKA, and lossy formats such as MP3, AAC, Opus and Vorbis. The GUI also needs Tkinter, which is included with the python.org installers for Windows and macOS. On Linux, install it with `sudo apt install python3-tk` (Debian/Ubuntu) or `sudo dnf install python3-tkinter` (Fedora).
+You need Python 3.9 or newer, NumPy, [miniaudio](https://github.com/irmen/pyminiaudio) (the music player's sound output; `pip install .` installs both), and FFmpeg (both `ffmpeg` and `ffprobe` must be on your `PATH`). FFmpeg does the decoding, so every format it understands works: FLAC, WAV, AIFF, ALAC/M4A, APE, WavPack, DSF/DFF (DSD), TTA, MKA, and lossy formats such as MP3, AAC, Opus and Vorbis. The GUI also needs Tkinter, which is included with the python.org installers for Windows and macOS. On Linux, install it with `sudo apt install python3-tk` (Debian/Ubuntu) or `sudo dnf install python3-tkinter` (Fedora).
 
 On macOS you can install FFmpeg with `brew install ffmpeg`. On Ubuntu or Debian use `sudo apt install ffmpeg`, and on Windows use `winget install ffmpeg`.
 
@@ -234,7 +278,7 @@ git clone https://github.com/SU2H1/Real-Hi-Res.git
 cd Real-Hi-Res && pip install .
 ```
 
-You can also run it without installing by calling `python -m realhires` (command line) or `python -m realhires.gui` (desktop app) from inside the repository folder.
+You can also run it without installing by calling `python -m realhires` (command line) or `python -m realhires.gui` (desktop app) from inside the repository folder. Without miniaudio the app still opens and the quality checker works; each song you try to play then says that the sound output is missing.
 
 ## Command-line usage
 
@@ -301,7 +345,7 @@ While it works, a progress line on the terminal counts the files and estimates t
 | `--list-settings` | Print every setting with its current value and description. |
 | `--settings FILE` / `--no-settings` | Use a different settings file, or ignore the saved settings and use the defaults. |
 | `--no-color` | Disable coloured output. Setting the `NO_COLOR` environment variable does the same. |
-| `--rescan` | Analyse every file again, even files with a saved result from an earlier scan (the saved results are updated). Without it, files that have not changed since an earlier scan, in the app or on the command line, are not analysed again; see "Results are saved" under [Desktop app](#desktop-app-gui). |
+| `--rescan` | Analyse every file again, even files with a saved result from an earlier scan (the saved results are updated). Without it, files that have not changed since an earlier scan, in the app or on the command line, are not analysed again; see "Results are saved" under [Quality check](#quality-check-finding-fakes). |
 | `--rescan-outdated` | Analyse again only the files whose saved result was made by older detection rules (after an update). |
 | `--no-cache` | Neither use nor save saved results in this run. |
 | `--forget-results` | Delete all saved results and exit. |
@@ -409,9 +453,9 @@ MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with or
 
 The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language: the desktop app and the command-line tool, with everything described above, including Fix and the synced lyrics from LRCLIB. It is a preview, released since version 1.12.0 as separate packages next to the Python ones (see [Download](#download-and-run-no-installation-needed)); the Python version remains the main one. It judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
 
-![The Rust desktop app: the list of fake files, and the dashboard showing a fake 24/192 file upsampled from 44.1 kHz, with its spectrogram cut off at 22.05 kHz](docs/rust-gui.png)
+![The Rust desktop app on its Library page](docs/rust-gui.png)
 
-To build it yourself you need [Rust](https://rustup.rs) 1.95 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
+To build it yourself you need [Rust](https://rustup.rs) 1.95 or newer (on Linux also the ALSA headers: `libasound2-dev` on Debian and Ubuntu, `alsa-lib-devel` on Fedora) and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
 
 ```bash
 cargo build --release
@@ -423,7 +467,7 @@ The desktop app is then `rust/target/release/realhires-gui` (`realhires-gui.exe`
 rust/target/release/realhires ~/Music/HiRes
 ```
 
-The desktop app works like the one described under [Desktop app](#desktop-app-gui): the Sources panel, the live scan with the time left, the filters with counts, Search, Find (Ctrl+F), the Files, By album and By artist views, the dashboard with the spectrogram and the average spectrum, the summary chart after each scan, the Settings window with the same five tabs, saved results that appear as soon as a folder is listed, and the Fix window, including fixing automatically after a scan. Folders and files can also be dropped onto its window. Its pop-up windows (summary, Settings, Fix) open inside the main window rather than as separate windows. On Linux it needs a desktop with OpenGL, which every X11 or Wayland desktop provides (it loads the system's `libxkbcommon-x11` and OpenGL driver).
+Since 2.0 its desktop app is the same music player as the Python version's, described under [Music player](#music-player): the Library page with its fourteen entries, playlists, likes and dislikes, Recently Played and Your Stats, Now Playing with synced lyrics, the Playback info, Up Next, the graphic and parametric equalizer with your own presets and their files, themes and the theme editor, and the Settings page. It plays through the system's sound output (WASAPI on Windows, CoreAudio on macOS, ALSA on Linux, which also reaches PulseAudio and PipeWire) at each song's own sample rate where the device allows it, runs the equalizer and the volume in 64-bit floating point in the audio callback, and decodes the next song into the same buffer for gapless playback. Its Quality check page works like the one described under [Quality check](#quality-check-finding-fakes): the Sources panel, the live scan with the time left, the filters with counts, Search, Find (Ctrl+F), the Files, By album and By artist views, the dashboard with the spectrogram and the average spectrum, the summary chart after each scan, the Settings window with the same five tabs, saved results that appear as soon as a folder is listed, and the Fix window, including fixing automatically after a scan. Folders and files can also be dropped onto its window. Its pop-up windows (summary, Settings, Fix) open inside the main window rather than as separate windows. On Linux it needs a desktop with OpenGL, which every X11 or Wayland desktop provides (it loads the system's `libxkbcommon-x11` and OpenGL driver).
 
 Rust compiles to native programs, so they need neither Python nor NumPy and start at once: the command-line tool is about 7 MB and the desktop app about 21 MB, without FFmpeg. On Windows they carry the same kind of icon and version information as the Python version's programs, and the C runtime is built in, so nothing else has to be installed. Files are analysed in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The command-line help (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
 
@@ -483,6 +527,8 @@ The project layout is documented in [CLAUDE.md](CLAUDE.md).
 ## Acknowledgements
 
 **Synced lyrics.** The lyrics come from [LRCLIB](https://lrclib.net), a free and open lyrics database, and from the people who contribute lyrics to it. The lyrics feature is modelled on [LRCGET](https://github.com/tranxuanthang/lrcget), the official LRCLIB client: it looks songs up, matches them and names and marks lyrics files (`.lrc`, `.txt`, `[au: instrumental]`) the way LRCGET does, so the two programs understand each other's files. LRCGET and the [LRCLIB server](https://github.com/tranxuanthang/lrclib) are both made by tranxuanthang and released under the MIT License (LRCGET: "Copyright (c) 2023 tranxuanthang"; the LRCLIB server: "Copyright (c) 2024 tranxuanthang"). Real-Hi-Res's own lyrics code, in the Python version (`realhires/lyrics.py`) and in the Rust version (`rust/crates/core/src/lyrics.rs`), was written for Real-Hi-Res and contains no code from either project; it uses LRCLIB's published API and names itself in every request, as LRCLIB asks. Both desktop apps credit LRCLIB and LRCGET in their lyrics window and in Help → About. Thank you to tranxuanthang and to everyone who contributes lyrics to LRCLIB.
+
+**Fonts and sound.** On Windows and Linux both apps use the [Inter](https://rsms.me/inter/) typeface by The Inter Project Authors, released under the SIL Open Font License 1.1, whose text is in [`realhires/assets/fonts/LICENSE-Inter.txt`](realhires/assets/fonts/LICENSE-Inter.txt) and in every package. The Python app plays sound through [miniaudio](https://github.com/irmen/pyminiaudio) (Python bindings by Irmen de Jong, miniaudio by David Reid; MIT License, whose notice travels in the packages), and the Rust app through [cpal](https://github.com/RustAudio/cpal) (Apache License 2.0). The equalizer reads and writes the preset format of [Equalizer APO](https://sourceforge.net/projects/equalizerapo/), which [AutoEQ](https://github.com/jaakkopasanen/AutoEq) also publishes; no presets of either are bundled.
 
 ## License
 

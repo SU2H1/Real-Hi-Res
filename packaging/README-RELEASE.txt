@@ -1,5 +1,5 @@
-Real-Hi-Res - fake hi-res audio detector
-=========================================
+Real-Hi-Res - music player and fake hi-res audio detector
+=========================================================
 
 This package is self-contained: Python, NumPy and FFmpeg are bundled, so
 nothing else needs to be installed.
@@ -15,7 +15,36 @@ Start the app
             ./uninstall.sh removes that again.  The app runs from this
             folder, so re-run install.sh if you move the folder.
 
-Click "Add Folder..." (or "Add Files...").  Every folder/file you add appears
+The music player (2.0)
+----------------------
+The app opens on your Library.  The first time, choose your music folder
+(the Library page has a button, or Settings > Library).  The Library page
+and the sidebar lead to All Songs, Folders, Albums, Artists, Album Artists,
+Genres, Years, Composers, Playlists, Liked Songs, Disliked Songs, Recently
+Played, Recently Added and Your Stats.  Double-click a song to play it.
+
+The playback bar has Shuffle (off, this list, the whole library, same genre,
+same artist, same album), Previous, Play/Pause, Next and Repeat (off, song,
+album, stop after this song); in the middle the cover, title, seek bar and a
+quality badge (click it for the Playback info: track, decoder, output); on
+the right Like, Dislike (disliked songs are left out of shuffles), "..." (add
+to a playlist and more), Lyrics (Now Playing: cover left, synced lyrics
+right), Up Next, the equalizer and the volume.  Space plays and pauses.
+
+The equalizer has a 10-band graphic and a parametric part, built-in presets
+and your own (Save as preset..., Rename..., Delete...); Import... and
+Export... read and write Real-Hi-Res .json files and Equalizer APO / AutoEQ
+.txt files.  Your Stats sums up your listening like a yearly music review;
+Details shows the full numbers.  Settings > Appearance has the font, the
+theme (8 built-in themes, or your own: New theme... and the colour editor)
+and theme Import/Export.  Every other function is in Settings too:
+Settings > Library > "Scan library" checks your library for fake files in
+the quality checker described below.
+
+The quality checker
+-------------------
+Open it with Settings > Library > "Scan library" or "Open the quality
+checker".  Click "Add Folder..." (or "Add Files...").  Every folder/file you add appears
 in the "Sources to scan" panel with the number of audio files found (red if
 none), and the files are listed right away as "Not scanned".  Then press
 "Scan".  While it runs, the status line counts the files and, after the
@@ -110,6 +139,12 @@ LRCGET ("Copyright (c) 2023 tranxuanthang") and the LRCLIB server
 are released under the MIT License.  Real-Hi-Res's lyrics code was written
 for Real-Hi-Res and contains no code from either project.  Thank you to
 tranxuanthang and to everyone who contributes lyrics to LRCLIB.
+
+On Windows and Linux the app uses the Inter typeface
+(https://rsms.me/inter/, Copyright (c) 2016 The Inter Project Authors),
+released under the SIL Open Font License 1.1; see LICENSE-Inter.txt.
+The player plays sound through miniaudio (Python bindings Copyright (c)
+2019 Irmen de Jong, miniaudio Copyright 2019 David Reid; MIT License).
 
 Full documentation: https://github.com/SU2H1/Real-Hi-Res
 FFmpeg licence information: see FFMPEG-NOTICE.txt in the "ffmpeg" folder
