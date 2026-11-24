@@ -364,10 +364,15 @@ pub fn cover_source(tracks: &[String]) -> Option<CoverSource> {
     None
 }
 
-/// The picture as a PNG that fits into size × size (aspect kept, never
-/// enlarged), made by FFmpeg, for showing it (Python `fit_png`).
-pub fn fit_png(data: &[u8], size: u32) -> Option<Vec<u8>> {
-    let vf = format!("scale=w='min({size},iw)':h='min({size},ih)':force_original_aspect_ratio=decrease");
+/// The picture as a PNG that fits into size × size (aspect kept; a smaller one
+/// is enlarged only with `enlarge`), made by FFmpeg, for showing it (Python
+/// `fit_png`).
+pub fn fit_png(data: &[u8], size: u32, enlarge: bool) -> Option<Vec<u8>> {
+    let vf = if enlarge {
+        format!("scale=w={size}:h={size}:force_original_aspect_ratio=decrease")
+    } else {
+        format!("scale=w='min({size},iw)':h='min({size},ih)':force_original_aspect_ratio=decrease")
+    };
     let mut cmd = command(tool("ffmpeg"));
     cmd.args(["-v", "error", "-nostdin", "-i", "pipe:0", "-frames:v", "1", "-vf", &vf, "-f", "image2pipe", "-c:v", "png", "-"]);
     run_output(cmd, Some(data)).filter(|d| d.starts_with(b"\x89PNG"))

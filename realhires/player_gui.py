@@ -43,7 +43,7 @@ from .player_pages import (AlbumPage, AlbumsPage, GroupPage, NowPlayingPage, Pag
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
                            system_is_dark, theme_menu)
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
-from .player_windows import EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
+from .player_windows import CoverWindow, EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
 SEARCH_DELAY_MS = 200
@@ -1010,6 +1010,7 @@ class PlayerApp:
             m.add_command(label="Show album", command=lambda: self.open_album(album))
         if os.path.exists(path):
             m.add_command(label="Edit info…", command=lambda: self.edit_info([track]))
+            m.add_command(label="Cover…", command=lambda: self.open_cover_window(path))
             m.add_command(label="Show in folder", command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
             m.add_command(label="Playback Info…", command=self.open_info)
@@ -1041,6 +1042,27 @@ class PlayerApp:
         n = len(album["tracks"])
         return self.edit_info(album["tracks"], album["title"],
                               " · ".join(x for x in (album["artist"], f"{n:,} song{'s' if n != 1 else ''}") if x))
+
+    def open_cover_window(self, path: str) -> Optional[CoverWindow]:
+        """The Cover window of this song's cover (a click on Now Playing's cover, Cover…
+        in the song menus): one at a time; while it is busy it is brought to the front."""
+        w = getattr(self, "cover_window", None)
+        if w is not None:
+            try:
+                alive = bool(w.win.winfo_exists())
+            except tk.TclError:
+                alive = False
+            if alive and (w.busy or w.path == path):
+                w.win.lift()
+                w.win.focus_force()
+                return w
+            if alive:
+                w.close()
+            self.cover_window = None
+        if not path or not os.path.exists(path):
+            return None
+        self.cover_window = CoverWindow(self, path)
+        return self.cover_window
 
     def tags_saved(self, paths: List[str]) -> None:
         """Edit Info saved new information into these files (the library index already

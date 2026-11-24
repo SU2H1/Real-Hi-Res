@@ -266,10 +266,13 @@ def cover_source(tracks: Iterable[str]) -> Optional[CoverSource]:
     return None
 
 
-def fit_png(data: bytes, size: int) -> Optional[bytes]:
-    """The picture as a PNG that fits into size × size (aspect kept, never enlarged),
-    made by FFmpeg, for showing it (Tk cannot decode JPEG)."""
-    vf = f"scale=w='min({size},iw)':h='min({size},ih)':force_original_aspect_ratio=decrease"
+def fit_png(data: bytes, size: int, enlarge: bool = False) -> Optional[bytes]:
+    """The picture as a PNG that fits into size × size (aspect kept; a smaller one is
+    enlarged only with `enlarge`), made by FFmpeg, for showing it (Tk cannot decode JPEG)."""
+    if enlarge:
+        vf = f"scale=w={size}:h={size}:force_original_aspect_ratio=decrease"
+    else:
+        vf = f"scale=w='min({size},iw)':h='min({size},ih)':force_original_aspect_ratio=decrease"
     cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-i", "pipe:0", "-frames:v", "1", "-vf", vf,
            "-f", "image2pipe", "-c:v", "png", "-"]
     try:
