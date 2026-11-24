@@ -205,7 +205,7 @@ jobs:
       - name: Install build dependencies
         run: |
           bash packaging/linux/setup_almalinux8.sh
-          dnf -y -q install gcc curl
+          dnf -y -q install gcc curl alsa-lib-devel pkgconf-pkg-config
           bash packaging/install_rust.sh >> "$GITHUB_PATH"
       - name: Build, test and package
         env:

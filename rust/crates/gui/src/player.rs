@@ -308,7 +308,12 @@ impl Player {
         let last = p.state.last_path.clone();
         if !last.is_empty() && p.lib.by_path.contains_key(&last) && std::path::Path::new(&last).is_file() {
             let pos = p.state.last_position;
-            p.make_queue(p.lib.tracks.iter().map(|t| t.path.clone()).collect(), "Songs");
+            // go on with the song's album, as after playing it from there
+            let (list, name) = match p.lib.album_of(&last) {
+                Some(a) => (a.tracks.iter().map(|t| t.path.clone()).collect(), a.title.clone()),
+                None => (vec![last.clone()], "Songs".to_string()),
+            };
+            p.make_queue(list, &name);
             if let Some(q) = p.queue.as_mut() {
                 q.start(&last);
             }

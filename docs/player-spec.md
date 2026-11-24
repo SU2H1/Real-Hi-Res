@@ -137,7 +137,7 @@ the update. Covers come from `covers.cover_png()` (cached per album, loaded in a
 - Errors (no output device, unreadable file) show in the LCD's second line for that song, and playback moves to the
   next song after 2 s, except when every song failed.
 - On quit the player state saves the song and position (`last_path`, `last_position`); on start the LCD shows that
-  song paused at that position (it does not start playing by itself).
+  song paused at that position (it does not start playing by itself), with its album as the list it plays from.
 
 ## Lyrics while scanning
 

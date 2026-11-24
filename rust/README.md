@@ -4,7 +4,7 @@ This folder holds the Rust port of Real-Hi-Res: the desktop app and the command-
 
 ## Building and testing
 
-You need Rust 1.82 or newer and FFmpeg (`ffmpeg` and `ffprobe` on the `PATH`, or in an `ffmpeg` folder next to the executable, or in the folder `$REALHIRES_FFMPEG_DIR` names). Build the optimised programs with:
+You need Rust 1.95 or newer and FFmpeg (`ffmpeg` and `ffprobe` on the `PATH`, or in an `ffmpeg` folder next to the executable, or in the folder `$REALHIRES_FFMPEG_DIR` names). Build the optimised programs with:
 
 ```bash
 cargo build --release

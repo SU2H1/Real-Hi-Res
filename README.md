@@ -381,7 +381,7 @@ The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming 
 
 ![The Rust desktop app: the list of fake files, and the dashboard showing a fake 24/192 file upsampled from 44.1 kHz, with its spectrogram cut off at 22.05 kHz](docs/rust-gui.png)
 
-To build it yourself you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
+To build it yourself you need [Rust](https://rustup.rs) 1.95 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
 
 ```bash
 cargo build --release

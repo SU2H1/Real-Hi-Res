@@ -69,6 +69,8 @@ case "$OS" in
     # FFmpeg next to the programs, where they look for it first
     cp build/ffmpeg/ffmpeg build/ffmpeg/ffprobe "$MACOS/"
     cp build/ffmpeg/FFMPEG-*.txt "$APP/Contents/Resources/"
+    # the player's font on Windows and Linux is built in; its licence goes along (SIL OFL)
+    cp realhires/assets/fonts/LICENSE-Inter.txt "$APP/Contents/Resources/"
     ICONSET=build/RealHiResRust.iconset
     rm -rf "$ICONSET" && mkdir -p "$ICONSET"
     for s in 16 32 128 256 512; do
@@ -110,6 +112,7 @@ EOF
     cp "$BIN/realhires-gui" "$BIN/realhires" "$DIR/"
     cp build/ffmpeg/ffmpeg build/ffmpeg/ffprobe build/ffmpeg/FFMPEG-*.txt "$DIR/ffmpeg/"
     cp realhires/assets/icon.png "$DIR/realhires-rust.png"
+    cp realhires/assets/fonts/LICENSE-Inter.txt "$DIR/"
     cp packaging/linux/install-rust.sh "$DIR/install.sh"
     cp packaging/linux/uninstall-rust.sh "$DIR/uninstall.sh"
     chmod +x "$DIR/install.sh" "$DIR/uninstall.sh"
@@ -121,6 +124,7 @@ EOF
     mkdir -p "$DIR/ffmpeg"
     cp "$BIN/realhires-gui.exe" "$BIN/realhires.exe" "$DIR/"
     cp build/ffmpeg/ffmpeg.exe build/ffmpeg/ffprobe.exe build/ffmpeg/FFMPEG-*.txt "$DIR/ffmpeg/"
+    cp realhires/assets/fonts/LICENSE-Inter.txt "$DIR/"
     CLI="$DIR/realhires.exe"
     for f in "$DIR/realhires-gui.exe" "$DIR/realhires.exe"; do
       echo "$(basename "$f"): $(wc -c < "$f") bytes, sha256 $(sha256sum "$f" | cut -d' ' -f1)"
