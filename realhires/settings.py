@@ -20,7 +20,7 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-GROUPS = ("Detection", "Scanning", "Saved results", "Display", "Fixing")
+GROUPS = ("Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics")
 SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
@@ -214,6 +214,34 @@ class Settings:
         "if you chose to delete originals, you are still asked first). Only the desktop app does "
         "this; the command-line tool fixes with --fix.",
         choices=["Do nothing", "Ask whether to fix them", "Fix them automatically"], kind="choice")
+
+    # ---- Lyrics (synced lyrics from LRCLIB, as LRCGET) --------------------
+    lyrics_existing: str = _f(
+        "Skip songs that have synced lyrics", "Lyrics", "Songs that already have lyrics",
+        "Which songs are looked up. A song has synced lyrics when <name>.lrc is next to it, and plain "
+        "lyrics when <name>.txt is. 'Skip songs that have synced lyrics' still looks up songs that only "
+        "have a .txt, to add an .lrc (the .txt is kept). Lyrics files are never deleted; 'Download "
+        "again and replace them' overwrites them.",
+        choices=["Skip songs that have synced lyrics", "Skip songs that have any lyrics",
+                 "Download again and replace them"], kind="choice")
+    lyrics_plain: bool = _f(
+        True, "Lyrics", "Save plain lyrics as .txt",
+        "When LRCLIB has only plain (unsynced) lyrics for a song, save them as <name>.txt next to it. "
+        "Off: such songs are left without lyrics.", kind="bool")
+    lyrics_instrumental: bool = _f(
+        True, "Lyrics", "Mark instrumental songs",
+        "Save an .lrc holding '[au: instrumental]' for songs LRCLIB lists as instrumental, as LRCGET "
+        "does, so they are not looked up again.", kind="bool")
+    lyrics_search: bool = _f(
+        True, "Lyrics", "Search when there is no exact match",
+        "When LRCLIB has no record with the song's exact title, artist, album and length, search by "
+        "title and artist and take a result with the same title, the same artist and a length within "
+        "2 seconds. This finds songs whose album is named differently on LRCLIB. Off: exact matches only "
+        "(one request per song instead of up to two).", kind="bool")
+    lyrics_server: str = _f(
+        "https://lrclib.net", "Lyrics", "LRCLIB server",
+        "Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB.",
+        kind="str")
 
     # ------------------------------------------------------------------
     def extension_set(self) -> set:

@@ -1,0 +1,30 @@
+[
+[
+"[ar: x]\n[00:01.00][00:02.00]  la la\r\nplain",
+"la la\nplain"
+],
+[
+"[00:01.00]\u001cnext\u2028[x]y",
+"next\ny"
+],
+[
+"  [a] [b]  c  \n\n",
+"c"
+],
+[
+"no stamps",
+"no stamps"
+],
+[
+"[unclosed",
+"[unclosed"
+],
+[
+"[]",
+""
+],
+[
+"\r\r\n",
+""
+]
+]

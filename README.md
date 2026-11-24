@@ -1,8 +1,8 @@
 # Real-Hi-Res
 
-Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain.
+Real-Hi-Res is a desktop app and command-line tool that scans your music library and tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
 
-![Real-Hi-Res desktop app: list of fake and suspicious files, and the dashboard showing a fake FLAC with its spectrogram and a one-line reason](docs/gui-screenshot.png)
+![Real-Hi-Res desktop app: list of fake and suspicious files with an After fix column, and the dashboard showing a fake FLAC with its spectrogram, a one-line reason and what Fix would do with it](docs/gui-screenshot.png)
 
 ## Download and run (no installation needed)
 
@@ -15,6 +15,18 @@ Ready-to-run packages are attached to every release on the [Releases page](https
 | macOS 10.15 Catalina or later, Intel | `RealHiRes-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
 | Linux, x86-64 (PC) | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
 | Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+
+**Rust version (preview).** Since 1.12.0 every release also carries the [Rust version](#rust-version-preview) of the app and the command-line tool, with FFmpeg bundled. It finds the same fakes with the same reasons and shares its settings and saved results with the version above.
+
+| System | Download | Start the app | Command line |
+| --- | --- | --- | --- |
+| Windows 10/11, 64-bit | `RealHiRes-Rust-<version>-windows-x64.zip` | `RealHiRes-Rust\realhires-gui.exe` | `RealHiRes-Rust\realhires.exe "D:\Music"` |
+| macOS 12+, Apple Silicon | `RealHiRes-Rust-<version>-macos-arm64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
+| macOS 10.15+, Intel | `RealHiRes-Rust-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
+| Linux, x86-64 | `RealHiRes-Rust-<version>-linux-x64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
+| Linux, ARM64 | `RealHiRes-Rust-<version>-linux-arm64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
+
+The first launch works as described below for the other packages (on macOS the app is called `RealHiRes-Rust.app`). On Linux, `RealHiRes-Rust/install.sh` adds "Real-Hi-Res (Rust)" to the application menu and links the command-line tool as `realhires-rust`, next to an installed Python version; the app also needs OpenGL, which every desktop has. On Windows, keep the `ffmpeg` folder next to the two programs.
 
 If you are not sure which Mac you have, open the Apple menu and choose **About This Mac**. "Chip: Apple M…" means Apple Silicon, and "Processor: Intel…" means Intel. On Linux, `uname -m` prints `x86_64` for the x64 package or `aarch64` for the ARM64 package.
 
@@ -68,7 +80,7 @@ Press **Scan** when the list looks right. Everything updates live while the scan
 
 ![Live scan: finished files show their verdict, the files being worked on are marked "Analysing…", the rest wait in the queue](docs/gui-live.png)
 
-By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason; it filters once you pause typing, so even a list of tens of thousands of files does not stutter while you type or delete. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
+By default one file per CPU core is analysed at a time (**Parallel jobs = 0**, automatic). You can set up to 512 in Settings → Scanning, although more jobs than CPU cores does not make scanning faster. After the scan the list shows only the problem files by default (**Fake lossless**, **Fake hi-res** and **Suspicious**), so you can scroll straight through them. Each row has a short **Why** column that says in one line what is wrong, for example "Upsampled from 44.1 kHz: nothing above 22.05 kHz" or "Made from a lossy file (MP3/AAC-style cut-off at 16.0 kHz)". The **After fix** column, next to **Bandwidth**, says in a few words what **Fix to real resolution** does with each fake file and whether it is still marked fake afterwards: "Fixable to 16/44.1", "16/44.1, stays fake: MP3/AAC source", "Stays fake: MP3/AAC source" (already at its real resolution) or "Stays fake: rate kept". Tick the other boxes (Real hi-res, CD quality, Lossy format, Error) to see everything, and use the search box to filter by file name, folder or reason; it filters once you pause typing, so even a list of tens of thousands of files does not stutter while you type or delete. Each checkbox shows how many files have that verdict, and clicking a column header sorts by it.
 
 **Views: Files, By album, By artist.** The **View** switch above the list changes how results are shown. **Files** is the file list. **By album** and **By artist** show your library like a music player, as a grid of cards. Each card shows the cover art, the album (or artist) name, and a **ring** that shows how much of it is fake. Red stands for fake, orange for suspicious and green for fine, and the centre of the ring reads the percentage (for example "25%") or the songs ("1/4"), your choice under **Rings show**. A line such as "1 fake of 4 songs" or "All 3 songs fine" sits under each card. The cards with the most fakes come first; use **Sort** to switch to alphabetical order. **Click a card** to list that album's or artist's songs in track order, with their verdicts. **◀ Back to albums** returns to the grid.
 
@@ -89,9 +101,10 @@ Album, artist and track numbers come from the files' tags (FLAC/Vorbis, ID3, MP4
 **Dashboard.** Clicking a file fills the dashboard below the list with the following:
 
 - The verdict as a coloured badge, together with the concise reason.
-- The key facts: the claimed resolution, the resolution the audio really has, the bandwidth, how many bits are actually used, the format and the duration.
+- The key facts: the claimed resolution, the resolution the audio really has, the bandwidth, how many bits are actually used, the format, the duration and, for a fake file, what **Fix to real resolution** would do with it (**After fix**).
 - A **spectrogram** (time left to right, frequency bottom to top). On an upsampled or MP3-sourced file it shows a hard black area above the cut-off for the whole track, and the detected cut-off is marked with a labelled line.
 - The **average spectrum** tab, which shows the same thing as a single curve.
+- The **Lyrics** tab, which shows the lyrics saved next to the song (its `.lrc` or `.txt` file), with the timestamps of synced lyrics in grey. See [Synced lyrics](#synced-lyrics-lrclib) below.
 - The full reasoning and measurements under **Details**.
 
 **Opening files quickly.** **Open Folder** opens the file's folder in Explorer, Finder or your Linux file manager with the file selected, and **Open File** plays it in your default player. Double-clicking a row or pressing **Enter** opens the folder, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) opens the file. You can swap these two in Settings. Right-click a row for the same actions, or **Ctrl+C** to copy the paths of the selected rows. **Ctrl+A** (**Cmd+A** on a Mac, or **Edit → Select all listed files**) selects every file the list currently shows, so the filters decide what it takes; in the Search and Find boxes it still selects their text. **File → Export…** saves the listed files as CSV or JSON.
@@ -124,23 +137,56 @@ Files made from an MP3/AAC can be fixed too, but this only removes their fake hi
 
 The command-line tool prints the same summary with `--fix`.
 
+**When fixing has finished,** a pop-up says so: how many files were fixed (and how many could not be, with the first reason), how much smaller they are now, how many were restored bit-exactly or converted with their album neighbours so they stay gapless, where the originals went (the backup folder with its full path, `.bak` files, or deleted, as chosen; for copies, the folder they were saved in), what the re-check found (and why some fixed files are still marked fake), and how many fake files were left alone on purpose. **Show in folder** opens the fixed files. The pop-up does not block the app. If you close the Fix window while it is still working, the files are finished in the background, the list is still updated, and the pop-up appears when they are done.
+
+**Files that stay marked fake after fixing.** A scan after fixing still marks some files fake, and that is expected. A file made from an MP3/AAC stays fake lossless at any resolution, because no conversion can bring back what the lossy encoder removed. A file whose sample rate Fix had to keep, so as not to cut real content, stays fake hi-res. And the fake files that Fix left alone are unchanged. So that you do not have to remember this, the **After fix** column says it in a few words, and the details of every fake file (in the app, and with `-v` on the command line) end with what **Fix to real resolution** does with that file and whether it stays marked fake afterwards, for example: "Fix to real resolution leaves it unchanged: it is already 16/44.1, the resolution it really has. It stays marked fake lossless, also after fixing and re-scanning, because it was made from an MP3/AAC, and no conversion can bring back what the lossy encoder removed. Only a genuine lossless copy is better."
+
+![Pop-up after fixing: four fake 24/96 files fixed to 16/44.1, 15.2 MB smaller, converted gaplessly with their neighbours, originals in the Real-Hi-Res backups folder, re-checked as CD quality, one MP3-sourced file left alone](docs/gui-fix-done.png)
+
 **Fix automatically after a scan.** **Settings → Fixing → After a scan** can **Ask whether to fix them** once each scan has finished, or **Fix them automatically**: the Fix window then opens with the fake files of that scan and starts at once, with your Fixing options (originals still go to the backup folder, and if you chose to delete originals you are still asked first). The default is **Do nothing**. Only the desktop app does this; on the command line, `--fix` does the same.
 
 Before fixing a large library, keep in mind what cannot be avoided. A resampled file is not bit-identical to its original master (only padded, only-dithered and whole-number-ratio FFmpeg upsamples are), although the difference is far below hearing. Rewritten files no longer match their checksums, so torrent seeding, rip verification and a store's re-download or library sync treat them as different files. Fake lossless files stay lossy-sourced, because nothing can bring back what MP3/AAC removed. Keep the backups until you have listened to a few results.
 
 ![Fix to real resolution window after an automatic fix: four upsampled files fixed in place with their originals in the backup folder; two MP3-sourced files at 16/44.1 left unchanged, with the reason](docs/gui-fix.png)
 
-**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with five tabs, and pointing at any setting shows an explanation of what it does:
+**Settings.** **⚙ Settings…** (or **Ctrl+,**) opens a window with six tabs, and pointing at any setting shows an explanation of what it does:
 
 - **Detection** holds every detection threshold described under [How detection works](#how-detection-works): the narrow and deep upsampling cliffs, the resampler mid-point ratio, the lossy cut-off drop and search range, the expected ultrasonic content, the converter noise floor, the value-grid strength, the bit-usage threshold and more.
 - **Scanning** covers parallel jobs, analysing only the first N seconds, the quick-scan length, sub-folders and file extensions.
 - **Saved results** turns saving and reusing results on or off, re-scans results of older detection rules automatically if you want, and sets the space for saved graphs. It also shows where the results are kept and how big they are, with a button to delete them.
 - **Display** sets the view at start-up (Files, By album or By artist), what the album/artist rings show, the card order, which verdicts are listed by default, the summary pop-up, what double-click does, and the spectrogram colours and range.
 - **Fixing** holds the defaults of the Fix dialog: replace or copy, what happens to the original, the backup and copy folders, the output format, the target bit depth, the copy suffix and the re-check, plus what happens **after a scan** (nothing, ask, or fix automatically).
+- **Lyrics** holds the defaults of the lyrics window: which songs are skipped because they already have lyrics, whether plain lyrics and instrumental marks are saved, whether to search when there is no exact match, and the LRCLIB server.
 
 Settings are saved and used again the next time you start the app, and by the command-line tool too. **Restore defaults** undoes all changes. Detection changes apply to the next scan.
 
 ![Settings window on the Saved results tab](docs/gui-settings.png)
+
+### Synced lyrics (LRCLIB)
+
+Real-Hi-Res can also download synced lyrics for your songs, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does. Select songs in the list and click **Get lyrics…** in the dashboard (or press **Ctrl+L**, **Cmd+L** on a Mac, or use the right-click menu), or choose **Edit → Download synced lyrics for all songs…** for every song you have added. You do not need to scan first. Each song is looked up on [LRCLIB](https://lrclib.net), a free and open lyrics database, by the title, artist, album and length in its tags, and its synced lyrics are saved as an `.lrc` file with the same name next to it, so `01 Song.flac` gets `01 Song.lrc`. Many music players and lyrics plug-ins find such a file and show the lyrics line by line in time with the music. The audio files themselves are never changed.
+
+![Download synced lyrics window after a run: synced lyrics saved for three songs (one found by searching), plain lyrics saved as .txt for one, one song marked instrumental, one not found and one without tags](docs/gui-lyrics.png)
+
+The window lists every song with its artist and title, and after the download its result: **Synced lyrics saved**, **Plain lyrics saved (no synced ones)**, **Marked instrumental**, **Not found on LRCLIB** or **No title or artist tag**. Selecting a row shows the full explanation under the list, and **Show in folder** opens the folder of the lyrics. When LRCLIB has only plain (unsynced) lyrics for a song, they are saved as `<name>.txt`. A song that LRCLIB lists as instrumental gets an `.lrc` holding `[au: instrumental]`, as in LRCGET, so that it is not looked up again. These are LRCGET's conventions, so lyrics files made by either program are understood by the other. Songs that already have an `.lrc` are skipped without asking LRCLIB at all, so running the download again over a whole library only looks up the songs that still have no lyrics; they are listed last, in grey. A song without a title or artist tag cannot be looked up. Lyrics files are never deleted.
+
+**How a song is matched.** Real-Hi-Res first asks LRCLIB for the record with the song's title, artist and album whose length is within 2 seconds of the song's, which is LRCLIB's exact lookup. If there is no such record, it searches by title and artist and accepts a result only when its title and artist are the same as the song's (case, punctuation and additions such as "(Remastered 2011)" or "feat. …" do not matter) and its length is within 2 seconds. This finds songs whose album is named differently on LRCLIB, and the window says "found by searching". Synced lyrics are preferred to plain ones. You can turn the search off in the options, and then only exact matches are used.
+
+**LRCLIB's rules.** LRCLIB is a free service, and Real-Hi-Res follows the rules it sets for programs. It sends one request at a time with a pause after each (at most about 85 per minute, below the 90 per minute that LRCLIB allows a program that names itself), it names itself and its version in every request, and it waits as long as LRCLIB asks when the server is busy or the limit is reached. A library of 1,000 songs without lyrics therefore takes roughly 15 to 25 minutes. The window estimates the time left, and **Stop** ends the run after the current song, keeping everything saved so far. Only the title, artist, album and length of each song are sent to lrclib.net; file names and folders are not.
+
+**Options** (in the window, and as defaults under **Settings → Lyrics**):
+
+- **Songs that already have lyrics** is **Skip songs that have synced lyrics** by default. A song that has only a `.txt` is then looked up again in case LRCLIB now has synced lyrics for it, and an `.lrc` is added next to the `.txt`, which is kept. **Skip songs that have any lyrics** skips songs that have a `.txt` too, and **Download again and replace them** looks every song up again and overwrites its lyrics files.
+- **Save plain lyrics as .txt** (on by default) saves plain lyrics when a song has no synced ones.
+- **Mark instrumental songs** (on by default) writes the `[au: instrumental]` mark.
+- **Search when there is no exact match** (on by default) is described above.
+- **LRCLIB server** (Settings only) is `https://lrclib.net`; change it only if you run your own LRCLIB server.
+
+The **Lyrics** tab of the dashboard shows the lyrics of the selected song, and it updates as soon as they are downloaded:
+
+![The Lyrics tab of the dashboard showing the synced lyrics of the selected song, with grey timestamps](docs/gui-lyrics-tab.png)
+
+On the command line, `--lyrics-only` downloads lyrics without analysing the files, and `--lyrics` does it after a scan; see [Synced lyrics on the command line](#synced-lyrics-on-the-command-line).
 
 ## Running from source
 
@@ -214,7 +260,11 @@ While it works, a progress line on the terminal counts the files and estimates t
 | `--fix-backup folder\|bak\|none` | With `--fix`, keep originals in the backup folder (default), as `<name>.bak`, or delete them. |
 | `--fix-backup-dir DIR` | With `--fix`, move the originals into `DIR`. |
 | `--fix-copy` / `--fix-dir DIR` | With `--fix`, leave the files alone and save corrected copies next to them or into `DIR`. |
-| `--dry-run` | With `--fix`, only show what would be changed. |
+| `--dry-run` | With `--fix`, only show what would be changed. With `--lyrics` or `--lyrics-only`, look the songs up but save nothing. |
+| `--lyrics` | After scanning, download synced lyrics from LRCLIB for every scanned song and save them as `<name>.lrc` next to it (plain lyrics as `<name>.txt`), as LRCGET does. See [Synced lyrics on the command line](#synced-lyrics-on-the-command-line). |
+| `--lyrics-only` | Download lyrics as `--lyrics` does, without analysing the files (only their tags are read). |
+| `--lyrics-existing skip-synced\|skip-any\|replace` | With `--lyrics`, skip songs that have an `.lrc` (default), skip songs that have an `.lrc` or a `.txt`, or download again and replace their lyrics files. |
+| `--check-lyrics-server` | Make one request to the LRCLIB server, say whether it can be reached, and exit. This helps when a firewall or proxy blocks the downloads. |
 | `-t SECONDS`, `--max-seconds SECONDS` | Analyse only the first N seconds of each file, which is faster but slightly less reliable. |
 | `-n`, `--no-recursive` | Do not descend into sub-folders. |
 | `--set NAME=VALUE` | Override one setting for this run, for example `--set cliff_db=30` or `--set lossy_max_khz=20.8`. You can repeat it. |
@@ -241,6 +291,27 @@ And the following command lists only the problem files and saves spectrograms an
 ```bash
 realhires ~/Music --only problems --spectrogram realhires-report/spectrograms --csv realhires-report/report.csv
 ```
+
+### Synced lyrics on the command line
+
+`--lyrics-only` downloads synced lyrics for every song without analysing the audio, and `--lyrics` does the same after a scan. They follow the same rules and settings as the desktop app (see [Synced lyrics](#synced-lyrics-lrclib)). Songs that already have an `.lrc` are skipped and only counted, unless you add `-v`.
+
+```bash
+realhires ~/Music --lyrics-only
+```
+
+```
+Lyrics: looking up 3 song(s) on LRCLIB (https://lrclib.net), one at a time; 1 already has lyrics and is skipped.
+  Synced lyrics saved  Nightjar Ensemble – Harbour Lights
+                       Saved synced lyrics as 01 Harbour Lights.lrc.
+  Synced lyrics saved  Nightjar Ensemble – Northern Line
+                       Saved synced lyrics as 02 Northern Line.lrc (found by searching).
+  Not found            Nightjar Ensemble – Under the Lanterns
+                       LRCLIB has no lyrics for this song (yet).
+Lyrics: 2 with synced lyrics, 1 not found on LRCLIB, 1 skipped (already had lyrics).
+```
+
+On a terminal, a progress line estimates the time left. The command exits with code 1 if a lookup failed (for example because the server could not be reached), but not when a song is simply not found. Use `--lyrics-existing replace` to download lyrics again, `--set lyrics_search=false` for exact matches only, and `--check-lyrics-server` to test the connection.
 
 ### Settings file
 
@@ -300,15 +371,43 @@ Old analogue recordings often have no content above 20 kHz even when they were t
 
 A real hi-res file whose ultrasonic band contains only analogue tape or microphone hiss is reported as REAL, because that hiss is genuinely captured above 22 kHz.
 
+Lyrics can only be as good as LRCLIB's records and your tags. A song with wrong or missing title and artist tags cannot be found, and when LRCLIB holds only another recording of a song with the same length (a remaster or a different mix), its timing may be slightly off. LRCLIB adds songs over time, so a song that is not found today may be found by a later run.
+
 MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with ordinary CD anti-aliasing filters, so a lossy source is not always detectable in a 44.1 or 48 kHz file. Upsampled to hi-res, such a file is still caught by the cliff test. You can raise **Lossy cut-off search up to** in Settings (`lossy_max_khz`) to about 20.8 kHz to catch more of them, at the risk of flagging CD masters that have an unusually low and steep anti-aliasing filter.
+
+## Rust version (preview)
+
+The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language: the desktop app and the command-line tool, with everything described above, including Fix and the synced lyrics from LRCLIB. It is a preview, released since version 1.12.0 as separate packages next to the Python ones (see [Download](#download-and-run-no-installation-needed)); the Python version remains the main one. It judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
+
+![The Rust desktop app: the list of fake files, and the dashboard showing a fake 24/192 file upsampled from 44.1 kHz, with its spectrogram cut off at 22.05 kHz](docs/rust-gui.png)
+
+To build it yourself you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
+
+```bash
+cargo build --release
+```
+
+The desktop app is then `rust/target/release/realhires-gui` (`realhires-gui.exe` on Windows), and the command-line tool is `rust/target/release/realhires`, which takes the same arguments as the Python one:
+
+```bash
+rust/target/release/realhires ~/Music/HiRes
+```
+
+The desktop app works like the one described under [Desktop app](#desktop-app-gui): the Sources panel, the live scan with the time left, the filters with counts, Search, Find (Ctrl+F), the Files, By album and By artist views, the dashboard with the spectrogram and the average spectrum, the summary chart after each scan, the Settings window with the same five tabs, saved results that appear as soon as a folder is listed, and the Fix window, including fixing automatically after a scan. Folders and files can also be dropped onto its window. Its pop-up windows (summary, Settings, Fix) open inside the main window rather than as separate windows. On Linux it needs a desktop with OpenGL, which every X11 or Wayland desktop provides (it loads the system's `libxkbcommon-x11` and OpenGL driver).
+
+Rust compiles to native programs, so they need neither Python nor NumPy and start at once: the command-line tool is about 7 MB and the desktop app about 21 MB, without FFmpeg. On Windows they carry the same kind of icon and version information as the Python version's programs, and the C runtime is built in, so nothing else has to be installed. Files are analysed in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The command-line help (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
+
+The test [`tests/test_rust_parity.py`](tests/test_rust_parity.py) keeps the two versions equal. It runs the Rust tool on the synthetic test library and fails if any verdict, flag, reason or summary differs from the Python version, or if a measurement differs by more than rounding. It also compares the whole `-v` output of both tools (including what Fix does with each fake file), checks that both versions read each other's saved results and settings, that the Rust `--fix` restores FFmpeg-made upsamples bit-exactly and keeps gapless albums gapless, and that both versions send the same requests to a fake LRCLIB server and write the same lyrics files with the same messages. It is skipped when the Rust tool has not been built. The desktop app has its own test, which runs the whole app without a screen: it scans generated files, checks the verdicts, the summary, the album view, the After fix column and the saved results on a second start, fixes a file with the Fix window closed and checks the pop-up that follows, and downloads lyrics from a small fake LRCLIB server and shows them in the Lyrics tab.
 
 ## Development
 
-Run the test suite with pytest. The tests generate synthetic real and fake files with FFmpeg and NumPy, so no audio files are stored in the repository. They cover genuine 24/48, 24/96 and 24/192 files, upsamples from 44.1→96, 48→96 (with soxr and with FFmpeg's default resampler), 44.1→192 and 96→192, bit-padded 16-in-24 and 16-in-float files, 16-bit masters given a gain change or dither into 24-bit and float, MP3-sourced files, a dull 96 kHz analogue transfer with converter noise, a dull 48 kHz transfer upsampled to 96 kHz, and dull and silent files. The Fix tests check that FFmpeg-made 2× and 4× upsamples come back as the bit-identical 16-bit master, and that a three-track gapless album fixed track by track joins exactly like the album converted in one piece.
+Run the test suite with pytest. The tests generate synthetic real and fake files with FFmpeg and NumPy, so no audio files are stored in the repository. They cover genuine 24/48, 24/96 and 24/192 files, upsamples from 44.1→96, 48→96 (with soxr and with FFmpeg's default resampler), 44.1→192 and 96→192, bit-padded 16-in-24 and 16-in-float files, 16-bit masters given a gain change or dither into 24-bit and float, MP3-sourced files, a dull 96 kHz analogue transfer with converter noise, a dull 48 kHz transfer upsampled to 96 kHz, and dull and silent files. The Fix tests check that FFmpeg-made 2× and 4× upsamples come back as the bit-identical 16-bit master, and that a three-track gapless album fixed track by track joins exactly like the album converted in one piece. The lyrics tests run a fake LRCLIB server on `127.0.0.1`, so they need no internet connection; they check the files that are saved, the search fallback, the skipping of songs that have lyrics, the pauses between requests and the handling of `Retry-After`.
 
 ```bash
 python3 -m pytest -q
 ```
+
+The Rust version has its own tests, including one that drives the whole desktop app without a screen, which run with `cargo test` in the `rust` folder. Once it is built (`cargo build --release`), `python3 -m pytest -q` also runs the comparison of the two versions in `tests/test_rust_parity.py`.
 
 ### Building the packages and publishing a release
 
@@ -318,10 +417,10 @@ The release packages are built by GitHub Actions ([`.github/workflows/build.yml`
 2. It runs the test suite with that FFmpeg.
 3. It builds the package with PyInstaller.
 4. It runs [`packaging/check_compat.py`](packaging/check_compat.py), which fails the build if any bundled file needs a newer glibc or macOS than the package claims, or (on macOS) lacks the right CPU architecture. On Windows it runs [`packaging/check_windows.py`](packaging/check_windows.py) instead, which fails the build if an executable carries its program archive inside it again or lacks version information, and logs the hash of the PyInstaller launcher, which the Windows job compiles on the build machine.
-5. It smoke-tests the frozen command-line tool with an empty `PATH`.
+5. It smoke-tests the frozen command-line tool with an empty `PATH`, including a lyrics download from a fake LRCLIB server and one request to lrclib.net, which fails the build if the bundled OpenSSL cannot verify its certificate.
 6. It packages the result.
 
-Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
+Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml` and in `rust/Cargo.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
 
 ```bash
 git tag v1.1.0
@@ -335,6 +434,8 @@ The release files are named with their version, for example `RealHiRes-1.10.0-wi
 
 Before anything is published, the `av-scan` job of the build workflow calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml) on the packages that the run has just built, and the `release` job publishes only after that scan has finished, using the release notes it wrote. The scan job fails, and so holds the release back, unless VirusTotal has a finished result for every file; re-running the failed job scans again and then publishes. The same workflow runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag), and the build workflow can be started by hand with **av_scan** ticked to try the pre-release scan on a branch without publishing anything. It takes the packages (or downloads the release), unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's own verdict from Kaspersky OpenTIP (only that: a file OpenTIP has not judged yet says so instead of borrowing Kaspersky's row on VirusTotal; the daily refresh also uploads the downloads to OpenTIP, so that it can judge them), sends the two Windows launchers to the Hybrid Analysis sandbox (whose report also carries its antivirus multiscan), and writes the "Antivirus scan results" section of the release notes (into the new notes before a release, with `gh release edit` afterwards). A release page describes only the changes of its own version: [`packaging/RELEASE_NOTES.md`](packaging/RELEASE_NOTES.md) holds a single "What's new in X" section, for the version being released, which is replaced (not added to) at every version bump, and a test fails the build when that section does not match `__version__`. Every refresh also drops the sections of other versions from a page and takes the current version's section from that file, so a correction there reaches the published page; Actions → Antivirus scan → Run workflow with **notes_only** does just that without scanning. The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. A free Hybrid Analysis key can only read reports: uploading a file (to the sandbox or to its antivirus quick scan) needs a premium key. For the Windows programs of a new release, the Hybrid Analysis column therefore says "not in Hybrid Analysis yet" until someone uploads them on hybrid-analysis.com; the next daily refresh then shows the report. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes, which is how much later than the builds a release now appears.
 
+The Rust packages are built by the `rust-windows`, `rust-macos` and `rust-linux` jobs of the same workflow with [`packaging/rust_build.sh`](packaging/rust_build.sh), which fetches FFmpeg, builds the Rust programs, runs their tests and the comparison with the Python version, checks the binaries with `check_compat.py` (the Linux ones are built in the same AlmaLinux 8 container), smoke-tests the packaged command-line tool and packages it as `RealHiRes-Rust-<version>-<platform>`: a `.zip` on Windows, an ad-hoc signed `RealHiRes-Rust.app` in a `.dmg` and a `.zip` on macOS, and a `.tar.gz` with `install.sh` on Linux. The antivirus scan covers these packages and the two Rust programs inside the Windows zip as well, and the release waits for it in the same way. A version bump must change `rust/Cargo.toml` too; the build checks that it matches.
+
 To build a package on your own machine, install the build tools and run the same script with the name of the archive you want. The result appears in `out/`.
 
 ```bash
@@ -345,9 +446,13 @@ pip install numpy pyinstaller pillow pytest
 ASSET=RealHiRes-local bash packaging/ci_build.sh
 ```
 
-On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
+For the Rust version, install Rust and run `ASSET=RealHiRes-Rust-local bash packaging/rust_build.sh` instead (it needs `numpy` and `pytest` for the comparison with the Python version). On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).
+
+## Acknowledgements
+
+Lyrics come from [LRCLIB](https://lrclib.net), a free and open lyrics database. The lyrics feature follows [LRCGET](https://github.com/tranxuanthang/lrcget) by tranxuanthang (MIT License), the official LRCLIB client, in how songs are looked up and how lyrics files are named and marked; no LRCGET code is used.
 
 ## License
 

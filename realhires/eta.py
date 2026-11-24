@@ -62,10 +62,15 @@ def fmt_left(seconds: Optional[float]) -> str:
     """'about 6 min left', 'about 1 h 20 min left', 'less than a minute left'."""
     if seconds is None:
         return "estimating the time left"
+    return f"{fmt_about(seconds)} left"
+
+
+def fmt_about(seconds: float) -> str:
+    """'about 6 min', 'about 1 h 20 min', 'less than a minute'."""
     if seconds < 60:
-        return "less than a minute left"
+        return "less than a minute"
     minutes = int(seconds // 60 + (1 if seconds % 60 >= 30 else 0))
     if minutes < 60:
-        return f"about {minutes} min left"
+        return f"about {minutes} min"
     h, m = divmod(minutes, 60)
-    return f"about {h} h {m} min left" if m else f"about {h} h left"
+    return f"about {h} h {m} min" if m else f"about {h} h"

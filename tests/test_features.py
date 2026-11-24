@@ -19,6 +19,18 @@ from realhires.verdict import FAKE, REAL, FileResult, analyze_file, verdict_brea
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
+def test_rust_port_has_the_same_version():
+    # The Rust port in rust/ writes its version into the saved results it shares with this
+    # version, so it must be bumped together with __version__ and pyproject.toml.
+    import re
+
+    from realhires import __version__
+
+    cargo = (Path(__file__).resolve().parent.parent / "rust" / "Cargo.toml").read_text(encoding="utf-8")
+    m = re.search(r'^\[workspace\.package\][^\[]*?^version = "([^"]+)"', cargo, re.M | re.S)
+    assert m and m.group(1) == __version__, "bump version in rust/Cargo.toml together with __version__"
+
+
 # ---------------------------------------------------------------- settings ---
 def test_settings_defaults_match_detection_constants():
     s = settings.Settings()
@@ -193,6 +205,13 @@ def run():
         root.after(300, verify)
     def verify():
         root.update()
+        # a pop-up says that fixing is done, how much smaller the files are and where they went
+        done = [w for w in root.winfo_children() if isinstance(w, gui.FixDoneDialog)]
+        assert len(done) == 1, "no pop-up after fixing"
+        assert done[0].headline.startswith("Saved corrected copies of"), done[0].headline
+        text = " ".join(done[0].lines)
+        assert "The originals were left unchanged" in text and "Re-check of the fixed files" in text, text
+        done[0].destroy()
         dialogs = [w for w in root.winfo_children() if isinstance(w, gui.SummaryDialog)]
         fixers = [w for w in root.winfo_children() if isinstance(w, gui.FixDialog)]
         assert len(fixers) == 1 and fixers[0].plans and fixers[0].done_paths, "no automatic fix after the scan"
@@ -259,6 +278,11 @@ def run():
         app.tree.selection_set(p); root.update()
         assert app.cache.get(p)["spectrogram"], "saved graphs not used"
         assert "Saved result from" in app.text.get("1.0", "end")
+        assert "Fix to real resolution" in app.text.get("1.0", "end"), "details do not say what Fix does"
+        # ... and the list and the facts show it in a few words, next to the bandwidth
+        assert "fix" in app.tree.set(p, "fix").lower() or "stays fake" in app.tree.set(p, "fix"), \
+            app.tree.set(p, "fix")
+        assert app.fact_vars["After fix"].get() == app.tree.set(p, "fix")
         # graphs that were not saved are drawn on demand
         from realhires.store import ResultStore
         with ResultStore() as st:
@@ -657,6 +681,80 @@ def test_fix_explains_files_it_leaves_alone():
     assert text.startswith("2 file(s) are not changed: 2 made from MP3/AAC but already at CD resolution")
     assert skip_group(padded, "Kept 96 kHz instead of the estimated 48 kHz: ...") == "uncertain"
     assert skip_summary([]) == ""
+
+
+def test_fix_done_summary_for_the_pop_up():
+    from realhires.fix import BACKUP_DIR_NAME, FixOutcome, FixPlan, done_summary, fmt_bytes
+
+    def plan(name, backup="folder", replace=True):
+        return FixPlan(source=f"/m/{name}.flac", target_rate=44100, target_bits=16, resample=True,
+                       output=f"/m/{name}.flac", codec="flac", sample_fmt="s16", replace_original=replace,
+                       description="24/96 → 16/44.1", backup=backup,
+                       backup_dir=os.path.join(f"/m{name}", BACKUP_DIR_NAME))
+
+    mb = 1024 * 1024
+    cd = FileResult(path="/m/a.flac", verdict="NOT HI-RES")
+    mp3 = FileResult(path="/m/b.flac", verdict="FAKE LOSSLESS")
+    outcomes = [FixOutcome(plan("a"), True, "", "/m/a.flac", cd, 100 * mb, 30 * mb, "exact"),
+                FixOutcome(plan("b"), True, "", "/m/b.flac", mp3, 50 * mb, 20 * mb, "gapless"),
+                FixOutcome(plan("c"), False, "FFmpeg failed: disk full")]
+    head, lines = done_summary(outcomes, skipped=2, label=lambda v: v.lower())
+    text = " ".join(lines)
+    assert head == "Fixed 2 of 3 files to their real resolution"
+    assert "They now take 50.0 MB instead of 150.0 MB, 100.0 MB less." in text
+    assert "1 file was restored bit-exactly" in text and "1 file was converted together with" in text
+    assert f'moved to the "{BACKUP_DIR_NAME}" folder next to each file' in text
+    assert "Re-check of the fixed files: 1 not hi-res, 1 fake lossless." in text
+    assert "They keep that mark in later scans, and their details say why." in text
+    assert "1 file could not be fixed and was left as it was. c.flac: FFmpeg failed: disk full" in text
+    assert "2 files were left alone on purpose" in text
+    copy = plan("d", replace=False)
+    copy.output = "/out/d.flac"
+    head, lines = done_summary([FixOutcome(copy, True, "", "/out/d.flac", None, 10, 5)])
+    assert head == "Saved corrected copies of 1 file"
+    assert f"the corrected copies are in {os.path.abspath('/out')}." in " ".join(lines)  # D:\\out on Windows
+    assert done_summary([FixOutcome(plan("e"), False, "no")])[0] == "No file could be fixed"
+    assert fmt_bytes(812) == "812 bytes" and fmt_bytes(1.5 * 1024 ** 3) == "1.5 GB"
+
+
+def test_fix_advice_explains_files_that_stay_fake(library, capsys):
+    from realhires.fix import fix_advice, fix_outlook
+
+    cfg = settings.Settings()
+    lossy_cd = FileResult(path="/m/a.flac", verdict="FAKE LOSSLESS", codec="flac", sample_rate=44100,
+                          claimed_bits=16, effective_bits=16, lossy_cutoff_hz=16000.0)
+    text = fix_advice(lossy_cd, cfg)
+    assert text.startswith("Fix to real resolution leaves it unchanged: it is already 16/44.1")
+    assert "stays marked fake lossless, also after fixing and re-scanning" in text
+    assert fix_outlook(lossy_cd, cfg) == "Stays fake: MP3/AAC source"  # the "After fix" column
+    lossy_hires = FileResult(path="/m/b.flac", verdict="FAKE LOSSLESS", codec="flac", sample_rate=96000,
+                             claimed_bits=24, effective_bits=24, lossy_cutoff_hz=16000.0)
+    text = fix_advice(lossy_hires, cfg)
+    assert text.startswith("Fix to real resolution converts it to 16/48") and "stays marked fake lossless" in text
+    assert fix_outlook(lossy_hires, cfg) == "16/48, stays fake: MP3/AAC source"
+    padded = FileResult(path="/m/c.flac", verdict="FAKE HI-RES", codec="flac", sample_rate=96000,
+                        claimed_bits=24, effective_bits=16)
+    assert fix_advice(padded, cfg).endswith("a re-scan then no longer marks it fake.")
+    assert fix_outlook(padded, cfg) == "Fixable to 16/96"
+    # upsampled, but no clear collapse at 24 kHz: Fix keeps 96 kHz, so the file stays fake hi-res
+    unsure = FileResult(path="/m/d.flac", verdict="FAKE HI-RES", codec="flac", sample_rate=96000,
+                        claimed_bits=24, effective_bits=24, upsampled_from=48000)
+    as_detected = settings.Settings()
+    as_detected.fix_bits = "As detected"  # all 24 bits kept: nothing would change
+    text = fix_advice(unsure, as_detected)
+    assert text.startswith("Fix to real resolution leaves it unchanged: it keeps 96 kHz instead of the "
+                           "estimated 48 kHz, because the spectrum"), text
+    assert text.endswith("It stays marked fake hi-res, also after fixing and re-scanning.")
+    assert fix_outlook(unsure, as_detected) == "Stays fake: rate kept"
+    text = fix_advice(unsure, cfg)  # the default reduces a 48 kHz-sourced file to 16 bits
+    assert text.startswith("Fix to real resolution converts it to 16/96, but it keeps 96 kHz") and \
+        "stays marked fake hi-res after fixing" in text, text
+    assert fix_outlook(unsure, cfg) == "16/96, stays fake: rate kept"
+    assert fix_advice(FileResult(path="/m/e.flac", verdict="REAL HI-RES"), cfg) is None
+    assert fix_outlook(FileResult(path="/m/e.flac", verdict="REAL HI-RES"), cfg) == ""
+    # the command-line tool shows it with -v
+    assert main([library["fake_up_44_to_96"], "-v", "--no-color", "--no-settings"]) == 0
+    assert "Fix to real resolution converts it to 16/44.1" in capsys.readouterr().out
 
 
 def test_scan_eta_counts_bytes_not_files():

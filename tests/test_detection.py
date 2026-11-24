@@ -197,7 +197,8 @@ def test_cli_scan_with_exports(library, tmp_path, capsys):
     data = json.loads(out_json.read_text())
     assert {d["verdict"] for d in data} >= {FAKE, REAL, NOT_HIRES}
     assert all("summary" in d and "flags" in d for d in data)
-    assert "%" in out  # percentage summary    assert out_csv.read_text().startswith("path,verdict")
+    assert "%" in out  # percentage summary
+    assert out_csv.read_text().startswith("path,verdict")
     assert len(list(plots.glob("*.svg"))) >= 10
 
 

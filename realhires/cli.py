@@ -18,6 +18,7 @@ from .probe import ToolMissingError, require_tools
 from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
                      write_json, write_svg)
 from .eta import ScanEta, file_sizes
+from .lyrics import EXISTING_CLI
 from .store import ResultStore, StoreError, open_store, settings_key
 from .verdict import (ERROR, FAKE, FAKE_LOSSLESS, LOSSY, NOT_HIRES, REAL, SUSPECT, FileResult,
                       analyze_file)
@@ -118,7 +119,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fix-dir", metavar="DIR", help="with --fix: leave the files alone and save corrected "
                                                      "copies into DIR")
     p.add_argument("--fix-replace", action="store_true", help=argparse.SUPPRESS)  # 1.4.0 name, now default
-    p.add_argument("--dry-run", action="store_true", help="with --fix: only show what would be changed")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with --fix or --lyrics: only show what would be changed (lyrics are still looked "
+                        "up, but nothing is saved)")
+    p.add_argument("--lyrics", action="store_true",
+                   help="after scanning, download synced lyrics from LRCLIB (lrclib.net) for every scanned song "
+                        "and save them as <name>.lrc next to it (plain lyrics as <name>.txt), as LRCGET does; "
+                        "songs are looked up by the title, artist, album and length in their tags")
+    p.add_argument("--lyrics-only", action="store_true",
+                   help="download lyrics as --lyrics does, without analysing the files (only their tags are "
+                        "read)")
+    p.add_argument("--lyrics-existing", choices=list(EXISTING_CLI),
+                   help="with --lyrics: skip songs that have an .lrc (skip-synced, the default), skip songs "
+                        "that have an .lrc or .txt (skip-any), or download again and replace (replace)")
+    p.add_argument("--check-lyrics-server", action="store_true",
+                   help="check that the LRCLIB server can be reached (one request) and exit")
     p.add_argument("--rescan", action="store_true",
                    help="analyse every file again, even files with a saved result from an earlier scan "
                         "(the saved results are updated)")
@@ -194,6 +209,15 @@ def main(argv=None) -> int:
             eprint(f"error: {exc}")
             return 2
         return 0
+    if args.check_lyrics_server:
+        from .lyrics import LyricsError, check_server
+
+        try:
+            print(check_server(cfg.lyrics_server))
+        except LyricsError as exc:
+            eprint(f"error: {exc}")
+            return 1
+        return 0
     if not args.paths:
         build_parser().error("no files or folders given")
     try:
@@ -207,6 +231,10 @@ def main(argv=None) -> int:
     if not files:
         eprint("No audio files found.")
         return 1
+    if args.lyrics_existing:
+        cfg.lyrics_existing = EXISTING_CLI[args.lyrics_existing]
+    if args.lyrics_only:
+        return run_lyrics_cli(files, cfg, dry_run=args.dry_run, verbose=args.verbose)
 
     color = use_color(sys.stdout, args.no_color)
     wanted = {v for o in args.only for v in FILTERS[o]} if args.only else None
@@ -268,7 +296,7 @@ def main(argv=None) -> int:
             eta.add(r.path)
         results.append(r)
         if wanted is None or r.verdict in wanted:
-            print(row(r, color, base=base, verbose=args.verbose), flush=True)
+            print(row(r, color, base=base, verbose=args.verbose, cfg=cfg), flush=True)
         if show_progress and i < len(files):
             eprint(f"[{i}/{len(files)}] analysing… {eta.text() if eta else ''}", end="", flush=True)
 
@@ -307,9 +335,11 @@ def main(argv=None) -> int:
     if args.spectrogram:
         print(f"Spectrograms written to {args.spectrogram}/")
     try:
-        if args.fix:
-            return run_fixes(results, cfg, jobs, args.dry_run, store=store)
-        return 0
+        rc = run_fixes(results, cfg, jobs, args.dry_run, store=store) if args.fix else 0
+        if args.lyrics:
+            rc = max(rc, run_lyrics_cli([r.path for r in results], cfg, args.dry_run, args.verbose,
+                                        {r.path: r for r in results}))
+        return rc
     finally:
         if store is not None:
             store.close()
@@ -351,6 +381,46 @@ def run_fixes(results: List[FileResult], cfg, jobs: int, dry_run: bool = False,
             print(f"  {mark} {out.plan.source}\n       {out.message}")
     print(f"Fix: {len(plans) - failed} fixed, {failed} failed.")
     return 1 if failed else 0
+
+
+def run_lyrics_cli(paths: List[str], cfg, dry_run: bool = False, verbose: bool = False,
+                   results: Optional[dict] = None) -> int:
+    """Download synced lyrics for `paths` (--lyrics, --lyrics-only), one song at a time."""
+    from .lyrics import FAILED, SKIPPED, STATUS_LABEL, LrclibClient, lyrics_summary, run_lyrics, skip_reason
+
+    client = LrclibClient(cfg.lyrics_server)
+    todo = [p for p in paths if not skip_reason(p, cfg)]
+    print()
+    skipped = len(paths) - len(todo)
+    note = (f"; {skipped} already {'has' if skipped == 1 else 'have'} lyrics and {'is' if skipped == 1 else 'are'} "
+            "skipped" if skipped else "")
+    print(f"Lyrics: looking up {len(todo)} song(s) on LRCLIB ({client.server}), one at a time{note}"
+          + (" (dry run: nothing is saved)." if dry_run else "."), flush=True)
+    show_progress = sys.stderr.isatty()
+    eta = ScanEta({p: 1 for p in todo}) if show_progress else None
+    outcomes = []
+    try:
+        for o in run_lyrics(paths, cfg, results, dry_run, client=client):
+            outcomes.append(o)
+            if show_progress:
+                eprint("\r\033[K", end="")
+            if eta is not None:
+                eta.add(o.path)
+            if o.status != SKIPPED or verbose:
+                name = o.track.label if o.track else os.path.basename(o.path)
+                print(f"  {STATUS_LABEL[o.status]:<20} {name}\n  {'':<20} {o.message}", flush=True)
+            if show_progress and len(outcomes) < len(paths):
+                eprint(f"[{len(outcomes)}/{len(paths)}] looking up lyrics… {eta.text() if eta else ''}",
+                       end="", flush=True)
+    except KeyboardInterrupt:
+        if show_progress:
+            eprint("\r\033[K", end="")
+        print(f"Lyrics: stopped after {len(outcomes)} of {len(paths)} song(s): {lyrics_summary(outcomes)}")
+        return 130
+    if show_progress:
+        eprint("\r\033[K", end="")
+    print(f"Lyrics: {lyrics_summary(outcomes)}")
+    return 1 if any(o.status == FAILED for o in outcomes) else 0
 
 
 if __name__ == "__main__":
