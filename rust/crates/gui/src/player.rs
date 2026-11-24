@@ -2098,6 +2098,10 @@ mod tests {
         assert_eq!(p.now.as_ref().unwrap().path, a1);
         p.set_repeat("off");
         p.set_shuffle("off");
+        // paused from here on: the song lasts 2 s, and the quality scan below took longer on
+        // the Windows runner, so the next song had started before quitting
+        p.toggle_play();
+        assert!(!p.is_playing());
 
         // the windows
         p.open_info();
