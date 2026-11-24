@@ -20,6 +20,8 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
+from .i18n import LANGUAGES
+
 GROUPS = ("Library", "Playback", "Appearance", "Lyrics", "Detection", "Scanning", "Saved results", "Display",
           "Fixing")
 SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
@@ -61,6 +63,18 @@ class Settings:
         "While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its "
         "lyrics as set on the Lyrics tab (one request at a time, as LRCLIB asks).", kind="bool")
 
+    musicbrainz_auto: bool = _f(
+        False, "Library", "Add song information from MusicBrainz automatically",
+        "When new songs come into the library, look those that miss some information (artist, album, album "
+        "artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a "
+        "certain match is used, and information already in a tag is never replaced. Each song is looked up once, "
+        "one request per second, as MusicBrainz asks. Off: use Get info from MusicBrainz… in a song's or an "
+        "album's menu.", kind="bool")
+    musicbrainz_server: str = _f(
+        "https://musicbrainz.org", "Library", "MusicBrainz server",
+        "Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your "
+        "own.", kind="str")
+
     # ---- Playback (2.0) ---------------------------------------------------
     output_device: str = _f(
         "", "Playback", "Output device",
@@ -71,6 +85,11 @@ class Settings:
         kind="bool")
 
     # ---- Appearance (2.0) ---------------------------------------------------
+    language: str = _f(
+        "English", "Appearance", "Language",
+        "The language of the app's menus, pages and windows: English or 日本語 (Japanese). The information of "
+        "your songs is shown as it is in their tags, and the command-line tool always writes English.",
+        choices=list(LANGUAGES), kind="choice")
     font_family: str = _f(
         "", "Appearance", "Font",
         "The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux "
