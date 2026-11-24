@@ -87,7 +87,7 @@ def album_order(songs: Iterable[Song]) -> List[Song]:
 def number(value) -> int:
     """'3/12' -> 3; anything unreadable -> 0."""
     text = str(value or "").strip().split("/")[0].strip()
-    return int(text) if text.isdigit() else 0
+    return int(text) if text.isascii() and text.isdigit() else 0
 
 
 @dataclass

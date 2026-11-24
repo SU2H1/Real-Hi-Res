@@ -15,7 +15,15 @@ use std::path::{Path, PathBuf};
 
 use crate::json::{self, Value};
 
-pub const GROUPS: [&str; 6] = ["Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics"];
+pub const GROUPS: [&str; 9] =
+    ["Library", "Playback", "Appearance", "Lyrics", "Detection", "Scanning", "Saved results", "Display", "Fixing"];
+pub const LYRICS_SAVE_CHOICES: [&str; 4] = [
+    "An .lrc file next to the song",
+    "Inside the audio file (MP3, FLAC)",
+    "Both: .lrc file and inside the audio file",
+    "Plain lyrics inside the audio file (no timing)",
+];
+pub const THEMES: [&str; 3] = ["Match the system", "Light", "Dark"];
 pub const SETTINGS_VERSION: i64 = 160;
 
 pub const ALL_VERDICTS: [&str; 7] =
@@ -33,6 +41,8 @@ pub enum Kind {
     Str,
     Choice,
     Multi,
+    /// a list of folders (2.0: the library folders)
+    Paths,
 }
 
 /// A setting's value, independent of its Rust type.
@@ -202,6 +212,32 @@ const VERDICTS: &[&str] = &ALL_VERDICTS;
 const MAPS: &[&str] = &COLORMAPS;
 
 settings! {
+    // ---- Library (2.0, the player) -----------------------------------------
+    library_folders: Vec<String> = vec![], "Library", "Library folders",
+        s("The folders whose songs make up your music library. Every audio file in them and in their sub-folders \
+           is listed in the player, with the title, artist, album and genre from its tags. On the command line, \
+           separate several folders with ';' on Windows and ':' elsewhere."), Paths, None, None, NUMS;
+    scan_library_on_start: bool = false, "Library", "Check new songs when the app starts",
+        s("When the app starts, analyse the library songs that have not been checked for fake hi-res and fake \
+           lossless yet. Songs checked before are answered from the saved results at once."), Bool, None, None, NUMS;
+    lyrics_while_scanning: bool = false, "Library", "Download lyrics while scanning",
+        s("While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its lyrics as \
+           set on the Lyrics tab (one request at a time, as LRCLIB asks)."), Bool, None, None, NUMS;
+
+    // ---- Playback (2.0) ---------------------------------------------------
+    output_device: String = s(""), "Playback", "Output device",
+        s("The sound device the player plays through. Empty = the system's default device."), Str, None, None, NUMS;
+    gapless: bool = true, "Playback", "Gapless playback",
+        s("Start the next song without a pause, so albums that flow from track to track play as one."), Bool, None,
+        None, NUMS;
+
+    // ---- Appearance (2.0) ---------------------------------------------------
+    font_family: String = s(""), "Appearance", "Font",
+        s("The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux (SF Pro may \
+           only be used on Apple systems). Any font installed on your computer can be chosen."), Str, None, None, NUMS;
+    theme: String = s("Match the system"), "Appearance", "Appearance", s("Light or dark, or the same as the system."),
+        Choice, None, None, &THEMES;
+
     // ---- Detection ------------------------------------------------------
     cliff_db: f64 = 25.0, "Detection", "Upsampling cliff (dB)",
         s("Minimum level drop at the Nyquist frequency of a lower sample rate (22.05 kHz for 44.1 kHz, 24 kHz for \
@@ -354,6 +390,12 @@ settings! {
            artist and take a result with the same title, the same artist and a length within 2 seconds. This finds \
            songs whose album is named differently on LRCLIB. Off: exact matches only (one request per song instead \
            of up to two)."), Bool, None, None, NUMS;
+    lyrics_save_as: String = s(LYRICS_SAVE_CHOICES[0]), "Lyrics", "Save lyrics as",
+        s("Where downloaded lyrics go. An .lrc file next to the song works with every player and never changes the \
+           audio file. 'Inside the audio file' writes synced lyrics into the file's tag, as LRCGET does (MP3: SYLT and \
+           USLT; FLAC: LYRICS and UNSYNCEDLYRICS); only the tag is rewritten, the audio itself is not changed, and \
+           other formats get an .lrc file instead. 'Plain lyrics inside the audio file' stores the text without \
+           timing, which more players show."), Choice, None, None, &LYRICS_SAVE_CHOICES;
     lyrics_server: String = s("https://lrclib.net"), "Lyrics", "LRCLIB server",
         s("Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB."),
         Str, None, None, NUMS;
@@ -382,6 +424,17 @@ fn coerce(f: &FieldInfo, v: &Value) -> Option<SValue> {
             return Some(SValue::List(
                 items.iter().filter_map(Value::as_str).filter(|s| f.choices.contains(s)).map(str::to_string).collect(),
             ));
+        }
+        Kind::Paths => {
+            let mut out: Vec<String> = vec![];
+            for item in v.as_array()? {
+                if let Some(p) = item.as_str().map(crate::pyunicode::strip).filter(|p| !p.is_empty()) {
+                    if !out.iter().any(|o| o == p) {
+                        out.push(p.to_string());
+                    }
+                }
+            }
+            return Some(SValue::List(out));
         }
         Kind::Int => match v {
             Value::Int(i) => *i as f64,
@@ -484,6 +537,13 @@ impl Settings {
                 raw.split(',').map(str::trim).filter(|v| !v.is_empty()).map(|v| Value::Str(v.to_uppercase())).collect(),
             ),
             Kind::Bool => Value::Bool(["1", "true", "yes", "on"].contains(&raw.trim().to_lowercase().as_str())),
+            Kind::Paths => Value::Array(
+                raw.split(if cfg!(windows) { ';' } else { ':' })
+                    .map(crate::pyunicode::strip)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| Value::Str(v.to_string()))
+                    .collect(),
+            ),
             _ => Value::Str(raw.to_string()),
         };
         match coerce(&f, &v) {

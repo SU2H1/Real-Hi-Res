@@ -1087,12 +1087,41 @@ pub fn skip_reason(path: &str, cfg: &Settings) -> String {
             if is_instrumental_lrc(&read_head(&lrc, 4096)) { "an instrumental mark" } else { "synced lyrics" };
         return format!("Already has {with_what} ({}).", file_name(&lrc));
     }
+    let mode = save_mode(cfg);
+    if mode != "lrc" {
+        let (synced, plain) = crate::embed::embedded_lyrics(path);
+        let text = if synced.is_empty() { &plain } else { &synced };
+        if !text.is_empty() && is_instrumental_lrc(text) {
+            return "Already has an instrumental mark inside the file.".into();
+        }
+        if !synced.is_empty() {
+            return "Already has synced lyrics inside the file.".into();
+        }
+        if !plain.is_empty() && (mode == "plain" || cfg.lyrics_existing == EXISTING_CHOICES[1]) {
+            return "Already has lyrics inside the file.".into();
+        }
+    }
     if let Some(txt) = txt {
         if cfg.lyrics_existing == EXISTING_CHOICES[1] {
             return format!("Already has lyrics ({}).", file_name(&txt));
         }
     }
     String::new()
+}
+
+/// "lrc", "embed", "both" or "plain" from Settings -> Lyrics -> Save lyrics as (2.0).
+pub fn save_mode(cfg: &Settings) -> &'static str {
+    use crate::settings::LYRICS_SAVE_CHOICES as C;
+    let v = cfg.lyrics_save_as.as_str();
+    if v == C[1] {
+        "embed"
+    } else if v == C[2] {
+        "both"
+    } else if v == C[3] {
+        "plain"
+    } else {
+        "lrc"
+    }
 }
 
 fn read_head(path: &str, size: u64) -> String {
@@ -1163,7 +1192,8 @@ pub fn read_lyrics_file(path: &str) -> Option<(Status, String, String)> {
         }
         return Some((Status::Plain, text, file));
     }
-    None
+    // 2.0: lyrics inside the file (MP3, FLAC)
+    crate::embed::lyrics_of(path).map(|(kind, text)| (kind, text, path.to_string()))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1224,31 +1254,72 @@ pub fn short_skip(reason: &str) -> String {
 pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track>, dry_run: bool) -> LyricsOutcome {
     let replace = replace_mode(cfg);
     let (lrc, txt) = (sidecar(path, ".lrc"), sidecar(path, ".txt"));
+    let (lrc_name, txt_name, name) = (file_name(&lrc), file_name(&txt), file_name(path));
     let via = if lyr.how == "search" { " (found by searching)" } else { "" };
     let how = lyr.how.as_str();
-    let (status, target, text, msg);
+    let mut mode = save_mode(cfg);
+    let mut note = "";
+    if mode != "lrc" && !crate::embed::supported(path) {
+        mode = "lrc";
+        note = " Lyrics can only be embedded in MP3 and FLAC files.";
+    }
+    let mut files: Vec<(String, String)> = vec![];
+    let mut inside: Option<(String, String)> = None;
+    let status;
+    let msg;
     if !lyr.synced.is_empty() {
-        (status, target, text) = (Status::Synced, lrc.clone(), lyr.synced.as_str());
-        msg = format!("Saved synced lyrics as {}{via}.", file_name(&lrc));
+        let plain = if lyr.plain.is_empty() { strip_timestamps(&lyr.synced) } else { lyr.plain.clone() };
+        if mode == "plain" {
+            status = Status::Plain;
+            inside = Some((String::new(), plain));
+            msg = format!("Embedded the lyrics in {name}, without timing{via}.");
+        } else {
+            status = Status::Synced;
+            if mode == "lrc" || mode == "both" {
+                files.push((lrc.clone(), lyr.synced.clone()));
+            }
+            if mode == "embed" || mode == "both" {
+                inside = Some((lyr.synced.clone(), plain));
+            }
+            msg = match mode {
+                "lrc" => format!("Saved synced lyrics as {lrc_name}{via}."),
+                "embed" => format!("Embedded synced lyrics in {name}{via}."),
+                _ => format!("Saved synced lyrics as {lrc_name} and embedded them in {name}{via}."),
+            };
+        }
     } else if !lyr.plain.is_empty() {
         if !cfg.lyrics_plain {
+            let what = if mode == "lrc" { "saving them as .txt" } else { "saving plain lyrics" };
             return LyricsOutcome::new(
                 path,
                 Status::PlainOnly,
-                "LRCLIB has only plain (unsynced) lyrics for this song, and saving them as .txt is turned off.".into(),
+                format!("LRCLIB has only plain (unsynced) lyrics for this song, and {what} is turned off."),
             )
             .with(track, how);
         }
-        if Path::new(&txt).is_file() && !replace {
+        let keep_txt = Path::new(&txt).is_file() && !replace;
+        if mode == "lrc" && keep_txt {
             return LyricsOutcome::new(
                 path,
                 Status::Skipped,
-                format!("LRCLIB has only plain lyrics for this song, so the existing {} was kept.", file_name(&txt)),
+                format!("LRCLIB has only plain lyrics for this song, so the existing {txt_name} was kept."),
             )
             .with(track, how);
         }
-        (status, target, text) = (Status::Plain, txt.clone(), lyr.plain.as_str());
-        msg = format!("LRCLIB has only plain lyrics for this song; saved them as {}{via}.", file_name(&txt));
+        status = Status::Plain;
+        if mode == "lrc" {
+            files.push((txt.clone(), lyr.plain.clone()));
+            msg = format!("LRCLIB has only plain lyrics for this song; saved them as {txt_name}{via}.");
+        } else if mode == "both" && !keep_txt {
+            files.push((txt.clone(), lyr.plain.clone()));
+            inside = Some((String::new(), lyr.plain.clone()));
+            msg = format!(
+                "LRCLIB has only plain lyrics for this song; saved them as {txt_name} and embedded them in {name}{via}."
+            );
+        } else {
+            inside = Some((String::new(), lyr.plain.clone()));
+            msg = format!("LRCLIB has only plain lyrics for this song; embedded them in {name}{via}.");
+        }
     } else {
         if !cfg.lyrics_instrumental {
             return LyricsOutcome::new(
@@ -1260,31 +1331,56 @@ pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track
             )
             .with(track, how);
         }
-        if Path::new(&txt).is_file() && !replace {
+        if (mode == "lrc" || mode == "both") && Path::new(&txt).is_file() && !replace {
             return LyricsOutcome::new(
                 path,
                 Status::Skipped,
-                format!(
-                    "LRCLIB lists this song as instrumental, but it has lyrics in {}, which were kept.",
-                    file_name(&txt)
-                ),
+                format!("LRCLIB lists this song as instrumental, but it has lyrics in {txt_name}, which were kept."),
             )
             .with(track, how);
         }
-        (status, target, text) = (Status::Instrumental, lrc.clone(), INSTRUMENTAL_LRC);
-        msg = format!("LRCLIB lists this song as instrumental; marked it in {}{via}.", file_name(&lrc));
+        status = Status::Instrumental;
+        if mode == "lrc" || mode == "both" {
+            files.push((lrc.clone(), INSTRUMENTAL_LRC.to_string()));
+        }
+        if mode == "embed" || mode == "both" {
+            inside = Some((INSTRUMENTAL_LRC.to_string(), INSTRUMENTAL_LRC.to_string()));
+        } else if mode == "plain" {
+            inside = Some((String::new(), INSTRUMENTAL_LRC.to_string()));
+        }
+        msg = match mode {
+            "lrc" => format!("LRCLIB lists this song as instrumental; marked it in {lrc_name}{via}."),
+            "both" => format!("LRCLIB lists this song as instrumental; marked it in {lrc_name} and in {name}{via}."),
+            _ => format!("LRCLIB lists this song as instrumental; marked it in {name}{via}."),
+        };
     }
+    let msg = format!("{msg}{note}");
     if dry_run {
         let mut c = msg.chars();
         let first = c.next().map(|f| f.to_lowercase().collect::<String>()).unwrap_or_default();
         return LyricsOutcome::new(path, status, format!("Would save: {first}{}", c.as_str())).with(track, how);
     }
-    if let Err(e) = write_text(&target, text) {
-        return LyricsOutcome::new(path, Status::Failed, format!("Could not save {}: {e}", file_name(&target)))
-            .with(track, how);
+    let mut written = vec![];
+    for (target, text) in &files {
+        if let Err(e) = write_text(target, text) {
+            let mut o = LyricsOutcome::new(path, Status::Failed, format!("Could not save {}: {e}", file_name(target)))
+                .with(track, how);
+            o.written = written;
+            return o;
+        }
+        written.push(target.clone());
+    }
+    if let Some((synced, plain)) = &inside {
+        if let Err(e) = crate::embed::embed_lyrics(path, synced, plain) {
+            let mut o = LyricsOutcome::new(path, Status::Failed, format!("Could not embed the lyrics in {name}: {e}"))
+                .with(track, how);
+            o.written = written;
+            return o;
+        }
+        written.push(path.to_string());
     }
     let mut o = LyricsOutcome::new(path, status, msg).with(track, how);
-    o.written = vec![target];
+    o.written = written;
     o
 }
 
@@ -1340,11 +1436,11 @@ pub fn run_lyrics(
     }
 }
 
-/// "12 with synced lyrics, 3 with plain lyrics (.txt), 5 not found, 20 skipped."
+/// "12 with synced lyrics, 3 with plain lyrics, 5 not found, 20 skipped."
 pub fn lyrics_summary(outcomes: &[LyricsOutcome]) -> String {
     let words = [
         (Status::Synced, "with synced lyrics"),
-        (Status::Plain, "with plain lyrics (.txt)"),
+        (Status::Plain, "with plain lyrics"),
         (Status::Instrumental, "instrumental"),
         (Status::PlainOnly, "with only plain lyrics (not saved)"),
         (Status::NotFound, "not found on LRCLIB"),
