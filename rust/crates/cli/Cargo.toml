@@ -12,3 +12,7 @@ path = "src/main.rs"
 [dependencies]
 realhires-core = { path = "../core" }
 clap = { version = "4.5", features = ["derive", "wrap_help"] }
+
+[build-dependencies]
+winresource = "0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }

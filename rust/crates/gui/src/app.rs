@@ -2256,7 +2256,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn ffmpeg(args: &[&str]) {
-        let st = Command::new("ffmpeg").args(["-v", "error", "-y"]).args(args).status().expect("ffmpeg");
+        let st = Command::new(realhires::probe::tool("ffmpeg")).args(["-v", "error", "-y"]).args(args).status().expect("ffmpeg");
         assert!(st.success(), "{args:?}");
     }
 

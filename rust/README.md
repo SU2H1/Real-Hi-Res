@@ -35,3 +35,7 @@ The workspace has one library and the programs built on it.
 ## Keeping it equal to the Python version
 
 Every change to the detection rules, the reasons and summaries, the settings, the saved-results format, the CLI options, Fix or the desktop app's behaviour must be made here too, in the same commit, and `tests/test_rust_parity.py` must pass. The version in `Cargo.toml` (`[workspace.package] version`) is kept equal to `realhires.__version__`, which `test_rust_port_has_the_same_version` checks, because both versions write it into the saved results they share. `verdict::DETECTOR_VERSION` must equal the Python `DETECTOR_VERSION` for the same reason.
+
+## Packages
+
+Since version 1.12.0 every release carries the Rust version as `RealHiRes-Rust-<version>-<platform>` packages with FFmpeg bundled. They are built by the `rust-*` jobs of `.github/workflows/build.yml` with `packaging/rust_build.sh`, which also runs the tests above and the comparison with the Python version, checks the binaries with `packaging/check_compat.py`, and smoke-tests the packaged command-line tool. On Windows, `windows_resources.rs` gives both programs an icon and version information, and `.cargo/config.toml` links the C runtime statically.

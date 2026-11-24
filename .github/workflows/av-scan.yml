@@ -89,12 +89,19 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "build_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
-          # The Windows launchers inside the zip are what antivirus programs judge.
+          # The Windows programs inside the zips are what antivirus programs judge:
+          # the launchers of the Python version and the two Rust programs.
           INNER=()
           for z in assets/*windows-x64.zip; do
             [ -f "$z" ] || continue
-            unzip -j -o "$z" 'RealHiRes/RealHiRes.exe' 'RealHiRes/realhires-cli.exe' -d inner
-            for e in RealHiRes.exe realhires-cli.exe; do INNER+=(--inner "$e=$(basename "$z")"); done
+            case "$(basename "$z")" in
+              RealHiRes-Rust-*) DIR=RealHiRes-Rust; EXES=(realhires-gui.exe realhires.exe) ;;
+              *) DIR=RealHiRes; EXES=(RealHiRes.exe realhires-cli.exe) ;;
+            esac
+            for e in "${EXES[@]}"; do
+              unzip -j -o "$z" "$DIR/$e" -d inner
+              INNER+=(--inner "$e=$(basename "$z")")
+            done
           done
           : > inner-args.txt
           [ ${#INNER[@]} -eq 0 ] || printf '%s\n' "${INNER[@]}" > inner-args.txt
@@ -118,7 +125,9 @@ jobs:
           fi
           EXTRA=()
           if [ "${{ inputs.prerelease }}" = true ]; then
-            EXTRA=(--require-results)        # a release waits for VirusTotal on every file
+            # a release waits for VirusTotal on every file; with the Python and the Rust
+            # packages there are about 20 files at 4 requests a minute
+            EXTRA=(--require-results --minutes 75)
           else
             EXTRA=(--opentip-upload-all)     # refreshes have time to send the archives to Kaspersky too
           fi

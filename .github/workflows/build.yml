@@ -10,9 +10,11 @@ name: Test, build and release
 # * Run workflow (workflow_dispatch) with "av_scan": build and scan without
 #   publishing, to try the scan on a branch.
 #
-# Every job runs packaging/ci_build.sh, which fetches FFmpeg, runs pytest with
-# it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
+# The Python jobs run packaging/ci_build.sh, which fetches FFmpeg, runs pytest
+# with it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
 # binary (packaging/check_compat.py), smoke-tests the frozen CLI and packages.
+# The rust-* jobs do the same for the Rust version with packaging/rust_build.sh
+# (which also compares it with the Python version).  A release carries both.
 on:
   push:
     branches: ["**"]
@@ -126,6 +128,97 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  # The Rust version (rust/): packaging/rust_build.sh builds it, runs its tests
+  # and the comparison with the Python version (tests/test_rust_parity.py),
+  # checks OS/CPU compatibility, smoke-tests the CLI with the bundled FFmpeg and
+  # packages it as RealHiRes-Rust-<version>-<platform>.
+  rust-windows:
+    name: RealHiRes-Rust-windows-x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip numpy pytest
+      - name: Install Rust
+        shell: bash
+        run: bash packaging/install_rust.sh
+      - name: Build, test and package
+        shell: bash
+        env:
+          ASSET: RealHiRes-Rust-windows-x64
+        run: bash packaging/rust_build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RealHiRes-Rust-windows-x64
+          path: out/*
+          if-no-files-found: error
+
+  rust-macos:
+    name: RealHiRes-Rust-macos-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            macos_min: "12.0"    # bundled FFmpeg (martin-riedl.de) needs 12
+          - arch: x86_64
+            runner: macos-15-intel
+            macos_min: "10.15"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip numpy pytest
+      - name: Install Rust
+        run: bash packaging/install_rust.sh >> "$GITHUB_PATH"
+      - name: Build, test and package
+        env:
+          ASSET: RealHiRes-Rust-macos-${{ matrix.arch }}
+          MACOS_MIN: ${{ matrix.macos_min }}
+        run: bash packaging/rust_build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RealHiRes-Rust-macos-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  rust-linux:
+    name: RealHiRes-Rust-linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # glibc 2.28, like the Python packages; check_compat.py enforces it.
+    container: almalinux:8
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build dependencies
+        run: |
+          bash packaging/linux/setup_almalinux8.sh
+          dnf -y -q install gcc curl
+          bash packaging/install_rust.sh >> "$GITHUB_PATH"
+      - name: Build, test and package
+        env:
+          ASSET: RealHiRes-Rust-linux-${{ matrix.arch }}
+          PYTHON: /opt/venv/bin/python
+          MAX_GLIBC: "2.28"
+        run: bash packaging/rust_build.sh
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RealHiRes-Rust-linux-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
   # Decides whether this run publishes a release: when either
   #  * a tag vX.Y.Z is pushed (it must match realhires/__init__.py), or
   #  * main receives a commit whose __version__ has no release yet
@@ -171,7 +264,7 @@ jobs:
   # GITHUB_TOKEN start no other workflows, so av-scan.yml is called from here;
   # it also refreshes the latest release every day and runs on demand.
   av-scan:
-    needs: [prepare, windows, macos, linux]
+    needs: [prepare, windows, macos, linux, rust-windows, rust-macos, rust-linux]
     if: needs.prepare.outputs.scan == 'true'
     uses: ./.github/workflows/av-scan.yml
     with:

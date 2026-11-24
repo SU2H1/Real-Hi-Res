@@ -1,10 +1,8 @@
-## What's new in 1.11.0
+## What's new in 1.12.0
 
-While a scan runs, the status line now estimates how long it will take to finish ("Scanning: 120/500 files, ... about 6 min left"). The estimate appears after the first few files and is based on how much audio has been analysed so far, so libraries that mix short and long tracks, or CD-quality and 24/192 files, are estimated fairly, and files whose saved result is reused are left out of it. The command-line tool shows the same estimate on its progress line.
+Real-Hi-Res now also comes as a **Rust version**, released as a preview next to the usual packages. It is a complete rewrite of the desktop app and the command-line tool in the Rust programming language, with every feature of the Python version: the live scan with the time left, the album and artist views, the dashboard with spectrogram and spectrum, saved results, Find, Settings, and Fix to real resolution, including bit-exact restores and gapless albums. It judges every file exactly as the Python version does, with the same verdicts and the same reasons word for word; an automatic comparison of the two versions on every build makes sure of that. Both versions use the same settings and the same saved results, so you can switch between them, or use both, and a file checked by one is not analysed again by the other.
 
-Genuine 24-bit files at 44.1 or 48 kHz now say why they count as hi-res: their **Why** reads "Genuine 24-bit at standard 44.1 kHz: hi-res by bit depth only", and the details explain that their sample rate is a standard one, so only the bit depth goes beyond CD quality. Results saved by earlier versions show the new text too, without a re-scan.
-
-The **Antivirus scan results** below show in the Kaspersky column only Kaspersky's own verdict, from its Threat Intelligence Portal, and each result links to Kaspersky's page. A file Kaspersky has not judged yet says so; the column no longer shows Kaspersky's result as reported by VirusTotal. The daily refresh also sends the downloads to Kaspersky, so it can judge them. Release pages now describe only the changes of their own version.
+The Rust version is a native program: it needs no Python inside, starts at once, and its downloads are smaller apart from the bundled FFmpeg. Scans are somewhat faster (about 1.4 times on the test files), because most of the time goes into FFmpeg decoding the audio, which both versions share. Its windows are drawn by the program itself, so it looks a little different, and you can drop folders onto it. As a preview it may still have rough edges; the Python version remains the main one and is unchanged in this release.
 
 ## Download
 
@@ -18,8 +16,20 @@ Pick the package for your computer, unpack it and run it. Python, NumPy and FFmp
 | Linux x86-64 | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh` adds a menu entry) |
 | Linux ARM64 (e.g. Raspberry Pi 4/5 with 64-bit OS) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` (optional: `RealHiRes/install.sh`) |
 
-The `.zip` files for macOS contain the same app as the `.dmg` files. The Linux packages need glibc 2.28 or newer (any distribution from 2018 onwards), and every package also contains the command-line tool `realhires-cli`. On Windows, keep the `.pkg` files and the `_internal` folder next to the `.exe` files.
+**Rust version (preview).** The same app and command-line tool, rewritten in Rust (see "What's new" above), with FFmpeg bundled:
 
-**First launch.** The apps are not code-signed. On Windows, SmartScreen may ask you to confirm with **More info → Run anyway**. On macOS 15 and later, open **System Settings → Privacy & Security** and click **Open Anyway**. On older macOS, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/RealHiRes.app` once in Terminal.
+| System | Download | Start the app |
+| --- | --- | --- |
+| Windows 10/11, 64-bit | `RealHiRes-Rust-<version>-windows-x64.zip` | `RealHiRes-Rust\realhires-gui.exe` |
+| macOS 12+ on Apple Silicon | `RealHiRes-Rust-<version>-macos-arm64.dmg` | drag `RealHiRes-Rust` to Applications |
+| macOS 10.15+ on Intel | `RealHiRes-Rust-<version>-macos-x86_64.dmg` | drag `RealHiRes-Rust` to Applications |
+| Linux x86-64 | `RealHiRes-Rust-<version>-linux-x64.tar.gz` | `RealHiRes-Rust/realhires-gui` (optional: `RealHiRes-Rust/install.sh`) |
+| Linux ARM64 | `RealHiRes-Rust-<version>-linux-arm64.tar.gz` | `RealHiRes-Rust/realhires-gui` (optional: `RealHiRes-Rust/install.sh`) |
+
+Its command-line tool is `realhires` (`realhires.exe`) next to the app, with the same options as `realhires-cli`.
+
+The `.zip` files for macOS contain the same app as the `.dmg` files. The Linux packages need glibc 2.28 or newer (any distribution from 2018 onwards), and the Rust version's app also needs OpenGL, which every desktop has. Every package also contains the command-line tool. On Windows, keep the `.pkg` files and the `_internal` folder next to the `.exe` files of the Python version, and the `ffmpeg` folder next to those of the Rust version.
+
+**First launch.** The apps are not code-signed. On Windows, SmartScreen may ask you to confirm with **More info → Run anyway**. On macOS 15 and later, open **System Settings → Privacy & Security** and click **Open Anyway**. On older macOS, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/RealHiRes.app` (or `/Applications/RealHiRes-Rust.app`) once in Terminal.
 
 The bundled FFmpeg executables are licensed separately (LGPL on Windows and Linux, GPL on macOS). See `FFMPEG-NOTICE.txt` inside the package.

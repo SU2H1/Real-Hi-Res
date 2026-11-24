@@ -16,6 +16,18 @@ Ready-to-run packages are attached to every release on the [Releases page](https
 | Linux, x86-64 (PC) | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
 | Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
 
+**Rust version (preview).** Since 1.12.0 every release also carries the [Rust version](#rust-version-preview) of the app and the command-line tool, with FFmpeg bundled. It finds the same fakes with the same reasons and shares its settings and saved results with the version above.
+
+| System | Download | Start the app | Command line |
+| --- | --- | --- | --- |
+| Windows 10/11, 64-bit | `RealHiRes-Rust-<version>-windows-x64.zip` | `RealHiRes-Rust\realhires-gui.exe` | `RealHiRes-Rust\realhires.exe "D:\Music"` |
+| macOS 12+, Apple Silicon | `RealHiRes-Rust-<version>-macos-arm64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
+| macOS 10.15+, Intel | `RealHiRes-Rust-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
+| Linux, x86-64 | `RealHiRes-Rust-<version>-linux-x64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
+| Linux, ARM64 | `RealHiRes-Rust-<version>-linux-arm64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
+
+The first launch works as described below for the other packages (on macOS the app is called `RealHiRes-Rust.app`). On Linux, `RealHiRes-Rust/install.sh` adds "Real-Hi-Res (Rust)" to the application menu and links the command-line tool as `realhires-rust`, next to an installed Python version; the app also needs OpenGL, which every desktop has. On Windows, keep the `ffmpeg` folder next to the two programs.
+
 If you are not sure which Mac you have, open the Apple menu and choose **About This Mac**. "Chip: Apple M…" means Apple Silicon, and "Processor: Intel…" means Intel. On Linux, `uname -m` prints `x86_64` for the x64 package or `aarch64` for the ARM64 package.
 
 ### macOS
@@ -304,11 +316,11 @@ MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with or
 
 ## Rust version (preview)
 
-The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language: the desktop app and the command-line tool, with everything described above, including Fix. It is a preview: the release packages are still the Python version, so you build the Rust version yourself from the source. It judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
+The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language: the desktop app and the command-line tool, with everything described above, including Fix. It is a preview, released since version 1.12.0 as separate packages next to the Python ones (see [Download](#download-and-run-no-installation-needed)); the Python version remains the main one. It judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
 
 ![The Rust desktop app: the list of fake files, and the dashboard showing a fake 24/192 file upsampled from 44.1 kHz, with its spectrogram cut off at 22.05 kHz](docs/rust-gui.png)
 
-To build it you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
+To build it yourself you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the programs, as in the release packages). Then run this in the `rust` folder:
 
 ```bash
 cargo build --release
@@ -322,7 +334,7 @@ rust/target/release/realhires ~/Music/HiRes
 
 The desktop app works like the one described under [Desktop app](#desktop-app-gui): the Sources panel, the live scan with the time left, the filters with counts, Search, Find (Ctrl+F), the Files, By album and By artist views, the dashboard with the spectrogram and the average spectrum, the summary chart after each scan, the Settings window with the same five tabs, saved results that appear as soon as a folder is listed, and the Fix window, including fixing automatically after a scan. Folders and files can also be dropped onto its window. Its pop-up windows (summary, Settings, Fix) open inside the main window rather than as separate windows. On Linux it needs a desktop with OpenGL, which every X11 or Wayland desktop provides (it loads the system's `libxkbcommon-x11` and OpenGL driver).
 
-Rust compiles to native programs, so they need neither Python nor NumPy and start at once: the command-line tool is about 5 MB and the desktop app about 18 MB, without FFmpeg. Files are analysed in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The command-line help (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
+Rust compiles to native programs, so they need neither Python nor NumPy and start at once: the command-line tool is about 5 MB and the desktop app about 18 MB, without FFmpeg. On Windows they carry the same kind of icon and version information as the Python version's programs, and the C runtime is built in, so nothing else has to be installed. Files are analysed in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The command-line help (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
 
 The test [`tests/test_rust_parity.py`](tests/test_rust_parity.py) keeps the two versions equal. It runs the Rust tool on the synthetic test library and fails if any verdict, flag, reason or summary differs from the Python version, or if a measurement differs by more than rounding. It also checks that both versions read each other's saved results and settings, and that the Rust `--fix` restores FFmpeg-made upsamples bit-exactly and keeps gapless albums gapless. It is skipped when the Rust tool has not been built. The desktop app has its own test, which runs the whole app without a screen: it scans generated files, checks the verdicts, the summary, the album view and the saved results on a second start, and fixes a file.
 
@@ -347,7 +359,7 @@ The release packages are built by GitHub Actions ([`.github/workflows/build.yml`
 5. It smoke-tests the frozen command-line tool with an empty `PATH`.
 6. It packages the result.
 
-Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
+Every push uploads the packages as workflow artifacts. A GitHub Release is published automatically in two cases. The first is when `main` receives a commit whose version (`__version__` in `realhires/__init__.py`, kept equal to `version` in `pyproject.toml` and in `rust/Cargo.toml`) has not been released yet, so bumping the version and merging into `main` releases it. The second is when a tag matching that version is pushed:
 
 ```bash
 git tag v1.1.0
@@ -361,6 +373,8 @@ The release files are named with their version, for example `RealHiRes-1.10.0-wi
 
 Before anything is published, the `av-scan` job of the build workflow calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml) on the packages that the run has just built, and the `release` job publishes only after that scan has finished, using the release notes it wrote. The scan job fails, and so holds the release back, unless VirusTotal has a finished result for every file; re-running the failed job scans again and then publishes. The same workflow runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag), and the build workflow can be started by hand with **av_scan** ticked to try the pre-release scan on a branch without publishing anything. It takes the packages (or downloads the release), unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's own verdict from Kaspersky OpenTIP (only that: a file OpenTIP has not judged yet says so instead of borrowing Kaspersky's row on VirusTotal; the daily refresh also uploads the downloads to OpenTIP, so that it can judge them), sends the two Windows launchers to the Hybrid Analysis sandbox (whose report also carries its antivirus multiscan), and writes the "Antivirus scan results" section of the release notes (into the new notes before a release, with `gh release edit` afterwards). A release page describes only the changes of its own version: [`packaging/RELEASE_NOTES.md`](packaging/RELEASE_NOTES.md) holds a single "What's new in X" section, for the version being released, which is replaced (not added to) at every version bump, and a test fails the build when that section does not match `__version__`. Every refresh also drops the sections of other versions from a page and takes the current version's section from that file, so a correction there reaches the published page; Actions → Antivirus scan → Run workflow with **notes_only** does just that without scanning. The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. A free Hybrid Analysis key can only read reports: uploading a file (to the sandbox or to its antivirus quick scan) needs a premium key. For the Windows programs of a new release, the Hybrid Analysis column therefore says "not in Hybrid Analysis yet" until someone uploads them on hybrid-analysis.com; the next daily refresh then shows the report. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes, which is how much later than the builds a release now appears.
 
+The Rust packages are built by the `rust-windows`, `rust-macos` and `rust-linux` jobs of the same workflow with [`packaging/rust_build.sh`](packaging/rust_build.sh), which fetches FFmpeg, builds the Rust programs, runs their tests and the comparison with the Python version, checks the binaries with `check_compat.py` (the Linux ones are built in the same AlmaLinux 8 container), smoke-tests the packaged command-line tool and packages it as `RealHiRes-Rust-<version>-<platform>`: a `.zip` on Windows, an ad-hoc signed `RealHiRes-Rust.app` in a `.dmg` and a `.zip` on macOS, and a `.tar.gz` with `install.sh` on Linux. The antivirus scan covers these packages and the two Rust programs inside the Windows zip as well, and the release waits for it in the same way. A version bump must change `rust/Cargo.toml` too; the build checks that it matches.
+
 To build a package on your own machine, install the build tools and run the same script with the name of the archive you want. The result appears in `out/`.
 
 ```bash
@@ -371,7 +385,7 @@ pip install numpy pyinstaller pillow pytest
 ASSET=RealHiRes-local bash packaging/ci_build.sh
 ```
 
-On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
+For the Rust version, install Rust and run `ASSET=RealHiRes-Rust-local bash packaging/rust_build.sh` instead (it needs `numpy` and `pytest` for the comparison with the Python version). On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).
 
