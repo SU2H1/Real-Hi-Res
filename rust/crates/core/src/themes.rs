@@ -234,3 +234,47 @@ pub fn import_theme(text: &str, custom: &[Theme]) -> Result<Theme, ThemeError> {
     }
     Ok(t)
 }
+
+pub const FOLDER_NAME: &str = "themes";
+pub const MAX_FILE_BYTES: u64 = 1 << 20;
+
+/// A theme from a file in the themes folder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileTheme {
+    pub theme: Theme,
+    pub file: PathBuf,
+}
+
+/// The themes folder: "themes" next to themes.json (Python `folder`).
+pub fn folder(path: Option<&Path>) -> PathBuf {
+    let p = path.map(Path::to_path_buf).unwrap_or_else(default_path);
+    let abs = PathBuf::from(crate::paths::abspath(&p.to_string_lossy()));
+    abs.parent().map(Path::to_path_buf).unwrap_or_default().join(FOLDER_NAME)
+}
+
+/// The themes of the .json files in the themes folder, in file-name order; a
+/// taken name gets " 2", " 3"...; files that are not themes are left out
+/// (Python `load_folder`).
+pub fn load_folder(custom: &[Theme], folder_path: Option<&Path>) -> Vec<FileTheme> {
+    let d = folder_path.map(Path::to_path_buf).unwrap_or_else(|| folder(None));
+    let Ok(entries) = std::fs::read_dir(&d) else { return vec![] };
+    let mut files: Vec<String> = entries
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.') && n.len() >= 5 && n[n.len() - 5..].eq_ignore_ascii_case(".json"))
+        .collect();
+    files.sort();
+    let mut known: Vec<Theme> = custom.to_vec();
+    let mut out = vec![];
+    for n in files {
+        let p = d.join(&n);
+        let Ok(meta) = std::fs::metadata(&p) else { continue };
+        if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        let Some(text) = std::fs::read(&p).ok().and_then(|b| String::from_utf8(b).ok()) else { continue };
+        let Ok(t) = import_theme(&text, &known) else { continue };
+        known.push(t.clone());
+        out.push(FileTheme { theme: t, file: p });
+    }
+    out
+}

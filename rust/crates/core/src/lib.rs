@@ -38,6 +38,7 @@ pub mod report;
 pub mod settings;
 pub mod stats;
 pub mod store;
+pub mod tagedit;
 pub mod themes;
 pub mod verdict;
 

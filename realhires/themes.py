@@ -4,8 +4,11 @@ A theme is a name, whether it is dark, and eight colours (`COLOR_KEYS`).
 The player comes with the themes of `BUILTIN`; "Match the system" follows the
 system's light or dark mode with "Light" and "Dark".  The user's own themes
 are kept in `themes.json` next to the saved results (`store.data_dir()`, or
-`$REALHIRES_THEMES`) and can be exported and imported as .json files.  The
-`theme` setting holds the chosen name.  The Rust version reads the same file
+`$REALHIRES_THEMES`) and can be exported and imported as .json files.  Theme
+files put into the themes folder (`folder()`, "themes" next to `themes.json`)
+appear in the menu as they are (`load_folder()`): they are read again whenever
+the menu is built, and can be changed only in their files.  The `theme`
+setting holds the chosen name.  The Rust version reads the same file
 and has the same built-in themes (`rust/crates/core/src/themes.rs`).
 """
 
@@ -20,6 +23,8 @@ from typing import Dict, List, Optional
 THEMES_ENV = "REALHIRES_THEMES"
 FILE_NAME = "themes.json"
 THEME_FILE_FORMAT = "real-hi-res-theme"
+FOLDER_NAME = "themes"
+MAX_FILE_BYTES = 1 << 20
 SYSTEM = "Match the system"
 MAX_NAME = 80
 
@@ -177,3 +182,33 @@ def import_theme(text: str, custom: List[dict]) -> dict:
         t["name"] = clean_name(f"{base} {n}")
         n += 1
     return t
+
+
+def folder(path: Optional[str] = None) -> str:
+    """The themes folder: "themes" next to themes.json."""
+    return os.path.join(os.path.dirname(os.path.abspath(path or default_path())), FOLDER_NAME)
+
+
+def load_folder(custom: List[dict], folder_path: Optional[str] = None) -> List[dict]:
+    """The themes of the .json files in the themes folder, in file-name order, each
+    with its "file".  A name that is taken (built-in, the user's own, or an earlier
+    file) gets " 2", " 3"...; files that are not themes are left out."""
+    d = folder_path or folder()
+    try:
+        files = sorted(n for n in os.listdir(d) if n.lower().endswith(".json") and not n.startswith("."))
+    except OSError:
+        return []
+    out: List[dict] = []
+    for n in files:
+        p = os.path.join(d, n)
+        try:
+            with open(p, "rb") as fh:
+                text = fh.read(MAX_FILE_BYTES + 1)
+            if len(text) > MAX_FILE_BYTES:
+                continue
+            t = import_theme(text.decode("utf-8"), custom + out)
+        except (OSError, ThemeError, UnicodeDecodeError):
+            continue
+        t["file"] = p
+        out.append(t)
+    return out

@@ -105,7 +105,9 @@ def _comment_key(c: bytes) -> str:
     return c.split(b"=", 1)[0].decode("ascii", "replace").upper()
 
 
-def flac_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
+def flac_rewrite(data: bytes, edit, too_long: str = "The tag is too long for a FLAC file.") -> bytes:
+    """The FLAC file with its Vorbis comments replaced by edit(comments) (a list of
+    b"KEY=value"); every other metadata block and the audio stay as they are."""
     start = 0
     if data[:3] == b"ID3":  # some FLAC files carry an ID3 tag in front; keep it
         size = _syncsafe(data[6:10])
@@ -118,14 +120,9 @@ def flac_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
     vi = next((i for i, (k, _) in enumerate(blocks) if k == 4), None)
     if vi is not None:
         vendor, comments = _parse_vorbis(blocks[vi][1])
-    comments = [c for c in comments if _comment_key(c) not in (FLAC_SYNCED, FLAC_PLAIN)]
-    if synced:
-        comments.append(f"{FLAC_SYNCED}={synced}".encode("utf-8"))
-    if plain:
-        comments.append(f"{FLAC_PLAIN}={plain}".encode("utf-8"))
-    body = _vorbis_body(vendor, comments)
+    body = _vorbis_body(vendor, edit(comments))
     if len(body) >= 1 << 24:
-        raise EmbedError("The lyrics are too long for a FLAC tag.")
+        raise EmbedError(too_long)
     if vi is not None:
         blocks[vi] = (4, body)
     else:
@@ -144,6 +141,18 @@ def flac_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
         out += bytes([kind | last]) + len(b).to_bytes(3, "big") + b
     out += data[audio:]
     return bytes(out)
+
+
+def flac_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
+    def edit(comments):
+        comments = [c for c in comments if _comment_key(c) not in (FLAC_SYNCED, FLAC_PLAIN)]
+        if synced:
+            comments.append(f"{FLAC_SYNCED}={synced}".encode("utf-8"))
+        if plain:
+            comments.append(f"{FLAC_PLAIN}={plain}".encode("utf-8"))
+        return comments
+
+    return flac_rewrite(data, edit, "The lyrics are too long for a FLAC tag.")
 
 
 def flac_lyrics(data: bytes) -> Tuple[str, str]:
@@ -229,16 +238,12 @@ def _sylt(entries: List[Tuple[int, str]], major: int) -> bytes:
     return out
 
 
-def mp3_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
+def mp3_rewrite(data: bytes, edit, too_long: str = "The tag is too long for an ID3 tag.") -> bytes:
+    """The MP3 file with its ID3v2 frames replaced by edit(major, frames) (a list of
+    (id, flags, body)); the audio after the tag stays as it is."""
     major, frames, total = _id3_frames(data)
-    frames = [f for f in frames if f[0] not in (b"USLT", b"SYLT")]
-    entries = lrc_entries(synced) if synced else []
-    if entries:
-        frames.append((b"SYLT", b"\x00\x00", _sylt(entries, major)))
-    if plain:
-        frames.append((b"USLT", b"\x00\x00", _uslt(plain, major)))
     body = b""
-    for fid, fflags, fb in frames:
+    for fid, fflags, fb in edit(major, frames):
         size = _to_syncsafe(len(fb)) if major == 4 else struct.pack(">I", len(fb))
         body += fid + size + fflags + fb
     old_body = total - 10 if total else 0
@@ -247,9 +252,22 @@ def mp3_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
         pad = NEW_PADDING
     body += b"\x00" * pad
     if len(body) >= 1 << 28:
-        raise EmbedError("The lyrics are too long for an ID3 tag.")
+        raise EmbedError(too_long)
     header = b"ID3" + bytes([major, 0, 0]) + _to_syncsafe(len(body))
     return header + body + data[total:]
+
+
+def mp3_with_lyrics(data: bytes, synced: str, plain: str) -> bytes:
+    def edit(major, frames):
+        frames = [f for f in frames if f[0] not in (b"USLT", b"SYLT")]
+        entries = lrc_entries(synced) if synced else []
+        if entries:
+            frames.append((b"SYLT", b"\x00\x00", _sylt(entries, major)))
+        if plain:
+            frames.append((b"USLT", b"\x00\x00", _uslt(plain, major)))
+        return frames
+
+    return mp3_rewrite(data, edit, "The lyrics are too long for an ID3 tag.")
 
 
 def mp3_lyrics(data: bytes) -> Tuple[str, str]:
@@ -357,11 +375,18 @@ def embed_lyrics(path: str, synced: str, plain: str) -> None:
     with open(path, "rb") as fh:
         data = fh.read()
     new = flac_with_lyrics(data, synced, plain) if ext == ".flac" else mp3_with_lyrics(data, synced, plain)
+    replace_file(path, new)
+
+
+def replace_file(path: str, data: bytes) -> None:
+    """Write `data` over the file through a temporary file in its folder (keeping its
+    permissions), so a failure never leaves half a file."""
+    ext = os.path.splitext(path)[1].lower()
     folder = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(prefix=".realhires-embed-", suffix=ext, dir=folder)
     try:
         with os.fdopen(fd, "wb") as fh:
-            fh.write(new)
+            fh.write(data)
         try:
             os.chmod(tmp, os.stat(path).st_mode & 0o7777)
         except OSError:

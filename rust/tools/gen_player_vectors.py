@@ -1,6 +1,7 @@
 """Writes the Python answers the Rust player core is tested against:
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
-python_eqfiles.json, python_themes.json and python_playerstate.json.  Run from
+python_eqfiles.json, python_themes.json, python_playerstate.json and
+python_tagedit.json (the tag editor and the themes folder).  Run from
 the repository root:
 
     python3 rust/tools/gen_player_vectors.py
@@ -12,7 +13,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 import time  # noqa: E402
 
-from realhires import eq, musiclib, playerstate, stats, themes  # noqa: E402
+from realhires import eq, musiclib, playerstate, stats, tagedit, themes  # noqa: E402
 from realhires.musiclib import Track  # noqa: E402
 from realhires.playqueue import PlayQueue, Song, SplitMix64, shuffled  # noqa: E402
 
@@ -227,3 +228,124 @@ with open(os.path.join(OUT, "python_playerstate.json"), "w", encoding="utf-8") a
               fh, indent=0, ensure_ascii=False)
 print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", len(plays), "plays,",
       len(imports), "EQ files")
+
+
+# ------------------------------------------------- tag editor, themes folder ---
+import struct  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def flac_file(comments, id3=b"", padding=64, vorbis=True):
+    info = b"\x10\x00\x10\x00" + b"\x00" * 6 + b"\x0a\xc4\x42\xf0" + b"\x00" * 4 + b"\x00" * 16
+    blocks = [(0, info)]
+    if vorbis:
+        vendor = b"reference libFLAC 1.4.3"
+        body = struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", len(comments))
+        for c in comments:
+            c = c.encode("utf-8")
+            body += struct.pack("<I", len(c)) + c
+        blocks.append((4, body))
+    blocks.append((6, b"\x00\x00\x00\x03" + b"\x00" * 28))  # a PICTURE-like block that must stay
+    if padding:
+        blocks.append((1, b"\x00" * padding))
+    out = id3 + b"fLaC"
+    for i, (k, b) in enumerate(blocks):
+        out += bytes([k | (0x80 if i == len(blocks) - 1 else 0)]) + len(b).to_bytes(3, "big") + b
+    return out + b"\xff\xf8AUDIO-FRAMES" * 3
+
+
+def id3_tag(major, frames, padding=32):
+    body = b""
+    for fid, text in frames:
+        if isinstance(text, bytes):
+            fb = text
+        elif major == 4:
+            fb = b"\x03" + text.encode("utf-8")
+        else:
+            fb = b"\x00" + text.encode("latin-1")
+        size = (bytes([(len(fb) >> 21) & 0x7F, (len(fb) >> 14) & 0x7F, (len(fb) >> 7) & 0x7F, len(fb) & 0x7F])
+                if major == 4 else struct.pack(">I", len(fb)))
+        body += fid + size + b"\x00\x00" + fb
+    body += b"\x00" * padding
+    n = len(body)
+    return b"ID3" + bytes([major, 0, 0]) + bytes([(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F]) + body
+
+
+MP3_AUDIO = b"\xff\xfb\x90\x64" + b"MPEG-FRAME" * 4
+flacs = {
+    "plain": flac_file(["TITLE=Old", "ARTIST=One", "ARTIST=Two", "ALBUM ARTIST=AA", "ALBUMARTIST=AA2",
+                        "TRACKNUMBER=2", "TRACKTOTAL=9", "DATE=2001", "LYRICS=[00:01.00] la", "genre=Pop"]),
+    "no_padding": flac_file(["TITLE=Old", "DISCNUMBER=1", "TOTALDISCS=2"], padding=0),
+    "no_vorbis": flac_file([], vorbis=False),
+    "id3_front": flac_file(["TITLE=Old"], id3=id3_tag(3, [(b"TIT2", "Front")])),
+}
+mp3s = {
+    "v23": id3_tag(3, [(b"TIT2", "Old"), (b"TPE1", "Art"), (b"TYER", "2001"), (b"TDAT", "2805"), (b"TRCK", "2/9"),
+                       (b"USLT", b"\x00XXX\x00la la")]) + MP3_AUDIO,
+    "v24": id3_tag(4, [(b"TIT2", "Old"), (b"TDRC", "2001-02"), (b"TPE2", "AA"), (b"TXXX", b"\x03k\x00v")],
+                   padding=0) + MP3_AUDIO,
+    "none": MP3_AUDIO,
+    "v22": b"ID3\x02\x00\x00\x00\x00\x00\x10" + b"\x00" * 16 + MP3_AUDIO,
+}
+change_sets = [
+    {"title": "Neue Ünïcode 日本", "album_artist": "", "date": "2020-05-28", "composer": "Bach",
+     "track": "04/12", "disc": "1", "genre": "Jazz"},
+    {"artist": "Solo", "track": "3", "disc": "", "date": "1999"},
+    {"album": "  Spaced \n out  ", "date": "", "track": ""},
+    {},
+]
+
+
+def written(fn, data, changes):
+    try:
+        return {"output": fn(data, tagedit.check_changes(changes)).hex()}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+tag_cases = []
+for kind, files, fn in (("flac", flacs, tagedit.flac_with_tags), ("mp3", mp3s, tagedit.mp3_with_tags)):
+    for name, data in files.items():
+        for ch in change_sets:
+            tag_cases.append(dict(kind=kind, name=name, input=data.hex(), changes=ch, **written(fn, data, ch)))
+checks_tag = []
+for ch in change_sets + [{"track": "x"}, {"disc": "1/x"}, {"date": "May 2004"}, {"title": "x" * 1001},
+                         {"track": " 3 / 12 "}, {"track": "007"}, {"unknown": "1", "genre": "\tRock\t"}]:
+    try:
+        checks_tag.append({"changes": ch, "ok": list(tagedit.check_changes(ch).items())})
+    except tagedit.TagError as exc:
+        checks_tag.append({"changes": ch, "error": str(exc)})
+commands = [{"src": src, "dst": "/tmp/out" + os.path.splitext(src)[1], "changes": ch,
+             "args": tagedit.ffmpeg_args(src, "/tmp/out" + os.path.splitext(src)[1], tagedit.check_changes(ch))}
+            for src in ("/m/a.m4a", "/m/b.OGG", "/m/c.aiff", "/m/d.wav", "/m/e.opus") for ch in change_sets[:2]]
+cannot = {p: tagedit.cannot_edit(p) for p in ("a.ape", "b.DSF", "c.flac", "d.m4a", "e.tta")}
+notes = []
+for ch, got in ((change_sets[0], {"title": "Neue Ünïcode 日本", "track": "4/12", "date": "2020-05-28", "genre": "Jazz"}),
+                (change_sets[0], {"title": "Neue Ünïcode 日本", "album_artist": "x", "date": "2020", "genre": "Jazz",
+                                  "composer": "Bach", "track": "4", "disc": "1"}),
+                (change_sets[1], {"artist": "Solo", "track": "3/9", "date": "1999"})):
+    notes.append({"changes": tagedit.check_changes(ch), "tags": got, "note": tagedit.kept_note("x.wav", tagedit.check_changes(ch), got)})
+commons = [[{"title": "A", "album": "X"}, {"title": "B", "album": " X "}], [{"genre": "Pop"}], []]
+outcomes = [[tagedit.TagOutcome("a", True, ""), tagedit.TagOutcome("b", True, "b was saved, but x.")],
+            [tagedit.TagOutcome("a", True, ""), tagedit.TagOutcome("b", False, "Could not."),
+             tagedit.TagOutcome("c", False, "Could not.")],
+            [tagedit.TagOutcome("a", False, "No.")], [tagedit.TagOutcome("a", True)]]
+own = [themes.normalize({"name": "Neon", "dark": True, "colors": {}})]
+folder_files = {"b.json": themes.export_theme(dict(themes.BUILTIN["Dark"], name="Dark")),
+                "a.JSON": json.dumps({"name": "Neon", "dark": False, "colors": {"accent": "#00FF00"}}),
+                "c.json": "nope", ".hidden.json": themes.export_theme(own[0]), "d.txt": themes.export_theme(own[0]),
+                "e.json": "﻿" + themes.export_theme({"name": "Sunset", "dark": False,
+                                                         "colors": {"accent": "#ff8800"}}),
+                "f.json": themes.export_theme({"name": "Neon", "dark": True, "colors": {}})}
+with tempfile.TemporaryDirectory() as d:
+    for n, text in folder_files.items():
+        with open(os.path.join(d, n), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    loaded = [{"theme": {k: v for k, v in t.items() if k != "file"}, "file": os.path.basename(t["file"])}
+              for t in themes.load_folder(own, d)]
+with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh:
+    json.dump({"cases": tag_cases, "checks": checks_tag, "commands": commands, "cannot": cannot, "notes": notes,
+               "commons": [{"tags": c, "values": tagedit.common_values(c)} for c in commons],
+               "summaries": [{"outcomes": [[o.path, o.ok, o.message] for o in oc],
+                              "summary": tagedit.save_summary(oc)} for oc in outcomes],
+               "folder": {"own": own, "files": folder_files, "loaded": loaded}}, fh, indent=0, ensure_ascii=False)

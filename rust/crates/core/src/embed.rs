@@ -181,12 +181,18 @@ fn vorbis_body(vendor: &[u8], comments: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-fn comment_key(c: &[u8]) -> String {
+pub(crate) fn comment_key(c: &[u8]) -> String {
     let key = c.split(|b| *b == b'=').next().unwrap_or(&[]);
     String::from_utf8_lossy(key).to_uppercase()
 }
 
-pub fn flac_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>, EmbedError> {
+/// The FLAC file with its Vorbis comments replaced by `edit(comments)`; every
+/// other metadata block and the audio stay as they are (Python `flac_rewrite`).
+pub fn flac_rewrite(
+    data: &[u8],
+    edit: impl FnOnce(Vec<Vec<u8>>) -> Vec<Vec<u8>>,
+    too_long: &str,
+) -> Result<Vec<u8>, EmbedError> {
     let start = id3_len(data);
     if data.get(start..start + 4) != Some(b"fLaC") {
         return err("This is not a FLAC file.");
@@ -199,19 +205,9 @@ pub fn flac_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8
     if let Some(i) = vi {
         (vendor, comments) = parse_vorbis(&blocks[i].1)?;
     }
-    comments.retain(|c| {
-        let k = comment_key(c);
-        k != FLAC_SYNCED && k != FLAC_PLAIN
-    });
-    if !synced.is_empty() {
-        comments.push(format!("{FLAC_SYNCED}={synced}").into_bytes());
-    }
-    if !plain.is_empty() {
-        comments.push(format!("{FLAC_PLAIN}={plain}").into_bytes());
-    }
-    let body = vorbis_body(&vendor, &comments);
+    let body = vorbis_body(&vendor, &edit(comments));
     if body.len() >= 1 << 24 {
-        return err("The lyrics are too long for a FLAC tag.");
+        return err(too_long);
     }
     match vi {
         Some(i) => blocks[i] = (4, body),
@@ -231,6 +227,23 @@ pub fn flac_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8
     }
     out.extend_from_slice(&data[audio..]);
     Ok(out)
+}
+
+pub fn flac_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>, EmbedError> {
+    let edit = |mut comments: Vec<Vec<u8>>| {
+        comments.retain(|c| {
+            let k = comment_key(c);
+            k != FLAC_SYNCED && k != FLAC_PLAIN
+        });
+        if !synced.is_empty() {
+            comments.push(format!("{FLAC_SYNCED}={synced}").into_bytes());
+        }
+        if !plain.is_empty() {
+            comments.push(format!("{FLAC_PLAIN}={plain}").into_bytes());
+        }
+        comments
+    };
+    flac_rewrite(data, edit, "The lyrics are too long for a FLAC tag.")
 }
 
 pub fn flac_lyrics(data: &[u8]) -> Result<(String, String), EmbedError> {
@@ -262,7 +275,7 @@ pub fn flac_lyrics(data: &[u8]) -> Result<(String, String), EmbedError> {
 
 // ------------------------------------------------------------------- ID3 ---
 
-type Frame = ([u8; 4], [u8; 2], Vec<u8>);
+pub type Frame = ([u8; 4], [u8; 2], Vec<u8>);
 
 fn be32(b: &[u8]) -> usize {
     u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize
@@ -307,7 +320,7 @@ fn id3_frames(data: &[u8]) -> Result<(u8, Vec<Frame>, usize), EmbedError> {
 }
 
 /// (encoding byte, encoded text, terminator)
-fn enc(text: &str, major: u8) -> (u8, Vec<u8>, &'static [u8]) {
+pub(crate) fn enc(text: &str, major: u8) -> (u8, Vec<u8>, &'static [u8]) {
     if major == 4 {
         return (3, text.as_bytes().to_vec(), b"\x00");
     }
@@ -345,18 +358,16 @@ fn sylt(entries: &[(u32, String)], major: u8) -> Vec<u8> {
     out
 }
 
-pub fn mp3_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>, EmbedError> {
-    let (major, mut frames, total) = id3_frames(data)?;
-    frames.retain(|(id, _, _)| id != b"USLT" && id != b"SYLT");
-    let entries = if synced.is_empty() { vec![] } else { lrc_entries(synced) };
-    if !entries.is_empty() {
-        frames.push((*b"SYLT", [0, 0], sylt(&entries, major)));
-    }
-    if !plain.is_empty() {
-        frames.push((*b"USLT", [0, 0], uslt(plain, major)));
-    }
+/// The MP3 file with its ID3v2 frames replaced by `edit(major, frames)`; the
+/// audio after the tag stays as it is (Python `mp3_rewrite`).
+pub fn mp3_rewrite(
+    data: &[u8],
+    edit: impl FnOnce(u8, Vec<Frame>) -> Vec<Frame>,
+    too_long: &str,
+) -> Result<Vec<u8>, EmbedError> {
+    let (major, frames, total) = id3_frames(data)?;
     let mut body = vec![];
-    for (id, flags, fb) in &frames {
+    for (id, flags, fb) in &edit(major, frames) {
         body.extend_from_slice(id);
         if major == 4 {
             body.extend_from_slice(&to_syncsafe(fb.len()));
@@ -370,7 +381,7 @@ pub fn mp3_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>
     let pad = if total == 0 || old_body < body.len() { NEW_PADDING } else { old_body - body.len() };
     body.resize(body.len() + pad, 0);
     if body.len() >= 1 << 28 {
-        return err("The lyrics are too long for an ID3 tag.");
+        return err(too_long);
     }
     let mut out = b"ID3".to_vec();
     out.extend_from_slice(&[major, 0, 0]);
@@ -378,6 +389,21 @@ pub fn mp3_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>
     out.extend_from_slice(&body);
     out.extend_from_slice(&data[total.min(data.len())..]);
     Ok(out)
+}
+
+pub fn mp3_with_lyrics(data: &[u8], synced: &str, plain: &str) -> Result<Vec<u8>, EmbedError> {
+    let edit = |major: u8, mut frames: Vec<Frame>| {
+        frames.retain(|(id, _, _)| id != b"USLT" && id != b"SYLT");
+        let entries = if synced.is_empty() { vec![] } else { lrc_entries(synced) };
+        if !entries.is_empty() {
+            frames.push((*b"SYLT", [0, 0], sylt(&entries, major)));
+        }
+        if !plain.is_empty() {
+            frames.push((*b"USLT", [0, 0], uslt(plain, major)));
+        }
+        frames
+    };
+    mp3_rewrite(data, edit, "The lyrics are too long for an ID3 tag.")
 }
 
 fn split_text(b: &[u8], encoding: u8) -> (String, &[u8]) {
@@ -528,6 +554,13 @@ pub fn embed_lyrics(path: &str, synced: &str, plain: &str) -> Result<(), EmbedEr
     let data = std::fs::read(path)?;
     let new =
         if ext == ".flac" { flac_with_lyrics(&data, synced, plain)? } else { mp3_with_lyrics(&data, synced, plain)? };
+    replace_file(path, &new).map_err(EmbedError::Io)
+}
+
+/// Write `data` over the file through a temporary file in its folder (keeping
+/// its permissions), so a failure never leaves half a file (Python `replace_file`).
+pub fn replace_file(path: &str, data: &[u8]) -> std::io::Result<()> {
+    let ext = extension(&file_name(path)).to_lowercase();
     let folder = crate::paths::parent(&crate::paths::abspath(path));
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let tmp = Path::new(&folder).join(format!(
@@ -537,7 +570,7 @@ pub fn embed_lyrics(path: &str, synced: &str, plain: &str) -> Result<(), EmbedEr
     ));
     let res = (|| -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-        f.write_all(&new)?;
+        f.write_all(data)?;
         drop(f);
         if let Ok(meta) = std::fs::metadata(path) {
             let _ = std::fs::set_permissions(&tmp, meta.permissions());
@@ -547,7 +580,7 @@ pub fn embed_lyrics(path: &str, synced: &str, plain: &str) -> Result<(), EmbedEr
     if res.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
-    res.map_err(EmbedError::Io)
+    res
 }
 
 /// (kind, text) of the lyrics embedded in a song, for display (Python `lyrics_of`).
