@@ -1036,8 +1036,9 @@ mod tests {
         let p = plan_fix(&fake(96000, 44100, 24), &cfg).unwrap();
         assert_eq!((p.target_rate, p.target_bits, p.resample), (44100, 16, true));
         assert_eq!(p.description, "24/96 → 16/44.1");
-        assert_eq!(p.output, "/music/a/Song.flac");
-        assert_eq!(p.backup_dir.as_deref(), Some("/music/a/Real-Hi-Res backups"));
+        // joined like os.path.join: "\\" on Windows
+        assert_eq!(p.output, join("/music/a", "Song.flac"));
+        assert_eq!(p.backup_dir, Some(join("/music/a", "Real-Hi-Res backups")));
         assert_eq!(p.exact_ratio, 0);
         let cmd = ffmpeg_command(&p, "x.flac").join(" ");
         assert!(cmd.contains("aresample=44100") && cmd.contains("dither_method=triangular"));
