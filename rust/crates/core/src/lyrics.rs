@@ -1211,6 +1211,28 @@ pub fn read_lyrics_file(path: &str) -> Option<(Status, String, String)> {
     inside.map(|(kind, text)| (kind, text, path.to_string()))
 }
 
+/// The label above the lyrics on Now Playing (Python `shown_label`), for lyrics of `kind`
+/// (as shown: synced lyrics without a single timed line are shown as plain) that
+/// `read_lyrics_file(path)` found in `file`: ("Synced lyrics" / "Lyrics (not synced)" /
+/// "Instrumental", where they come from: ".lrc file", "inside the file" or ".txt file").
+pub fn shown_label(kind: Status, path: &str, file: &str) -> (&'static str, String) {
+    let label = match kind {
+        Status::Synced => "Synced lyrics",
+        Status::Instrumental => "Instrumental",
+        _ => "Lyrics (not synced)",
+    };
+    let source = if file == path {
+        "inside the file".to_string()
+    } else {
+        let ext = std::path::Path::new(file)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+            .unwrap_or_else(|| "lyrics".into());
+        format!("{ext} file")
+    };
+    (label, source)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LyricsOutcome {
     pub path: String,

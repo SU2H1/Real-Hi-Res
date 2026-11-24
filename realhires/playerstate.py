@@ -1,6 +1,6 @@
 """What the player remembers between runs (2.0): liked and disliked songs, volume,
 the shuffle and repeat modes, the equalizer and the user's named EQ presets, the
-playlists, and the song that was playing.
+playlists, the song that was playing, and the size of the lyrics on Now Playing.
 
 One JSON file, `player.json`, next to the saved results (`store.data_dir()`), or
 `$REALHIRES_PLAYER`.  The Rust version reads and writes the same file
@@ -23,6 +23,11 @@ PLAYER_ENV = "REALHIRES_PLAYER"
 FILE_NAME = "player.json"
 STATE_VERSION = 1
 MAX_NAME = 80  # characters of a playlist or preset name
+# the size of the lyrics on Now Playing (A− / A+), in pixels
+LYRICS_SIZE_DEFAULT = 26
+LYRICS_SIZE_MIN = 16
+LYRICS_SIZE_MAX = 48
+LYRICS_SIZE_STEP = 2
 
 
 class InvalidName(ValueError):
@@ -31,6 +36,22 @@ class InvalidName(ValueError):
 
 def clean_name(name) -> str:
     return " ".join(str(name or "").split())[:MAX_NAME]
+
+
+def clean_lyrics_size(value) -> int:
+    """A lyrics size as saved: a whole number of pixels from LYRICS_SIZE_MIN to
+    LYRICS_SIZE_MAX (numbers and numeric text are rounded, half to even); anything
+    else gives the default."""
+    try:
+        size = int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return LYRICS_SIZE_DEFAULT
+    return min(max(size, LYRICS_SIZE_MIN), LYRICS_SIZE_MAX)
+
+
+def plain_lyrics_size(size: int) -> int:
+    """The size of plain (not synced) lyrics shown at lyrics size `size`."""
+    return int(round(clean_lyrics_size(size) * 0.7))
 
 
 def default_path() -> str:
@@ -54,6 +75,14 @@ class PlayerState:
     eq_presets: List[dict] = field(default_factory=list)
     # [{"id", "name", "created", "songs": [paths]}]
     playlists: List[dict] = field(default_factory=list)
+    lyrics_size: int = LYRICS_SIZE_DEFAULT          # pixels, Now Playing's A− / A+
+
+    # ------------------------------------------------------- lyrics size ---
+    def step_lyrics_size(self, steps: int) -> int:
+        """A+ (+1) or A− (-1): LYRICS_SIZE_STEP pixels larger or smaller per step, within
+        the limits; returns the new size."""
+        self.lyrics_size = clean_lyrics_size(clean_lyrics_size(self.lyrics_size) + steps * LYRICS_SIZE_STEP)
+        return self.lyrics_size
 
     # ------------------------------------------------------ like/dislike ---
     def is_liked(self, path: str) -> bool:
@@ -193,7 +222,8 @@ class PlayerState:
                 "disliked": sorted(set(self.disliked)),
                 "eq_presets": [{"name": p["name"], "eq": eq.normalize(p["eq"])} for p in self.eq_presets],
                 "playlists": [{"id": p["id"], "name": p["name"], "created": p["created"], "songs": list(p["songs"])}
-                              for p in self.playlists]}
+                              for p in self.playlists],
+                "lyrics_size": clean_lyrics_size(self.lyrics_size)}
 
     @classmethod
     def from_json(cls, data) -> "PlayerState":
@@ -241,6 +271,7 @@ class PlayerState:
                     if isinstance(p.get("songs"), list) else []
                 st.playlists.append({"id": p["id"], "name": clean_name(p.get("name")) or "Playlist",
                                      "created": created, "songs": list(dict.fromkeys(songs))})
+        st.lyrics_size = clean_lyrics_size(data.get("lyrics_size", LYRICS_SIZE_DEFAULT))
         last = data.get("last")
         if isinstance(last, dict):
             st.last_path = last.get("path") if isinstance(last.get("path"), str) else ""

@@ -158,6 +158,26 @@ def test_player_state_round_trip(tmp_path):
     assert playerstate.load(path).liked == []
 
 
+def test_lyrics_size_is_kept_within_its_limits(tmp_path):
+    """Now Playing's A− / A+: 16 to 48 px in steps of 2, 26 by default, saved in player.json."""
+    path = str(tmp_path / "player.json")
+    st = playerstate.load(path)
+    assert st.lyrics_size == playerstate.LYRICS_SIZE_DEFAULT == 26
+    assert st.step_lyrics_size(1) == 28 and st.step_lyrics_size(-3) == 22
+    playerstate.save(st, path)
+    assert json.loads((tmp_path / "player.json").read_text(encoding="utf-8"))["lyrics_size"] == 22
+    assert playerstate.load(path).lyrics_size == 22
+    for _ in range(30):
+        st.step_lyrics_size(1)
+    assert st.lyrics_size == playerstate.LYRICS_SIZE_MAX == 48
+    assert st.step_lyrics_size(-100) == playerstate.LYRICS_SIZE_MIN == 16
+    for saved, size in ((30, 30), ("34", 34), (12, 16), (99, 48), (27.5, 28), ("big", 26), (None, 26),
+                        (float("nan"), 26), (float("inf"), 26)):
+        assert playerstate.PlayerState.from_json({"lyrics_size": saved}).lyrics_size == size, saved
+    assert playerstate.PlayerState.from_json({}).lyrics_size == 26  # a player.json of 2.0.0
+    assert playerstate.plain_lyrics_size(26) == 18 and playerstate.plain_lyrics_size(48) == 34
+
+
 # ------------------------------------------------------- embedded lyrics ---
 SYNCED = "[ar: Band]\n[00:00.50] First line ♪\n[00:01.20][00:02.40] Twice\n[00:03.00] 日本語の行"
 PLAIN = "First line ♪\nTwice\n日本語の行"

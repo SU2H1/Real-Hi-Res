@@ -259,7 +259,33 @@ fn player_state_matches_python() {
     ops.save_eq_preset("  My   Jazz ", &jazz, false).unwrap();
     ops.save_eq_preset("Other", &EqState::default(), false).unwrap();
     ops.rename_eq_preset("Other", "Bright").unwrap();
+    ops.step_lyrics_size(1);
+    ops.step_lyrics_size(1);
     same(&ops.to_json(), data.get("ops_out").unwrap(), "ops");
+    // Now Playing's lyrics size (A− / A+)
+    let limits: Vec<i64> =
+        data.get("lyrics_size_limits").unwrap().as_array().unwrap().iter().map(|v| v.as_i64().unwrap()).collect();
+    assert_eq!(
+        limits,
+        vec![
+            playerstate::LYRICS_SIZE_MIN,
+            playerstate::LYRICS_SIZE_DEFAULT,
+            playerstate::LYRICS_SIZE_MAX,
+            playerstate::LYRICS_SIZE_STEP
+        ]
+    );
+    for case in data.get("lyrics_sizes").unwrap().as_array().unwrap() {
+        let case = case.as_array().unwrap();
+        let obj = Value::Object(vec![("lyrics_size".to_string(), case[0].clone())]);
+        assert_eq!(PlayerState::from_json(&obj).lyrics_size, case[1].as_i64().unwrap(), "{case:?}");
+    }
+    for case in data.get("lyrics_size_steps").unwrap().as_array().unwrap() {
+        let case = case.as_array().unwrap();
+        let obj = Value::Object(vec![("lyrics_size".to_string(), case[0].clone())]);
+        let mut st = PlayerState::from_json(&obj);
+        assert_eq!(st.step_lyrics_size(case[1].as_i64().unwrap()), case[2].as_i64().unwrap(), "{case:?}");
+        assert_eq!(playerstate::plain_lyrics_size(st.lyrics_size), case[3].as_i64().unwrap(), "{case:?}");
+    }
     for e in data.get("name_errors").unwrap().as_array().unwrap() {
         let e = e.as_array().unwrap();
         let got = ops.check_preset_name(e[0].as_str().unwrap(), "").err().map(|x| x.0);

@@ -14,6 +14,26 @@ pub const FILE_NAME: &str = "player.json";
 pub const STATE_VERSION: i64 = 1;
 /// Characters of a playlist or preset name.
 pub const MAX_NAME: usize = 80;
+/// The size of the lyrics on Now Playing (A− / A+), in pixels.
+pub const LYRICS_SIZE_DEFAULT: i64 = 26;
+pub const LYRICS_SIZE_MIN: i64 = 16;
+pub const LYRICS_SIZE_MAX: i64 = 48;
+pub const LYRICS_SIZE_STEP: i64 = 2;
+
+/// A lyrics size as saved (Python `clean_lyrics_size`): a whole number of pixels from
+/// LYRICS_SIZE_MIN to LYRICS_SIZE_MAX (numbers and numeric text are rounded, half to
+/// even); anything else gives the default.
+pub fn clean_lyrics_size(value: Option<&Value>) -> i64 {
+    match value.and_then(as_num) {
+        Some(v) if v.is_finite() => crate::pyfmt::round_int(v).clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX),
+        _ => LYRICS_SIZE_DEFAULT,
+    }
+}
+
+/// The size of plain (not synced) lyrics shown at lyrics size `size`.
+pub fn plain_lyrics_size(size: i64) -> i64 {
+    crate::pyfmt::round_int(size.clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX) as f64 * 0.7)
+}
 
 /// A playlist or preset name that cannot be used; the message says why.
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +85,8 @@ pub struct PlayerState {
     pub disliked: Vec<String>,
     pub eq_presets: Vec<EqPreset>,
     pub playlists: Vec<Playlist>,
+    /// pixels, Now Playing's A− / A+
+    pub lyrics_size: i64,
 }
 
 impl Default for PlayerState {
@@ -81,6 +103,7 @@ impl Default for PlayerState {
             disliked: vec![],
             eq_presets: vec![],
             playlists: vec![],
+            lyrics_size: LYRICS_SIZE_DEFAULT,
         }
     }
 }
@@ -112,6 +135,15 @@ impl PlayerState {
         }
         self.disliked.sort();
         self.disliked.dedup();
+    }
+
+    // ------------------------------------------------------ lyrics size ---
+    /// A+ (+1) or A− (-1): LYRICS_SIZE_STEP pixels larger or smaller per step, within the
+    /// limits; returns the new size.
+    pub fn step_lyrics_size(&mut self, steps: i64) -> i64 {
+        let now = self.lyrics_size.clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX);
+        self.lyrics_size = now.saturating_add(steps.saturating_mul(LYRICS_SIZE_STEP)).clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX);
+        self.lyrics_size
     }
 
     // ------------------------------------------------------- EQ presets ---
@@ -295,6 +327,7 @@ impl PlayerState {
                         .collect(),
                 ),
             )
+            .put("lyrics_size", self.lyrics_size.clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX))
             .build()
     }
 
@@ -373,6 +406,7 @@ impl PlayerState {
                 });
             }
         }
+        st.lyrics_size = clean_lyrics_size(data.get("lyrics_size"));
         if let Some(last @ Value::Object(_)) = data.get("last") {
             st.last_path = last.get("path").and_then(Value::as_str).unwrap_or("").to_string();
             st.last_position = last.get("position").and_then(as_num).filter(|v| !v.is_nan()).unwrap_or(0.0).max(0.0);

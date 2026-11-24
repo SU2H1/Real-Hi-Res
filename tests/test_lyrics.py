@@ -308,24 +308,34 @@ def test_synced_lyrics_win_wherever_they_are(tmp_path):
     lrc = "[ar: Someone]\n[00:00.50] First line\n[00:01.20] Second line\n[00:02.00] Third\n"
     song = tmp_path / "Song.flac"
     subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", str(song)], check=True)
+
+    def label():  # what Now Playing writes above them
+        kind, _, file = lyrics.read_lyrics_file(str(song))
+        return lyrics.shown_label(kind, str(song), file)
+
     assert lyrics.read_lyrics_file(str(song)) is None
     (tmp_path / "Song.txt").write_text("First line\nSecond line\nThird\n", encoding="utf-8")
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.PLAIN
+    assert label() == ("Lyrics (not synced)", ".txt file")
     embed.embed_lyrics(str(song), lrc, "First line\nSecond line\nThird")
     kind, text, where = lyrics.read_lyrics_file(str(song))
     assert (kind, where) == (lyrics.SYNCED, str(song)) and len(embed.lrc_entries(text)) == 3
+    assert label() == ("Synced lyrics", "inside the file")
     (tmp_path / "Song.lrc").write_text("[00:00.10] From the file\n", encoding="utf-8")
     assert lyrics.read_lyrics_file(str(song))[1] == "[00:00.10] From the file\n"  # the .lrc still comes first
+    assert label() == ("Synced lyrics", ".lrc file")
     os.remove(tmp_path / "Song.lrc")
     embed.embed_lyrics(str(song), "", "First line\nSecond line\nThird")  # plain inside, plain .txt
     assert lyrics.read_lyrics_file(str(song))[:2] == (lyrics.PLAIN, "First line\nSecond line\nThird\n")
     (tmp_path / "Song.txt").write_text(lrc, encoding="utf-8")  # LRC saved as .txt
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
+    assert label() == ("Synced lyrics", ".txt file")
     os.remove(tmp_path / "Song.txt")
     embed.embed_lyrics(str(song), "", lrc)  # LRC in the plain tag (UNSYNCEDLYRICS)
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
     assert embed.looks_synced(lrc) and not embed.looks_synced("Words\n[00:01] one\nmore\nwords")
     assert not embed.looks_synced("") and not embed.looks_synced("[ar: x]\n[ti: y]")
+    assert lyrics.shown_label(lyrics.INSTRUMENTAL, str(song), str(tmp_path / "Song.LRC")) == ("Instrumental", ".lrc file")
 
 
 def test_lrclib_and_lrcget_are_credited():
