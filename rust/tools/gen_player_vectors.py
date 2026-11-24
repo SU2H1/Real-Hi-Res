@@ -96,12 +96,43 @@ for shuffle in ("off", "songs", "library", "artist"):
                 steps.append(q.current)
         runs.append({"shuffle": shuffle, "repeat": "off", "seed": seed, "steps": steps, "up_next": q.up_next(30),
                      "disliked": disliked})
+# the user's queue (2.1): Play Next / Add to Queue / Up Next jumps, with each mode
+user_ops = ["auto", "play_next:3,4", "add:7", "next", "play_next:9", "auto", "next", "prev", "next",
+            "add:1,2,6", "jump:1", "next", "jump:3", "add:8", "set_shuffle:songs", "next", "next", "auto"]
+user_runs = []
+for shuffle in ("off", "songs", "album"):
+    for repeat in ("off", "song", "album"):
+        q = PlayQueue(songs, everything[:10], shuffle=shuffle, repeat=repeat, seed=11)
+        steps = [q.start(everything[2])]
+        for op in user_ops:
+            name, _, arg = op.partition(":")
+            picked = [everything[int(i)] for i in arg.split(",")] if arg and name in ("play_next", "add") else []
+            if name == "auto":
+                steps.append(q.next(auto=True))
+            elif name == "next":
+                steps.append(q.next())
+            elif name == "prev":
+                steps.append(q.previous())
+            elif name == "play_next":
+                q.play_next(picked)
+                steps.append(q.current)
+            elif name == "add":
+                q.add_to_queue(picked)
+                steps.append(q.current)
+            elif name == "jump":
+                steps.append(q.jump(int(arg)))
+            else:
+                q.set_shuffle(arg)
+                steps.append(q.current)
+            steps.append(q.up_next(6))
+        user_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": 11, "steps": steps})
 rng = SplitMix64(2024)
 with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
     json.dump({"songs": [s.__dict__ for s in songs], "context": everything[:10], "start": everything[2],
                "ops": ["auto", "next", "auto", "prev", "next", "auto", "next", "next", "auto", "next", "auto",
                        "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"],
-               "runs": runs, "splitmix_2024": [str(rng.next()) for _ in range(5)],
+               "runs": runs, "user_ops": user_ops, "user_runs": user_runs,
+               "splitmix_2024": [str(rng.next()) for _ in range(5)],
                "shuffled_9": shuffled([str(i) for i in range(12)], SplitMix64(9))}, fh, indent=0)
 
 # ------------------------------------------------------------- statistics ---

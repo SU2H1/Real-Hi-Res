@@ -490,3 +490,17 @@ The user's words, then what both apps do:
     album artist or composer: a mosaic of up to four of their album covers, or the one cover when there is one; a
     genre or year: the same mosaic of its albums) with the name in bold and "N albums · M songs" in grey under it,
     sorted as the list was. A click opens the same page as before. Unknown names keep their "Unknown …" label.
+
+### Play Next and Add to Queue (asked for later on 2026-11-24)
+
+"When user right clicks on song, user should have the option to add to queue or play next." Every song menu
+(right-click, and "…") starts with **Play Next** and **Add to Queue**. The play queue (`playqueue.PlayQueue`, both
+versions, parity vectors `user_runs` in `python_queue.json`) keeps the songs the user queued in `queued`: Play Next
+puts the song before the songs queued earlier, Add to Queue after them. When the current song ends (or Next is
+pressed), the first queued song plays before the list goes on, whatever the shuffle and repeat modes; repeat album
+treats a queued song as an interruption (`inserted`: after it the album being repeated goes on). After Previous,
+Next first walks back up through the songs already played (`top`). Up Next lists those songs, then the queued ones,
+then the rest of the list; a double-click there (`jump()`) plays that song, dropping the queued songs listed before
+it (or all of them when the chosen song comes from the list). With nothing playing, both items start playing the
+song. The queue lasts for the session. The gapless look-ahead asks a copy of the queue in both apps, so the queued
+song follows without a gap.

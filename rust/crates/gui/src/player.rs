@@ -566,25 +566,37 @@ impl Player {
         self.state_dirty = true;
     }
 
+    /// Play Next (`first`) / Add to Queue (2.1): the songs come after the current one (Play
+    /// Next before songs queued earlier, Add to Queue after them); with nothing playing they
+    /// start playing.
+    pub fn queue_songs(&mut self, paths: &[String], first: bool) {
+        let paths: Vec<String> = paths.iter().filter(|p| self.lib.track(p).is_some()).cloned().collect();
+        if paths.is_empty() {
+            return;
+        }
+        let playing = self.now.as_ref().is_some_and(|n| n.active);
+        match self.queue.as_mut() {
+            Some(q) if playing && q.current().is_some() => {
+                if first {
+                    q.play_next(&paths);
+                } else {
+                    q.add_to_queue(&paths);
+                }
+                self.update_next();
+            }
+            _ => self.play_list(paths, None, "Queue"),
+        }
+    }
+
     /// Tell the engine which song follows gaplessly.
     pub fn update_next(&mut self) {
         let Some(q) = self.queue.as_ref() else {
             self.engine.set_next(None);
             return;
         };
-        let Some(cur) = q.current().map(str::to_string) else {
-            self.engine.set_next(None);
-            return;
-        };
-        let next = match q.repeat.as_str() {
-            "song" => Some(cur.clone()),
-            "stop" => None,
-            "album" => {
-                let key = |p: &str| self.lib.track(p).map(|t| t.song().album_key());
-                q.up_next(1).into_iter().next().filter(|n| key(n) == key(&cur))
-            }
-            _ => q.up_next(1).into_iter().next(),
-        };
+        // what the queue plays when the current song ends by itself, asked of a copy (as the
+        // Python app does), so repeat, the album rules and queued songs all count
+        let next = q.clone().next(true);
         match next {
             Some(p) => {
                 let rate = self.lib.track(&p).map(|t| t.sample_rate as u32).unwrap_or(0);
@@ -1707,7 +1719,6 @@ impl Player {
             return;
         };
         let upcoming = q.up_next(50);
-        let base = q.pos + 1;
         if upcoming.is_empty() {
             ui.label(RichText::new("Nothing comes after this song.").color(pal.secondary));
         }
@@ -1725,14 +1736,12 @@ impl Player {
                 p.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
                 p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
                 if resp.double_clicked() {
-                    jump = Some(base + i);
+                    jump = Some(i);
                 }
             }
         });
         if let Some(i) = jump {
-            if let Some(q) = self.queue.as_mut() {
-                q.pos = i;
-                let p = q.order[i].clone();
+            if let Some(p) = self.queue.as_mut().and_then(|q| q.jump(i)) {
                 self.play_path(&p);
             }
         }
@@ -2037,6 +2046,12 @@ mod tests {
         p.cover_clicked();
         frame(&ctx, &mut p);
         assert_eq!(p.page, Page::NowPlaying);
+        // 2.1: Play Next from a song's menu comes first; the gapless look-ahead leaves the queue alone
+        p.queue_songs(&[b1.clone()], true);
+        assert_eq!(p.queue.as_ref().unwrap().up_next(2), vec![b1.clone(), a2.clone()]);
+        assert_eq!(p.queue.as_ref().unwrap().queued, vec![b1.clone()]);
+        p.queue.as_mut().unwrap().queued.clear();
+        p.update_next();
 
         // likes are saved at once
         p.toggle_like(&a1);

@@ -337,6 +337,15 @@ impl Player {
 
     /// The right-click menu of a song.
     pub fn song_menu(&mut self, ui: &mut Ui, path: &str) {
+        if ui.button("Play Next").clicked() {
+            self.queue_songs(&[path.to_string()], true);
+            ui.close();
+        }
+        if ui.button("Add to Queue").clicked() {
+            self.queue_songs(&[path.to_string()], false);
+            ui.close();
+        }
+        ui.separator();
         let liked = self.state.is_liked(path);
         if ui.button(if liked { "Unlike" } else { "Like" }).clicked() {
             self.toggle_like(path);

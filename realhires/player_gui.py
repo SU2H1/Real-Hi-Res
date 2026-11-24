@@ -1011,6 +1011,9 @@ class PlayerApp:
         missing = getattr(track, "missing", False)
         if rows is not None and index is not None and not missing:
             m.add_command(label="Play", command=lambda: self.play_list(list(rows), index, list_name))
+        if not missing:
+            m.add_command(label="Play Next", command=lambda: self.queue_songs([path], first=True))
+            m.add_command(label="Add to Queue", command=lambda: self.queue_songs([path], first=False))
             m.add_separator()
         m.add_command(label="Unlike" if self.is_liked(path) else "Like", command=lambda: self.toggle_like(path))
         m.add_command(label="Remove dislike" if self.is_disliked(path) else "Dislike",
@@ -1403,6 +1406,7 @@ class PlayerApp:
             return None
         c = copy.copy(q)
         c.order = list(q.order)
+        c.queued = list(q.queued)  # next() takes the first queued song: not from the real queue
         c.rng = SplitMix64(0)
         c.rng.state = q.rng.state
         return c.next(auto=True)
@@ -1493,10 +1497,27 @@ class PlayerApp:
         q = self.queue
         if q is None:
             return
-        upcoming = q.up_next(50)
-        if 0 <= index < len(upcoming):
-            q.pos += 1 + index
+        if q.jump(index) is not None:
             self._play_path(q.current)  # type: ignore[arg-type]
+
+    def queue_songs(self, paths: List[str], first: bool) -> None:
+        """Play Next (`first`) / Add to Queue (2.1): the songs come after the current one
+        (Play Next before songs queued earlier, Add to Queue after them); with nothing
+        playing they start playing."""
+        paths = [p for p in paths if p in self.by_path]
+        if not paths:
+            return
+        q = self.queue
+        if q is None or self.current is None:
+            self.play_list([self.by_path[p] for p in paths], 0, "Queue")
+            return
+        if first:
+            q.play_next(paths)
+        else:
+            q.add_to_queue(paths)
+        self._update_next()
+        if self.up_next_shown:
+            self.up_next.refresh()
 
     def _stopped(self) -> None:
         """The queue has ended: the last song stays in the LCD, at its start."""

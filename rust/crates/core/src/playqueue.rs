@@ -31,6 +31,7 @@ pub fn repeat_label(mode: &str) -> &'static str {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct SplitMix64 {
     pub state: u64,
 }
@@ -109,6 +110,7 @@ pub fn number(value: &str) -> i64 {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct PlayQueue {
     pub library: Vec<Song>,
     by_path: HashMap<String, usize>,
@@ -120,6 +122,14 @@ pub struct PlayQueue {
     pub pos: usize,
     /// left out whenever the order is shuffled (unless chosen)
     pub disliked: HashSet<String>,
+    /// songs the user queued with Play Next / Add to Queue: they play before `order` goes on
+    /// (each once, whatever the modes), and `up_next()` lists them first
+    pub queued: Vec<String>,
+    /// the furthest position played: after Previous, Next walks back up to it first
+    pub top: usize,
+    /// positions in `order` that hold queued songs: repeat album ignores them (a queued song
+    /// from another album is an interruption, and the album being repeated goes on after it)
+    pub inserted: HashSet<usize>,
 }
 
 impl PlayQueue {
@@ -135,6 +145,9 @@ impl PlayQueue {
             order: vec![],
             pos: 0,
             disliked: HashSet::new(),
+            queued: vec![],
+            top: 0,
+            inserted: HashSet::new(),
         }
     }
 
@@ -146,6 +159,8 @@ impl PlayQueue {
         let up = self.upcoming(path);
         self.order = std::iter::once(path.to_string()).chain(up).collect();
         self.pos = 0;
+        self.top = 0;
+        self.inserted.clear();
         path.to_string()
     }
 
@@ -216,6 +231,7 @@ impl PlayQueue {
             let up = self.upcoming(&cur);
             self.order.truncate(self.pos + 1);
             self.order.extend(up);
+            self.top = self.pos;
         }
     }
 
@@ -229,22 +245,43 @@ impl PlayQueue {
             self.repeat = "off".into();
             return None;
         }
+        if !self.queued.is_empty() && self.pos >= self.top {
+            let nxt = self.queued.remove(0);
+            self.order.insert(self.pos + 1, nxt.clone());
+            self.pos += 1;
+            self.top = self.pos;
+            self.inserted.insert(self.pos);
+            return Some(nxt);
+        }
         if self.pos + 1 < self.order.len() {
             let nxt = self.order[self.pos + 1].clone();
-            if self.repeat == "album" {
-                if let (Some(a), Some(b)) = (self.song(&cur), self.song(&nxt)) {
+            if self.repeat == "album" && !self.inserted.contains(&(self.pos + 1)) {
+                let base = self.album_song();
+                if let (Some(a), Some(b)) = (self.song(&base), self.song(&nxt)) {
                     if a.album_key() != b.album_key() {
-                        return self.restart_album(&cur);
+                        return self.restart_album(&base);
                     }
                 }
             }
             self.pos += 1;
+            self.top = self.top.max(self.pos);
             return Some(nxt);
         }
         if self.repeat == "album" {
-            return self.restart_album(&cur);
+            let base = self.album_song();
+            return self.restart_album(&base);
         }
         None
+    }
+
+    /// The song whose album repeat album keeps to: the current one, or when that was queued,
+    /// the last one played before it that was not.
+    fn album_song(&self) -> String {
+        let mut i = self.pos;
+        while i > 0 && self.inserted.contains(&i) {
+            i -= 1;
+        }
+        self.order[i].clone()
     }
 
     fn restart_album(&mut self, cur: &str) -> Option<String> {
@@ -256,6 +293,7 @@ impl PlayQueue {
         self.order.truncate(self.pos + 1);
         self.order.extend(tracks);
         self.pos += 1;
+        self.top = self.pos;
         self.order.get(self.pos).cloned()
     }
 
@@ -267,8 +305,50 @@ impl PlayQueue {
         None
     }
 
+    /// The songs to come: the queued ones first, then the rest of the order.
     pub fn up_next(&self, count: usize) -> Vec<String> {
-        self.order.iter().skip(self.pos + 1).take(count).cloned().collect()
+        let top = self.top.max(self.pos);
+        let back = self.order.get(self.pos + 1..top + 1).unwrap_or(&[]);
+        back.iter().chain(&self.queued).chain(self.order.iter().skip(top + 1)).take(count).cloned().collect()
+    }
+
+    /// Play Next: these songs come right after the current one, before songs queued earlier.
+    pub fn play_next(&mut self, paths: &[String]) {
+        self.queued.splice(0..0, paths.iter().cloned());
+    }
+
+    /// Add to Queue: these songs come after the songs queued earlier, then the list goes on.
+    pub fn add_to_queue(&mut self, paths: &[String]) {
+        self.queued.extend(paths.iter().cloned());
+    }
+
+    /// Up Next: play the song at `index` of `up_next()` now.  The songs listed before it are
+    /// skipped (queued ones are dropped); the list goes on after it.
+    pub fn jump(&mut self, index: usize) -> Option<String> {
+        let top = self.top.max(self.pos);
+        let (back, n) = (top - self.pos, self.queued.len());
+        if index < back {
+            self.pos += index + 1; // a song stepped back over: the queue stays
+            return Some(self.order[self.pos].clone());
+        }
+        if index < back + n {
+            let k = index - back;
+            let song = self.queued[k].clone();
+            self.queued.drain(..=k);
+            self.order.insert(top + 1, song.clone());
+            self.pos = top + 1;
+            self.top = self.pos;
+            self.inserted.insert(self.pos);
+            return Some(song);
+        }
+        let i = top + 1 + index - back - n;
+        if i >= self.order.len() {
+            return None;
+        }
+        self.queued.clear();
+        self.pos = i;
+        self.top = i;
+        Some(self.order[i].clone())
     }
 }
 
@@ -329,6 +409,48 @@ mod tests {
             assert_eq!(steps, strs(run.get("steps").unwrap()), "{run:?}");
             let up: Vec<String> = strs(run.get("up_next").unwrap()).into_iter().flatten().collect();
             assert_eq!(q.up_next(30), up);
+        }
+        // the user's queue: Play Next / Add to Queue / Up Next jumps
+        let everything: Vec<String> = songs.iter().map(|s| s.path.clone()).collect();
+        let user_ops: Vec<String> = strs(data.get("user_ops").unwrap()).into_iter().flatten().collect();
+        for run in data.get("user_runs").unwrap().as_array().unwrap() {
+            let seed = run.get("seed").unwrap().as_i64().unwrap() as u64;
+            let mut q = PlayQueue::new(songs.clone(), context.clone(), &s(run, "shuffle"), &s(run, "repeat"), seed);
+            let mut got: Vec<Value> = vec![Value::Str(q.start(&start))];
+            let opt = |v: Option<String>| v.map(Value::Str).unwrap_or(Value::Null);
+            for op in &user_ops {
+                let (name, arg) = op.split_once(':').unwrap_or((op.as_str(), ""));
+                let picked: Vec<String> = if matches!(name, "play_next" | "add") {
+                    arg.split(',').map(|i| everything[i.parse::<usize>().unwrap()].clone()).collect()
+                } else {
+                    vec![]
+                };
+                let step = match name {
+                    "auto" => q.next(true),
+                    "next" => q.next(false),
+                    "prev" => q.previous(),
+                    "play_next" => {
+                        q.play_next(&picked);
+                        q.current().map(str::to_string)
+                    }
+                    "add" => {
+                        q.add_to_queue(&picked);
+                        q.current().map(str::to_string)
+                    }
+                    "jump" => q.jump(arg.parse().unwrap()),
+                    _ => {
+                        q.set_shuffle(arg);
+                        q.current().map(str::to_string)
+                    }
+                };
+                got.push(opt(step));
+                got.push(Value::Array(q.up_next(6).into_iter().map(Value::Str).collect()));
+            }
+            let want = run.get("steps").unwrap().as_array().unwrap();
+            assert_eq!(got.len(), want.len());
+            for (i, (g, w)) in got.iter().zip(want).enumerate() {
+                assert_eq!(format!("{g:?}"), format!("{w:?}"), "{} {} step {i}", s(run, "shuffle"), s(run, "repeat"));
+            }
         }
         let mut rng = SplitMix64::new(2024);
         for want in strs(data.get("splitmix_2024").unwrap()) {

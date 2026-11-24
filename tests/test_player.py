@@ -134,6 +134,29 @@ def test_queue_repeat_modes():
     assert q.previous() == everything[1]
 
 
+def test_queue_play_next_and_add_to_queue():
+    """2.1: Play Next / Add to Queue from a song's menu, and Up Next jumps over them."""
+    lib = _library()
+    album0 = [s.path for s in album_order(s for s in lib if s.album == "Band A Album 0")]
+    other = [s.path for s in lib if s.album != "Band A Album 0"][:4]
+    for repeat in ("off", "album"):
+        q = PlayQueue(lib, album0, repeat=repeat)
+        q.start(album0[0])
+        q.add_to_queue([other[0]])
+        q.play_next([other[1], other[2]])  # before the song queued earlier
+        q.add_to_queue([other[3]])
+        assert q.up_next(6) == [other[1], other[2], other[0], other[3], album0[1], album0[2]]
+        assert q.next(auto=True) == other[1]  # queued songs play whatever the album
+        assert q.next() == other[2] and q.previous() == other[1] and q.next() == other[2]
+        assert q.jump(1) == other[3] and q.queued == []  # the queued song before it is dropped
+        assert q.next(auto=True) == album0[1]  # then the list goes on
+    q = PlayQueue(lib, album0)
+    q.start(album0[0])
+    q.add_to_queue([other[0]])
+    assert q.jump(2) == album0[2] and q.queued == []  # a jump into the list drops the queue
+    assert q.jump(99) is None and q.current == album0[2]
+
+
 def test_splitmix_matches_the_reference_values():
     rng = SplitMix64(1234567)
     # reference values of SplitMix64 (Steele, Lea, Flood) for this seed

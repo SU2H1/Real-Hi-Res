@@ -101,6 +101,13 @@ class PlayQueue:
     order: List[str] = field(default_factory=list)
     pos: int = 0
     disliked: Set[str] = field(default_factory=set)
+    # songs the user queued with Play Next / Add to Queue: they play before `order` goes
+    # on (each once, whatever the shuffle and repeat modes), and up_next() lists them first
+    queued: List[str] = field(default_factory=list)
+    top: int = 0  # the furthest position played: after Previous, Next walks back up to it first
+    # positions in `order` that hold queued songs: repeat album ignores them (a queued song
+    # from another album is an interruption, and the album being repeated goes on after it)
+    inserted: Set[int] = field(default_factory=set)
 
     def __post_init__(self):
         self.by_path: Dict[str, Song] = {s.path: s for s in self.library}
@@ -114,7 +121,8 @@ class PlayQueue:
     def start(self, path: str) -> str:
         """Play `path` now and build the order of the songs after it."""
         self.order = [path] + self._upcoming(path)
-        self.pos = 0
+        self.pos = self.top = 0
+        self.inserted = set()
         return path
 
     @property
@@ -160,6 +168,7 @@ class PlayQueue:
         cur = self.current
         if cur is not None:
             self.order = self.order[:self.pos + 1] + self._upcoming(cur)
+            self.top = self.pos
 
     # ----------------------------------------------------------------- moves ---
     def next(self, auto: bool = False) -> Optional[str]:
@@ -174,17 +183,32 @@ class PlayQueue:
         if auto and self.repeat == "stop":
             self.repeat = "off"
             return None
+        if self.queued and self.pos >= self.top:
+            nxt = self.queued.pop(0)
+            self.order.insert(self.pos + 1, nxt)
+            self.pos = self.top = self.pos + 1
+            self.inserted.add(self.pos)
+            return nxt
         if self.pos + 1 < len(self.order):
             nxt = self.order[self.pos + 1]
-            if self.repeat == "album":
-                a, b = self.by_path.get(cur), self.by_path.get(nxt)
+            if self.repeat == "album" and self.pos + 1 not in self.inserted:
+                a, b = self.by_path.get(self._album_song()), self.by_path.get(nxt)
                 if a is not None and b is not None and a.album_key != b.album_key:
                     return self._restart_album(cur)
             self.pos += 1
+            self.top = max(self.top, self.pos)
             return nxt
         if self.repeat == "album":
-            return self._restart_album(cur)
+            return self._restart_album(self._album_song())
         return None
+
+    def _album_song(self) -> str:
+        """The song whose album repeat album keeps to: the current one, or when that was
+        queued, the last one played before it that was not."""
+        i = self.pos
+        while i > 0 and i in self.inserted:
+            i -= 1
+        return self.order[i]
 
     def _restart_album(self, cur: str) -> Optional[str]:
         song = self.by_path.get(cur)
@@ -195,6 +219,7 @@ class PlayQueue:
             tracks = shuffled(tracks, self.rng)
         self.order = self.order[:self.pos + 1] + tracks
         self.pos += 1
+        self.top = self.pos
         return self.order[self.pos]
 
     def previous(self) -> Optional[str]:
@@ -205,4 +230,41 @@ class PlayQueue:
         return None
 
     def up_next(self, count: int = 50) -> List[str]:
-        return self.order[self.pos + 1:self.pos + 1 + count]
+        """The songs to come: those played before and stepped back over with Previous, the
+        queued ones, then the rest of the order."""
+        top = max(self.top, self.pos)
+        return (self.order[self.pos + 1:top + 1] + self.queued + self.order[top + 1:top + 1 + count])[:count]
+
+    # ------------------------------------------------------- the user's queue ---
+    def play_next(self, paths: List[str]) -> None:
+        """Play Next: these songs come right after the current one, before songs queued earlier."""
+        self.queued[0:0] = list(paths)
+
+    def add_to_queue(self, paths: List[str]) -> None:
+        """Add to Queue: these songs come after the songs queued earlier, then the list goes on."""
+        self.queued.extend(paths)
+
+    def jump(self, index: int) -> Optional[str]:
+        """Up Next: play the song at `index` of up_next() now.  The songs listed before it
+        are skipped (queued ones are dropped); the list goes on after it."""
+        top = max(self.top, self.pos)
+        back, n = top - self.pos, len(self.queued)
+        if index < 0:
+            return None
+        if index < back:  # a song stepped back over: the queue stays
+            self.pos += index + 1
+            return self.order[self.pos]
+        if index < back + n:
+            k = index - back
+            song = self.queued[k]
+            del self.queued[:k + 1]
+            self.order.insert(top + 1, song)
+            self.pos = self.top = top + 1
+            self.inserted.add(self.pos)
+            return song
+        i = top + 1 + index - back - n
+        if i >= len(self.order):
+            return None
+        self.queued.clear()
+        self.pos = self.top = i
+        return self.order[i]

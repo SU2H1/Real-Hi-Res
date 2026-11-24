@@ -254,6 +254,14 @@ def lyrics_ok():
     # Up Next lists the rest of the album
     app.toggle_up_next(); root.update()
     assert [t.display_title for t in app.up_next.list.rows] == ["Midnight Sun", "Polar Drift"]
+    # 2.1: Play Next from a song's menu comes first; the gapless look-ahead leaves the queue alone
+    menu = app.song_menu(app.by_path[umbrella])
+    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) == "command"]
+    assert "Play Next" in labels and "Add to Queue" in labels, labels
+    app.queue_songs([umbrella], first=True); root.update()
+    assert [t.display_title for t in app.up_next.list.rows] == ["Umbrella Weather", "Midnight Sun", "Polar Drift"]
+    assert app._auto_next() == umbrella and app.queue.queued == [umbrella]
+    app.queue.queued.clear(); app._update_next(); app.up_next.refresh()
     # the like button of the bar
     app.toggle_like_current()
     assert app.bar.heart.filled and glacier in playerstate.load().liked
