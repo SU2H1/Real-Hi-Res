@@ -25,7 +25,8 @@ from .playqueue import Song, number
 
 LIBRARY_ENV = "REALHIRES_LIBRARY"
 DB_NAME = "library.sqlite"
-LIBRARY_VERSION = 1
+LIBRARY_VERSION = 2  # 2: composer tags (older indexes are read again once)
+MIN_LOGGED_SECONDS = 1.0  # shorter listening is not written to the play history
 
 
 def default_path() -> str:
@@ -42,6 +43,7 @@ class Track:
     album: str = ""
     album_artist: str = ""
     genre: str = ""
+    composer: str = ""
     disc: int = 0
     track: int = 0
     year: str = ""
@@ -105,7 +107,8 @@ def track_from_info(info, size: int = 0, mtime_ns: int = 0) -> Track:
     bits = 0 if info.is_lossy else (info.claimed_bits or (32 if info.is_float else 0))
     return Track(path=info.path, title=tags.get("title", ""), artist=tags.get("artist", ""),
                  album=tags.get("album", ""), album_artist=tags.get("album_artist", ""),
-                 genre=tags.get("genre", ""), disc=number(tags.get("disc")), track=number(tags.get("track")),
+                 genre=tags.get("genre", ""), composer=tags.get("composer", ""),
+                 disc=number(tags.get("disc")), track=number(tags.get("track")),
                  year=(tags.get("date", "") or "")[:4], duration=float(info.duration or 0.0), codec=info.codec,
                  sample_rate=int(info.sample_rate or 0), bits=int(bits or 0), is_float=bool(info.is_float),
                  is_lossy=bool(info.is_lossy), channels=int(info.channels or 0),
@@ -122,7 +125,11 @@ class Library:
         self.db.execute("CREATE TABLE IF NOT EXISTS tracks (path TEXT PRIMARY KEY, size INTEGER, "
                         "mtime_ns INTEGER, data TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-        self.db.execute("INSERT OR IGNORE INTO meta VALUES ('version', ?)", (str(LIBRARY_VERSION),))
+        self.db.execute(_PLAYS_TABLE)
+        row = self.db.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
+        if row is not None and _int(row[0]) < LIBRARY_VERSION:
+            self.db.execute("DELETE FROM tracks")  # read every file again for the new tags
+        self.db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)", (str(LIBRARY_VERSION),))
         self.db.commit()
 
     def close(self) -> None:
@@ -185,6 +192,42 @@ class Library:
         self.db.commit()
         return self.tracks()
 
+    # ---------------------------------------------------------- history ---
+    def add_play(self, t: Track, started: float, seconds: float) -> bool:
+        """Log that `t` was listened to for `seconds` from `started` (Unix time).
+        A copy of its tags is kept, so the statistics survive moved files."""
+        if seconds < MIN_LOGGED_SECONDS:
+            return False
+        self.db.execute("INSERT INTO plays (path, started, seconds, duration, title, artist, album, album_artist, "
+                        "genre, year, composer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (t.path, float(started), float(seconds), float(t.duration or 0.0), t.display_title,
+                         t.artist, t.album, t.album_artist, t.genre, t.year, t.composer))
+        self.db.commit()
+        return True
+
+    def plays(self, since: float = 0.0, until: Optional[float] = None) -> List["Play"]:
+        """The logged plays that started in [since, until), oldest first."""
+        from .stats import Play
+
+        q = ("SELECT path, started, seconds, duration, title, artist, album, album_artist, genre, year, composer "
+             "FROM plays WHERE started >= ?")
+        args: list = [float(since)]
+        if until is not None:
+            q += " AND started < ?"
+            args.append(float(until))
+        return [Play(*row) for row in self.db.execute(q + " ORDER BY started, id", args)]
+
+    def recently_played(self, limit: int = 200) -> List[str]:
+        """The songs played last, newest first, each once."""
+        return [p for (p, _) in self.db.execute(
+            "SELECT path, MAX(started) AS last FROM plays GROUP BY path ORDER BY last DESC, path LIMIT ?",
+            (int(limit),))]
+
+    def clear_history(self) -> int:
+        n = self.db.execute("DELETE FROM plays").rowcount
+        self.db.commit()
+        return n
+
     def update_file(self, path: str) -> None:
         """A file was changed by Real-Hi-Res (lyrics embedded, fixed): read it again."""
         from .probe import probe
@@ -195,6 +238,18 @@ class Library:
             self.db.commit()
         except Exception:  # noqa: BLE001
             pass
+
+
+_PLAYS_TABLE = ("CREATE TABLE IF NOT EXISTS plays (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT, "
+                "started REAL, seconds REAL, duration REAL, title TEXT, artist TEXT, album TEXT, "
+                "album_artist TEXT, genre TEXT, year TEXT, composer TEXT)")
+
+
+def _int(text) -> int:
+    try:
+        return int(str(text).strip())
+    except ValueError:
+        return 0
 
 
 def library_files(cfg) -> List[str]:
@@ -225,12 +280,13 @@ def albums(tracks: Iterable[Track]) -> List[dict]:
     return sorted(out, key=lambda a: (a["title"].casefold(), a["artist"].casefold()))
 
 
-def artists(tracks: Iterable[Track]) -> List[dict]:
-    """{"name", "tracks"} per artist (album artist first), sorted by name."""
+def _group_by(tracks: Iterable[Track], name_of: Callable[[Track], str]) -> List[dict]:
+    """{"name", "tracks"} per name (the same name in any case is one group), the
+    songs sorted by title, the groups by name."""
     groups: Dict[str, List[Track]] = {}
     names: Dict[str, str] = {}
     for t in tracks:
-        name = t.album_artist or t.display_artist
+        name = name_of(t)
         key = name.strip().casefold()
         groups.setdefault(key, []).append(t)
         names.setdefault(key, name)
@@ -238,13 +294,50 @@ def artists(tracks: Iterable[Track]) -> List[dict]:
                   key=lambda a: a["name"].casefold())
 
 
+def artists(tracks: Iterable[Track]) -> List[dict]:
+    """{"name", "tracks"} per performing artist (the track's artist), sorted by name."""
+    return _group_by(tracks, lambda t: t.display_artist)
+
+
+def album_artists(tracks: Iterable[Track]) -> List[dict]:
+    """{"name", "tracks"} per album artist (else the track's artist), sorted by name."""
+    return _group_by(tracks, lambda t: t.album_artist.strip() or t.display_artist)
+
+
 def genres(tracks: Iterable[Track]) -> List[dict]:
-    groups: Dict[str, List[Track]] = {}
-    names: Dict[str, str] = {}
+    return _group_by(tracks, lambda t: t.genre.strip() or "Unknown Genre")
+
+
+def composers(tracks: Iterable[Track]) -> List[dict]:
+    return _group_by(tracks, lambda t: t.composer.strip() or "Unknown Composer")
+
+
+def years(tracks: Iterable[Track]) -> List[dict]:
+    """{"name", "tracks"} per year, newest first, "Unknown Year" last."""
+    groups = _group_by(tracks, lambda t: t.year if len(t.year) == 4 and t.year.isascii() and t.year.isdigit()
+                       else "Unknown Year")
+    return sorted(groups, key=lambda g: (g["name"] == "Unknown Year", -_int(g["name"]), g["name"]))
+
+
+def album_sorted(tracks: Iterable[Track]) -> List[Track]:
+    """Disc, track number, title (as on an album)."""
+    return sorted(tracks, key=lambda t: (t.disc or 9999, t.track or 9999, t.display_title.casefold(), t.path))
+
+
+def folder_view(tracks: Iterable[Track], folder: str) -> tuple:
+    """(subfolders, songs) of `folder`: the folders right under it that hold songs,
+    as (path, name, number of songs in it and below), sorted by name, and the
+    songs directly in it, in album order."""
+    folder = os.path.abspath(folder)
+    prefix = folder.rstrip(os.sep) + os.sep
+    subs: Dict[str, int] = {}
+    here: List[Track] = []
     for t in tracks:
-        name = t.genre.strip() or "Unknown Genre"
-        key = name.casefold()
-        groups.setdefault(key, []).append(t)
-        names.setdefault(key, name)
-    return sorted(({"name": names[k], "tracks": sort_songs(v)} for k, v in groups.items()),
-                  key=lambda a: a["name"].casefold())
+        d = os.path.dirname(t.path)
+        if d == folder:
+            here.append(t)
+        elif t.path.startswith(prefix):
+            child = os.path.join(folder, t.path[len(prefix):].split(os.sep, 1)[0])
+            subs[child] = subs.get(child, 0) + 1
+    folders = sorted(((p, os.path.basename(p), n) for p, n in subs.items()), key=lambda x: (x[1].casefold(), x[0]))
+    return folders, album_sorted(here)

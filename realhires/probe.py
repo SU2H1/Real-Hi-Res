@@ -207,6 +207,7 @@ _TAG_ALIASES = {
     "disc": ("disc", "discnumber", "tpos"),
     "date": ("date", "year", "icrd"),
     "genre": ("genre", "ignr"),
+    "composer": ("composer", "tcom", "wm/composer", "\xa9wrt"),
 }
 
 

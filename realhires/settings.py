@@ -29,7 +29,8 @@ ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NO
 COLORMAPS = ["inferno", "viridis", "magma", "gray"]
 LYRICS_SAVE_CHOICES = ["An .lrc file next to the song", "Inside the audio file (MP3, FLAC)",
                        "Both: .lrc file and inside the audio file", "Plain lyrics inside the audio file (no timing)"]
-THEMES = ["Match the system", "Light", "Dark"]
+# the built-in theme names (2.0); the full list, with the user's own themes, is themes.names()
+THEMES = ["Match the system", "Light", "Dark", "Midnight", "Graphite", "Forest", "Ocean", "Sepia", "Rose"]
 DEFAULT_EXTENSIONS = (".flac .wav .wave .w64 .rf64 .aif .aiff .aifc .caf .m4a .mp4 .alac .ape .wv "
                       ".tta .tak .dsf .dff .mka .ogg .oga .opus .mp3 .aac .wma .mpc .ac3 .dts")
 
@@ -76,8 +77,9 @@ class Settings:
         "(SF Pro may only be used on Apple systems). Any font installed on your computer can be chosen.",
         kind="str")
     theme: str = _f(
-        "Match the system", "Appearance", "Appearance",
-        "Light or dark, or the same as the system.", choices=THEMES, kind="choice")
+        "Match the system", "Appearance", "Theme",
+        "The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme "
+        "(Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose) or one of your own themes.", kind="str")
 
     # ---- Detection ------------------------------------------------------
     cliff_db: float = _f(

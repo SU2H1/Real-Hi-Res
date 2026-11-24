@@ -6,7 +6,8 @@ playback was started from, shuffled), "library" (every song in the library),
 artist or album).  Repeat modes: "off" (stop at the end), "song" (play the
 current song again when it ends), "album" (start the current album again when
 it ends) and "stop" (stop when the current song ends; it then switches back to
-"off").
+"off").  Disliked songs (`disliked`) are left out whenever the order is
+shuffled, unless one of them is the song that was chosen.
 
 The shuffled order comes from SplitMix64 and a Fisher-Yates shuffle with a
 seed, so the Rust version (`rust/crates/core/src/playqueue.rs`) plays exactly
@@ -17,7 +18,7 @@ holds this module's answers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 SHUFFLE_MODES = ["off", "songs", "library", "genre", "artist", "album"]
 SHUFFLE_LABELS = {"off": "Off", "songs": "Songs in this list", "library": "All songs in the library",
@@ -99,6 +100,7 @@ class PlayQueue:
     seed: int = 0
     order: List[str] = field(default_factory=list)
     pos: int = 0
+    disliked: Set[str] = field(default_factory=set)
 
     def __post_init__(self):
         self.by_path: Dict[str, Song] = {s.path: s for s in self.library}
@@ -143,7 +145,7 @@ class PlayQueue:
                 i = pool.index(path)
                 return pool[i + 1:]
             return pool
-        return shuffled([p for p in pool if p != path], self.rng)
+        return shuffled([p for p in pool if p != path and p not in self.disliked], self.rng)
 
     def set_shuffle(self, mode: str) -> None:
         self.shuffle = mode if mode in SHUFFLE_MODES else "off"

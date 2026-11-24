@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import cmath
 import copy
+import json
 import math
+import re
 from typing import Dict, List, Optional, Tuple
 
 GRAPHIC_FREQS = [32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
@@ -274,3 +276,166 @@ class Biquad:
         self.z1[ch] = b1 * x - a1 * y + self.z2[ch]
         self.z2[ch] = b2 * x - a2 * y
         return y
+
+
+# ------------------------------------------------------------- preset files ---
+# The user's named presets are kept in the player state (`playerstate.py`).
+# They can be exported and imported as Real-Hi-Res's own JSON, or as the text
+# that Equalizer APO reads and AutoEQ publishes for headphones
+# ("ParametricEQ.txt": "Preamp: -6.2 dB" and "Filter 1: ON PK Fc 105 Hz Gain
+# 3.5 dB Q 0.70" lines; "GraphicEQ: 20 -1.2; 32 0.5; ..." is read too).
+EQ_FILE_FORMAT = "real-hi-res-eq"
+APO_TYPES = {"peak": "PK", "low_shelf": "LSC", "high_shelf": "HSC", "low_pass": "LPQ", "high_pass": "HPQ",
+             "notch": "NO"}
+_APO_IN = {"PK": "peak", "PEQ": "peak", "MODAL": "peak", "LS": "low_shelf", "LSC": "low_shelf", "LSQ": "low_shelf",
+           "HS": "high_shelf", "HSC": "high_shelf", "HSQ": "high_shelf", "LP": "low_pass", "LPQ": "low_pass",
+           "HP": "high_pass", "HPQ": "high_pass", "NO": "notch"}
+
+
+class EqFileError(ValueError):
+    """A file that is not an equalizer preset Real-Hi-Res can read."""
+
+
+def export_json(name: str, state: dict) -> str:
+    """A preset as Real-Hi-Res's own .json file."""
+    data = {"format": EQ_FILE_FORMAT, "version": 1, "name": name, "eq": normalize(state)}
+    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def export_apo(name: str, state: dict) -> str:
+    """A preset as Equalizer APO / AutoEQ text: the pre-amp, then one filter per
+    band of the graphic (only bands that are not 0 dB) and the parametric EQ."""
+    s = normalize(state)
+    s["enabled"] = True
+    lines = [f"# {name}", "# Equalizer preset exported by Real-Hi-Res", f"Preamp: {preamp_db(s):.1f} dB"]
+    n = 0
+    if s["graphic"]["enabled"]:
+        for f, g in zip(GRAPHIC_FREQS, s["graphic"]["gains"]):
+            if abs(g) >= 1e-9:
+                n += 1
+                lines.append(f"Filter {n}: ON PK Fc {f:.1f} Hz Gain {g:.1f} dB Q {GRAPHIC_Q:.2f}")
+    if s["parametric"]["enabled"]:
+        for b in s["parametric"]["bands"]:
+            n += 1
+            gain = f" Gain {b['gain']:.1f} dB" if b["type"] in GAIN_TYPES else ""
+            lines.append(f"Filter {n}: {'ON' if b['on'] else 'OFF'} {APO_TYPES[b['type']]} Fc {b['freq']:.1f} Hz"
+                         f"{gain} Q {b['q']:.2f}")
+    return "\n".join(lines) + "\n"
+
+
+def _float(text: str) -> Optional[float]:
+    try:
+        v = float(text.replace(",", "."))
+    except ValueError:
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _graphic_from_points(points: List[Tuple[float, float]]) -> List[float]:
+    """The ten graphic bands sampled from a GraphicEQ curve (straight lines on a log axis)."""
+    pts = sorted(p for p in points if p[0] > 0)
+    out = []
+    for f in GRAPHIC_FREQS:
+        if f <= pts[0][0]:
+            g = pts[0][1]
+        elif f >= pts[-1][0]:
+            g = pts[-1][1]
+        else:
+            g = pts[0][1]
+            for (f0, g0), (f1, g1) in zip(pts, pts[1:]):
+                if f0 <= f <= f1:
+                    g = g0 if f1 == f0 else g0 + (g1 - g0) * math.log(f / f0) / math.log(f1 / f0)
+                    break
+        out.append(_num(g, 0.0, -GAIN_LIMIT_DB, GAIN_LIMIT_DB))
+    return out
+
+
+def import_eq(text: str, fallback_name: str = "Imported") -> Tuple[str, dict, List[str]]:
+    """(name, state, notes) from the text of a preset file; notes say what had
+    to be left out or limited.  Raises EqFileError for anything else."""
+    text = text.lstrip("﻿")
+    notes: List[str] = []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        if "eq" in data and isinstance(data["eq"], dict):
+            name = data.get("name") if isinstance(data.get("name"), str) and data.get("name").strip() else fallback_name
+            return name.strip(), normalize(data["eq"]), notes
+        if "graphic" in data or "parametric" in data:
+            return fallback_name, normalize(data), notes
+        raise EqFileError("This .json file is not an equalizer preset of Real-Hi-Res.")
+    preamp = 0.0
+    bands: List[dict] = []
+    graphic: Optional[List[float]] = None
+    skipped_types: List[str] = []
+    found = False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        m = re.match(r"(?i)^preamp\s*:\s*([-+]?[\d.,]+)\s*db", line)
+        if m:
+            v = _float(m.group(1))
+            if v is not None:
+                preamp += v
+                found = True
+            continue
+        m = re.match(r"(?i)^graphiceq\s*:\s*(.*)$", line)
+        if m:
+            points = []
+            for part in m.group(1).split(";"):
+                xs = part.split()
+                if len(xs) == 2 and _float(xs[0]) is not None and _float(xs[1]) is not None:
+                    points.append((_float(xs[0]), _float(xs[1])))
+            if points:
+                graphic = _graphic_from_points(points)
+                found = True
+            continue
+        m = re.match(r"(?i)^filter\s*\d*\s*:\s*(on|off)\s+([a-z]+)\s*(.*)$", line)
+        if not m:
+            continue
+        found = True
+        kind = _APO_IN.get(m.group(2).upper())
+        if kind is None:
+            if m.group(2).upper() not in skipped_types:
+                skipped_types.append(m.group(2).upper())
+            continue
+        rest = m.group(3)
+        fc = re.search(r"(?i)\bfc\s+([-+]?[\d.,]+)\s*hz", rest)
+        gain = re.search(r"(?i)\bgain\s+([-+]?[\d.,]+)\s*db", rest)
+        q = re.search(r"(?i)\bq\s+([\d.,]+)", rest)
+        bw = re.search(r"(?i)\bbw\s+oct\s+([\d.,]+)", rest)
+        if fc is None or _float(fc.group(1)) is None:
+            continue
+        qv = _float(q.group(1)) if q else None
+        if qv is None and bw is not None and _float(bw.group(1)):
+            n = 2.0 ** _float(bw.group(1))
+            qv = math.sqrt(n) / (n - 1.0)
+        if qv is None:
+            qv = math.sqrt(0.5) if kind in ("low_shelf", "high_shelf", "low_pass", "high_pass") else 1.0
+        bands.append(normalize_band({"type": kind, "freq": _float(fc.group(1)),
+                                     "gain": (_float(gain.group(1)) or 0.0) if gain else 0.0, "q": qv,
+                                     "on": m.group(1).lower() == "on"}))
+    if not found:
+        raise EqFileError("This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json "
+                          "presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ).")
+    if skipped_types:
+        notes.append(f"Filters of the type {', '.join(skipped_types)} are not supported and were left out.")
+    if len(bands) > MAX_PARAMETRIC_BANDS:
+        notes.append(f"The file has {len(bands)} filters; the first {MAX_PARAMETRIC_BANDS} were imported.")
+        bands = bands[:MAX_PARAMETRIC_BANDS]
+    if abs(preamp) > GAIN_LIMIT_DB:
+        notes.append(f"The pre-amp of {preamp:.1f} dB was limited to {GAIN_LIMIT_DB:.0f} dB.")
+    state = default_state()
+    state["enabled"] = True
+    if graphic is not None:
+        state["graphic"].update({"enabled": True, "gains": graphic, "preset": preset_name(graphic),
+                                 "preamp": _num(preamp if not bands else 0.0, 0.0, -GAIN_LIMIT_DB, GAIN_LIMIT_DB)})
+    else:
+        state["graphic"]["enabled"] = False
+    if bands:
+        state["parametric"] = {"enabled": True, "preamp": _num(preamp, 0.0, -GAIN_LIMIT_DB, GAIN_LIMIT_DB),
+                               "bands": bands}
+    return fallback_name, normalize(state), notes
