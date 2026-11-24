@@ -30,7 +30,8 @@ inside the audio file, both, or as plain lyrics inside the file (`lyrics_save_as
   quality badge ("Hi-Res Lossless", "Lossless", or the codec and bit rate, `musiclib.quality()`); right: the heart
   (like the current song), Lyrics (toggles the Now Playing view), Up Next (toggles the queue panel), EQ (opens the
   equalizer window), and the volume: a speaker icon (click mutes) and a slider. When nothing plays, the LCD shows
-  the app name in grey and every control except Play is disabled; Play then plays the songs of the page shown.
+  the app name in grey and Previous, Next and the heart are disabled (volume, EQ, Lyrics and Up Next stay usable);
+  Play then plays the songs of the page shown.
 - **Icons** are drawn as vector shapes (Tk Canvas, egui painter), never emoji or rare Unicode symbols, which several
   Linux fonts cannot show. A mode that is on (shuffle not off, repeat not off) is drawn in the accent colour; repeat
   song adds a small "1", stop after this song draws a small square.
