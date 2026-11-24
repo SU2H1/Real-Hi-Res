@@ -272,8 +272,18 @@ with open(os.path.join(OUT, "python_themes.json"), "w", encoding="utf-8") as fh:
 messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume": "0.4",
          "eq_presets": [{"name": " Night  Mode ", "eq": mixed}, {"name": "night mode", "eq": {}}, {"name": ""}, 7],
          "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
-                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}]}
+                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}],
+         "lyrics_size": "31.5"}
 ps = playerstate.PlayerState.from_json(messy)
+# Now Playing's lyrics size (A− / A+): what player.json may hold, and the steps
+sizes = [[v, playerstate.PlayerState.from_json({"lyrics_size": v}).lyrics_size]
+         for v in (26, 30, "30", " 31 ", 12, 60, 25.5, 26.5, 27.5, 30.49, True, None, "x", [], {}, -5, 1e308,
+                   float("nan"), float("inf"), "inf")]
+size_steps = []
+for start in (26, 47, 48, 16, 17, 99, "x"):
+    for steps in (1, -1, 3, -20):
+        st = playerstate.PlayerState(lyrics_size=start)
+        size_steps.append([start, steps, st.step_lyrics_size(steps), playerstate.plain_lyrics_size(st.lyrics_size)])
 ops = playerstate.PlayerState()
 pid = ops.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)
 pid2 = ops.create_playlist("road trip", now=1000.0)
@@ -286,6 +296,8 @@ ops.set_disliked("/m/z", True)
 ops.save_eq_preset("  My   Jazz ", eq.apply_preset(eq.default_state(), "Jazz"))
 ops.save_eq_preset("Other", eq.default_state())
 ops.rename_eq_preset("Other", "Bright")
+ops.step_lyrics_size(1)
+ops.step_lyrics_size(1)
 errors = []
 for name in ("rock", "my jazz", "", "  "):
     try:
@@ -294,7 +306,10 @@ for name in ("rock", "my jazz", "", "  "):
     except playerstate.InvalidName as exc:
         errors.append([name, str(exc)])
 with open(os.path.join(OUT, "python_playerstate.json"), "w", encoding="utf-8") as fh:
-    json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors},
+    json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors,
+               "lyrics_sizes": sizes, "lyrics_size_steps": size_steps,
+               "lyrics_size_limits": [playerstate.LYRICS_SIZE_MIN, playerstate.LYRICS_SIZE_DEFAULT,
+                                      playerstate.LYRICS_SIZE_MAX, playerstate.LYRICS_SIZE_STEP]},
               fh, indent=0, ensure_ascii=False)
 print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", len(plays), "plays,",
       len(imports), "EQ files")

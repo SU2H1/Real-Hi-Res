@@ -5,14 +5,14 @@ Quality check page is the 1.x scanner, `gui.App`)."""
 from __future__ import annotations
 
 import os
-import time
 import tkinter as tk
 from tkinter import ttk
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from . import APP_NAME, embed
 from . import lyrics as lyrics_mod
 from . import musiclib
+from . import playerstate
 from . import settings as settings_mod
 from .musiclib import Track
 from .player_theme import DEFAULT_FONT_LABEL, IconButton, PillButton, Theme, fit_text, font_families, round_rect
@@ -485,18 +485,194 @@ class SearchPage(Page):
 
 
 # ---------------------------------------------------------- now playing ---
+NP_TABS = (("lyrics", "Lyrics"), ("upnext", "Up Next"), ("details", "Details"))
+
+
+def fit_pair(font, a: str, sep: str, b: str, width: int, cache: Optional[dict] = None) -> tuple:
+    """`a`, `b` cut with "…" so that "a sep b" fits in `width` pixels; the shorter keeps
+    its room and the longer gets the rest (each at least half)."""
+    aw, sw, bw = font.measure(a), font.measure(sep), font.measure(b)
+    if aw + sw + bw <= width:
+        return a, b
+    room = max(0, width - sw)
+    if aw <= room / 2:
+        return a, fit_text(font, b, int(room - aw), cache)
+    if bw <= room / 2:
+        return fit_text(font, a, int(room - bw), cache), b
+    return fit_text(font, a, int(room / 2), cache), fit_text(font, b, int(room / 2), cache)
+
+
+def artist_line(font, artists: List[str], album_link: Optional[str], album: str, width: int,
+                cache: Optional[dict] = None) -> List[tuple]:
+    """"Artist, Artist — Album" in pieces (text, link, artist name): each artist its own
+    link ("artist"), the album name a link ("album_name") when `album_link` is given, the
+    separators plain; cut with "…" to fit in `width` pixels (the shorter part keeps its room)."""
+    sep = " — "
+    joined, album_shown = fit_pair(font, ", ".join(artists), sep, album, width, cache)
+    budget = font.measure(joined)
+    pieces: List[tuple] = []
+    used = 0
+    for i, name in enumerate(artists):
+        for text, what in (((", ", ""),) if i else ()) + ((name, "artist"),):
+            w = font.measure(text)
+            if used + w <= budget:
+                pieces.append((text, what, name if what else None))
+                used += w
+                continue
+            cut = fit_text(font, text, int(budget - used), cache) if what else ""
+            if cut:
+                pieces.append((cut, what, name))
+            elif pieces and pieces[-1][1]:  # no room for ", ": the last name ends with "…"
+                last = pieces[-1]
+                pieces[-1] = (fit_text(font, last[0] + "…", font.measure(last[0]), cache), last[1], last[2])
+            break
+        else:
+            continue
+        break
+    pieces.append((sep, "", None))
+    pieces.append((album_shown, "album_name" if album_link is not None else "", None))
+    return pieces
+
+
+def format_line(t: Track) -> str:
+    """Details' format line: "FLAC · 24-bit/96 kHz · 2,304 kbps" (lossy: "MP3 · 44.1 kHz ·
+    320 kbps"); parts that are unknown are left out."""
+    parts = [t.codec.upper()] if t.codec else []
+    khz = f"{t.sample_rate / 1000:g} kHz" if t.sample_rate else ""
+    if khz:
+        if t.is_lossy or not t.bits:
+            parts.append(khz)
+        else:
+            parts.append(f"{t.bits}-bit{' float' if t.is_float else ''}/{khz}")
+    if t.bit_rate:
+        parts.append(f"{round(t.bit_rate / 1000):,} kbps")
+    return " · ".join(parts) or "—"
+
+
+def song_details(t: Track, album_tracks: int, comment: str, verdict: Optional[tuple],
+                 artists: Optional[List[str]] = None) -> List[tuple]:
+    """Now Playing's Details: (label, value) rows.  `verdict` is (verdict label, summary)
+    of a saved Quality check result, or None; `artists` the artists of the artist field
+    (`musiclib.split_artists()`), shown as ", "-joined links."""
+    dash = "—"
+    if t.track and album_tracks >= t.track and album_tracks > 1:
+        track_no = f"{t.track} of {album_tracks}"
+    else:
+        track_no = str(t.track) if t.track else dash
+    artist = ", ".join(artists) if artists and t.artist else t.artist
+    rows = [("Title", t.display_title), ("Artist", artist or dash), ("Album", t.album or dash),
+            ("Album artist", t.album_artist or dash), ("Composer", t.composer or dash), ("Genre", t.genre or dash),
+            ("Year", t.year or dash), ("Track", track_no), ("Disc", str(t.disc) if t.disc else dash),
+            ("Duration", fmt_time(t.duration)), ("Format", format_line(t)), ("File", t.path)]
+    if comment.strip():
+        rows.append(("Comment", comment.strip()))
+    if verdict is None:
+        rows.append(("Quality check", "Not checked yet"))
+    else:
+        rows.append(("Quality check", verdict[0]))
+        if verdict[1]:
+            rows.append(("Why", verdict[1]))
+    return rows
+
+
+def read_comment(path: str) -> str:
+    """The comment tag of a song ("" when it has none, or the file cannot be read); ffprobe,
+    so call it off the window's thread."""
+    import json
+    import subprocess
+
+    from .probe import _no_window, tool
+
+    try:
+        out = subprocess.run([tool("ffprobe"), "-v", "error", "-show_entries", "format_tags:stream_tags",
+                              "-of", "json", path], capture_output=True, timeout=20, **_no_window()).stdout
+        data = json.loads(out.decode("utf-8", "replace") or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+    for src in [data.get("format", {})] + list(data.get("streams", [])):
+        for k, v in (src.get("tags") or {}).items():
+            if k.strip().casefold() == "comment" and isinstance(v, str) and v.strip():
+                return v.strip()
+    return ""
+
+
+class Segmented(tk.Canvas):
+    """A segmented switch (Now Playing's Lyrics | Up Next | Details): a rounded panel in the
+    LCD colour, the chosen segment raised in the page colour."""
+
+    H = 30
+
+    def __init__(self, master, theme: Theme, options, command: Callable[[str], None], value: str = ""):
+        super().__init__(master, height=self.H, width=300, highlightthickness=0, bd=0)
+        self.theme, self.options, self.command = theme, list(options), command
+        self.value = value or self.options[0][0]
+        self.hover: Optional[str] = None
+        self.boxes: List[tuple] = []
+        theme.reg(self, bg="bg")
+        theme.on_change(self.redraw, self)
+        self.bind("<Motion>", lambda e: self._hov(self._at(e.x)))
+        self.bind("<Leave>", lambda e: self._hov(None))
+        self.bind("<ButtonRelease-1>", self._click)
+        self.redraw()
+
+    def _at(self, x: float) -> Optional[str]:
+        return next((k for k, x0, x1 in self.boxes if x0 <= x <= x1), None)
+
+    def _hov(self, key: Optional[str]) -> None:
+        if key != self.hover:
+            self.hover = key
+            self.configure(cursor="hand2" if key and key != self.value else "")
+            self.redraw()
+
+    def _click(self, e) -> None:
+        key = self._at(e.x)
+        if key is not None:
+            self.choose(key)
+
+    def choose(self, key: str) -> None:
+        self.set(key)
+        self.command(key)
+
+    def set(self, key: str) -> None:
+        if key != self.value:
+            self.value = key
+            self.redraw()
+
+    def redraw(self) -> None:
+        t = self.theme
+        font = t.f("body_b")
+        seg = max(font.measure(text) for _, text in self.options) + 30
+        w = seg * len(self.options) + 4
+        self.configure(width=w)
+        self.delete("all")
+        round_rect(self, 0, 0, w, self.H, 9, fill=t.c("lcd"), outline="")
+        self.boxes = []
+        for i, (key, text) in enumerate(self.options):
+            x0, x1 = 2 + i * seg, 2 + (i + 1) * seg
+            self.boxes.append((key, x0, x1))
+            if key == self.value:
+                round_rect(self, x0, 2, x1, self.H - 2, 7, fill=t.c("bg"), outline="")
+            elif key == self.hover:
+                round_rect(self, x0, 2, x1, self.H - 2, 7, fill=t.c("hover"), outline="")
+            self.create_text((x0 + x1) / 2, self.H / 2, text=text, font=font,
+                             fill=t.c("text") if key == self.value else t.c("text2"))
+
+
 class LyricsView(tk.Canvas):
-    """Synced lyrics: every line, the current one bold in the text colour and the
-    others grey, kept about a third from the top unless the user scrolled in the
-    last 3 seconds; a click on a line seeks there.  Plain lyrics: the text."""
+    """Synced lyrics: every line, the current one bold in the text colour and the others
+    grey, kept about a third from the top; a click on a line seeks there.  When the user
+    scrolls the current line out of view, following stops and `on_away(True)` shows the
+    "Back to the current line" button until it is pressed (`back_to_line()`) or the user
+    scrolls the line back into view (2.1).  Plain lyrics: the text, scrollable.  Sizes
+    from the theme's lyrics fonts (A− / A+)."""
 
     PAD = 40
     GAP = 16
-    USER_HOLD_S = 3.0
 
-    def __init__(self, master, app: "PlayerApp"):
+    def __init__(self, master, app: "PlayerApp", on_away: Optional[Callable[[bool], None]] = None):
         super().__init__(master, highlightthickness=0, bd=0)
         self.app, self.theme = app, app.theme
+        self.on_away = on_away
         self.theme.reg(self, bg="bg")
         self.kind = ""
         self.entries: List[tuple] = []
@@ -508,7 +684,8 @@ class LyricsView(tk.Canvas):
         self.offset = 0.0
         self.target = 0.0
         self.total = 1.0
-        self.user_time = 0.0
+        self.away = False      # the user scrolled the current line out of view
+        self.followed = -2     # the line scrolled to last (-2: none yet)
         self._anim: Optional[str] = None
         self.bind("<Configure>", lambda e: self.layout())
         self.bind("<Button-1>", self._click)
@@ -523,8 +700,15 @@ class LyricsView(tk.Canvas):
             self.kind, self.plain = lyrics_mod.PLAIN, lyrics_mod.strip_timestamps(text)
         else:
             self.plain = text if kind == lyrics_mod.PLAIN else ""
-        self.current, self.offset, self.target, self.user_time = -1, 0.0, 0.0, 0.0
+        self.current, self.offset, self.target, self.followed = -1, 0.0, 0.0, -2
+        self._set_away(False)
         self.layout()
+
+    def _set_away(self, away: bool) -> None:
+        if away != self.away:
+            self.away = away
+            if self.on_away is not None:
+                self.on_away(away)
 
     def layout(self) -> None:
         t = self.theme
@@ -534,7 +718,7 @@ class LyricsView(tk.Canvas):
         if W <= 1:
             return
         width = max(100, W - 2 * self.PAD)
-        y = self.PAD
+        y = self.PAD / 2
         if self.kind == lyrics_mod.SYNCED:
             bold, normal = t.f("lyrics_b"), t.f("lyrics")
             for i, (_, line) in enumerate(self.entries):
@@ -558,12 +742,30 @@ class LyricsView(tk.Canvas):
             y += (box[3] - box[1]) if box else 0
         self.total = y + self.PAD + (H * 2 / 3 if self.kind == lyrics_mod.SYNCED else 0)
         self.configure(scrollregion=(0, 0, W, max(self.total, H)))
-        self._scroll_to(self.offset)
+        if self.kind == lyrics_mod.SYNCED and not self.away:
+            self._scroll_to(self._line_target())  # the current line stays where it was
+            self.target = self.offset
+        else:
+            self._scroll_to(self.offset)
 
     def _scroll_to(self, offset: float) -> None:
         H = self.winfo_height()
         self.offset = min(max(offset, 0.0), max(0.0, self.total - H))
         self.yview_moveto(self.offset / max(self.total, H, 1))
+
+    def _line_target(self) -> float:
+        """The offset that shows the current line a third from the top."""
+        if 0 <= self.current < len(self.tops):
+            return self.tops[self.current] + self.heights[self.current] / 2 - self.winfo_height() / 3
+        return 0.0
+
+    def line_in_view(self) -> bool:
+        """The current line (the first one before it starts) is wholly in view."""
+        i = self.current if 0 <= self.current < len(self.tops) else 0
+        if not self.tops:
+            return True
+        return self.offset - 1 <= self.tops[i] and self.tops[i] + self.heights[i] <= self.offset + \
+            self.winfo_height() + 1
 
     def update_position(self, seconds: float) -> None:
         if self.kind != lyrics_mod.SYNCED or not self.entries:
@@ -582,20 +784,20 @@ class LyricsView(tk.Canvas):
             self.current = idx
             if 0 <= idx < len(self.items):
                 self.itemconfigure(self.items[idx], font=t.f("lyrics_b"), fill=t.c("text"))
-        if time.monotonic() - self.user_time < self.USER_HOLD_S:
+        if self.away:
+            if self.line_in_view():  # the user scrolled the current line back into view
+                self.followed = self.current
+                self._set_away(False)
             return
-        if 0 <= self.current < len(self.tops):
-            target = self.tops[self.current] + self.heights[self.current] / 2 - self.winfo_height() / 3
-        else:
-            target = 0.0
-        if abs(target - self.target) > 0.5 or abs(self.offset - target) > 0.5:
-            self.target = target
-            if self._anim is None:
+        if self.current != self.followed:  # a new line: scroll it smoothly to a third from the top
+            self.followed = self.current
+            self.target = self._line_target()
+            if self._anim is None and abs(self.target - self.offset) > 0.5:
                 self._animate()
 
     def _animate(self) -> None:
         self._anim = None
-        if time.monotonic() - self.user_time < self.USER_HOLD_S:
+        if self.away:
             return
         diff = self.target - self.offset
         if abs(diff) < 0.6:
@@ -604,9 +806,30 @@ class LyricsView(tk.Canvas):
         self._scroll_to(self.offset + diff * 0.18)
         self._anim = self.after(16, self._animate)
 
+    def _stop_animation(self) -> None:
+        if self._anim is not None:
+            self.after_cancel(self._anim)
+            self._anim = None
+
     def _wheel(self, n: int) -> None:
-        self.user_time = time.monotonic()
-        self._scroll_to(self.offset + n * 48)
+        self.scroll_by(n * 48)
+
+    def scroll_by(self, pixels: float) -> None:
+        """The user scrolls: following stops while the current line is out of view."""
+        self._stop_animation()
+        self._scroll_to(self.offset + pixels)
+        self.target = self.offset
+        if self.kind == lyrics_mod.SYNCED and self.entries:
+            self.followed = self.current
+            self._set_away(not self.line_in_view())
+
+    def back_to_line(self) -> None:
+        """The "Back to the current line" button: there at once, and following again."""
+        self._stop_animation()
+        self._scroll_to(self._line_target())
+        self.target = self.offset
+        self.followed = self.current
+        self._set_away(False)
 
     def _line_at(self, e) -> Optional[int]:
         y = self.canvasy(e.y)
@@ -623,15 +846,116 @@ class LyricsView(tk.Canvas):
             return
         i = self._line_at(e)
         if i is not None:
-            self.user_time = 0.0
+            self.followed = -2  # follow the line clicked
+            self._set_away(False)
             self.app.seek(self.entries[i][0] / 1000.0)
 
 
+class DetailsView(tk.Canvas):
+    """Now Playing's Details: two columns, the labels grey on the left, scrollable.  The
+    artists of the Artist row are links (`on_artist(name)`)."""
+
+    PAD = 28
+
+    def __init__(self, master, theme: Theme, on_artist: Optional[Callable[[str], None]] = None):
+        super().__init__(master, highlightthickness=0, bd=0)
+        self.theme, self.on_artist = theme, on_artist
+        self.rows: List[tuple] = []
+        self.artists: List[str] = []
+        self.links: List[tuple] = []    # (x0, y0, x1, y1, artist) in canvas coordinates
+        self.hover: Optional[int] = None
+        self.offset = 0.0
+        self.total = 1.0
+        theme.reg(self, bg="bg")
+        self.bind("<Configure>", lambda e: self.layout())
+        self.bind("<Motion>", lambda e: self._hov(self._link_at(e)))
+        self.bind("<Leave>", lambda e: self._hov(None))
+        self.bind("<ButtonRelease-1>", self._click)
+        bind_wheel(self, lambda n: self._scroll_to(self.offset + n * 40))
+        theme.on_change(self.layout, self)
+
+    def set_rows(self, rows: List[tuple], artists: Optional[List[str]] = None) -> None:
+        artists = list(artists or [])
+        if rows != self.rows or artists != self.artists:
+            self.rows, self.artists = list(rows), artists
+            self.offset = 0.0
+            self.layout()
+
+    def _link_at(self, e) -> Optional[int]:
+        x, y = self.canvasx(e.x), self.canvasy(e.y)
+        return next((i for i, (x0, y0, x1, y1, _) in enumerate(self.links) if x0 <= x <= x1 and y0 <= y <= y1), None)
+
+    def _hov(self, i: Optional[int]) -> None:
+        if i != self.hover:
+            self.hover = i
+            self.configure(cursor="hand2" if i is not None else "")
+            self.delete("underline")
+            if i is not None and i < len(self.links):
+                x0, _, x1, y1, _ = self.links[i]
+                self.create_line(x0, y1 - 1, x1, y1 - 1, fill=self.theme.c("text"), tags="underline")
+
+    def _click(self, e) -> None:
+        i = self._link_at(e)
+        if i is not None and self.on_artist is not None:
+            self.on_artist(self.links[i][4])
+
+    def _artist_row(self, x: float, y: float, right: float) -> float:
+        """The Artist row as links, wrapped at `right`; returns its height."""
+        t = self.theme
+        font, line = t.f("body"), t.f("body").metrics("linespace")
+        x0, top = x, y
+        for i, name in enumerate(self.artists):
+            for text, link in (((", ", False),) if i else ()) + ((name, True),):
+                w = font.measure(text)
+                if x + w > right and x > x0 and link:
+                    x, y = x0, y + line
+                self.create_text(x, y, text=text, anchor="nw", font=font, fill=t.c("text"))
+                if link:
+                    self.links.append((x, y, x + w, y + line, name))
+                x += w
+        return y + line - top
+
+    def text(self) -> str:
+        return "\n".join(f"{k}: {v}" for k, v in self.rows)
+
+    def layout(self) -> None:
+        t = self.theme
+        self.delete("all")
+        W = self.winfo_width()
+        if W <= 1:
+            return
+        lf, vf = t.f("body"), t.f("body")
+        lw = max([lf.measure(k) for k, _ in self.rows] or [80]) + 18
+        y = self.PAD / 2
+        self.links, self.hover = [], None
+        for k, v in self.rows:
+            self.create_text(self.PAD, y, text=k, anchor="nw", font=lf, fill=t.c("text2"))
+            if k == "Artist" and self.artists and v == ", ".join(self.artists):
+                h = self._artist_row(self.PAD + lw, y, W - self.PAD)
+            else:
+                item = self.create_text(self.PAD + lw, y, text=v, anchor="nw", font=vf, fill=t.c("text"),
+                                        width=max(80, W - self.PAD * 2 - lw))
+                box = self.bbox(item)
+                h = (box[3] - box[1]) if box else 0
+            y += max(h, lf.metrics("linespace")) + 9
+        self.total = y + self.PAD
+        self.configure(scrollregion=(0, 0, W, max(self.total, self.winfo_height())))
+        self._scroll_to(self.offset)
+
+    def _scroll_to(self, offset: float) -> None:
+        H = self.winfo_height()
+        self.offset = min(max(offset, 0.0), max(0.0, self.total - H))
+        self.yview_moveto(self.offset / max(self.total, H, 1))
+
+
 class NowPlayingPage(Page):
-    """The cover on the left half and the lyrics on the right; without lyrics the
-    cover in the middle with the title, the artist and "Get lyrics"; with the lyrics
-    hidden (the Lyrics button on this page, `app.lyrics_hidden`) the cover in the middle
-    with the title and the artist."""
+    """The cover with the title and "Artist — Album" under it, as one block in the middle of
+    the left half (the album name opens the album, each artist name that artist, the cover
+    the Cover window);
+    on the right a switch Lyrics | Up Next | Details (`app.np_tab`).  Lyrics: a label
+    ("Synced lyrics" / "Lyrics (not synced)", where they come from), A− / A+ and the lyrics;
+    without lyrics "Get lyrics".  With the lyrics hidden (the Lyrics button on this page,
+    `app.lyrics_hidden`) only the block, in the middle of the page."""
 
     SIZES = (160, 200, 240, 280, 320, 360, 400, 440, 480)
 
@@ -640,15 +964,60 @@ class NowPlayingPage(Page):
         t = self.theme
         self.art = tk.Canvas(self, highlightthickness=0, bd=0)
         t.reg(self.art, bg="bg")
-        self.lyrics = LyricsView(self, app)
-        self.get_btn = PillButton(self.art, t, "Get lyrics", icon="lyrics", command=app.get_lyrics_current)
-        self.kind = ""
-        self.path: Optional[str] = None
+        self.links: List[tuple] = []          # (what, x0, y0, x1, y1) on the art canvas
+        self.hover_link: Optional[str] = None
         self.art.bind("<Configure>", lambda e: self.draw_art())
+        self.art.bind("<Motion>", self._art_motion)
+        self.art.bind("<Leave>", lambda e: self._art_hover(None))
+        self.art.bind("<ButtonRelease-1>", self._art_click)
+        self.right = frame(self, t)
+        self.switch = Segmented(self.right, t, NP_TABS, app.set_np_tab, app.np_tab)
+        self.switch.pack(side="top", pady=(18, 6))
+        self.body = frame(self.right, t)
+        self.body.pack(side="top", fill="both", expand=True)
+        # Lyrics
+        self.lyrics_pane = frame(self.body, t)
+        head = frame(self.lyrics_pane, t)
+        head.pack(side="top", fill="x", padx=(LyricsView.PAD, LyricsView.PAD - 8), pady=(6, 4))
+        self.kind_l = label(head, t, "", font="body_b")
+        self.kind_l.pack(side="left")
+        self.source_l = label(head, t, "", font="small", fg="text2")
+        self.source_l.pack(side="left", padx=(8, 0))
+        self.bigger = PillButton(head, t, "A+", kind="plain", height=26, command=lambda: app.lyrics_size_step(1))
+        self.bigger.pack(side="right")
+        self.smaller = PillButton(head, t, "A−", kind="plain", height=26, command=lambda: app.lyrics_size_step(-1))
+        self.smaller.pack(side="right", padx=(0, 6))
+        self.head = head
+        self.lyrics = LyricsView(self.lyrics_pane, app, on_away=self._away)
+        self.lyrics.pack(side="top", fill="both", expand=True)
+        self.back_btn = PillButton(self.lyrics_pane, t, "Back to the current line", command=self.lyrics.back_to_line)
+        self.empty = frame(self.lyrics_pane, t)  # no lyrics: a note and "Get lyrics"
+        self.empty_l = label(self.empty, t, "No lyrics for this song.", fg="text2", anchor="center")
+        self.empty_l.pack(pady=(0, 10))
+        self.get_btn = PillButton(self.empty, t, "Get lyrics", icon="lyrics", command=app.get_lyrics_current)
+        self.get_btn.pack()
+        # Up Next
+        self.upnext_pane = frame(self.body, t)
+        self.source = label(self.upnext_pane, t, "", "small", fg="text2")
+        self.source.pack(side="top", anchor="w", padx=24, pady=(4, 6))
+        self.queue_list = SongList(self.upnext_pane, t, [Column("title", "", 200, True, kind="two", key2="artist")],
+                                   lambda r, k: r.display_title if k == "title" else r.display_artist,
+                                   header=False, zebra=False, row_height=48, on_activate=app.jump_to,
+                                   empty_text="Nothing comes after this song.")
+        self.queue_list.pack(side="top", fill="both", expand=True, padx=(12, 8))
+        self.queue_paths: Optional[list] = None
+        # Details
+        self.details = DetailsView(self.body, t, on_artist=app.open_artist)
+        self.detail_extra: Dict[str, tuple] = {}  # path -> (comment, verdict), read once per song
+        self.detail_busy: set = set()
+        self.kind = ""
+        self.label = ("", "")
+        self.path: Optional[str] = None
         app.covers.listeners.append(lambda key, size: self.draw_art())
         t.on_change(self.draw_art)
         self._place()
 
+    # ---- state -------------------------------------------------------------
     def show(self, **kw) -> None:
         self.song_changed(force=True)
 
@@ -657,34 +1026,156 @@ class NowPlayingPage(Page):
         if path == self.path and not force:
             return
         self.path = path
+        self.queue_paths = None
+        if path is not None and path not in self.detail_busy:
+            self.detail_extra.pop(path, None)  # its saved verdict may be new: read again
         self.load_lyrics()
 
     def load_lyrics(self) -> None:
+        """Read the song's lyrics again and lay the page out (the song, the lyrics, the
+        switch or the hidden state changed)."""
         found = lyrics_mod.read_lyrics_file(self.path) if self.path else None
         if found is None:
-            self.kind = ""
+            self.kind, self.label = "", ("", "")
         else:
-            kind, text, _ = found
-            self.kind = kind
+            kind, text, file = found
             self.lyrics.set_lyrics(kind, text)
+            self.kind = self.lyrics.kind  # synced lyrics without a timed line show as plain
+            self.label = lyrics_mod.shown_label(self.kind, self.path, file)
+        self.kind_l.configure(text=self.label[0])
+        self.source_l.configure(text=self.label[1])
+        self.size_changed()
         self._place()
         self.draw_art()
         self.update_position(self.app.position())
 
+    def showing_right(self) -> bool:
+        return self.path is not None and not self.app.lyrics_hidden
+
     def showing_lyrics(self) -> bool:
-        return bool(self.kind) and not self.app.lyrics_hidden
+        return self.showing_right() and self.app.np_tab == "lyrics" and bool(self.kind)
+
+    def tab_changed(self) -> None:
+        self.switch.set(self.app.np_tab)
+        self._place()
+        self.draw_art()
+        self.update_position(self.app.position())
+
+    def size_changed(self) -> None:
+        """A− / A+: the lyrics fonts have a new size."""
+        size = self.app.state.lyrics_size
+        self.smaller.set(enabled=size > playerstate.LYRICS_SIZE_MIN)
+        self.bigger.set(enabled=size < playerstate.LYRICS_SIZE_MAX)
+        self.lyrics.layout()
+
+    def _away(self, away: bool) -> None:
+        if away:
+            self.back_btn.place(relx=0.5, rely=1.0, anchor="s", y=-22)
+            tk.Misc.tkraise(self.back_btn)  # (Canvas.lift raises canvas items)
+        else:
+            self.back_btn.place_forget()
 
     def _place(self) -> None:
-        if self.showing_lyrics():
-            self.art.place(relx=0, rely=0, relwidth=0.5, relheight=1)
-            self.lyrics.place(relx=0.5, rely=0, relwidth=0.5, relheight=1)
-        else:
-            self.lyrics.place_forget()
+        if not self.showing_right():
+            self.right.place_forget()
             self.art.place(relx=0, rely=0, relwidth=1, relheight=1)
+            return
+        self.art.place(relx=0, rely=0, relwidth=0.5, relheight=1)
+        self.right.place(relx=0.5, rely=0, relwidth=0.5, relheight=1)
+        tab = self.app.np_tab
+        for pane, on in ((self.lyrics_pane, tab == "lyrics"), (self.upnext_pane, tab == "upnext"),
+                         (self.details, tab == "details")):
+            if on:
+                pane.pack(fill="both", expand=True)
+            else:
+                pane.pack_forget()
+        if tab == "lyrics":
+            if self.kind:
+                self.empty.place_forget()
+                if not self.lyrics.winfo_manager():
+                    self.head.pack(side="top", fill="x", padx=(LyricsView.PAD, LyricsView.PAD - 8), pady=(6, 4))
+                    self.lyrics.pack(side="top", fill="both", expand=True)
+                self._away(self.lyrics.away)
+            else:
+                self.head.pack_forget()
+                self.lyrics.pack_forget()
+                self._away(False)
+                self.empty.place(relx=0.5, rely=0.42, anchor="center")
+        elif tab == "upnext":
+            self.refresh_queue()
+        else:
+            self.refresh_details()
 
+    # ---- Up Next and Details -----------------------------------------------------
+    def refresh_queue(self) -> None:
+        app = self.app
+        q = app.queue
+        paths = [p for p in (q.up_next(50) if q is not None else []) if p in app.by_path]
+        if paths != self.queue_paths:
+            self.queue_paths = paths
+            self.queue_list.set_rows([app.by_path[p] for p in paths])
+        self.source.configure(text=f"Playing from {app.context_name}" if q is not None and app.context_name else "")
+
+    def refresh_details(self) -> None:
+        tr = self.app.track(self.path)
+        if tr is None:
+            self.details.set_rows([])
+            return
+        album = self.app.album_of(tr)
+        extra = self.detail_extra.get(tr.path)
+        if extra is None:
+            self._read_details(tr.path)
+            extra = ("", None)
+        artists = musiclib.split_artists(tr.artist, self.app.known_artists) if tr.artist else []
+        self.details.set_rows(song_details(tr, len(album["tracks"]) if album else 0, extra[0], extra[1], artists),
+                              artists)
+
+    def _read_details(self, path: str) -> None:
+        """The comment tag (ffprobe) and the saved verdict, in a thread; then Details again."""
+        if path in self.detail_busy:
+            return
+        self.detail_busy.add(path)
+        cfg = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
+        out: dict = {}
+
+        def work():
+            out["comment"] = read_comment(path)
+            out["verdict"] = None
+            try:
+                from . import gui
+                from .store import open_store, settings_key
+
+                store = open_store(cfg)
+                if store is not None:
+                    try:
+                        r = store.lookup(path, settings_key(cfg))
+                    finally:
+                        store.close()
+                    if r is not None:
+                        out["verdict"] = (gui.VERDICT_STYLE.get(r.verdict, (r.verdict,))[0], r.summary or "")
+            except Exception:  # noqa: BLE001 - no saved results: "Not checked yet"
+                pass
+
+        def wait(th):
+            if th.is_alive():
+                self.after(60, lambda: wait(th))
+                return
+            self.detail_busy.discard(path)
+            self.detail_extra[path] = (out.get("comment", ""), out.get("verdict"))
+            if path == self.path and self.app.np_tab == "details":
+                self.refresh_details()
+
+        import threading
+
+        th = threading.Thread(target=work, daemon=True, name="realhires-details")
+        th.start()
+        self.after(60, lambda: wait(th))
+
+    # ---- the cover block ---------------------------------------------------------
     def draw_art(self) -> None:
         t, c = self.theme, self.art
         c.delete("all")
+        self.links = []
         W, H = c.winfo_width(), c.winfo_height()
         if W <= 1:
             return
@@ -692,7 +1183,7 @@ class NowPlayingPage(Page):
         if tr is None:
             c.create_text(W / 2, H / 2, text="Nothing is playing", fill=t.c("text2"), font=t.f("h2"))
             return
-        text_h = 0 if self.showing_lyrics() else 120 if not self.kind else 80
+        text_h = 80  # the title and "Artist — Album" under the cover, one block in the middle
         room = min(W - 80, H - 80 - text_h)
         size = max([s for s in self.SIZES if s <= room] or [self.SIZES[0]])
         album = self.app.album_of(tr)
@@ -702,19 +1193,63 @@ class NowPlayingPage(Page):
         x = (W - size) / 2
         y = (H - size - text_h) / 2
         draw_cover(c, t, img, x, y, size)
-        if not self.showing_lyrics():
-            fit = {}
-            c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), tr.display_title, W - 60, fit),
-                          fill=t.c("text"), font=t.f("h1"))
-            c.create_text(W / 2, y + size + 58, text=fit_text(t.f("body"), f"{tr.display_artist} — "
-                                                              f"{tr.display_album}", W - 60, fit),
-                          fill=t.c("text2"), font=t.f("body"))
-            if not self.kind:  # no lyrics at all: offer to get them
-                c.create_window(W / 2, y + size + 96, window=self.get_btn)
+        self.links.append(("cover", x, y, x + size, y + size, None))  # the Cover window
+        fit: dict = {}
+        c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), tr.display_title, W - 60, fit),
+                      fill=t.c("text"), font=t.f("h1"))
+        pieces = artist_line(t.f("body"), self.app.artists_of(tr), tr.display_album if album is not None else None,
+                             tr.display_album, W - 60, fit)
+        font, h = t.f("body"), t.f("body").metrics("linespace")
+        left, ty = W / 2 - sum(font.measure(p[0]) for p in pieces) / 2, y + size + 58
+        for text, what, name in pieces:
+            c.create_text(left, ty, text=text, anchor="w", fill=t.c("text2"), font=font)
+            if what:
+                self.links.append((what, left, ty - h / 2, left + font.measure(text), ty + h / 2, name))
+            left += font.measure(text)
+        self._underline()
 
+    def _link_at(self, x: float, y: float) -> Optional[int]:
+        return next((i for i, (_, x0, y0, x1, y1, _) in enumerate(self.links) if x0 <= x <= x1 and y0 <= y <= y1),
+                    None)
+
+    def _art_motion(self, e) -> None:
+        self._art_hover(self._link_at(e.x, e.y))
+
+    def _art_hover(self, i: Optional[int]) -> None:
+        if i != self.hover_link:
+            self.hover_link = i
+            self.art.configure(cursor="hand2" if i is not None else "")
+            self._underline()
+
+    def _underline(self) -> None:
+        """The artist or album name under the pointer is underlined (not the cover)."""
+        self.art.delete("underline")
+        i = self.hover_link
+        if i is not None and i < len(self.links) and self.links[i][0] != "cover":
+            _, x0, _, x1, y1, _ = self.links[i]
+            self.art.create_line(x0, y1 - 1, x1, y1 - 1, fill=self.theme.c("text2"), tags="underline")
+
+    def _art_click(self, e) -> None:
+        i = self._link_at(e.x, e.y)
+        tr = self.app.track(self.path) if self.path else None
+        if i is None or tr is None:
+            return
+        what, *_, name = self.links[i]
+        if what == "artist":
+            self.app.open_artist(name)
+        elif what == "cover":
+            self.app.open_cover_window(tr.path)
+        else:
+            album = self.app.album_of(tr)
+            if album is not None:
+                self.app.open_album(album)
+
+    # ---- every tick ----------------------------------------------------------------
     def update_position(self, seconds: float) -> None:
         if self.showing_lyrics():
             self.lyrics.update_position(seconds)
+        elif self.showing_right() and self.app.np_tab == "upnext":
+            self.refresh_queue()
 
     def lyrics_changed(self, path: str) -> None:
         if path == self.path:

@@ -1044,6 +1044,27 @@ impl App {
         self.lyrics_win = Some(LyricsWindow::new(self, paths));
     }
 
+    /// The player's Get lyrics: the lyrics window for these songs, downloading at once.  When
+    /// it cannot start (LRCLIB wants one request at a time) a message box says why, since the
+    /// status line is only shown on the Quality check page.
+    pub fn download_lyrics_now(&mut self, paths: Vec<String>) {
+        if self.lyrics_win.as_ref().is_some_and(|w| w.running) {
+            return; // its window is open on every page, showing the download in progress
+        }
+        if self.scan_lyrics_busy() {
+            self.info = Some((
+                "Download synced lyrics".into(),
+                "Lyrics are being downloaded for the songs of the scan; wait for them or stop the scan first.".into(),
+            ));
+            return;
+        }
+        let mut w = LyricsWindow::new(self, paths);
+        if !w.todo.is_empty() {
+            w.start(self);
+        }
+        self.lyrics_win = Some(w);
+    }
+
     /// Ctrl/Cmd+L, the Get lyrics… button and the menus: the selected songs.
     pub fn lyrics_selected(&mut self) {
         let paths: Vec<String> = if self.view == View::Files {

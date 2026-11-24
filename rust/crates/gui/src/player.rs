@@ -3,9 +3,9 @@
 //! (`pages.rs`), the Up Next panel and the Playback info and Equalizer windows.
 //! The 1.x scanner (`app::App`) lives on as the Quality check page.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -136,6 +136,8 @@ pub struct LibView {
     /// album indices, newest first
     pub recent: Vec<usize>,
     pub songs: Vec<Song>,
+    /// `musiclib::known_artists()`, for splitting an artist field into its artists
+    pub known_artists: HashSet<String>,
 }
 
 impl LibView {
@@ -148,6 +150,7 @@ impl LibView {
         let newest = |a: &Album| a.tracks.iter().map(|t| t.mtime_ns).max().unwrap_or(0);
         recent.sort_by(|a, b| newest(&albums[*b]).cmp(&newest(&albums[*a])));
         LibView {
+            known_artists: musiclib::known_artists(&tracks),
             artists: musiclib::artists(&tracks),
             album_artists: musiclib::album_artists(&tracks),
             genres: musiclib::genres(&tracks),
@@ -170,6 +173,46 @@ impl LibView {
         let key = self.track(path)?.song().album_key();
         self.album_index.get(&key).map(|i| &self.albums[*i])
     }
+
+    /// The artists of a song's artist field (`musiclib::split_artists()`), each a link.
+    pub fn artists_of(&self, t: &Track) -> Vec<String> {
+        let names = musiclib::split_artists(&t.display_artist(), &self.known_artists);
+        if names.is_empty() {
+            vec![t.display_artist()]
+        } else {
+            names
+        }
+    }
+}
+
+/// Where Now Playing drew what can be clicked, and what it showed (for the tests).
+#[derive(Default)]
+pub struct NpHits {
+    pub cover: Option<Rect>,
+    /// the artist and album name links under the cover
+    pub links: Vec<(Rect, crate::pages::Link)>,
+    pub get_lyrics: Option<Rect>,
+    /// A− and A+
+    pub size_buttons: Vec<Rect>,
+    /// "Back to the current line"
+    pub back: Option<Rect>,
+    pub up_next: Vec<String>,
+    /// Details as "Label: value" lines
+    pub details: Vec<String>,
+    pub detail_links: Vec<(Rect, String)>,
+}
+
+/// Now Playing's right half (2.1): the switch Lyrics | Up Next | Details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NpTab {
+    Lyrics,
+    UpNext,
+    Details,
+}
+
+impl NpTab {
+    pub const ALL: [(NpTab, &'static str); 3] =
+        [(NpTab::Lyrics, "Lyrics"), (NpTab::UpNext, "Up Next"), (NpTab::Details, "Details")];
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -227,18 +270,36 @@ pub struct Player {
     /// a message for the LCD's second line, and when playback moves on after it
     pub message: Option<(String, Option<Instant>)>,
     fail_streak: usize,
-    lyrics: Option<(String, u64, Option<ShownLyrics>)>,
+    /// the lyrics of the song playing: (path, lyrics_gen, lyrics, (label, source))
+    lyrics: Option<(String, u64, Option<ShownLyrics>, (String, String))>,
     pub covers: Covers,
     pub show_up_next: bool,
     /// Now Playing without its lyrics column (the Lyrics button on that page, 2.1)
     pub lyrics_hidden: bool,
+    /// Now Playing's right half: Lyrics, Up Next or Details (for the session)
+    pub np_tab: NpTab,
+    /// Details: per song its comment tag (None while ffprobe reads it) and saved verdict
+    details_extra: HashMap<String, (Option<String>, Option<(String, String)>)>,
+    details_song: String,
+    details_tx: Sender<(String, String)>,
+    details_rx: Receiver<(String, String)>,
     pub eq_open: bool,
     pub eq_tab: usize,
     pub info: Option<InfoWindow>,
     pub settings_group: usize,
     settings_draft: Option<Settings>,
     settings_due: Option<Instant>,
-    pub lyrics_scrolled: Option<Instant>,
+    /// the user scrolled the current line of synced lyrics out of view: no following, and
+    /// the "Back to the current line" button shows (2.1)
+    pub lyrics_away: bool,
+    /// the Back button was pressed: the current line is scrolled to at once
+    pub lyrics_back: bool,
+    /// the user scrolled the lyrics: whether the current line is in view is checked again
+    pub lyrics_check: bool,
+    pub np_hits: NpHits,
+    /// the LCD's links: the title and the album name (the album), each artist
+    pub lcd_links: Vec<(Rect, crate::pages::Link)>,
+    /// the line followed last
     pub lyrics_line: Option<usize>,
     pub song_sort: (SongCol, bool),
     applied_look: Option<(String, String, u64)>,
@@ -317,6 +378,7 @@ impl Player {
         let state = playerstate::load(None);
         let tracks = Library::open(None).map(|l| l.tracks()).unwrap_or_default();
         let mut engine = Engine::new();
+        let (details_tx, details_rx) = mpsc::channel();
         engine.set_gain(engine_gain(&state, scanner.cfg.bit_perfect));
         engine.set_eq(&state.eq);
         engine.set_gapless(scanner.cfg.gapless);
@@ -344,13 +406,22 @@ impl Player {
             lyrics: None,
             show_up_next: false,
             lyrics_hidden: false,
+            np_tab: NpTab::Lyrics,
+            details_extra: HashMap::new(),
+            details_song: String::new(),
+            details_tx,
+            details_rx,
             eq_open: false,
             eq_tab: 0,
             info: None,
             settings_group: 0,
             settings_draft: None,
             settings_due: None,
-            lyrics_scrolled: None,
+            lyrics_away: false,
+            lyrics_back: false,
+            lyrics_check: false,
+            np_hits: NpHits::default(),
+            lcd_links: vec![],
             lyrics_line: None,
             song_sort: (SongCol::Artist, false),
             applied_look: None,
@@ -824,29 +895,102 @@ impl Player {
 
     /// The lyrics of the song playing, read again when lyrics were saved.
     pub fn lyrics_of_now(&mut self) -> Option<ShownLyrics> {
+        use realhires::lyrics::Status;
         let path = self.now.as_ref()?.path.clone();
         let gen = self.scanner.lyrics_gen;
-        if let Some((p, g, l)) = &self.lyrics {
+        if let Some((p, g, l, _)) = &self.lyrics {
             if *p == path && *g == gen {
                 return l.clone();
             }
         }
-        let shown = realhires::lyrics::read_lyrics_file(&path).and_then(|(kind, text, _)| match kind {
-            realhires::lyrics::Status::Instrumental => Some(ShownLyrics::Instrumental),
-            realhires::lyrics::Status::Synced => {
-                let lines = realhires::embed::lrc_entries(&text);
-                if lines.is_empty() {
-                    let plain = realhires::lyrics::strip_timestamps(&text);
-                    (!plain.trim().is_empty()).then_some(ShownLyrics::Plain(plain))
-                } else {
-                    Some(ShownLyrics::Synced(lines))
+        let mut file = String::new();
+        let shown = realhires::lyrics::read_lyrics_file(&path).and_then(|(kind, text, f)| {
+            file = f;
+            match kind {
+                Status::Instrumental => Some(ShownLyrics::Instrumental),
+                Status::Synced => {
+                    let lines = realhires::embed::lrc_entries(&text);
+                    if lines.is_empty() {
+                        let plain = realhires::lyrics::strip_timestamps(&text);
+                        (!plain.trim().is_empty()).then_some(ShownLyrics::Plain(plain))
+                    } else {
+                        Some(ShownLyrics::Synced(lines))
+                    }
                 }
+                _ => (!text.trim().is_empty()).then(|| ShownLyrics::Plain(text)),
             }
-            _ => (!text.trim().is_empty()).then(|| ShownLyrics::Plain(text)),
         });
-        self.lyrics = Some((path, gen, shown.clone()));
+        // the label above them says what is shown (synced lyrics without a timed line show as plain)
+        let label = match &shown {
+            Some(l) => {
+                let kind = match l {
+                    ShownLyrics::Synced(_) => Status::Synced,
+                    ShownLyrics::Plain(_) => Status::Plain,
+                    ShownLyrics::Instrumental => Status::Instrumental,
+                };
+                let (a, b) = realhires::lyrics::shown_label(kind, &path, &file);
+                (a.to_string(), b)
+            }
+            None => (String::new(), String::new()),
+        };
+        self.lyrics = Some((path, gen, shown.clone(), label));
         self.lyrics_line = None;
+        self.lyrics_away = false;
         shown
+    }
+
+    /// What Now Playing writes above the lyrics: ("Synced lyrics", ".lrc file"), or empty.
+    pub fn lyrics_label_of_now(&mut self) -> (String, String) {
+        self.lyrics_of_now();
+        self.lyrics.as_ref().map(|l| l.3.clone()).unwrap_or_default()
+    }
+
+    /// A+ (+1) / A− (-1) on Now Playing: the lyrics larger or smaller, saved at once.
+    pub fn lyrics_size_step(&mut self, steps: i64) {
+        let before = self.state.lyrics_size;
+        if self.state.step_lyrics_size(steps) != before {
+            self.save_state();
+        }
+    }
+
+    /// Get lyrics (Now Playing, a song's menu): the lyrics window for these songs, which
+    /// starts downloading at once; Now Playing shows the lyrics when they are saved.
+    pub fn get_lyrics(&mut self, paths: Vec<String>) {
+        self.scanner.download_lyrics_now(paths);
+    }
+
+    /// Now Playing's Details for the song playing: the comment tag (read by ffprobe in a
+    /// thread) and the saved Quality check verdict, read again when the song changes.
+    pub fn details_extra(&mut self, path: &str) -> (String, Option<(String, String)>) {
+        while let Ok((p, comment)) = self.details_rx.try_recv() {
+            if let Some(e) = self.details_extra.get_mut(&p) {
+                e.0 = Some(comment);
+            }
+        }
+        if self.details_song != path {
+            self.details_song = path.to_string();
+            self.details_extra.retain(|_, e| e.0.is_none()); // still being read: the answer is on its way
+            self.details_extra.remove(path);
+        }
+        if !self.details_extra.contains_key(path) {
+            let skey = realhires::store::settings_key(&self.scanner.cfg);
+            let verdict = self
+                .scanner
+                .results
+                .get(path)
+                .cloned()
+                .or_else(|| self.scanner.store.as_ref().and_then(|s| s.lookup(path, &skey, None)))
+                .map(|r| (crate::style::verdict_style(r.verdict).0.to_string(), r.summary.clone()));
+            self.details_extra.insert(path.to_string(), (None, verdict));
+            let (tx, p, ctx) = (self.details_tx.clone(), path.to_string(), self.ctx.clone());
+            std::thread::spawn(move || {
+                let comment = read_comment(&p);
+                let _ = tx.send((p, comment));
+                ctx.request_repaint();
+            });
+        }
+        let e = &self.details_extra[path];
+        (e.0.clone().unwrap_or_default(), e.1.clone())
     }
 
     // ------------------------------------------------------------ settings ---
@@ -1631,7 +1775,7 @@ impl Player {
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, "Up Next").clicked() {
                     self.show_up_next = !self.show_up_next;
                 }
-                let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden;
+                let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden && self.np_tab == NpTab::Lyrics;
                 if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, "Lyrics").clicked() {
                     self.lyrics_button();
                 }
@@ -1667,10 +1811,56 @@ impl Player {
     /// page stays (2.1, as the user asked).
     pub fn lyrics_button(&mut self) {
         if self.page == Page::NowPlaying {
-            self.lyrics_hidden = !self.lyrics_hidden;
+            if self.np_tab != NpTab::Lyrics {
+                self.np_tab = NpTab::Lyrics;
+                self.lyrics_hidden = false;
+            } else {
+                self.lyrics_hidden = !self.lyrics_hidden;
+            }
         } else {
             self.lyrics_hidden = false;
+            self.np_tab = NpTab::Lyrics;
             self.go(Page::NowPlaying);
+        }
+    }
+
+    /// Now Playing's switch: Lyrics, Up Next or Details (kept for the session).
+    pub fn set_np_tab(&mut self, tab: NpTab) {
+        self.np_tab = tab;
+        self.lyrics_hidden = false;
+    }
+
+    /// The Artists page with this artist chosen (a click on an artist's name).
+    pub fn open_artist(&mut self, name: &str) {
+        let key = casefold(name.trim());
+        let found = self.lib.artists.iter().find(|g| casefold(g.name.trim()) == key).map(|g| g.name.clone());
+        let name = found.or_else(|| {
+            // not an artist of the library on its own: the first artist it splits into
+            let first = musiclib::split_artists(name, &self.lib.known_artists).into_iter().next()?;
+            let key = casefold(first.trim());
+            self.lib.artists.iter().find(|g| casefold(g.name.trim()) == key).map(|g| g.name.clone())
+        });
+        if let Some(n) = name {
+            self.group_sel.insert("artists", n);
+        }
+        self.go(Page::Artists);
+    }
+
+    /// The album page of a song's album.
+    pub fn open_album_of(&mut self, path: &str) {
+        if let Some(key) = self.lib.album_of(path).map(|a| a.key.clone()) {
+            self.go(Page::Album(key));
+        }
+    }
+
+    /// A click on Now Playing's cover: the Cover window (another branch).
+    pub fn open_cover_window(&mut self, _path: &str) {}
+
+    /// Up Next (Now Playing): play that song now; the queue continues after it.
+    pub fn jump_up_next(&mut self, i: usize) {
+        // PlayQueue::jump() also handles the songs queued with Play Next / Add to Queue
+        if let Some(p) = self.queue.as_mut().and_then(|q| q.jump(i)) {
+            self.play_path(&p);
         }
     }
 
@@ -1713,13 +1903,36 @@ impl Player {
         let mid = (text_left + text_right) / 2.0;
         let clip = Rect::from_x_y_ranges(text_left..=text_right, rect.y_range());
         let tp = ui.painter_at(clip);
-        tp.text(pos2(mid, rect.top() + 13.0), Align2::CENTER_CENTER, track.display_title(), look::title(13.0), pal.text);
-        let second = match &self.message {
-            Some((m, _)) => m.clone(),
-            None => format!("{} — {}", track.display_artist(), track.display_album()),
-        };
-        let second_color = if self.message.is_some() { pal.accent } else { pal.secondary };
-        tp.text(pos2(mid, rect.top() + 29.0), Align2::CENTER_CENTER, second, look::text(11.5), second_color);
+        // the title and the album name open the album, each artist name that artist (2.1)
+        let has_album = self.lib.album_of(&path).is_some();
+        let mut open = None;
+        let title = crate::pages::elided(ui, &track.display_title(), look::title(13.0), pal.text, clip.width());
+        let trect = Rect::from_center_size(pos2(mid, rect.top() + 13.0), title.size());
+        tp.galley(trect.min, title, pal.text);
+        self.lcd_links.clear();
+        if has_album {
+            let r = ui.interact(trect, ui.scope_id().with("lcd-title"), Sense::click());
+            if r.hovered() {
+                tp.line_segment([pos2(trect.left(), trect.bottom() - 1.0), pos2(trect.right(), trect.bottom() - 1.0)], Stroke::new(1.0, pal.text));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if r.clicked() {
+                open = Some(crate::pages::Link::Album);
+            }
+            self.lcd_links.push((trect, crate::pages::Link::Album));
+        }
+        match &self.message {
+            Some((m, _)) => {
+                tp.text(pos2(mid, rect.top() + 29.0), Align2::CENTER_CENTER, m.clone(), look::text(11.5), pal.accent);
+            }
+            None => {
+                let artists = self.lib.artists_of(&track);
+                let pieces = crate::pages::artist_line(ui, look::text(11.5), pal.secondary, &artists, &track.display_album(), has_album, clip.width());
+                let (rects, clicked) = crate::pages::paint_links(ui, &tp, pieces, pos2(mid, rect.top() + 29.0), pal.secondary, ui.scope_id().with("lcd-links"));
+                self.lcd_links.extend(rects);
+                open = open.or(clicked);
+            }
+        }
         // seek bar
         let dur = track.duration.max(0.0);
         let pos = if now_active { self.engine.position().unwrap_or(0.0) } else { 0.0 };
@@ -1750,6 +1963,11 @@ impl Player {
         p.text(brect.center(), Align2::CENTER_CENTER, badge, badge_font, bcol);
         if bresp.on_hover_text("Playback info").clicked() {
             self.open_info();
+        }
+        match open {
+            Some(crate::pages::Link::Artist(name)) => self.open_artist(&name),
+            Some(crate::pages::Link::Album) => self.open_album_of(&path),
+            None => {}
         }
     }
 
@@ -1938,6 +2156,33 @@ fn sidebar_item(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: b
 }
 
 /// A cover, or a coloured square with a note when the album has none.
+/// The comment tag of a song ("" when it has none, or the file cannot be read); ffprobe,
+/// so call it off the window's thread.
+pub fn read_comment(path: &str) -> String {
+    let out = realhires::probe::command(realhires::probe::tool("ffprobe"))
+        .args(["-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", path])
+        .stdin(std::process::Stdio::null())
+        .output();
+    let Ok(out) = out else { return String::new() };
+    let Ok(data) = realhires::json::parse(&String::from_utf8_lossy(&out.stdout)) else { return String::new() };
+    let mut sources: Vec<&realhires::json::Value> = data.get("format").into_iter().collect();
+    if let Some(realhires::json::Value::Array(streams)) = data.get("streams") {
+        sources.extend(streams.iter());
+    }
+    for src in sources {
+        if let Some(realhires::json::Value::Object(tags)) = src.get("tags") {
+            for (k, v) in tags {
+                if casefold(k.trim()) == "comment" {
+                    if let Some(v) = v.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 pub fn cover(p: &egui::Painter, rect: Rect, tex: Option<&egui::TextureHandle>, title: &str, radius: u8) {
     match tex {
         Some(t) => {
@@ -2610,6 +2855,246 @@ mod tests {
         run_until(&ctx, &mut p, "the new cover", |p| shown(p).len() == 2);
         let after = shown(&p);
         assert!(after.iter().any(|(k, id)| *k == key_a && !before.contains(&(k.clone(), *id))));
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A click as a person makes it: the pointer moves there, presses, releases.
+    fn click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame_with(ctx, p, vec![button(true)]);
+        frame_with(ctx, p, vec![button(false)]);
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
+    }
+
+    /// The mouse wheel over `at` (a negative `dy` moves the content up: scrolls down).
+    fn wheel(ctx: &egui::Context, p: &mut Player, at: egui::Pos2, dy: f32) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        frame_with(
+            ctx,
+            p,
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Default::default(),
+            }],
+        );
+        for _ in 0..30 {
+            frame_with(ctx, p, vec![]);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn link_at(links: &[(Rect, crate::pages::Link)], want: &crate::pages::Link) -> egui::Pos2 {
+        links.iter().find(|(_, l)| l == want).unwrap_or_else(|| panic!("no link {want:?} in {links:?}")).0.center()
+    }
+
+    /// One song on a fake LRCLIB: /api/get answers "Midnight Sun" with synced lyrics.
+    fn fake_lrclib() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut req = vec![];
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&req).lines().next().unwrap_or("").to_string();
+                let (status, body) = if line.starts_with("GET /api/get?") && line.contains("track_name=Midnight") {
+                    (
+                        "200 OK",
+                        r#"{"id": 7, "trackName": "Midnight Sun", "artistName": "Aurora Fields", "albumName": "Northern Lights", "duration": 20.0, "instrumental": false, "plainLyrics": "Midnight sun\nOver the bay", "syncedLyrics": "[00:00.50] Midnight sun\n[00:03.00] Over the bay"}"#,
+                    )
+                } else {
+                    ("404 Not Found", r#"{"message": "Failed to find specified track"}"#)
+                };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    /// Now Playing (2.1): the label above the lyrics, A− / A+ saved in player.json, "Back to
+    /// the current line" while the current line is scrolled away, the switch Lyrics | Up Next
+    /// | Details, one link per artist (also in the LCD and Details), the cover's hook, and Get
+    /// lyrics, which downloads at once (the user's "Get lyrics button doesn't work": it opened
+    /// the lyrics window, which waited for its own Download lyrics button).
+    #[test]
+    fn now_playing_switch_links_lyrics_size_and_get_lyrics() {
+        use crate::pages::Link;
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-np-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::lyrics::INTERVAL_ENV, "0");
+        let glacier = song(&music, "Northern Lights", "Glacier Song", "Aurora Fields", "Ambient", 1, 44_100, 20.0);
+        let sun = song(&music, "Northern Lights", "Midnight Sun", "Aurora Fields", "Ambient", 2, 44_100, 20.0);
+        let kettle = song(&music, "Small Hours", "Blue Kettle", "June Harbor", "Jazz", 1, 44_100, 1.0);
+        // a duet with a comment tag
+        let duet_dir = music.join("Duets");
+        std::fs::create_dir_all(&duet_dir).unwrap();
+        let duet = realhires::paths::abspath(&duet_dir.join("01 Together.flac").to_string_lossy());
+        ffmpeg(&["-f", "lavfi", "-i", "sine=frequency=500:sample_rate=44100:duration=2", "-metadata", "title=Together",
+                 "-metadata", "artist=June Harbor, Aurora Fields", "-metadata", "album=Duets", "-metadata",
+                 "comment=Recorded live", &duet]);
+        let lines: Vec<String> = (0..40).map(|i| format!("[00:{:02}.{:02}]Line number {i}", i / 2, (i % 2) * 50)).collect();
+        std::fs::write(realhires::lyrics::sidecar(&glacier, ".lrc"), lines.join("\n") + "\n").unwrap();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        cfg.lyrics_server = fake_lrclib();
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+        p.play_list(vec![glacier.clone(), sun.clone()], Some(&glacier), "Northern Lights");
+        run_until(&ctx, &mut p, "playback", |p| p.engine.position().unwrap_or(0.0) > 0.3);
+        p.toggle_play(); // paused, so the current line stays
+        p.lyrics_button();
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        assert_eq!((p.page.clone(), p.np_tab), (Page::NowPlaying, NpTab::Lyrics));
+        // the label says what the lyrics are and where they come from
+        assert_eq!(p.lyrics_label_of_now(), ("Synced lyrics".to_string(), ".lrc file".to_string()));
+        // the cover with the title and "Artist — Album": one block in the middle of the left half
+        let cover = p.np_hits.cover.expect("the cover");
+        let links = p.np_hits.links.clone();
+        let line = links.iter().map(|(r, _)| r.center().x).fold(0.0, f32::max);
+        assert!(cover.center().x < 640.0 && cover.left() < line && line < cover.right(), "{cover:?} {links:?}");
+        // A− / A+: 26 px by default, 2 px a step, saved at once
+        assert_eq!(p.state.lyrics_size, 26);
+        let sizes = p.np_hits.size_buttons.clone();
+        click(&ctx, &mut p, sizes[1].center());
+        assert_eq!((p.state.lyrics_size, playerstate::load(None).lyrics_size), (28, 28));
+        click(&ctx, &mut p, sizes[0].center());
+        assert_eq!((p.state.lyrics_size, playerstate::load(None).lyrics_size), (26, 26));
+        // scrolled away from the current line: following stops and the Back button shows
+        let lyrics_at = pos2(1000.0, 600.0);
+        wheel(&ctx, &mut p, lyrics_at, -3000.0);
+        assert!(p.lyrics_away, "scrolled away");
+        let back = p.np_hits.back.expect("the Back to the current line button");
+        for _ in 0..5 {
+            frame(&ctx, &mut p);
+        }
+        assert!(p.lyrics_away && p.np_hits.back.is_some(), "no automatic scrolling while it shows");
+        click(&ctx, &mut p, back.center());
+        for _ in 0..5 {
+            frame(&ctx, &mut p);
+        }
+        assert!(!p.lyrics_away && p.np_hits.back.is_none());
+        wheel(&ctx, &mut p, lyrics_at, -3000.0);
+        assert!(p.lyrics_away);
+        wheel(&ctx, &mut p, lyrics_at, 3000.0); // scrolled back into view: the button goes
+        assert!(!p.lyrics_away && p.np_hits.back.is_none());
+        // the switch: Up Next lists the rest of the album, Details describes the song
+        p.set_np_tab(NpTab::UpNext);
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_hits.up_next, vec![sun.clone()]);
+        p.set_np_tab(NpTab::Details);
+        frame(&ctx, &mut p);
+        for needed in ["Title: Glacier Song", "Artist: Aurora Fields", "Track: 1 of 2", "Format: FLAC · 16-bit/44.1 kHz", "Quality check: Not checked yet"] {
+            assert!(p.np_hits.details.iter().any(|l| l.starts_with(needed)), "{needed}: {:?}", p.np_hits.details);
+        }
+        p.lyrics_button(); // the Lyrics button chooses Lyrics again
+        assert!(p.np_tab == NpTab::Lyrics && !p.lyrics_hidden);
+        frame(&ctx, &mut p);
+        // the album name opens the album, the artist the artist, the cover the Cover window hook
+        let links = p.np_hits.links.clone();
+        click(&ctx, &mut p, link_at(&links, &Link::Album));
+        assert!(matches!(p.page, Page::Album(_)), "{:?}", p.page);
+        p.go(Page::NowPlaying);
+        frame(&ctx, &mut p);
+        click(&ctx, &mut p, link_at(&links, &Link::Artist("Aurora Fields".into())));
+        assert_eq!((p.page.clone(), p.group_sel.get("artists").cloned()), (Page::Artists, Some("Aurora Fields".into())));
+        p.go(Page::NowPlaying);
+        frame(&ctx, &mut p);
+        click(&ctx, &mut p, cover.center());
+        assert_eq!(p.page, Page::NowPlaying);
+        // the LCD: the title and the album name open the album, the artist the artist
+        let lcd = p.lcd_links.clone();
+        assert_eq!(lcd.iter().filter(|(_, l)| *l == Link::Album).count(), 2, "{lcd:?}");
+        click(&ctx, &mut p, lcd[0].0.center());
+        assert!(matches!(p.page, Page::Album(_)));
+        p.group_sel.clear();
+        click(&ctx, &mut p, link_at(&lcd, &Link::Artist("Aurora Fields".into())));
+        assert_eq!((p.page.clone(), p.group_sel.get("artists").cloned()), (Page::Artists, Some("Aurora Fields".into())));
+
+        // several artists in one field: each its own link, on Now Playing, in the LCD and in Details
+        p.play_list(vec![duet.clone()], Some(&duet), "Duets");
+        p.toggle_play();
+        p.go(Page::NowPlaying);
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        let artists: Vec<Link> = p.np_hits.links.iter().map(|(_, l)| l.clone()).filter(|l| *l != Link::Album).collect();
+        assert_eq!(artists, vec![Link::Artist("June Harbor".into()), Link::Artist("Aurora Fields".into())]);
+        let links = p.np_hits.links.clone();
+        click(&ctx, &mut p, link_at(&links, &Link::Artist("June Harbor".into())));
+        assert_eq!(p.group_sel.get("artists").cloned(), Some("June Harbor".into()));
+        assert!(p.lcd_links.iter().any(|(_, l)| *l == Link::Artist("Aurora Fields".into())), "{:?}", p.lcd_links);
+        p.go(Page::NowPlaying);
+        p.set_np_tab(NpTab::Details);
+        run_until(&ctx, &mut p, "the comment tag", |p| p.np_hits.details.iter().any(|l| l == "Comment: Recorded live"));
+        assert!(p.np_hits.details.iter().any(|l| l == "Artist: June Harbor, Aurora Fields"), "{:?}", p.np_hits.details);
+        for _ in 0..3 {
+            frame(&ctx, &mut p); // the grid settles its column widths
+        }
+        let names: Vec<String> = p.np_hits.detail_links.iter().map(|(_, n)| n.clone()).collect();
+        assert_eq!(names, vec!["June Harbor".to_string(), "Aurora Fields".to_string()]);
+        let second = p.np_hits.detail_links[1].0.center();
+        click(&ctx, &mut p, second);
+        assert_eq!((p.page.clone(), p.group_sel.get("artists").cloned()), (Page::Artists, Some("Aurora Fields".into())));
+
+        // Get lyrics: the download starts at once, and Now Playing shows the lyrics, staying
+        p.play_list(vec![sun.clone()], Some(&sun), "Northern Lights");
+        p.toggle_play();
+        p.lyrics_button();
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        assert!(p.lyrics_of_now().is_none());
+        let get = p.np_hits.get_lyrics.expect("the Get lyrics button");
+        click(&ctx, &mut p, get.center());
+        assert!(p.scanner.lyrics_win.as_ref().is_some_and(|w| w.running), "the download started at once");
+        run_until(&ctx, &mut p, "the lyrics", |p| p.scanner.lyrics_win.as_ref().is_some_and(|w| !w.running));
+        assert_eq!(p.scanner.lyrics_win.as_ref().unwrap().status, "1 with synced lyrics.");
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::NowPlaying);
+        match p.lyrics_of_now() {
+            Some(ShownLyrics::Synced(lines)) => assert_eq!(lines[0].1, "Midnight sun"),
+            other => panic!("no synced lyrics: {other:?}"),
+        }
+        assert!(std::path::Path::new(&realhires::lyrics::sidecar(&sun, ".lrc")).is_file());
+        // a song's menu has Get lyrics… too (get_lyrics): this one is not on LRCLIB
+        p.get_lyrics(vec![kettle.clone()]);
+        assert!(p.scanner.lyrics_win.as_ref().is_some_and(|w| w.running));
+        run_until(&ctx, &mut p, "the second lookup", |p| p.scanner.lyrics_win.as_ref().is_some_and(|w| !w.running));
+        assert_eq!(p.scanner.lyrics_win.as_ref().unwrap().outcomes[0].status, realhires::lyrics::Status::NotFound);
+        p.scanner.lyrics_win = None;
         drop(p);
         let _ = std::fs::remove_dir_all(&tmp);
     }

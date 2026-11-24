@@ -563,6 +563,21 @@ def read_lyrics_file(path: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
+SHOWN_LABELS = {SYNCED: "Synced lyrics", PLAIN: "Lyrics (not synced)", INSTRUMENTAL: "Instrumental"}
+
+
+def shown_label(kind: str, path: str, file: str) -> Tuple[str, str]:
+    """The label above the lyrics on Now Playing, for lyrics of `kind` (as shown: synced
+    lyrics without a single timed line are shown as plain) that `read_lyrics_file(path)`
+    found in `file`: ("Synced lyrics" / "Lyrics (not synced)" / "Instrumental", where they
+    come from: ".lrc file", "inside the file" or ".txt file")."""
+    if file == path:
+        source = "inside the file"
+    else:
+        source = f"{os.path.splitext(file)[1].lower() or 'lyrics'} file"
+    return SHOWN_LABELS.get(kind, SHOWN_LABELS[PLAIN]), source
+
+
 @dataclass
 class LyricsOutcome:
     path: str

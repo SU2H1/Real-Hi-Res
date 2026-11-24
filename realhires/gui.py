@@ -1127,8 +1127,8 @@ class LyricsDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self._close())
         self._replan()
         self.after(100, self._poll)
-        if autostart and self.todo:
-            self.after(400, self._start)
+        if autostart and self.todo:  # the player's Get lyrics: no second button to press
+            self.after_idle(self._start)
 
     def _cfg(self):
         c = settings_mod.Settings.from_dict(self.app.cfg.to_dict())
@@ -3197,15 +3197,19 @@ class App(ttk.Frame):
         if self._current_path() == path:
             self._show_lyrics(path)
 
-    def download_lyrics(self, paths: List[str]) -> None:
+    def download_lyrics(self, paths: List[str], autostart: bool = False) -> Optional["LyricsDialog"]:
+        """The Download synced lyrics window for `paths`; with `autostart` (the player's Get
+        lyrics) the download starts at once.  While a download runs, its window is shown
+        instead (LRCLIB wants one request at a time)."""
         d = self.lyrics_dialog
         if d is not None and d.winfo_exists():
             if d.running:
                 d.lift()
                 self.status_var.set("Lyrics are being downloaded already; wait for them or press Stop first.")
-                return
+                return d
             d.destroy()
-        self.lyrics_dialog = LyricsDialog(self, paths)
+        self.lyrics_dialog = LyricsDialog(self, paths, autostart=autostart)
+        return self.lyrics_dialog
 
     def lyrics_selected(self, event=None):
         """Ctrl/Cmd+L, the Download lyrics… button and the menus: the selected songs."""
