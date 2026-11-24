@@ -46,7 +46,7 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 from . import __version__
 from . import settings as settings_mod
 from .eta import ScanEta, file_sizes
-from .fix import FIXABLE_VERDICTS
+from .fix import FIXABLE_VERDICTS, fix_advice
 from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
@@ -2435,6 +2435,9 @@ class App(ttk.Frame):
         self.fact_vars["Format"].set(f"{r.codec}, {r.channels} ch" if r.codec else "–")
         self.fact_vars["Duration"].set(fmt_duration(r.duration) if r.duration else "?")
         parts = [f"• {x}\n" for x in r.reasons] + [f"• {x}\n" for x in r.notes]
+        advice = fix_advice(r, self.cfg)  # what Fix does with it, and whether it stays fake afterwards
+        if advice:
+            parts.append(f"• {advice}\n")
         if r.saved:
             parts.insert(0, f"• {saved_note(r)}\n")
         if r.cliffs_db:

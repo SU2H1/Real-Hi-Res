@@ -268,7 +268,7 @@ def main(argv=None) -> int:
             eta.add(r.path)
         results.append(r)
         if wanted is None or r.verdict in wanted:
-            print(row(r, color, base=base, verbose=args.verbose), flush=True)
+            print(row(r, color, base=base, verbose=args.verbose, cfg=cfg), flush=True)
         if show_progress and i < len(files):
             eprint(f"[{i}/{len(files)}] analysing… {eta.text() if eta else ''}", end="", flush=True)
 

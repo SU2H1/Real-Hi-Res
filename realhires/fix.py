@@ -290,6 +290,46 @@ def skip_summary(skipped) -> str:
     return f"{len(skipped)} file(s) are not changed: " + "; ".join(parts) + "."
 
 
+def _keeps(note: str) -> str:
+    """'Kept 96 kHz instead of ...: the spectrum ...' -> 'keeps 96 kHz instead of ..., because the spectrum ...'."""
+    return "keeps " + note[len("Kept "):].replace(": the spectrum", ", because the spectrum", 1).rstrip(".")
+
+
+def fix_advice(r: FileResult, cfg=None) -> Optional[str]:
+    """What "Fix to real resolution" does with a fake file, and whether it is
+    still marked fake afterwards (shown in the details, so a file that stays
+    fake after fixing and re-scanning says why); None for other verdicts."""
+    if r.verdict not in FIXABLE_VERDICTS:
+        return None
+    plan, why = plan_fix(r, cfg)
+    lossy = ("because it was made from an MP3/AAC, and no conversion can bring back what the lossy "
+             "encoder removed. Only a genuine lossless copy is better.")
+    if plan is None:
+        tgt = target_resolution(r, cfg)
+        if tgt is None:
+            return "Fix to real resolution leaves it unchanged, because its real resolution could not be determined."
+        rate, bits, notes = tgt
+        if r.verdict == FAKE_LOSSLESS:
+            return (f"Fix to real resolution leaves it unchanged: it is already {_fmt(bits, rate)}, the resolution "
+                    f"it really has. It stays marked fake lossless, also after fixing and re-scanning, {lossy}")
+        kept = [n for n in notes if n.startswith("Kept")]
+        if kept:
+            return (f"Fix to real resolution leaves it unchanged: it {_keeps(kept[0])}, and all its {bits} bits "
+                    "are used, so nothing would change. It stays marked fake hi-res, also after fixing and "
+                    "re-scanning.")
+        return f"Fix to real resolution leaves it unchanged: it is already {_fmt(bits, rate)}."
+    target = _fmt(plan.target_bits, plan.target_rate)
+    if r.verdict == FAKE_LOSSLESS:
+        return (f"Fix to real resolution converts it to {target}, the resolution it really has, but it stays "
+                f"marked fake lossless even then, {lossy}")
+    kept = [n for n in plan.notes if n.startswith("Kept")]
+    if kept:
+        return (f"Fix to real resolution converts it to {target}, but it {_keeps(kept[0])}. It therefore "
+                "stays marked fake hi-res after fixing and re-scanning.")
+    return (f"Fix to real resolution converts it to {target}, the resolution it really has; a re-scan then "
+            "no longer marks it fake.")
+
+
 def fmt_bytes(n: float) -> str:
     """'1.2 GB', '350.4 MB', '812 bytes'."""
     for unit in ("bytes", "KB", "MB", "GB"):
@@ -372,6 +412,11 @@ def done_summary(outcomes: List[FixOutcome], skipped: int = 0,
             if FAKE_LOSSLESS in counts:
                 line += (" A file made from MP3/AAC stays fake lossless at any resolution, because "
                          "fixing cannot bring back what the lossy encoder removed.")
+            if FAKE in counts:
+                line += (" A file whose sample rate had to be kept, to avoid cutting real content, stays "
+                         "marked fake hi-res.")
+            if FAKE_LOSSLESS in counts or FAKE in counts:
+                line += " They keep that mark in later scans, and their details say why."
             lines.append(line)
     if bad:
         first = bad[0]

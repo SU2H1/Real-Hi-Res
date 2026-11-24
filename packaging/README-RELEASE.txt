@@ -40,7 +40,9 @@ Settings > Fixing > "After a scan" can ask, or fix the fake files on its own,
 when a scan finishes.  Fake FLACs made from an MP3 that are already 16/44.1
 cannot be improved; the Fix window lists them last and says why.  When
 fixing has finished, a pop-up says how many files were fixed, how much smaller
-they are and where the originals went.
+they are and where the originals went.  The details of each fake file say what
+Fix does with it and whether it stays marked fake afterwards (a file made from
+an MP3/AAC stays "Fake lossless" at any resolution).
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 
