@@ -232,7 +232,7 @@ def test_cli_downloads_lyrics_like_lrcget(lrclib, tmp_path, capsys):
     for name in ("05 Epsilon", "06 untagged", "07 Zeta"):  # Zeta's only record is 5 s longer
         assert not (folder / f"{name}.lrc").exists() and not (folder / f"{name}.txt").exists()
     assert "(found by searching)" in out
-    assert ("Lyrics: 2 with synced lyrics, 1 with plain lyrics (.txt), 1 instrumental, 2 not found on LRCLIB, "
+    assert ("Lyrics: 2 with synced lyrics, 1 with plain lyrics, 1 instrumental, 2 not found on LRCLIB, "
             "1 without title/artist tags.") in out, out
     assert all(ua.startswith("Real-Hi-Res v") for _, _, ua in lrclib.requests)
     first = next(q for p, q, _ in lrclib.requests if p == "/api/get" and q["track_name"] == "Alpha")

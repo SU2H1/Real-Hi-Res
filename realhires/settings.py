@@ -20,12 +20,16 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-GROUPS = ("Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics")
+GROUPS = ("Library", "Playback", "Appearance", "Lyrics", "Detection", "Scanning", "Saved results", "Display",
+          "Fixing")
 SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
                 "LOSSY FORMAT", "ERROR"]
 COLORMAPS = ["inferno", "viridis", "magma", "gray"]
+LYRICS_SAVE_CHOICES = ["An .lrc file next to the song", "Inside the audio file (MP3, FLAC)",
+                       "Both: .lrc file and inside the audio file", "Plain lyrics inside the audio file (no timing)"]
+THEMES = ["Match the system", "Light", "Dark"]
 DEFAULT_EXTENSIONS = (".flac .wav .wave .w64 .rf64 .aif .aiff .aifc .caf .m4a .mp4 .alac .ape .wv "
                       ".tta .tak .dsf .dff .mka .ogg .oga .opus .mp3 .aac .wma .mpc .ac3 .dts")
 
@@ -40,6 +44,41 @@ def _f(default, group, label, help_text, lo=None, hi=None, choices=None, kind=No
 
 @dataclass
 class Settings:
+    # ---- Library (2.0, the player) -----------------------------------------
+    library_folders: list = _f(
+        [], "Library", "Library folders",
+        "The folders whose songs make up your music library. Every audio file in them and in their "
+        "sub-folders is listed in the player, with the title, artist, album and genre from its tags. "
+        "On the command line, separate several folders with ';' on Windows and ':' elsewhere.",
+        kind="paths")
+    scan_library_on_start: bool = _f(
+        False, "Library", "Check new songs when the app starts",
+        "When the app starts, analyse the library songs that have not been checked for fake hi-res and "
+        "fake lossless yet. Songs checked before are answered from the saved results at once.", kind="bool")
+    lyrics_while_scanning: bool = _f(
+        False, "Library", "Download lyrics while scanning",
+        "While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its "
+        "lyrics as set on the Lyrics tab (one request at a time, as LRCLIB asks).", kind="bool")
+
+    # ---- Playback (2.0) ---------------------------------------------------
+    output_device: str = _f(
+        "", "Playback", "Output device",
+        "The sound device the player plays through. Empty = the system's default device.", kind="str")
+    gapless: bool = _f(
+        True, "Playback", "Gapless playback",
+        "Start the next song without a pause, so albums that flow from track to track play as one.",
+        kind="bool")
+
+    # ---- Appearance (2.0) ---------------------------------------------------
+    font_family: str = _f(
+        "", "Appearance", "Font",
+        "The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux "
+        "(SF Pro may only be used on Apple systems). Any font installed on your computer can be chosen.",
+        kind="str")
+    theme: str = _f(
+        "Match the system", "Appearance", "Appearance",
+        "Light or dark, or the same as the system.", choices=THEMES, kind="choice")
+
     # ---- Detection ------------------------------------------------------
     cliff_db: float = _f(
         25.0, "Detection", "Upsampling cliff (dB)",
@@ -238,6 +277,14 @@ class Settings:
         "title and artist and take a result with the same title, the same artist and a length within "
         "2 seconds. This finds songs whose album is named differently on LRCLIB. Off: exact matches only "
         "(one request per song instead of up to two).", kind="bool")
+    lyrics_save_as: str = _f(
+        LYRICS_SAVE_CHOICES[0], "Lyrics", "Save lyrics as",
+        "Where downloaded lyrics go. An .lrc file next to the song works with every player and never "
+        "changes the audio file. 'Inside the audio file' writes synced lyrics into the file's tag, as "
+        "LRCGET does (MP3: SYLT and USLT; FLAC: LYRICS and UNSYNCEDLYRICS); only the tag is rewritten, the "
+        "audio itself is not changed, and other formats get an .lrc file instead. 'Plain lyrics inside "
+        "the audio file' stores the text without timing, which more players show.",
+        choices=LYRICS_SAVE_CHOICES, kind="choice")
     lyrics_server: str = _f(
         "https://lrclib.net", "Lyrics", "LRCLIB server",
         "Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB.",
@@ -294,6 +341,8 @@ class Settings:
         value: Any = raw
         if kind == "multi":
             value = [v.strip().upper() for v in raw.split(",") if v.strip()]
+        elif kind == "paths":
+            value = [v.strip() for v in raw.split(os.pathsep) if v.strip()]
         elif kind == "bool":
             value = raw.strip().lower() in ("1", "true", "yes", "on")
         v = _coerce(f, value)
@@ -316,6 +365,14 @@ def _coerce(f, value):
         if kind == "multi":
             vals = [v for v in value if v in md["choices"]]
             return vals if isinstance(value, (list, tuple)) else None
+        if kind == "paths":
+            if not isinstance(value, (list, tuple)):
+                return None
+            out: List[str] = []
+            for v in value:
+                if isinstance(v, str) and v.strip() and v.strip() not in out:
+                    out.append(v.strip())
+            return out
         num = int(value) if kind == "int" else float(value)
     except (TypeError, ValueError, KeyError):
         return None

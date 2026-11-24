@@ -486,6 +486,18 @@ def skip_reason(path: str, cfg) -> str:
     if lrc:
         with_what = "an instrumental mark" if is_instrumental_lrc(_read_head(lrc)) else "synced lyrics"
         return f"Already has {with_what} ({os.path.basename(lrc)})."
+    mode = save_mode(cfg)
+    if mode != "lrc":
+        from . import embed
+
+        synced, plain = embed.embedded_lyrics(path)
+        text = synced or plain
+        if text and is_instrumental_lrc(text):
+            return "Already has an instrumental mark inside the file."
+        if synced:
+            return "Already has synced lyrics inside the file."
+        if plain and (mode == "plain" or cfg.lyrics_existing == EXISTING_CHOICES[1]):
+            return "Already has lyrics inside the file."
     if txt and cfg.lyrics_existing == EXISTING_CHOICES[1]:
         return f"Already has lyrics ({os.path.basename(txt)})."
     return ""
@@ -534,6 +546,12 @@ def read_lyrics_file(path: str) -> Optional[Tuple[str, str, str]]:
         if file == lrc:
             return (INSTRUMENTAL if is_instrumental_lrc(text) else SYNCED), text, file
         return PLAIN, text, file
+    from . import embed  # 2.0: lyrics inside the file (MP3, FLAC)
+
+    found = embed.lyrics_of(path)
+    if found is not None:
+        kind, text, _ = found
+        return kind, text, path
     return None
 
 
@@ -576,38 +594,96 @@ def short_skip(reason: str) -> str:
     return "Kept the existing .txt"
 
 
+def save_mode(cfg) -> str:
+    """"lrc", "embed", "both" or "plain" from Settings → Lyrics → Save lyrics as (2.0)."""
+    from .settings import LYRICS_SAVE_CHOICES
+
+    return {LYRICS_SAVE_CHOICES[1]: "embed", LYRICS_SAVE_CHOICES[2]: "both",
+            LYRICS_SAVE_CHOICES[3]: "plain"}.get(getattr(cfg, "lyrics_save_as", ""), "lrc")
+
+
 def save_lyrics(path: str, lyr: Lyrics, cfg, track: Optional[Track] = None, dry_run: bool = False) -> LyricsOutcome:
+    from . import embed
+
     replace = _replace_mode(cfg)
     lrc, txt = sidecar(path, ".lrc"), sidecar(path, ".txt")
+    lrc_name, txt_name, name = os.path.basename(lrc), os.path.basename(txt), os.path.basename(path)
     via = " (found by searching)" if lyr.how == "search" else ""
+    mode, note = save_mode(cfg), ""
+    if mode != "lrc" and not embed.supported(path):
+        mode, note = "lrc", " Lyrics can only be embedded in MP3 and FLAC files."
+    files: List[Tuple[str, str]] = []      # (file, text) to write next to the song
+    inside: Optional[Tuple[str, str]] = None  # (synced, plain) to embed in the song
     if lyr.synced:
-        status, target, text = SYNCED, lrc, lyr.synced
-        msg = f"Saved synced lyrics as {os.path.basename(lrc)}{via}."
+        plain = lyr.plain or strip_timestamps(lyr.synced)
+        if mode == "plain":
+            status, inside = PLAIN, ("", plain)
+            msg = f"Embedded the lyrics in {name}, without timing{via}."
+        else:
+            status = SYNCED
+            if mode in ("lrc", "both"):
+                files.append((lrc, lyr.synced))
+            if mode in ("embed", "both"):
+                inside = (lyr.synced, plain)
+            msg = {"lrc": f"Saved synced lyrics as {lrc_name}{via}.",
+                   "embed": f"Embedded synced lyrics in {name}{via}.",
+                   "both": f"Saved synced lyrics as {lrc_name} and embedded them in {name}{via}."}[mode]
     elif lyr.plain:
         if not cfg.lyrics_plain:
+            what = "saving them as .txt" if mode == "lrc" else "saving plain lyrics"
             return LyricsOutcome(path, PLAIN_ONLY, "LRCLIB has only plain (unsynced) lyrics for this song, and "
-                                 "saving them as .txt is turned off.", track, how=lyr.how)
-        if os.path.isfile(txt) and not replace:
+                                 f"{what} is turned off.", track, how=lyr.how)
+        keep_txt = os.path.isfile(txt) and not replace
+        if mode == "lrc" and keep_txt:
             return LyricsOutcome(path, SKIPPED, "LRCLIB has only plain lyrics for this song, so the existing "
-                                 f"{os.path.basename(txt)} was kept.", track, how=lyr.how)
-        status, target, text = PLAIN, txt, lyr.plain
-        msg = f"LRCLIB has only plain lyrics for this song; saved them as {os.path.basename(txt)}{via}."
+                                 f"{txt_name} was kept.", track, how=lyr.how)
+        status = PLAIN
+        if mode == "lrc":
+            files.append((txt, lyr.plain))
+            msg = f"LRCLIB has only plain lyrics for this song; saved them as {txt_name}{via}."
+        elif mode == "both" and not keep_txt:
+            files.append((txt, lyr.plain))
+            inside = ("", lyr.plain)
+            msg = f"LRCLIB has only plain lyrics for this song; saved them as {txt_name} and embedded them in {name}{via}."
+        else:
+            inside = ("", lyr.plain)
+            msg = f"LRCLIB has only plain lyrics for this song; embedded them in {name}{via}."
     else:
         if not cfg.lyrics_instrumental:
             return LyricsOutcome(path, INSTRUMENTAL, "LRCLIB lists this song as instrumental; marking "
                                  "instrumental songs is turned off, so nothing was saved.", track, how=lyr.how)
-        if os.path.isfile(txt) and not replace:
+        if mode in ("lrc", "both") and os.path.isfile(txt) and not replace:
             return LyricsOutcome(path, SKIPPED, "LRCLIB lists this song as instrumental, but it has lyrics in "
-                                 f"{os.path.basename(txt)}, which were kept.", track, how=lyr.how)
-        status, target, text = INSTRUMENTAL, lrc, INSTRUMENTAL_LRC
-        msg = f"LRCLIB lists this song as instrumental; marked it in {os.path.basename(lrc)}{via}."
+                                 f"{txt_name}, which were kept.", track, how=lyr.how)
+        status = INSTRUMENTAL
+        if mode in ("lrc", "both"):
+            files.append((lrc, INSTRUMENTAL_LRC))
+        if mode in ("embed", "both"):
+            inside = (INSTRUMENTAL_LRC, INSTRUMENTAL_LRC)
+        elif mode == "plain":
+            inside = ("", INSTRUMENTAL_LRC)
+        msg = {"lrc": f"LRCLIB lists this song as instrumental; marked it in {lrc_name}{via}.",
+               "both": f"LRCLIB lists this song as instrumental; marked it in {lrc_name} and in {name}{via}."}.get(
+            mode, f"LRCLIB lists this song as instrumental; marked it in {name}{via}.")
+    msg += note
     if dry_run:
         return LyricsOutcome(path, status, "Would save: " + msg[0].lower() + msg[1:], track, how=lyr.how)
-    try:
-        write_text(target, text)
-    except OSError as exc:
-        return LyricsOutcome(path, FAILED, f"Could not save {os.path.basename(target)}: {exc}", track, how=lyr.how)
-    return LyricsOutcome(path, status, msg, track, [target], lyr.how)
+    written = []
+    for target, text in files:
+        try:
+            write_text(target, text)
+        except OSError as exc:
+            return LyricsOutcome(path, FAILED, f"Could not save {os.path.basename(target)}: {exc}", track,
+                                 written, lyr.how)
+        written.append(target)
+    if inside is not None:
+        try:
+            embed.embed_lyrics(path, *inside)
+        except (OSError, embed.EmbedError) as exc:
+            return LyricsOutcome(path, FAILED, f"Could not embed the lyrics in {name}: {exc}", track, written,
+                                 lyr.how)
+        written.append(path)
+    return LyricsOutcome(path, status, msg, track, written, lyr.how)
 
 
 def fetch_for_file(path: str, client: LrclibClient, cfg, result=None, dry_run: bool = False) -> LyricsOutcome:
@@ -644,11 +720,11 @@ def run_lyrics(paths: Iterable[str], cfg, results: Optional[dict] = None, dry_ru
 
 
 def lyrics_summary(outcomes: Iterable[LyricsOutcome]) -> str:
-    """'12 with synced lyrics, 3 with plain lyrics (.txt), 5 not found, 20 skipped.'"""
+    """'12 with synced lyrics, 3 with plain lyrics, 5 not found, 20 skipped.'"""
     counts: Dict[str, int] = {}
     for o in outcomes:
         counts[o.status] = counts.get(o.status, 0) + 1
-    words = [(SYNCED, "with synced lyrics"), (PLAIN, "with plain lyrics (.txt)"),
+    words = [(SYNCED, "with synced lyrics"), (PLAIN, "with plain lyrics"),
              (INSTRUMENTAL, "instrumental"), (PLAIN_ONLY, "with only plain lyrics (not saved)"),
              (NOT_FOUND, "not found on LRCLIB"), (SKIPPED, "skipped (already had lyrics)"),
              (NO_TAGS, "without title/artist tags"), (FAILED, "failed")]
