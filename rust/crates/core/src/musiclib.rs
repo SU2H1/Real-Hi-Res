@@ -509,21 +509,154 @@ fn group_by(tracks: &[Track], name_of: impl Fn(&Track) -> String) -> Vec<Group> 
     groups
 }
 
-/// Per performing artist (the track's artist).
-pub fn artists(tracks: &[Track]) -> Vec<Group> {
-    group_by(tracks, Track::display_artist)
+// ------------------------------------------------- several artists in one ---
+// 2.1 (Python musiclib "several artists in one"): ';' and "feat."/"ft."/"featuring" always
+// separate artists; ", ", " & ", " x " and " / " only when one of the names they give is an
+// artist of the library on its own (`known_artists()`).  Separator letters match in any case
+// (ASCII only).
+
+pub const ALWAYS_SEPARATORS: [&str; 9] =
+    [";", " feat. ", " feat ", " ft. ", " ft ", " featuring ", " (feat. ", " (ft. ", " (featuring "];
+pub const MAYBE_SEPARATORS: [&str; 4] = [", ", " & ", " x ", " / "];
+
+/// `text` cut at every separator of `seps` (the longest that matches at a place).
+fn split_on(text: &str, seps: &[&str]) -> Vec<String> {
+    let mut seps: Vec<Vec<char>> = seps.iter().map(|s| s.chars().collect()).collect();
+    seps.sort_by_key(|s| std::cmp::Reverse(s.len())); // stable, as Python's sorted()
+    let chars: Vec<char> = text.chars().collect();
+    let (mut out, mut start, mut i, n) = (vec![], 0usize, 0usize, chars.len());
+    'outer: while i < n {
+        for sep in &seps {
+            let m = sep.len();
+            if i + m <= n
+                && chars[i..i + m].iter().zip(sep).all(|(c, x)| c == x || (c.is_ascii() && c.to_ascii_lowercase() == *x))
+            {
+                out.push(chars[start..i].iter().collect());
+                i += m;
+                start = i;
+                continue 'outer;
+            }
+        }
+        i += 1;
+    }
+    out.push(chars[start..].iter().collect());
+    out
 }
 
-/// Per album artist (else the track's artist).
-pub fn album_artists(tracks: &[Track]) -> Vec<Group> {
-    group_by(tracks, |t| {
-        let a = crate::pyunicode::strip(&t.album_artist);
-        if a.is_empty() {
-            t.display_artist()
-        } else {
-            a.to_string()
+fn clean_names(parts: Vec<String>) -> Vec<String> {
+    let mut out = vec![];
+    for p in parts {
+        let mut p = crate::pyunicode::strip(&p).to_string();
+        if p.ends_with(')') && p.matches('(').count() < p.matches(')').count() {
+            p.pop(); // "A (feat. B)" leaves "B)"
+            p = crate::pyunicode::strip(&p).to_string();
         }
-    })
+        if !p.is_empty() {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// The artists an artist field always stands for (split at ';' and "feat.").
+pub fn artist_pieces(name: &str) -> Vec<String> {
+    clean_names(split_on(name, &ALWAYS_SEPARATORS))
+}
+
+/// Casefolded names that stand on their own in an artist or album artist field.
+pub fn known_artists(tracks: &[Track]) -> std::collections::HashSet<String> {
+    let mut known = std::collections::HashSet::new();
+    for t in tracks {
+        for field in [&t.artist, &t.album_artist] {
+            for piece in artist_pieces(field) {
+                known.insert(casefold(&piece));
+            }
+        }
+    }
+    known
+}
+
+/// The artists of an artist field, in order and without repeats.
+pub fn split_artists(name: &str, known: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let mut seen = std::collections::HashSet::new();
+    for piece in artist_pieces(name) {
+        let parts = clean_names(split_on(&piece, &MAYBE_SEPARATORS));
+        let names = if parts.len() > 1 && parts.iter().any(|p| known.contains(&casefold(p))) { parts } else { vec![piece] };
+        for n in names {
+            if seen.insert(casefold(&n)) {
+                out.push(n);
+            }
+        }
+    }
+    out
+}
+
+/// As `group_by()`, but a track may belong to several groups (once to each).
+fn group_by_many(tracks: &[Track], names_of: impl Fn(&Track) -> Vec<String>) -> Vec<Group> {
+    let mut groups: Vec<Group> = vec![];
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for t in tracks {
+        let mut done = std::collections::HashSet::new();
+        for name in names_of(t) {
+            let key = casefold(crate::pyunicode::strip(&name));
+            if !done.insert(key.clone()) {
+                continue;
+            }
+            match index.get(&key) {
+                Some(i) => groups[*i].tracks.push(t.clone()),
+                None => {
+                    index.insert(key, groups.len());
+                    groups.push(Group { name, tracks: vec![t.clone()] });
+                }
+            }
+        }
+    }
+    for g in groups.iter_mut() {
+        sort_songs(&mut g.tracks);
+    }
+    groups.sort_by_key(|g| casefold(&g.name));
+    groups
+}
+
+/// Per performing artist: each artist of the track's artist field (`split_artists()`).
+pub fn artists(tracks: &[Track]) -> Vec<Group> {
+    let known = known_artists(tracks);
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    let mut names = |field: String| -> Vec<String> {
+        cache
+            .entry(field.clone())
+            .or_insert_with(|| {
+                let v = split_artists(&field, &known);
+                if v.is_empty() { vec![field] } else { v }
+            })
+            .clone()
+    };
+    let lists: Vec<Vec<String>> = tracks.iter().map(|t| names(t.display_artist())).collect();
+    let by_path: HashMap<&str, usize> = tracks.iter().enumerate().map(|(i, t)| (t.path.as_str(), i)).collect();
+    group_by_many(tracks, |t| lists[by_path[t.path.as_str()]].clone())
+}
+
+/// Per album artist (else the track's artist), each artist of the field on its own.
+pub fn album_artists(tracks: &[Track]) -> Vec<Group> {
+    let known = known_artists(tracks);
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    let lists: Vec<Vec<String>> = tracks
+        .iter()
+        .map(|t| {
+            let a = crate::pyunicode::strip(&t.album_artist);
+            let field = if a.is_empty() { t.display_artist() } else { a.to_string() };
+            cache
+                .entry(field.clone())
+                .or_insert_with(|| {
+                    let v = split_artists(&field, &known);
+                    if v.is_empty() { vec![field] } else { v }
+                })
+                .clone()
+        })
+        .collect();
+    let by_path: HashMap<&str, usize> = tracks.iter().enumerate().map(|(i, t)| (t.path.as_str(), i)).collect();
+    group_by_many(tracks, |t| lists[by_path[t.path.as_str()]].clone())
 }
 
 pub fn composers(tracks: &[Track]) -> Vec<Group> {

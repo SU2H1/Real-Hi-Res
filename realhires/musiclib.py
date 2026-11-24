@@ -314,14 +314,120 @@ def _group_by(tracks: Iterable[Track], name_of: Callable[[Track], str]) -> List[
                   key=lambda a: a["name"].casefold())
 
 
+# ------------------------------------------------- several artists in one ---
+# 2.1, as the user asked: "Mariah Carey, Michael Bublé" is two artists, and a click on
+# "Michael Bublé" opens his page.  ';' (how FFmpeg joins several ARTIST tags) and
+# "feat."/"ft."/"featuring" always separate artists; ", ", " & ", " x " and " / " only when
+# one of the names they give is an artist of the library on its own (`known_artists()`),
+# so that "Earth, Wind & Fire" and "Simon & Garfunkel" stay one artist.  Letters of a
+# separator match in any case (ASCII only), so both versions split alike.
+ALWAYS_SEPARATORS = (";", " feat. ", " feat ", " ft. ", " ft ", " featuring ", " (feat. ", " (ft. ",
+                     " (featuring ")
+MAYBE_SEPARATORS = (", ", " & ", " x ", " / ")
+
+
+def _split_on(text: str, seps: Iterable[str]) -> List[str]:
+    """`text` cut at every separator of `seps` (the longest that matches at a place)."""
+    seps = sorted(seps, key=len, reverse=True)
+    low = text.lower()
+    if not any(sep in low for sep in seps):  # the common case, at C speed
+        return [text]
+    out, start, i, n = [], 0, 0, len(text)
+    while i < n:
+        for sep in seps:
+            m = len(sep)
+            if i + m <= n and all(c == x or (c.isascii() and c.lower() == x) for c, x in zip(text[i:i + m], sep)):
+                out.append(text[start:i])
+                i = start = i + m
+                break
+        else:
+            i += 1
+    out.append(text[start:])
+    return out
+
+
+def _clean_names(parts: Iterable[str]) -> List[str]:
+    out = []
+    for p in parts:
+        p = p.strip()
+        if p.endswith(")") and p.count("(") < p.count(")"):  # "A (feat. B)" leaves "B)"
+            p = p[:-1].strip()
+        if p:
+            out.append(p)
+    return out
+
+
+def artist_pieces(name: str) -> List[str]:
+    """The artists an artist field always stands for (split at ';' and "feat.")."""
+    return _clean_names(_split_on(name, ALWAYS_SEPARATORS))
+
+
+def known_artists(tracks: Iterable[Track]) -> set:
+    """Casefolded names that stand on their own in an artist or album artist field."""
+    known = set()
+    for t in tracks:
+        for field in (t.artist, t.album_artist):
+            for piece in artist_pieces(field):
+                known.add(piece.casefold())
+    return known
+
+
+def split_artists(name: str, known: set) -> List[str]:
+    """The artists of an artist field, in order and without repeats (see above)."""
+    out: List[str] = []
+    seen = set()
+    for piece in artist_pieces(name):
+        parts = _clean_names(_split_on(piece, MAYBE_SEPARATORS))
+        names = parts if len(parts) > 1 and any(p.casefold() in known for p in parts) else [piece]
+        for n in names:
+            if n.casefold() not in seen:
+                seen.add(n.casefold())
+                out.append(n)
+    return out
+
+
+def _group_by_many(tracks: Iterable[Track], names_of: Callable[[Track], List[str]]) -> List[dict]:
+    """As _group_by(), but a track may belong to several groups (once to each)."""
+    groups: Dict[str, List[Track]] = {}
+    names: Dict[str, str] = {}
+    for t in tracks:
+        for key in dict.fromkeys(n.strip().casefold() for n in names_of(t)):  # once per group
+            groups.setdefault(key, []).append(t)
+        for name in names_of(t):
+            names.setdefault(name.strip().casefold(), name)
+    return sorted(({"name": names[k], "tracks": sort_songs(v)} for k, v in groups.items()),
+                  key=lambda a: a["name"].casefold())
+
+
 def artists(tracks: Iterable[Track]) -> List[dict]:
-    """{"name", "tracks"} per performing artist (the track's artist), sorted by name."""
-    return _group_by(tracks, lambda t: t.display_artist)
+    """{"name", "tracks"} per performing artist (each artist of the track's artist field,
+    `split_artists()`), sorted by name."""
+    tracks = list(tracks)
+    known = known_artists(tracks)
+    cache: Dict[str, List[str]] = {}
+
+    def names(t: Track) -> List[str]:
+        field = t.display_artist
+        if field not in cache:
+            cache[field] = split_artists(field, known) or [field]
+        return cache[field]
+    return _group_by_many(tracks, names)
 
 
 def album_artists(tracks: Iterable[Track]) -> List[dict]:
-    """{"name", "tracks"} per album artist (else the track's artist), sorted by name."""
-    return _group_by(tracks, lambda t: t.album_artist.strip() or t.display_artist)
+    """{"name", "tracks"} per album artist (else the track's artist), each artist of the
+    field on its own, sorted by name."""
+    tracks = list(tracks)
+    known = known_artists(tracks)
+
+    cache: Dict[str, List[str]] = {}
+
+    def names(t: Track) -> List[str]:
+        field = t.album_artist.strip() or t.display_artist
+        if field not in cache:
+            cache[field] = split_artists(field, known) or [field]
+        return cache[field]
+    return _group_by_many(tracks, names)
 
 
 def genres(tracks: Iterable[Track]) -> List[dict]:
