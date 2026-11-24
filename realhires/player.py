@@ -300,6 +300,7 @@ class Exclusive:
     modes: List[bp.Mode] = field(default_factory=list)
     error: str = ""
     target: object = None      # what open() needs to reach it (backend specific)
+    note: str = ""             # added to the reasons when the song is not played as it is
 
 
 class OpenError(PlayerError):
@@ -545,7 +546,8 @@ class MiniaudioOutput(Output):
         name = dev.name if device or dev.default else "System default"
         if not modes:
             return Exclusive(bp.WASAPI, name, error=bp.failure_reason("Windows offers no exclusive-mode format for it"))
-        return Exclusive(bp.WASAPI, name, modes, target=("wasapi", dev.id if device else None))
+        return Exclusive(bp.WASAPI, name, modes, target=("wasapi", dev.id if device else None),
+                         note=bp.WASAPI_FORMAT_NOTE)
 
     # ---- playing -----------------------------------------------------------
     def open(self, device, rate, callback, ready=None, fmt=bp.F32, channels=CHANNELS, exclusive=None) -> None:
@@ -1270,6 +1272,8 @@ class Player:
         if ex.error:
             return self._shared_plan(device, song, ex.error, ex)
         p = bp.plan(song, ex.modes)
+        if ex.note and p.reasons:
+            p.reasons.append(ex.note)
         return _OutPlan(p.rate, p.format, p.channels, ex, p, song, ex.access, ex.label)
 
     def _shared_plan(self, device: str, song: bp.Song, why: str, ex: Optional[Exclusive] = None) -> _OutPlan:

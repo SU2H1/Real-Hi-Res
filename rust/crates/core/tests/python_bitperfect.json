@@ -4841,6 +4841,7 @@
 "busy": "The device is in use by another program, so the sound is mixed by the system.",
 "lossy": "The song is decoded from a lossy format, so it is played as decoded.",
 "eq": "Bypassed while bit-perfect playback is on.",
+"wasapi": "Windows gives the device to this app alone only in the format chosen in its Sound settings (the device's Properties, Advanced, Default Format).",
 "off": "Off",
 "idle": "On"
 },

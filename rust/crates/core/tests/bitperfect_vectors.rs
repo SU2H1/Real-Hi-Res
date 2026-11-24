@@ -100,6 +100,7 @@ fn plans_reasons_and_texts_equal_python() {
     assert_eq!(bitperfect::BUSY, text(t, "busy"));
     assert_eq!(bitperfect::LOSSY_NOTE, text(t, "lossy"));
     assert_eq!(bitperfect::EQ_BYPASSED, text(t, "eq"));
+    assert_eq!(bitperfect::WASAPI_FORMAT_NOTE, text(t, "wasapi"));
     assert_eq!(bitperfect::OFF, text(t, "off"));
     assert_eq!(bitperfect::ON_IDLE, text(t, "idle"));
     let rates: Vec<u32> = list(d.get("standard_rates").unwrap()).iter().map(|r| r.as_i64().unwrap() as u32).collect();

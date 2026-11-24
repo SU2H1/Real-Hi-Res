@@ -45,6 +45,9 @@ ON_IDLE = "On"
 BUSY = "The device is in use by another program, so the sound is mixed by the system."
 LOSSY_NOTE = "The song is decoded from a lossy format, so it is played as decoded."
 EQ_BYPASSED = "Bypassed while bit-perfect playback is on."
+# the Python app on Windows: miniaudio opens a WASAPI exclusive stream only in the device's Default Format
+WASAPI_FORMAT_NOTE = ("Windows gives the device to this app alone only in the format chosen in its Sound "
+                      "settings (the device's Properties, Advanced, Default Format).")
 
 # the rates a device with a range of rates is tried at, as miniaudio and cpal list them
 STANDARD_RATES = (8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000,
@@ -319,7 +322,7 @@ def alsa_device(device: str, cards: Sequence[Tuple[int, str, str]]) -> str:
 
 
 __all__ = ["I16", "I24", "I32", "F32", "FORMATS", "WASAPI", "ALSA", "COREAUDIO", "DIRECT", "OFF", "ON_IDLE",
-           "BUSY", "LOSSY_NOTE", "EQ_BYPASSED", "STANDARD_RATES", "Song", "Mode", "Plan", "fmt_khz",
+           "BUSY", "LOSSY_NOTE", "EQ_BYPASSED", "WASAPI_FORMAT_NOTE", "STANDARD_RATES", "Song", "Mode", "Plan", "fmt_khz",
            "format_label", "output_label", "access_label", "failure_reason", "rate_reason", "status",
            "preferred_formats", "usable", "rates_offered", "pick_rate", "plan", "int_sample", "song_bits",
            "alsa_cards", "alsa_device", "channels_label"]

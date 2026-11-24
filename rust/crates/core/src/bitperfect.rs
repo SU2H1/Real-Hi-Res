@@ -24,11 +24,12 @@
 use crate::pyfmt;
 
 /// The sample formats the engine writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Format {
     I16,
     I24,
     I32,
+    #[default]
     F32,
 }
 
@@ -92,6 +93,9 @@ pub const ON_IDLE: &str = "On";
 pub const BUSY: &str = "The device is in use by another program, so the sound is mixed by the system.";
 pub const LOSSY_NOTE: &str = "The song is decoded from a lossy format, so it is played as decoded.";
 pub const EQ_BYPASSED: &str = "Bypassed while bit-perfect playback is on.";
+/// The Python app on Windows: miniaudio opens a WASAPI exclusive stream only in the device's Default Format.
+pub const WASAPI_FORMAT_NOTE: &str = "Windows gives the device to this app alone only in the format chosen in its \
+                                      Sound settings (the device's Properties, Advanced, Default Format).";
 
 /// The rates a device with a range of rates is tried at, as miniaudio and cpal list them.
 pub const STANDARD_RATES: [u32; 16] = [

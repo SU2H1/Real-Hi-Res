@@ -462,3 +462,25 @@ def test_bit_perfect_through_miniaudio_builds_the_device_in_the_songs_format(tmp
     assert wait_for(lambda: events.extend(p.poll()) or events, 10)
     assert events == [("finished", path)]
     p.close()
+
+
+def test_windows_note_when_the_exclusive_format_is_fixed(tmp_path):
+    """The Python app on Windows gets an exclusive stream only in the device's Default Format
+    (miniaudio 0.11), so a song in another rate says where that format is set."""
+    from realhires import bitperfect
+
+    class FixedFormat(ManualOutput):
+        def exclusive(self, device):
+            ex = super().exclusive(device)
+            ex.note = bitperfect.WASAPI_FORMAT_NOTE
+            return ex
+
+    path = int_song(tmp_path / "s.flac", 0.3, 44100, 16)
+    out = FixedFormat(rates=[48000], formats=["i32"])
+    p = Player(out)
+    p.set_bit_perfect(True)
+    p.play(path)
+    out.pull(500)
+    assert p.output_info()["bit_perfect"] == ("No: The device cannot play 44.1 kHz, so the song is resampled to "
+                                               "48 kHz. " + bitperfect.WASAPI_FORMAT_NOTE)
+    p.close()

@@ -482,6 +482,7 @@ with open(os.path.join(OUT, "python_bitperfect.json"), "w", encoding="utf-8") as
                "idle": [bp.status(None, None, enabled=False), bp.status(None, None)],
                "cards_text": cards_text, "cards": cards,
                "devices": [{"device": d, "hw": bp.alsa_device(d, cards)} for d in devices],
-               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq": bp.EQ_BYPASSED, "off": bp.OFF,
+               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq": bp.EQ_BYPASSED, "wasapi": bp.WASAPI_FORMAT_NOTE,
+                         "off": bp.OFF,
                          "idle": bp.ON_IDLE},
                "standard_rates": list(bp.STANDARD_RATES)}, fh, indent=0, ensure_ascii=False)
