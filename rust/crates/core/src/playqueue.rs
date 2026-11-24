@@ -4,7 +4,7 @@
 //! song).  The shuffled order comes from SplitMix64 and a Fisher-Yates shuffle,
 //! so the same seed gives Python's order; `tests/python_queue.json` holds it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::pyunicode::{casefold, strip};
 
@@ -118,6 +118,8 @@ pub struct PlayQueue {
     rng: SplitMix64,
     pub order: Vec<String>,
     pub pos: usize,
+    /// left out whenever the order is shuffled (unless chosen)
+    pub disliked: HashSet<String>,
 }
 
 impl PlayQueue {
@@ -132,6 +134,7 @@ impl PlayQueue {
             rng: SplitMix64::new(seed),
             order: vec![],
             pos: 0,
+            disliked: HashSet::new(),
         }
     }
 
@@ -192,7 +195,7 @@ impl PlayQueue {
                 None => pool,
             };
         }
-        let rest: Vec<String> = pool.into_iter().filter(|p| p != path).collect();
+        let rest: Vec<String> = pool.into_iter().filter(|p| p != path && !self.disliked.contains(p)).collect();
         shuffled(&rest, &mut self.rng)
     }
 
@@ -304,6 +307,9 @@ mod tests {
         for run in data.get("runs").unwrap().as_array().unwrap() {
             let seed = run.get("seed").unwrap().as_i64().unwrap() as u64;
             let mut q = PlayQueue::new(songs.clone(), context.clone(), &s(run, "shuffle"), &s(run, "repeat"), seed);
+            if let Some(d) = run.get("disliked") {
+                q.disliked = strs(d).into_iter().flatten().collect();
+            }
             let mut steps = vec![Some(q.start(&start))];
             for op in &ops {
                 steps.push(match op.as_str() {

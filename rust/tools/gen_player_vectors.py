@@ -1,6 +1,7 @@
 """Writes the Python answers the Rust player core is tested against:
-rust/crates/core/tests/python_eq.json and python_queue.json.  Run from the
-repository root:
+rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
+python_eqfiles.json, python_themes.json and python_playerstate.json.  Run from
+the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -9,7 +10,10 @@ import os
 import sys
 
 sys.path.insert(0, os.getcwd())
-from realhires import eq  # noqa: E402
+import time  # noqa: E402
+
+from realhires import eq, musiclib, playerstate, stats, themes  # noqa: E402
+from realhires.musiclib import Track  # noqa: E402
 from realhires.playqueue import PlayQueue, Song, SplitMix64, shuffled  # noqa: E402
 
 OUT = os.path.join("rust", "crates", "core", "tests")
@@ -69,6 +73,28 @@ for shuffle in ("off", "songs", "library", "genre", "artist", "album"):
                     steps.append(q.current)
             runs.append({"shuffle": shuffle, "repeat": repeat, "seed": seed, "steps": steps,
                          "up_next": q.up_next(30)})
+# disliked songs are left out of shuffled orders
+for shuffle in ("off", "songs", "library", "artist"):
+    for seed in (5, 77):
+        disliked = [everything[1], everything[5], everything[11], everything[17]]
+        q = PlayQueue(songs, everything[:10], shuffle=shuffle, repeat="off", seed=seed, disliked=set(disliked))
+        steps = [q.start(everything[2])]
+        for op in ("auto", "next", "auto", "prev", "next", "auto", "next", "next", "auto", "next", "auto",
+                   "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"):
+            if op == "auto":
+                steps.append(q.next(auto=True))
+            elif op == "next":
+                steps.append(q.next())
+            elif op == "prev":
+                steps.append(q.previous())
+            elif op.startswith("set_shuffle:"):
+                q.set_shuffle(op.split(":")[1])
+                steps.append(q.current)
+            else:
+                q.set_repeat(op.split(":")[1])
+                steps.append(q.current)
+        runs.append({"shuffle": shuffle, "repeat": "off", "seed": seed, "steps": steps, "up_next": q.up_next(30),
+                     "disliked": disliked})
 rng = SplitMix64(2024)
 with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
     json.dump({"songs": [s.__dict__ for s in songs], "context": everything[:10], "start": everything[2],
@@ -76,4 +102,128 @@ with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
                        "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"],
                "runs": runs, "splitmix_2024": [str(rng.next()) for _ in range(5)],
                "shuffled_9": shuffled([str(i) for i in range(12)], SplitMix64(9))}, fh, indent=0)
-print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs")
+
+# ------------------------------------------------------------- statistics ---
+def tokyo(ts):
+    return time.gmtime(ts + 9 * 3600)
+
+
+tracks = []
+artists_ = ["Mira Calloway", "The Northern Quay", "Juniper Vale", "", "mira calloway"]
+for i in range(14):
+    a = artists_[i % len(artists_)]
+    tracks.append(Track(path=f"/lib/{'AB'[i % 2]}/{'sub/' if i % 3 == 0 else ''}{i:02d}.flac", title=f"Song {i}",
+                        artist=a, album=["Paper Lanterns", "Harbour Lights", "", "Static Bloom"][i % 4],
+                        album_artist="Various" if i % 5 == 0 else "", genre=["Pop", "jazz", "", "Jazz"][i % 4],
+                        composer=["", "Zed", "zed", "Ann"][i % 4], year=["2001", "1999", "x", "", "2024"][i % 5],
+                        track=i % 6, disc=1 + i % 2, duration=[20.0, 180.0, 240.5, 61.0][i % 4],
+                        codec=["flac", "mp3", "alac", "aac"][i % 4], is_lossy=i % 4 in (1, 3),
+                        sample_rate=[44100, 48000, 96000, 192000][i % 4], bits=[16, 0, 24, 0][i % 4],
+                        is_float=i == 6, size=1000 * i, mtime_ns=i))
+plays = []
+t = 1_700_000_000.0
+for i in range(60):
+    tr = tracks[(i * 7) % len(tracks)]
+    t += [600.0, 3600.0 * 5, 86400.0, 86400.0 * 3, 1800.0][i % 5]
+    secs = [tr.duration, 5.0, 31.0, tr.duration / 2.0, 0.0 + 12.5][i % 5]
+    plays.append(stats.Play(tr.path, t, secs, tr.duration, tr.display_title, tr.artist, tr.album, tr.album_artist,
+                            tr.genre, tr.year, tr.composer))
+st = stats.compute(plays, localtime=tokyo)
+half = stats.compute(plays[:7], localtime=tokyo)
+groups = {name: [[g["name"], [x.path for x in g["tracks"]]] for g in fn(tracks)]
+          for name, fn in (("artists", musiclib.artists), ("album_artists", musiclib.album_artists),
+                           ("genres", musiclib.genres), ("composers", musiclib.composers), ("years", musiclib.years))}
+folders = {f: [[list(x) for x in musiclib.folder_view(tracks, f)[0]], [x.path for x in musiclib.folder_view(tracks, f)[1]]]
+           for f in ("/lib", "/lib/A", "/lib/B", "/lib/A/sub", "/nope")}
+ls = stats.library_stats(tracks)
+with open(os.path.join(OUT, "python_stats.json"), "w", encoding="utf-8") as fh:
+    json.dump({"tracks": [x.to_json() for x in tracks], "plays": [p.__dict__ for p in plays], "offset": 9 * 3600,
+               "stats": st, "cards": stats.cards(st), "stats_7": half, "cards_7": stats.cards(half),
+               "cards_empty": stats.cards(stats.compute([], localtime=tokyo)), "groups": groups, "folders": folders,
+               "library": ls, "hours": [stats.hour_label(h) for h in range(24)]}, fh, indent=0,
+              ensure_ascii=False)
+
+# ------------------------------------------------------------- EQ files ---
+param = eq.apply_preset(eq.default_state(), "Rock")
+param["parametric"] = {"enabled": True, "preamp": -1.5, "bands": [
+    {"type": "high_shelf", "freq": 8000, "gain": -3, "q": 0.71, "on": True},
+    {"type": "notch", "freq": 3000, "gain": 0, "q": 5, "on": False},
+    {"type": "low_pass", "freq": 18000.25, "gain": 2, "q": 0.5, "on": True}]}
+exports = [{"name": n, "state": s_, "json": eq.export_json(n, s_), "apo": eq.export_apo(n, s_)}
+           for n, s_ in (("My Rock", param), ("Flat", eq.default_state()), ("Für Elise ♪", mixed))]
+texts = [
+    "Preamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 3.5 dB Q 0.70\nFilter 2: ON LSC Fc 105 Hz Gain 4.1 dB Q 0.71\n",
+    "\ufeff# AutoEQ\r\nPreamp: -3,5 dB\r\nFilter 1: ON PK Fc 105Hz Gain 3.5dB Q 0.7\r\nFilter 2: OFF HP Fc 20 Hz\r\n"
+    "Filter 3: ON PK Fc 1000 Hz Gain -2 dB BW Oct 1.0\r\nFilter: ON NO Fc 60 Hz Q 30\r\nFilter 5: ON BP Fc 1 Hz\r\n",
+    "Preamp: -20 dB\n" + "".join(f"Filter {i}: ON PK Fc {100 * i} Hz Gain {i - 6} dB Q 1\n" for i in range(1, 13)),
+    "GraphicEQ: 20 -1; 50 2; 100 3; 1000 0; 20000 -6",
+    "Preamp: -2 dB\nGraphicEQ: 0 5; 25 -14; 16000 14",
+    "Preamp: x dB\nfilter 1 : on pk fc 440 hz gain 1 db q 2\nFilter 2: ON LS Fc 80 Hz Gain 2 dB\n",
+    eq.export_json("Saved", param), json.dumps({"name": "  ", "eq": mixed}), json.dumps(mixed),
+    json.dumps({"hello": 1}), "hello", "", "Filter 1: ON PK Fc x Hz Gain 1 dB Q 1",
+]
+imports = []
+for text in texts:
+    try:
+        name, state, notes = eq.import_eq(text, "Imported")
+        imports.append({"text": text, "name": name, "state": state, "notes": notes})
+    except eq.EqFileError as exc:
+        imports.append({"text": text, "error": str(exc)})
+with open(os.path.join(OUT, "python_eqfiles.json"), "w", encoding="utf-8") as fh:
+    json.dump({"exports": exports, "imports": imports}, fh, indent=0, ensure_ascii=False)
+
+# ---------------------------------------------------------------- themes ---
+custom = [themes.normalize({"name": " My  Theme ", "dark": True, "colors": {"accent": "#00FF00", "text": "red"}}),
+          themes.normalize({"name": "Paper", "colors": {"background": "#fafafa"}})]
+cases_t = [{"input": x, "output": themes.normalize(x)} for x in (
+    {"name": " My  Theme ", "dark": True, "colors": {"accent": "#00FF00", "text": "red"}}, {"name": ""}, "x",
+    {"name": "Paper", "colors": {"background": "#fafafa", "panel": " #ABCDEF "}}, {"name": "N", "colors": 5})]
+imports_t = []
+for text in (themes.export_theme(custom[0]), themes.export_theme(dict(custom[1], name="Dark")), "{}", "nope",
+             json.dumps({"name": "Paper", "colors": {}})):
+    try:
+        imports_t.append({"text": text, "theme": themes.import_theme(text, custom)})
+    except themes.ThemeError as exc:
+        imports_t.append({"text": text, "error": str(exc)})
+checks = []
+for n in ("dark", "My theme", " New  one ", "", "Match the system"):
+    try:
+        checks.append([n, themes.check_name(n, custom), None])
+    except themes.ThemeError as exc:
+        checks.append([n, None, str(exc)])
+with open(os.path.join(OUT, "python_themes.json"), "w", encoding="utf-8") as fh:
+    json.dump({"builtin": themes.BUILTIN, "custom": custom, "names": themes.names(custom), "cases": cases_t,
+               "imports": imports_t, "checks": checks, "copy": [themes.copy_name("Midnight", custom),
+                                                               themes.copy_name("My Theme", custom)],
+               "export": themes.export_theme(custom[0])}, fh, indent=0, ensure_ascii=False)
+
+# ---------------------------------------------------------- player state ---
+messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume": "0.4",
+         "eq_presets": [{"name": " Night  Mode ", "eq": mixed}, {"name": "night mode", "eq": {}}, {"name": ""}, 7],
+         "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
+                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}]}
+ps = playerstate.PlayerState.from_json(messy)
+ops = playerstate.PlayerState()
+pid = ops.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)
+pid2 = ops.create_playlist("road trip", now=1000.0)
+ops.add_to_playlist(pid, ["/m/b", "/m/c"])
+ops.move_in_playlist(pid, "/m/c", -2)
+ops.rename_playlist(pid2, "  Night   Drive ")
+ops.set_liked("/m/a", True)
+ops.set_disliked("/m/a", True)
+ops.set_disliked("/m/z", True)
+ops.save_eq_preset("  My   Jazz ", eq.apply_preset(eq.default_state(), "Jazz"))
+ops.save_eq_preset("Other", eq.default_state())
+ops.rename_eq_preset("Other", "Bright")
+errors = []
+for name in ("rock", "my jazz", "", "  "):
+    try:
+        ops.check_preset_name(name)
+        errors.append([name, None])
+    except playerstate.InvalidName as exc:
+        errors.append([name, str(exc)])
+with open(os.path.join(OUT, "python_playerstate.json"), "w", encoding="utf-8") as fh:
+    json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors},
+              fh, indent=0, ensure_ascii=False)
+print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", len(plays), "plays,",
+      len(imports), "EQ files")

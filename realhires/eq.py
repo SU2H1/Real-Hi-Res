@@ -387,7 +387,7 @@ def import_eq(text: str, fallback_name: str = "Imported") -> Tuple[str, dict, Li
             points = []
             for part in m.group(1).split(";"):
                 xs = part.split()
-                if len(xs) == 2 and _float(xs[0]) is not None and _float(xs[1]) is not None:
+                if len(xs) == 2 and _float(xs[0]) is not None and _float(xs[1]) is not None and _float(xs[0]) > 0:
                     points.append((_float(xs[0]), _float(xs[1])))
             if points:
                 graphic = _graphic_from_points(points)

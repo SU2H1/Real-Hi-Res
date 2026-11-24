@@ -17,7 +17,10 @@ use crate::settings::Settings;
 
 pub const LIBRARY_ENV: &str = "REALHIRES_LIBRARY";
 pub const DB_NAME: &str = "library.sqlite";
-pub const LIBRARY_VERSION: i64 = 1;
+/// 2: composer tags (older indexes are read again once)
+pub const LIBRARY_VERSION: i64 = 2;
+/// Shorter listening is not written to the play history.
+pub const MIN_LOGGED_SECONDS: f64 = 1.0;
 
 pub fn default_path() -> PathBuf {
     std::env::var_os(LIBRARY_ENV)
@@ -34,6 +37,7 @@ pub struct Track {
     pub album: String,
     pub album_artist: String,
     pub genre: String,
+    pub composer: String,
     pub disc: i64,
     pub track: i64,
     pub year: String,
@@ -102,6 +106,7 @@ impl Track {
             .put("bits", self.bits)
             .put("channels", self.channels)
             .put("codec", self.codec.as_str())
+            .put("composer", self.composer.as_str())
             .put("disc", self.disc)
             .put("duration", self.duration)
             .put("genre", self.genre.as_str())
@@ -128,6 +133,7 @@ impl Track {
             album: s("album"),
             album_artist: s("album_artist"),
             genre: s("genre"),
+            composer: s("composer"),
             disc: i("disc"),
             track: i("track"),
             year: s("year"),
@@ -186,6 +192,7 @@ pub fn track_from_info(info: &AudioInfo, size: i64, mtime_ns: i64) -> Track {
         album: t("album"),
         album_artist: t("album_artist"),
         genre: t("genre"),
+        composer: t("composer"),
         disc: number(&t("disc")),
         track: number(&t("track")),
         year: t("date").chars().take(4).collect(),
@@ -201,6 +208,10 @@ pub fn track_from_info(info: &AudioInfo, size: i64, mtime_ns: i64) -> Track {
         mtime_ns,
     }
 }
+
+const PLAYS_TABLE: &str = "CREATE TABLE IF NOT EXISTS plays (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT, \
+     started REAL, seconds REAL, duration REAL, title TEXT, artist TEXT, album TEXT, album_artist TEXT, genre TEXT, \
+     year TEXT, composer TEXT);";
 
 fn stat(path: &str) -> Option<(i64, i64)> {
     crate::store::stat(path).ok()
@@ -223,8 +234,81 @@ impl Library {
             "CREATE TABLE IF NOT EXISTS tracks (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, data TEXT);
              CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);",
         )?;
-        db.execute("INSERT OR IGNORE INTO meta VALUES ('version', ?1)", params![LIBRARY_VERSION.to_string()])?;
+        db.execute_batch(PLAYS_TABLE)?;
+        let version: Option<String> =
+            db.query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| r.get(0)).ok();
+        if version.is_some_and(|v| v.trim().parse::<i64>().unwrap_or(0) < LIBRARY_VERSION) {
+            db.execute("DELETE FROM tracks", [])?; // read every file again for the new tags
+        }
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?1)", params![LIBRARY_VERSION.to_string()])?;
         Ok(Library { path, db })
+    }
+
+    /// Log that `t` was listened to for `seconds` from `started` (Unix time),
+    /// with a copy of its tags (Python `Library.add_play`).
+    pub fn add_play(&self, t: &Track, started: f64, seconds: f64) -> bool {
+        if seconds < MIN_LOGGED_SECONDS {
+            return false;
+        }
+        self.db
+            .execute(
+                "INSERT INTO plays (path, started, seconds, duration, title, artist, album, album_artist, genre, \
+                 year, composer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    t.path,
+                    started,
+                    seconds,
+                    t.duration,
+                    t.display_title(),
+                    t.artist,
+                    t.album,
+                    t.album_artist,
+                    t.genre,
+                    t.year,
+                    t.composer
+                ],
+            )
+            .is_ok()
+    }
+
+    /// The plays that started in [since, until), oldest first.
+    pub fn plays(&self, since: f64, until: Option<f64>) -> Vec<crate::stats::Play> {
+        let q = "SELECT path, started, seconds, duration, title, artist, album, album_artist, genre, year, composer \
+                 FROM plays WHERE started >= ?1 AND started < ?2 ORDER BY started, id";
+        let Ok(mut st) = self.db.prepare(q) else { return vec![] };
+        let s = |r: &rusqlite::Row, i: usize| r.get::<_, Option<String>>(i).ok().flatten().unwrap_or_default();
+        let rows = st.query_map(params![since, until.unwrap_or(f64::INFINITY)], |r| {
+            Ok(crate::stats::Play {
+                path: s(r, 0),
+                started: r.get(1)?,
+                seconds: r.get(2)?,
+                duration: r.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                title: s(r, 4),
+                artist: s(r, 5),
+                album: s(r, 6),
+                album_artist: s(r, 7),
+                genre: s(r, 8),
+                year: s(r, 9),
+                composer: s(r, 10),
+            })
+        });
+        rows.map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default()
+    }
+
+    /// The songs played last, newest first, each once.
+    pub fn recently_played(&self, limit: usize) -> Vec<String> {
+        let Ok(mut st) = self.db.prepare(
+            "SELECT path, MAX(started) AS last FROM plays GROUP BY path ORDER BY last DESC, path LIMIT ?1",
+        ) else {
+            return vec![];
+        };
+        st.query_map(params![limit as i64], |r| r.get::<_, String>(0))
+            .map(|it| it.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn clear_history(&self) -> usize {
+        self.db.execute("DELETE FROM plays", []).unwrap_or(0)
     }
 
     pub fn tracks(&self) -> Vec<Track> {
@@ -396,8 +480,84 @@ fn group_by(tracks: &[Track], name_of: impl Fn(&Track) -> String) -> Vec<Group> 
     groups
 }
 
+/// Per performing artist (the track's artist).
 pub fn artists(tracks: &[Track]) -> Vec<Group> {
-    group_by(tracks, |t| if t.album_artist.is_empty() { t.display_artist() } else { t.album_artist.clone() })
+    group_by(tracks, Track::display_artist)
+}
+
+/// Per album artist (else the track's artist).
+pub fn album_artists(tracks: &[Track]) -> Vec<Group> {
+    group_by(tracks, |t| {
+        let a = crate::pyunicode::strip(&t.album_artist);
+        if a.is_empty() {
+            t.display_artist()
+        } else {
+            a.to_string()
+        }
+    })
+}
+
+pub fn composers(tracks: &[Track]) -> Vec<Group> {
+    group_by(tracks, |t| {
+        let c = crate::pyunicode::strip(&t.composer);
+        if c.is_empty() {
+            "Unknown Composer".into()
+        } else {
+            c.to_string()
+        }
+    })
+}
+
+/// Per year, newest first, "Unknown Year" last.
+pub fn years(tracks: &[Track]) -> Vec<Group> {
+    let mut g = group_by(tracks, |t| {
+        if t.year.len() == 4 && t.year.bytes().all(|b| b.is_ascii_digit()) {
+            t.year.clone()
+        } else {
+            "Unknown Year".into()
+        }
+    });
+    g.sort_by(|a, b| {
+        let k = |x: &Group| (x.name == "Unknown Year", -x.name.parse::<i64>().unwrap_or(0), x.name.clone());
+        k(a).cmp(&k(b))
+    });
+    g
+}
+
+/// Disc, track number, title (as on an album).
+pub fn album_sorted(tracks: &mut [Track]) {
+    let n = |x: i64| if x == 0 { 9999 } else { x };
+    tracks.sort_by(|a, b| {
+        (n(a.disc), n(a.track), casefold(&a.display_title()), &a.path).cmp(&(
+            n(b.disc),
+            n(b.track),
+            casefold(&b.display_title()),
+            &b.path,
+        ))
+    });
+}
+
+/// (subfolders, songs) of `folder`: the folders right under it that hold songs,
+/// as (path, name, songs in it and below), sorted by name, and the songs
+/// directly in it, in album order (Python `folder_view`).
+pub fn folder_view(tracks: &[Track], folder: &str) -> (Vec<(String, String, usize)>, Vec<Track>) {
+    let folder = abspath(folder);
+    let sep = std::path::MAIN_SEPARATOR;
+    let prefix = format!("{}{sep}", folder.trim_end_matches(sep));
+    let mut subs: HashMap<String, usize> = HashMap::new();
+    let mut here = vec![];
+    for t in tracks {
+        if parent(&t.path) == folder {
+            here.push(t.clone());
+        } else if let Some(rest) = t.path.strip_prefix(&prefix) {
+            let first = rest.split(sep).next().unwrap_or("");
+            *subs.entry(format!("{prefix}{first}")).or_insert(0) += 1;
+        }
+    }
+    let mut folders: Vec<(String, String, usize)> = subs.into_iter().map(|(p, n)| (p.clone(), file_name(&p), n)).collect();
+    folders.sort_by(|a, b| (casefold(&a.1), &a.0).cmp(&(casefold(&b.1), &b.0)));
+    album_sorted(&mut here);
+    (folders, here)
 }
 
 pub fn genres(tracks: &[Track]) -> Vec<Group> {

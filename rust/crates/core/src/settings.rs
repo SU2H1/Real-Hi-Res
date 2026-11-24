@@ -23,7 +23,8 @@ pub const LYRICS_SAVE_CHOICES: [&str; 4] = [
     "Both: .lrc file and inside the audio file",
     "Plain lyrics inside the audio file (no timing)",
 ];
-pub const THEMES: [&str; 3] = ["Match the system", "Light", "Dark"];
+/// The built-in theme names (2.0); with the user's own themes: `themes::names()`.
+pub const THEMES: [&str; 9] = ["Match the system", "Light", "Dark", "Midnight", "Graphite", "Forest", "Ocean", "Sepia", "Rose"];
 pub const SETTINGS_VERSION: i64 = 160;
 
 pub const ALL_VERDICTS: [&str; 7] =
@@ -235,8 +236,9 @@ settings! {
     font_family: String = s(""), "Appearance", "Font",
         s("The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux (SF Pro may \
            only be used on Apple systems). Any font installed on your computer can be chosen."), Str, None, None, NUMS;
-    theme: String = s("Match the system"), "Appearance", "Appearance", s("Light or dark, or the same as the system."),
-        Choice, None, None, &THEMES;
+    theme: String = s("Match the system"), "Appearance", "Theme",
+        s("The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme (Light, \
+           Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose) or one of your own themes."), Str, None, None, NUMS;
 
     // ---- Detection ------------------------------------------------------
     cliff_db: f64 = 25.0, "Detection", "Upsampling cliff (dB)",

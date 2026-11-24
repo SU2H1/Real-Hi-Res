@@ -58,6 +58,7 @@ const TAG_ALIASES: &[(&str, &[&str])] = &[
     ("disc", &["disc", "discnumber", "tpos"]),
     ("date", &["date", "year", "icrd"]),
     ("genre", &["genre", "ignr"]),
+    ("composer", &["composer", "tcom", "wm/composer", "\u{a9}wrt"]),
 ];
 
 pub type Tags = Vec<(String, String)>;

@@ -496,3 +496,334 @@ mod tests {
         assert_eq!(same, orig);
     }
 }
+
+// ------------------------------------------------------------- preset files ---
+// Python `export_json`, `export_apo` and `import_eq`: Real-Hi-Res's own .json
+// presets and Equalizer APO / AutoEQ text, with the same output and notes.
+
+pub const EQ_FILE_FORMAT: &str = "real-hi-res-eq";
+
+fn apo_type(kind: &str) -> &'static str {
+    match kind {
+        "low_shelf" => "LSC",
+        "high_shelf" => "HSC",
+        "low_pass" => "LPQ",
+        "high_pass" => "HPQ",
+        "notch" => "NO",
+        _ => "PK",
+    }
+}
+
+fn apo_in(t: &str) -> Option<&'static str> {
+    Some(match t.to_ascii_uppercase().as_str() {
+        "PK" | "PEQ" | "MODAL" => "peak",
+        "LS" | "LSC" | "LSQ" => "low_shelf",
+        "HS" | "HSC" | "HSQ" => "high_shelf",
+        "LP" | "LPQ" => "low_pass",
+        "HP" | "HPQ" => "high_pass",
+        "NO" => "notch",
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EqFileError(pub String);
+
+impl std::fmt::Display for EqFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A preset as Real-Hi-Res's own .json file.
+pub fn export_json(name: &str, state: &EqState) -> String {
+    let data = ObjectBuilder::new()
+        .put("format", EQ_FILE_FORMAT)
+        .put("version", 1i64)
+        .put("name", name)
+        .put("eq", state.to_json())
+        .build();
+    let style = crate::json::Style { indent: Some(2), compact: false, ensure_ascii: false, sort_keys: true };
+    crate::json::dumps(&data, style) + "\n"
+}
+
+/// A preset as Equalizer APO / AutoEQ text.
+pub fn export_apo(name: &str, state: &EqState) -> String {
+    let f = crate::pyfmt::f;
+    let mut s = state.clone();
+    s.enabled = true;
+    let mut lines = vec![
+        format!("# {name}"),
+        "# Equalizer preset exported by Real-Hi-Res".to_string(),
+        format!("Preamp: {} dB", f(preamp_db(&s, RESPONSE_RATE), 1)),
+    ];
+    let mut n = 0;
+    if s.graphic_enabled {
+        for (fr, g) in GRAPHIC_FREQS.iter().zip(s.gains.iter()) {
+            if g.abs() >= 1e-9 {
+                n += 1;
+                lines.push(format!("Filter {n}: ON PK Fc {} Hz Gain {} dB Q {}", f(*fr, 1), f(*g, 1), f(GRAPHIC_Q, 2)));
+            }
+        }
+    }
+    if s.parametric_enabled {
+        for b in &s.bands {
+            n += 1;
+            let gain = if has_gain(&b.kind) { format!(" Gain {} dB", f(b.gain, 1)) } else { String::new() };
+            lines.push(format!(
+                "Filter {n}: {} {} Fc {} Hz{gain} Q {}",
+                if b.on { "ON" } else { "OFF" },
+                apo_type(&b.kind),
+                f(b.freq, 1),
+                f(b.q, 2)
+            ));
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+fn parse_float(text: &str) -> Option<f64> {
+    let v: f64 = text.replace(',', ".").parse().ok()?;
+    v.is_finite().then_some(v)
+}
+
+/// `[-+]?[\d.,]+` at the start of `s`: (the number text, the rest).
+fn number_prefix(s: &str, signed: bool) -> Option<(&str, &str)> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    if signed && i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+        i += 1;
+    }
+    let start_digits = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.' || b[i] == b',') {
+        i += 1;
+    }
+    (i > start_digits).then(|| (&s[..i], &s[i..]))
+}
+
+fn starts_ci<'a>(s: &'a str, word: &str) -> Option<&'a str> {
+    (s.len() >= word.len() && s.is_char_boundary(word.len()) && s[..word.len()].eq_ignore_ascii_case(word))
+        .then(|| &s[word.len()..])
+}
+
+/// `\bkw\s+NUMBER\s*unit` anywhere in `s` (case-insensitive).
+fn find_value(s: &str, kw: &str, unit: Option<&str>, signed: bool) -> Option<f64> {
+    let lower = s.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(kw).map(|i| i + from) {
+        from = i + 1;
+        let boundary = i == 0 || !lower.as_bytes()[i - 1].is_ascii_alphanumeric() && lower.as_bytes()[i - 1] != b'_';
+        if !boundary {
+            continue;
+        }
+        let after = &s[i + kw.len()..];
+        let trimmed = after.trim_start();
+        if trimmed.len() == after.len() {
+            continue; // \s+ needs at least one space
+        }
+        let Some((num, rest)) = number_prefix(trimmed, signed) else { continue };
+        if let Some(u) = unit {
+            if starts_ci(rest.trim_start(), u).is_none() {
+                continue;
+            }
+        }
+        return parse_float(num);
+    }
+    None
+}
+
+fn graphic_from_points(points: &[(f64, f64)]) -> [f64; 10] {
+    let mut pts: Vec<(f64, f64)> = points.iter().copied().filter(|p| p.0 > 0.0).collect();
+    pts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut out = [0.0; 10];
+    for (k, f) in GRAPHIC_FREQS.iter().enumerate() {
+        let (first, last) = (pts[0], pts[pts.len() - 1]);
+        let g = if *f <= first.0 {
+            first.1
+        } else if *f >= last.0 {
+            last.1
+        } else {
+            let mut g = first.1;
+            for w in pts.windows(2) {
+                let ((f0, g0), (f1, g1)) = (w[0], w[1]);
+                if f0 <= *f && *f <= f1 {
+                    g = if f1 == f0 { g0 } else { g0 + (g1 - g0) * (f / f0).ln() / (f1 / f0).ln() };
+                    break;
+                }
+            }
+            g
+        };
+        out[k] = if g.is_nan() { 0.0 } else { g.clamp(-GAIN_LIMIT_DB, GAIN_LIMIT_DB) };
+    }
+    out
+}
+
+/// (name, state, notes) from the text of a preset file (Python `import_eq`).
+pub fn import_eq(text: &str, fallback_name: &str) -> Result<(String, EqState, Vec<String>), EqFileError> {
+    let text = text.trim_start_matches('\u{feff}');
+    let mut notes: Vec<String> = vec![];
+    if let Ok(data @ Value::Object(_)) = crate::json::parse(text) {
+        if let Some(e @ Value::Object(_)) = data.get("eq") {
+            let name = match data.get("name").and_then(Value::as_str) {
+                Some(n) if !crate::pyunicode::strip(n).is_empty() => crate::pyunicode::strip(n).to_string(),
+                _ => crate::pyunicode::strip(fallback_name).to_string(),
+            };
+            return Ok((name, EqState::from_json(e), notes));
+        }
+        if data.get("graphic").is_some() || data.get("parametric").is_some() {
+            return Ok((fallback_name.to_string(), EqState::from_json(&data), notes));
+        }
+        return Err(EqFileError("This .json file is not an equalizer preset of Real-Hi-Res.".into()));
+    }
+    let mut preamp = 0.0;
+    let mut bands: Vec<Band> = vec![];
+    let mut graphic: Option<[f64; 10]> = None;
+    let mut skipped: Vec<String> = vec![];
+    let mut found = false;
+    for raw in crate::lyrics::splitlines(text) {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = starts_ci(line, "preamp") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix(':') {
+                if let Some((num, after)) = number_prefix(rest.trim_start(), true) {
+                    if starts_ci(after.trim_start(), "db").is_some() {
+                        if let Some(v) = parse_float(num) {
+                            preamp += v;
+                            found = true;
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+        if let Some(rest) = starts_ci(line, "graphiceq") {
+            if let Some(rest) = rest.trim_start().strip_prefix(':') {
+                let mut points = vec![];
+                for part in rest.split(';') {
+                    let xs: Vec<&str> = part.split_whitespace().collect();
+                    if xs.len() == 2 {
+                        if let (Some(a), Some(b)) = (parse_float(xs[0]), parse_float(xs[1])) {
+                            if a > 0.0 {
+                                points.push((a, b));
+                            }
+                        }
+                    }
+                }
+                if !points.is_empty() {
+                    graphic = Some(graphic_from_points(&points));
+                    found = true;
+                }
+                continue;
+            }
+        }
+        let Some(rest) = starts_ci(line, "filter") else { continue };
+        let rest = rest.trim_start().trim_start_matches(|c: char| c.is_ascii_digit()).trim_start();
+        let Some(rest) = rest.strip_prefix(':') else { continue };
+        let rest = rest.trim_start();
+        let (on, rest) = if let Some(r) = starts_ci(rest, "off") {
+            (false, r)
+        } else if let Some(r) = starts_ci(rest, "on") {
+            (true, r)
+        } else {
+            continue;
+        };
+        let after = rest.trim_start();
+        if after.len() == rest.len() {
+            continue;
+        }
+        let kind_len = after.bytes().take_while(|b| b.is_ascii_alphabetic()).count();
+        if kind_len == 0 {
+            continue;
+        }
+        found = true;
+        let (kind_text, params) = after.split_at(kind_len);
+        let Some(kind) = apo_in(kind_text) else {
+            let up = kind_text.to_ascii_uppercase();
+            if !skipped.contains(&up) {
+                skipped.push(up);
+            }
+            continue;
+        };
+        let Some(fc) = find_value(params, "fc", Some("hz"), true) else { continue };
+        let gain = find_value(params, "gain", Some("db"), true).unwrap_or(0.0);
+        let mut q = find_value(params, "q", None, false);
+        if q.is_none() {
+            if let Some(oct) = find_bw(params) {
+                if oct != 0.0 {
+                    let n = 2f64.powf(oct);
+                    q = Some(n.sqrt() / (n - 1.0));
+                }
+            }
+        }
+        let q = q.unwrap_or(if matches!(kind, "low_shelf" | "high_shelf" | "low_pass" | "high_pass") {
+            0.5f64.sqrt()
+        } else {
+            1.0
+        });
+        let b = ObjectBuilder::new().put("type", kind).put("freq", fc).put("gain", gain).put("q", q).put("on", on).build();
+        bands.push(Band::from_json(&b));
+    }
+    if !found {
+        return Err(EqFileError(
+            "This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json presets and \
+             Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
+                .into(),
+        ));
+    }
+    if !skipped.is_empty() {
+        notes.push(format!("Filters of the type {} are not supported and were left out.", skipped.join(", ")));
+    }
+    if bands.len() > MAX_PARAMETRIC_BANDS {
+        notes.push(format!("The file has {} filters; the first {MAX_PARAMETRIC_BANDS} were imported.", bands.len()));
+        bands.truncate(MAX_PARAMETRIC_BANDS);
+    }
+    if preamp.abs() > GAIN_LIMIT_DB {
+        notes.push(format!("The pre-amp of {} dB was limited to 12 dB.", crate::pyfmt::f(preamp, 1)));
+    }
+    let clamp = |x: f64| x.clamp(-GAIN_LIMIT_DB, GAIN_LIMIT_DB);
+    let mut st = EqState { enabled: true, ..EqState::default() };
+    match graphic {
+        Some(g) => {
+            st.graphic_enabled = true;
+            st.gains = g;
+            st.preset = preset_name(&g);
+            st.graphic_preamp = if bands.is_empty() { clamp(preamp) } else { 0.0 };
+        }
+        None => st.graphic_enabled = false,
+    }
+    if !bands.is_empty() {
+        st.parametric_enabled = true;
+        st.parametric_preamp = clamp(preamp);
+        st.bands = bands;
+    }
+    Ok((fallback_name.to_string(), st, notes))
+}
+
+/// `\bbw\s+oct\s+NUMBER`.
+fn find_bw(s: &str) -> Option<f64> {
+    let lower = s.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find("bw").map(|i| i + from) {
+        from = i + 1;
+        if i > 0 && (lower.as_bytes()[i - 1].is_ascii_alphanumeric() || lower.as_bytes()[i - 1] == b'_') {
+            continue;
+        }
+        let after = &s[i + 2..];
+        let t = after.trim_start();
+        if t.len() == after.len() {
+            continue;
+        }
+        let Some(rest) = starts_ci(t, "oct") else { continue };
+        let t2 = rest.trim_start();
+        if t2.len() == rest.len() {
+            continue;
+        }
+        if let Some((num, _)) = number_prefix(t2, false) {
+            return parse_float(num);
+        }
+    }
+    None
+}

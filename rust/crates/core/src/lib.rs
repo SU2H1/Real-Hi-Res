@@ -31,7 +31,9 @@ pub mod pyfmt;
 pub mod pyunicode;
 pub mod report;
 pub mod settings;
+pub mod stats;
 pub mod store;
+pub mod themes;
 pub mod verdict;
 
 /// The version of Real-Hi-Res this port corresponds to (also written into
