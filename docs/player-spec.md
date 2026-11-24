@@ -165,3 +165,91 @@ after the current song. Lyrics written into a file keep its saved scan result (`
 The 1.x app unchanged (sources, list, dashboard, summary, Fix, lyrics, find bar, card views, export), shown in the
 content area with the sidebar beside it, so every existing test keeps working. Its scan also feeds the lyrics worker
 when `lyrics_while_scanning` is on.
+
+## Additions (asked for on 2026-11-24, after the first version of this spec)
+
+The user asked for a Library landing page with fourteen entries, playlists, dislikes, a play history with "Your
+Stats", named equalizer presets that can be imported and exported, and custom themes; and that Settings → "Scan
+library" opens the quality checker as it is. The core of all of it exists in both versions, checked against each
+other (`tests/test_player_library.py`, `rust/crates/core/tests/player_additions.rs`): `musiclib` (composer tag,
+`album_artists()`, `years()`, `composers()`, `folder_view()`, `album_sorted()`, the play history `add_play()`,
+`plays()`, `recently_played()`, `clear_history()`), `stats` (`compute()`, `cards()`, `period_range()`,
+`library_stats()`, `PERIODS`), `playerstate` (`disliked`, `set_disliked()`, playlists, `eq_presets`), `playqueue`
+(`disliked`: left out of shuffled orders), `eq` (`export_json()`, `export_apo()`, `import_eq()`), `themes`
+(`BUILTIN`, `load_custom()`, `save_custom()`, `resolve()`, `check_name()`, `copy_name()`, `export_theme()`,
+`import_theme()`), and the `theme` setting, which is now free text holding a theme name.
+
+### The Library page (the start page)
+
+The app opens on **Library**: the title "Library", then the fourteen entries as a grid of tiles (icon, name, and a
+count in grey: songs, folders, albums...), in this order: **All Songs**, **Folders**, **Albums**, **Artists**,
+**Album Artists**, **Genres**, **Years**, **Composers**, **Playlists**, **Liked Songs**, **Disliked Songs**,
+**Recently Played**, **Recently Added**, **Your Stats**. Under the tiles: a row of the most recently added albums
+(cards) and, when there are plays this year, a small "Your Stats" banner with the minutes listened this year.
+
+The sidebar lists the same: **Library** (the landing page) at the top, then the section "Library" with All Songs,
+Folders, Albums, Artists, Album Artists, Genres, Years and Composers; the section "Playlists" with Liked Songs,
+Disliked Songs and every playlist by name (and "New Playlist…"); the section "History" with Recently Played,
+Recently Added and Your Stats; Settings at the bottom. The pages of the first version keep their behaviour ("Songs"
+is now called All Songs).
+
+- **Folders**: the library folders as the roots; a folder page shows its subfolders (folder icon, name, song count;
+  a click opens it) above its songs (a song table in album order), with a breadcrumb ("Music › Jazz › 1999") whose
+  parts are clickable; Play and Shuffle play the songs in the folder and below it.
+- **Artists** (the track's artist), **Album Artists**, **Genres**, **Years** (newest first, "Unknown Year" last)
+  and **Composers**: the names on the left with their counts, the songs or albums of the chosen one on the right
+  (Artists and Album Artists show album cards; Genres, Years and Composers show song tables), each with Play and
+  Shuffle.
+- **Playlists**: a page with the playlists as cards (a 2×2 mosaic of the first four songs' covers, the name and the
+  number of songs) and "New Playlist…". A playlist page: the mosaic, the name (Rename…, Delete… with a
+  confirmation), "N songs, M minutes", Play, Shuffle, and the song table in the playlist's order, where the context
+  menu adds "Remove from this playlist", "Move up" and "Move down". Every song's context menu (and the playback
+  bar's "…" menu for the song playing) has "Add to playlist ▸" with the playlists and "New Playlist…". Playlist
+  songs whose files are gone are shown in grey as "Not in the library" and skipped when played.
+- **Disliked Songs**: the songs marked with the dislike button (a thumbs-down drawn as a vector icon, next to the
+  heart in the playback bar and in the song's context menu: "Dislike" / "Remove dislike"). Liking a song removes
+  its dislike and the other way round. Disliked songs are left out when shuffling (`PlayQueue.disliked`), unless
+  you choose one yourself.
+- **Recently Played**: the last 200 different songs played (`Library.recently_played()`), newest first, as a song
+  table with a "Played" column ("Today 14:05", "Yesterday", or the date), and "Clear history…" (confirmation).
+- **Recently Added**: as before.
+- **Your Stats**: a period menu (`stats.PERIODS`, "This year" by default) and the summary as large coloured cards
+  (`stats.cards()`: label small, big text bold, detail grey; each card in its own accent colour, like a yearly music
+  review), then **Details**. The details show: the totals (minutes, plays, songs, artists, albums, genres, days with
+  music, longest streak), bar charts of listening by hour of the day (24 bars), by weekday and by month, the top 50
+  songs, artists, albums and genres as numbered lists with plays and minutes, and what the library holds
+  (`stats.library_stats()`: songs, albums, artists, total length and size, formats, Hi-Res Lossless / Lossless /
+  Lossy, sample rates and bit depths). Without plays in the period: "No listening yet in this period. Play some
+  music and come back."
+
+### Play history
+
+A song is logged (`Library.add_play(track, started, seconds)`) when it stops being the current song (it ended, the
+user skipped or stopped, chose another, or quit), with the seconds actually heard: the sum of the position's forward
+steps between UI updates while playing, so seeking does not count; songs heard for less than a second are not
+logged. `started` is the wall-clock time when it began. Settings → Library has "Clear the play history…".
+
+### Equalizer presets
+
+The preset menu of the equalizer lists the built-in presets, then "My presets" (`PlayerState.eq_presets`), and
+"Custom" when the gains match none. A user preset holds the whole equalizer (graphic and parametric). Buttons:
+**Save as preset…** (asks for a name; `check_preset_name()` errors are shown under the field), **Rename…**,
+**Delete…**, **Import…** (a file dialog for .json and .txt: `eq.import_eq()`; the imported preset is applied and
+saved under its name, a taken name getting " 2"; the notes are shown) and **Export…** (save as .json, Real-Hi-Res's
+own format, or .txt, Equalizer APO / AutoEQ text: `export_json()` / `export_apo()`, by the extension chosen). The
+name of the matching user preset (`matching_eq_preset()`) is shown in the menu.
+
+### Themes
+
+Settings → Appearance → Theme is a menu of `themes.names()`: "Match the system", the built-in themes (Light, Dark,
+Midnight, Graphite, Forest, Ocean, Sepia, Rose) and the user's own. Under it the theme editor: **New theme…**
+(a copy of the chosen theme, named by `copy_name()`), and for the user's own themes **Rename…**, **Delete…**, a
+"Dark theme" switch and a colour button for each of the eight colours (`COLOR_KEYS`, labels from
+`COLOR_LABELS`/`color_label()`), which change the app at once; **Import…** and **Export…** (.json). Built-in themes
+cannot be edited; editing one offers to make a copy. The user's themes are saved in `themes.json`.
+
+### Settings → Library
+
+The buttons are: Update the library now; **Scan library** (opens the Quality check page, as in the first version,
+with the library folders as its sources, and starts the scan); Download lyrics for the whole library…; Open the
+quality checker; Clear the play history….
