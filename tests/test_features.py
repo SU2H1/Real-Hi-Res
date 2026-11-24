@@ -769,3 +769,25 @@ def test_scan_eta_counts_bytes_not_files():
     assert eta.seconds_left() == pytest.approx(700 * 10 / 300)  # the long file still to come
     assert fmt_left(20) == "less than a minute left" and fmt_left(359) == "about 6 min left"
     assert fmt_left(4800) == "about 1 h 20 min left" and fmt_left(3600) == "about 1 h left"
+
+
+def test_double_clicked_cli_opens_the_app(tmp_path, monkeypatch, capsys):
+    """1.12.1: a command-line tool double-clicked in Explorer (no arguments, its own console)
+    opens the desktop app next to it instead of flashing a usage error (the user's report)."""
+    from realhires import cli
+
+    assert cli.open_app_instead(["D:\\\\Music"], started=lambda: True) is None  # a real command line
+    assert cli.open_app_instead([], started=lambda: False) is None  # started from a terminal
+    gui = tmp_path / "RealHiRes.exe"
+    gui.write_bytes(b"")
+    monkeypatch.setattr(cli.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cli.sys, "executable", str(tmp_path / "realhires-cli.exe"))
+    launched = []
+    assert cli.open_app_instead([], started=lambda: True,
+                                launch=lambda cmd, env: launched.append((cmd, env))) == 0
+    assert launched[0][0] == [str(gui)] and launched[0][1]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    gui.unlink()  # no app next to it: explain, and wait so the window does not vanish
+    waited = []
+    assert cli.open_app_instead([], started=lambda: True, wait=lambda: waited.append(1)) == 2
+    assert waited and "command-line tool of Real-Hi-Res" in capsys.readouterr().out
+    assert cli.started_from_explorer() is False or os.name == "nt"

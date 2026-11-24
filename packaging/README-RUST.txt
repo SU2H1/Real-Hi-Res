@@ -49,6 +49,8 @@ display, fixing and lyrics options.
 
 Command line
 ------------
+  realhires.exe (realhires on macOS/Linux) is the command-line tool, for a
+  terminal.  Double-clicked in Explorer it opens the app instead.
   Windows : realhires.exe "D:\Music"
   macOS   : /Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music
   Linux   : ./realhires ~/Music     (or realhires-rust after install.sh)

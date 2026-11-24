@@ -54,10 +54,19 @@ fn main() {
         }),
     );
     if let Err(e) = res {
-        eprintln!(
-            "Real-Hi-Res cannot open its window: {e}\nThe desktop app needs a graphical desktop (on Linux X11 or Wayland). The \
-             command-line tool `realhires` works without one."
+        let text = format!(
+            "Real-Hi-Res cannot open its window: {e}\n\nThe desktop app needs a graphical desktop with OpenGL 2.0 or \
+             newer (on Linux X11 or Wayland); updating the graphics driver usually helps. The command-line tool \
+             `realhires` works without one."
         );
+        eprintln!("{text}");
+        // a windowed program has no console on Windows, so say it where it can be seen
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("Real-Hi-Res")
+            .set_description(&text)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
         std::process::exit(1);
     }
 }
