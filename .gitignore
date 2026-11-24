@@ -9,3 +9,5 @@ realhires-report*/
 out/
 pkg/
 rust/target/
+# working copies of helper agents
+.claude/worktrees/
