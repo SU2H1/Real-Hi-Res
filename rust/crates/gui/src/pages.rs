@@ -776,7 +776,8 @@ impl Player {
                     }
                 }
                 ui.add_space(12.0);
-                if ui.button(format!("About {}", realhires::APP_NAME)).clicked() {
+                // under the group list: the About box (2.1: there is no Help menu)
+                if crate::style::flat_button(ui, &format!("About {}", realhires::APP_NAME), true).clicked() {
                     self.scanner.show_about();
                 }
             });

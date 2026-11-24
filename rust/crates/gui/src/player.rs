@@ -1426,7 +1426,8 @@ impl Player {
             ui.label(RichText::new(text).font(look::title(11.5)).color(pal.secondary));
             ui.add_space(2.0);
         };
-        let height = ui.available_height() - 64.0;
+        // room at the bottom for Quality Check, Settings and the library status
+        let height = ui.available_height() - 96.0;
         egui::ScrollArea::vertical().id_salt("sidebar").max_height(height.max(100.0)).auto_shrink([false, true]).show(ui, |ui| {
             if sidebar_item(ui, pal, Icon::Library, "Library", self.page == Page::Library).clicked() {
                 self.back.clear();
@@ -1492,9 +1493,8 @@ impl Player {
             if sidebar_item(ui, pal, Icon::Gear, "Settings", self.page == Page::Settings).clicked() {
                 self.go(Page::Settings);
             }
-            if self.page == Page::Quality
-                && sidebar_item(ui, pal, Icon::Check, "Quality check", true).clicked()
-            {
+            // always there (2.1: the menu bars are gone), just above Settings
+            if sidebar_item(ui, pal, Icon::Check, "Quality Check", self.page == Page::Quality).clicked() {
                 self.go(Page::Quality);
             }
         });
