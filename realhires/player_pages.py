@@ -891,28 +891,32 @@ def artist_line(font, artists: List[str], album_link: Optional[str], album: str,
                 cache: Optional[dict] = None) -> List[tuple]:
     """"Artist, Artist — Album" in pieces (text, link, artist name): each artist its own
     link ("artist"), the album name a link ("album_name") when `album_link` is given, the
-    separators plain; cut with "…" to fit in `width` pixels (the shorter part keeps its room)."""
+    separators plain; cut with "…" to fit in `width` pixels (the shorter part keeps its room).
+    A name with no room left is dropped with its ", ", and the name before it ends with "…"
+    ("June Harbor… — Album", never "June Harbor,  — Album")."""
     sep = " — "
     joined, album_shown = fit_pair(font, ", ".join(artists), sep, album, width, cache)
     budget = font.measure(joined)
     pieces: List[tuple] = []
     used = 0
     for i, name in enumerate(artists):
-        for text, what in (((", ", ""),) if i else ()) + ((name, "artist"),):
-            w = font.measure(text)
-            if used + w <= budget:
-                pieces.append((text, what, name if what else None))
-                used += w
-                continue
-            cut = fit_text(font, text, int(budget - used), cache) if what else ""
-            if cut:
-                pieces.append((cut, what, name))
-            elif pieces and pieces[-1][1]:  # no room for ", ": the last name ends with "…"
-                last = pieces[-1]
-                pieces[-1] = (fit_text(font, last[0] + "…", font.measure(last[0]), cache), last[1], last[2])
-            break
-        else:
+        comma = font.measure(", ") if i else 0
+        w = font.measure(name)
+        if used + comma + w <= budget:
+            if i:
+                pieces.append((", ", "", None))
+            pieces.append((name, "artist", name))
+            used += comma + w
             continue
+        cut = fit_text(font, name, int(budget - used - comma), cache)
+        if cut:
+            if i:
+                pieces.append((", ", "", None))
+            pieces.append((cut, "artist", name))
+        elif pieces:  # no room for this name: the last one shown ends with "…"
+            last = pieces[-1]
+            room = font.measure(last[0]) + int(budget - used)
+            pieces[-1] = (fit_text(font, last[0] + "…", room, cache), last[1], last[2])
         break
     pieces.append((sep, "", None))
     pieces.append((album_shown, "album_name" if album_link is not None else "", None))

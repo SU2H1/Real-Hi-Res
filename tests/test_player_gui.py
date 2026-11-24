@@ -291,7 +291,14 @@ def lyrics_ok():
     assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "Aurora Fields"
     app.go_back(); root.update()
     lcd = app.bar.lcd
-    assert lcd.artists == {{"artist:0": "June Harbor", "artist:1": "Aurora Fields"}}, lcd.artists
+    # both names as links; a narrow LCD (the Windows runners' 1024 x 768 screens) has room
+    # for the first one only, which then ends with "…", and never leaves a ", " behind
+    if len(lcd.artists) == 1:
+        assert lcd.artists == {{"artist:0": "June Harbor"}}, lcd.artists
+        assert any(t.startswith("June") and t.endswith("…") for t in texts(lcd)), texts(lcd)
+        assert ", " not in texts(lcd), texts(lcd)
+    else:
+        assert lcd.artists == {{"artist:0": "June Harbor", "artist:1": "Aurora Fields"}}, lcd.artists
     lcd._release(At(("artist:0",) + tuple(lcd.geo["artist:0"]))); root.update()
     assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "June Harbor"
     app.go_back(); root.update()
@@ -1264,6 +1271,35 @@ root.mainloop()
         assert [q.get("track_name") for p, q, _ in fake.requests if p == "/api/get"] == ["Midnight Sun", "Polar Drift"]
     finally:
         fake.server.shutdown()
+
+
+def test_artist_line_cuts_names_without_a_dangling_comma():
+    """The LCD's "Artist, Artist — Album" at every width: each name a link, cut with "…",
+    and a name with no room left goes with its ", " (CI's 1024 x 768 Windows screen showed
+    "June Harbor,  — Northern Lig…" before)."""
+    pytest.importorskip("tkinter")
+    from realhires.player_pages import artist_line
+
+    class Font:  # 7 px per character, like a small UI font
+        def measure(self, text):
+            return 7 * len(text)
+
+    names = ["June Harbor", "Aurora Fields"]
+    seen = set()
+    for width in range(400, 40, -3):
+        pieces = artist_line(Font(), names, "x", "Northern Lights", width)
+        shown = [p for p in pieces if p[1] == "artist"]
+        line = "".join(p[0] for p in pieces)
+        assert 7 * len(line) <= max(width, 7 * 3), (width, line)  # " — " always shows
+        assert [p[2] for p in shown] == names[:len(shown)], (width, pieces)
+        assert ",  —" not in line and not line.startswith(", "), (width, line)
+        assert pieces[-2:] == [(" — ", "", None), (pieces[-1][0], "album_name", None)]
+        if len(shown) == 1:
+            assert shown[0][0].endswith("…"), (width, line)  # more artists follow
+        seen.add(len(shown))
+        if width >= 7 * len("June Harbor, Aurora Fields — Northern Lights"):
+            assert line == "June Harbor, Aurora Fields — Northern Lights"
+    assert {1, 2} <= seen  # (below about 50 px not even "J…" fits)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")

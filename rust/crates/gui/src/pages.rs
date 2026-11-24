@@ -87,31 +87,50 @@ pub fn artist_line(ui: &Ui, font: FontId, color: Color32, artists: &[String], al
             (room / 2.0, room / 2.0)
         }
     };
-    let mut out = vec![];
+    // a name with no room left is dropped with its ", ", and the name before it ends with "…"
+    // ("June Harbor… — Album", never "June Harbor,  — Album"), as in the Python app
+    let mut out: Vec<(Arc<Galley>, Option<Link>)> = vec![];
     let mut used = 0.0;
+    let comma = text_width(ui, ", ", &font);
     for (i, name) in artists.iter().enumerate() {
-        if i > 0 {
-            let cw = text_width(ui, ", ", &font);
-            if used + cw > a_room + 0.5 {
-                break;
-            }
-            out.push((galley(", "), None));
-            used += cw;
-        }
+        let cw = if i > 0 { comma } else { 0.0 };
         let nw = text_width(ui, name, &font);
-        if used + nw <= a_room + 0.5 {
-            out.push((galley(name), Some(Link::Artist(name.clone()))));
-            used += nw;
-        } else {
-            if a_room - used > 12.0 {
-                out.push((elided(ui, name, font.clone(), color, a_room - used), Some(Link::Artist(name.clone()))));
+        if used + cw + nw <= a_room + 0.5 {
+            if i > 0 {
+                out.push((galley(", "), None));
             }
-            break;
+            out.push((galley(name), Some(Link::Artist(name.clone()))));
+            used += cw + nw;
+            continue;
         }
+        let room = a_room - used - cw;
+        if room > 12.0 {
+            if i > 0 {
+                out.push((galley(", "), None));
+            }
+            let mut g = elided(ui, name, font.clone(), color, room);
+            if i + 1 < artists.len() && shown(&g) == *name {
+                // egui's layout fits a name a fraction of a pixel wider than measured: it still
+                // ends with "…", since more artists follow
+                g = elided(ui, &format!("{name}…"), font.clone(), color, room);
+            }
+            out.push((g, Some(Link::Artist(name.clone()))));
+        } else if i > 0 {
+            let last = &artists[i - 1];
+            let w = out.pop().map_or(0.0, |(g, _)| g.size().x) + (a_room - used);
+            out.push((elided(ui, &format!("{last}…"), font.clone(), color, w + 0.5), Some(Link::Artist(last.clone()))));
+        }
+        break;
     }
     out.push((galley(sep), None));
     out.push((elided(ui, album, font, color, b_room + 0.5), album_link.then_some(Link::Album)));
     out
+}
+
+/// What a galley shows: its glyphs, with the "…" of an elided text (`Galley::text()` is the
+/// whole text it was made from).
+pub fn shown(g: &Galley) -> String {
+    g.rows.iter().flat_map(|r| r.glyphs.iter().map(|gl| gl.chr)).collect()
 }
 
 /// Paints link pieces centred at `center` with `painter`; the links get the pointer cursor and
@@ -1627,4 +1646,43 @@ pub fn played_label(ts: f64) -> String {
         (Some(a), Some(b)) if a.pred_opt() == Some(b) => format!("Yesterday {minute}"),
         _ => realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", t.year, t.month, t.day)),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The LCD's "Artist, Artist — Album" at every width, as the Python app's
+    /// `test_artist_line_cuts_names_without_a_dangling_comma`: each name a link, cut with "…",
+    /// and a name with no room left goes with its ", " ("June Harbor,  — Northern Lig…" before).
+    #[test]
+    fn artist_line_cuts_names_without_a_dangling_comma() {
+        let ctx = egui::Context::default();
+        let names = vec!["June Harbor".to_string(), "Aurora Fields".to_string()];
+        let mut seen = std::collections::BTreeSet::new();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() };
+        ctx.run_ui(input, |ui| {
+            let font = FontId::proportional(12.0);
+            let mut width = 400.0;
+            while width > 40.0 {
+                let pieces = artist_line(ui, font.clone(), Color32::WHITE, &names, "Northern Lights", true, width);
+                let line: String = pieces.iter().map(|(g, _)| shown(g)).collect();
+                let links: Vec<String> = pieces.iter().filter_map(|(_, l)| match l { Some(Link::Artist(n)) => Some(n.clone()), _ => None }).collect();
+                assert_eq!(links, names[..links.len()].to_vec(), "{width}: {line}");
+                assert!(!line.contains(",  —") && !line.starts_with(", "), "{width}: {line}");
+                assert_eq!(pieces.last().map(|p| p.1.clone()), Some(Some(Link::Album)), "{width}: {line}");
+                if links.len() == 1 {
+                    assert!(shown(&pieces[0].0).ends_with('…'), "{width}: {line}"); // more artists follow
+                }
+                if width >= 300.0 {
+                    assert_eq!(line, "June Harbor, Aurora Fields — Northern Lights");
+                }
+                seen.insert(links.len());
+                width -= 3.0;
+            }
+        })
+        .drop_without_applying_deltas();
+        assert!(seen.contains(&1) && seen.contains(&2), "{seen:?}");
+    }
+
 }
