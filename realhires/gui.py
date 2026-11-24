@@ -520,6 +520,7 @@ class SettingsDialog(tk.Toplevel):
         self.title("Settings")
         self.transient(app.root)
         self.vars: Dict[str, object] = {}
+        self.path_fields: set = set()
         outer = ttk.Frame(self, padding=12)
         outer.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
@@ -594,6 +595,9 @@ class SettingsDialog(tk.Toplevel):
             return frame
         v = tk.StringVar()
         self.vars[name] = v
+        if kind == "paths":  # 2.0: folders, separated by os.pathsep (';' on Windows, ':' elsewhere)
+            self.path_fields.add(name)
+            return ttk.Entry(parent, textvariable=v, width=60)
         if kind == "str":
             return ttk.Entry(parent, textvariable=v, width=60)
         inc = 1 if kind == "int" or (info.get("max") or 0) > 50 else 0.1
@@ -608,6 +612,8 @@ class SettingsDialog(tk.Toplevel):
                     b.set(choice in value)
             elif isinstance(var, tk.BooleanVar):
                 var.set(bool(value))
+            elif name in self.path_fields:
+                var.set(os.pathsep.join(value))
             else:
                 var.set(f"{value:g}" if isinstance(value, float) else str(value))
 
@@ -620,11 +626,13 @@ class SettingsDialog(tk.Toplevel):
         for name, var in self.vars.items():
             if isinstance(var, dict):
                 data[name] = [c for c, b in var.items() if b.get()]
+            elif name in self.path_fields:
+                data[name] = [p.strip() for p in var.get().split(os.pathsep) if p.strip()]
             else:
                 data[name] = var.get()
         new = settings_mod.Settings.from_dict(data)
         for name, raw in data.items():
-            if isinstance(raw, str) and infos[name].get("kind") not in ("str", "choice"):
+            if isinstance(raw, str) and infos[name].get("kind") not in ("str", "choice", "paths"):
                 try:
                     ok = float(raw) == float(getattr(new, name))
                 except ValueError:
@@ -1238,6 +1246,49 @@ class LyricsDialog(tk.Toplevel):
         self.destroy()
 
 
+class ScanLyrics(threading.Thread):
+    """Lyrics while scanning (2.0): one worker thread with one LrclibClient looks up the
+    songs a scan has answered, one at a time, as LRCLIB asks, following Settings → Lyrics
+    (lyrics_existing, lyrics_save_as, ...).  Posts ("scan_lyrics", self, LyricsOutcome)."""
+
+    def __init__(self, cfg, out: queue.Queue):
+        super().__init__(daemon=True, name="realhires-scan-lyrics")
+        self.cfg, self.out = cfg, out
+        self.todo: queue.Queue = queue.Queue()
+        self.stop_event = threading.Event()
+        self.seen: set = set()
+        self.saved = self.not_found = 0
+
+    def add(self, path: str, result=None) -> None:
+        if path not in self.seen and not self.stop_event.is_set():
+            self.seen.add(path)
+            self.todo.put((path, result))
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.todo.put((None, None))
+
+    def count(self, outcome) -> None:
+        """Called in the GUI thread for this worker's outcomes."""
+        if outcome.saved:
+            self.saved += 1
+        elif outcome.status == lyrics_mod.NOT_FOUND:
+            self.not_found += 1
+
+    def run(self) -> None:
+        client = lyrics_mod.LrclibClient(self.cfg.lyrics_server, stop=self.stop_event)
+        while not self.stop_event.is_set():
+            path, result = self.todo.get()
+            if path is None or self.stop_event.is_set():
+                break
+            try:
+                outcome = lyrics_mod.fetch_for_file(path, client, self.cfg, result)
+            except lyrics_mod.LyricsStopped:
+                break
+            if outcome.status != lyrics_mod.SKIPPED:
+                self.out.put(("scan_lyrics", self, outcome))
+
+
 class CardGrid(ttk.Frame):
     """Music-player style grid of album or artist cards: cover art, a ring
     showing how many of the songs are fake/suspicious, and the names."""
@@ -1437,9 +1488,15 @@ class App(ttk.Frame):
     HEADINGS = {"verdict": "Verdict", "why": "Why", "claimed": "Claimed", "estimated": "Real (est.)",
                 "bandwidth": "Bandwidth", "fix": "After fix", "name": "File", "folder": "Folder"}
 
-    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None):
-        super().__init__(root, padding=8)
+    def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None, parent=None):
+        # `parent`: the 2.0 player shows this app as its "Quality check" page inside its own
+        # window; then the menu bar is only built (the player shows it on that page), the
+        # keyboard shortcuts work while `active`, and quitting asks the player (`quit_callback`).
+        self.embedded = parent is not None
+        super().__init__(parent if parent is not None else root, padding=8)
         self.root = root
+        self.active = True
+        self.quit_callback = None
         self.cfg = cfg or settings_mod.load()
         self.sources: List[str] = []                 # added folders/files, in order
         self.source_files: Dict[str, List[str]] = {}  # source -> listed audio files (absolute)
@@ -1485,12 +1542,15 @@ class App(ttk.Frame):
         self._values_cache: Dict[str, tuple] = {}  # path -> (result, row values)
         self.quick_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Add a folder or files, then press Scan.")
+        self.scan_lyrics: Optional[ScanLyrics] = None  # lyrics while scanning (Settings → Library)
+        self._last_stopped = False
         self._build_menu()
         self._build()
-        self.grid(sticky="nsew")
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
-        root.protocol("WM_DELETE_WINDOW", self.quit_app)
+        if not self.embedded:
+            self.grid(sticky="nsew")
+            root.columnconfigure(0, weight=1)
+            root.rowconfigure(0, weight=1)
+            root.protocol("WM_DELETE_WINDOW", self.quit_app)
         if self.view_var.get() != "Files":
             self.after(50, self.switch_view)
         if initial:
@@ -1545,19 +1605,26 @@ class App(ttk.Frame):
         v.add_command(label="Show problem files only", command=lambda: self.set_filters(PROBLEM_VERDICTS))
         v.add_command(label="Show all files", command=lambda: self.set_filters(VERDICT_ORDER))
         m.add_cascade(label="View", menu=v)
+        self.view_menu = v
         h = tk.Menu(m, tearoff=False)
         h.add_command(label="About Real-Hi-Res", command=self.about)
         m.add_cascade(label="Help", menu=h)
-        self.root.configure(menu=m)
-        self.root.bind_all(f"<{mod}-o>", lambda e: self.add_folder())
+        self.menubar = m
+        if not self.embedded:
+            self.root.configure(menu=m)
+
+        def key(fn):  # embedded: the shortcuts belong to the player while another page is shown
+            return lambda e: fn(e) if self.active else None
+
+        self.root.bind_all(f"<{mod}-o>", key(lambda e: self.add_folder()))
         self.root.bind_all(f"<{mod}-q>", lambda e: self.quit_app())
-        self.root.bind_all(f"<{mod}-comma>", lambda e: self.open_settings())
-        self.root.bind_all(f"<{mod}-f>", lambda e: self.open_find())
-        self.root.bind_all(f"<{mod}-F>", lambda e: self.fix_selected())  # Shift+F
-        self.root.bind_all(f"<{mod}-a>", self.select_all)
-        self.root.bind_all(f"<{mod}-l>", self.lyrics_selected)
-        self.root.bind_all("<F3>", lambda e: self.find_step(1))
-        self.root.bind_all("<Shift-F3>", lambda e: self.find_step(-1))
+        self.root.bind_all(f"<{mod}-comma>", key(lambda e: self.open_settings()))
+        self.root.bind_all(f"<{mod}-f>", key(lambda e: self.open_find()))
+        self.root.bind_all(f"<{mod}-F>", key(lambda e: self.fix_selected()))  # Shift+F
+        self.root.bind_all(f"<{mod}-a>", key(self.select_all))
+        self.root.bind_all(f"<{mod}-l>", key(self.lyrics_selected))
+        self.root.bind_all("<F3>", key(lambda e: self.find_step(1)))
+        self.root.bind_all("<Shift-F3>", key(lambda e: self.find_step(-1)))
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -2158,6 +2225,9 @@ class App(ttk.Frame):
         else:
             self.results.clear()
             self.cache.clear()
+        if self.scan_lyrics is not None:  # lyrics while scanning: a new scan starts a new worker
+            self.scan_lyrics.stop()
+            self.scan_lyrics = None
         self.lookup_gen += 1  # answers of lookups still running are no longer wanted
         self.total, self.done = len(files), 0
         self.scan_order, self.scan_ptr = [], 0  # set when the scanner says which files it analyses
@@ -2199,6 +2269,29 @@ class App(ttk.Frame):
             self.scanner.stop_event.set()
             self.status_var.set("Stopping after the files already in progress…")
             self.stop_btn.configure(state="disabled")
+        if self.scan_lyrics is not None:
+            self.scan_lyrics.stop()  # after the song it is looking up now
+
+    def _lyrics_while_scanning(self, r: FileResult) -> None:
+        """Settings → Library → Download lyrics while scanning: every song the scan
+        answers goes to one lyrics worker (one LRCLIB request at a time)."""
+        if not getattr(self.cfg, "lyrics_while_scanning", False):
+            return
+        if self.scan_lyrics is None:
+            self.scan_lyrics = ScanLyrics(settings_mod.Settings.from_dict(self.cfg.to_dict()), self.queue)
+            self.scan_lyrics.start()
+        self.scan_lyrics.add(r.path, r)
+
+    def _on_scan_lyrics(self, worker, outcome) -> None:
+        if outcome.saved:
+            self.lyrics_saved(outcome.path)
+        if worker is self.scan_lyrics:  # not a worker of an earlier scan
+            worker.count(outcome)
+            self._update_status(final=not self.scanning, stopped=self._last_stopped)
+
+    def _lyrics_tail(self) -> str:
+        w = self.scan_lyrics
+        return f"  ·  Lyrics: {w.saved} saved, {w.not_found} not found" if w is not None else ""
 
     def _poll(self) -> None:
         dirty = False
@@ -2238,7 +2331,10 @@ class App(ttk.Frame):
                     self._insert(payload)
                     if payload.path in self.tree.selection():
                         self.show_details()  # the selected file just finished: show it live
+                    self._lyrics_while_scanning(payload)
                     dirty = True
+                elif kind == "scan_lyrics":
+                    self._on_scan_lyrics(payload, rest[0])
                 elif kind == "done":
                     self._finish(stopped=payload == "stopped")
                 elif kind == "error":
@@ -2259,6 +2355,7 @@ class App(ttk.Frame):
 
     def _finish(self, stopped: bool) -> None:
         self.scanning = False
+        self._last_stopped = stopped
         self.last_elapsed = time.time() - self.scan_started
         self.progress.stop()
         self.progress.configure(mode="determinate", maximum=max(self.total, 1), value=self.done)
@@ -2332,7 +2429,7 @@ class App(ttk.Frame):
             head = "Stopped" if stopped else "Finished" if self.last_elapsed is not None else "Saved results"
             extra = (f" ({reused} unchanged, from saved results)"
                      if reused and self.last_elapsed is not None else "")
-            self.status_var.set(f"{head}: {len(self.results)} files{extra}  ·  {tail}")
+            self.status_var.set(f"{head}: {len(self.results)} files{extra}  ·  {tail}{self._lyrics_tail()}")
         else:
             busy = (f"analysing {len(self.scan_order)} ({self.scan_workers} at a time)" if self.scan_order
                     else "looking up saved results")
@@ -2340,7 +2437,7 @@ class App(ttk.Frame):
                 busy += f", {self.eta.text()}"
             self._status_time = time.time()
             self.status_var.set(f"Scanning: {self.done}/{self.total} files, {reused} from saved results, "
-                                f"{busy}  ·  {tail}")
+                                f"{busy}  ·  {tail}{self._lyrics_tail()}")
 
     # ---------- views: files / by album / by artist ----------------------
     def set_view(self, mode: str) -> None:
@@ -2951,20 +3048,38 @@ class App(ttk.Frame):
             "https://github.com/SU2H1/Real-Hi-Res")
 
     def quit_app(self) -> None:
+        if self.embedded and self.quit_callback is not None:
+            self.quit_callback()  # the player saves its state, then calls shutdown()
+            return
+        self.shutdown()
+        self.root.destroy()
+
+    def shutdown(self) -> None:
+        """Stop the background work and close the saved results (before the window goes)."""
         if self.scanner and self.scanning:
             self.scanner.stop_event.set()
         if self.lyrics_dialog is not None:
             self.lyrics_dialog.stop_event.set()
+        if self.scan_lyrics is not None:
+            self.scan_lyrics.stop()
         self.cache.close()
         self.lookup_requests.put((0, None, None, None))
         if self.graph_pool is not None:
             self.graph_pool.shutdown(wait=False, cancel_futures=True)
         if self.store is not None:
             self.store.close()
-        self.root.destroy()
 
 
 def main(argv=None) -> int:
+    """The desktop app (2.0: the music player, with this app as its Quality check
+    page).  Paths on the command line open the Quality check page and scan them."""
+    from .player_gui import main as player_main
+
+    return player_main(argv)
+
+
+def scanner_main(argv=None) -> int:
+    """The 1.x scanner on its own, in a window of its own."""
     multiprocessing.freeze_support()
     args = list(sys.argv[1:] if argv is None else argv)
     try:

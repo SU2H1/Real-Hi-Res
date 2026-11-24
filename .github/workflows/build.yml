@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install --upgrade pip numpy pillow pytest
+      - run: python -m pip install --upgrade pip numpy pillow pytest miniaudio
       # Compile PyInstaller's launcher here instead of using the prebuilt one from the
       # wheel: that one is shared by every PyInstaller program, malware included, so
       # antivirus engines flag it.  packaging/check_windows.py logs the launcher hash.
@@ -80,7 +80,7 @@ jobs:
           python-version: "3.12"
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip pyinstaller pillow pytest
+          python -m pip install --upgrade pip pyinstaller pillow pytest miniaudio
           # pip would pick the NumPy wheel built for the runner's own (new) macOS;
           # take the one built for the oldest macOS we support instead.
           python -m pip download numpy --only-binary=:all: --no-deps -d wheels \
