@@ -25,6 +25,7 @@ VENDOR = "Real-Hi-Res"
 FLAC_SYNCED, FLAC_PLAIN = "LYRICS", "UNSYNCEDLYRICS"
 LANG = b"XXX"
 NEW_PADDING = 4096  # padding left after the tag when it has to grow
+MAX_KEPT_PADDING = 1 << 20  # more room than this (a removed cover picture) is not kept as FLAC padding
 
 
 class EmbedError(Exception):
@@ -117,6 +118,24 @@ def _comment_key(c: bytes) -> str:
 def flac_rewrite(data: bytes, edit, too_long: str = "The tag is too long for a FLAC file.") -> bytes:
     """The FLAC file with its Vorbis comments replaced by edit(comments) (a list of
     b"KEY=value"); every other metadata block and the audio stay as they are."""
+    def edit_blocks(blocks):
+        vendor, comments = VENDOR.encode(), []
+        vi = next((i for i, (k, _) in enumerate(blocks) if k == 4), None)
+        if vi is not None:
+            vendor, comments = _parse_vorbis(blocks[vi][1])
+        body = _vorbis_body(vendor, edit(comments))
+        if vi is not None:
+            blocks[vi] = (4, body)
+        else:
+            blocks.insert(1, (4, body))  # right after STREAMINFO
+        return blocks
+
+    return flac_rewrite_blocks(data, edit_blocks, too_long)
+
+
+def flac_rewrite_blocks(data: bytes, edit, too_long: str = "The tag is too long for a FLAC file.") -> bytes:
+    """The FLAC file with its metadata blocks replaced by edit(blocks) (a list of
+    (type, body)); the padding is laid out again and the audio stays as it is."""
     start = 0
     if data[:3] == b"ID3":  # some FLAC files carry an ID3 tag in front; keep it
         size = _syncsafe(data[6:10])
@@ -125,23 +144,15 @@ def flac_rewrite(data: bytes, edit, too_long: str = "The tag is too long for a F
         raise EmbedError("This is not a FLAC file.")
     blocks, audio = _flac_blocks(data, start)
     old_meta = audio - start - 4
-    vendor, comments = VENDOR.encode(), []
-    vi = next((i for i, (k, _) in enumerate(blocks) if k == 4), None)
-    if vi is not None:
-        vendor, comments = _parse_vorbis(blocks[vi][1])
-    body = _vorbis_body(vendor, edit(comments))
-    if len(body) >= 1 << 24:
+    blocks = edit(blocks)
+    if any(len(b) >= 1 << 24 for _, b in blocks):
         raise EmbedError(too_long)
-    if vi is not None:
-        blocks[vi] = (4, body)
-    else:
-        blocks.insert(1, (4, body))  # right after STREAMINFO
     # keep the metadata the same size when the padding allows it, so players that
     # read the header see the same layout; else leave fresh padding
     blocks = [b for b in blocks if b[0] != 1]
     used = sum(4 + len(b) for _, b in blocks)
     pad = old_meta - used - 4
-    if pad < 0:
+    if pad < 0 or pad > MAX_KEPT_PADDING:
         pad = NEW_PADDING
     blocks.append((1, b"\x00" * pad))
     out = bytearray(data[:start] + b"fLaC")
