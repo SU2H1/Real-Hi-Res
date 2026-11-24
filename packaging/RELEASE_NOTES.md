@@ -1,24 +1,28 @@
-## What's new in 2.0.0
+## What's new in 2.1.0
 
-**Real-Hi-Res is now Universal Music Player, a music player.** It has moved to this repository, [SU2H1/Universal-Music-Player](https://github.com/SU2H1/Universal-Music-Player), with its whole history, and is licensed under the GNU General Public License version 3. The quality checker keeps the name Real-Hi-Res, and your saved results, settings and the command-line tools (`realhires-cli`, Rust `realhires`) carry on unchanged; [Real-Hi-Res](https://github.com/SU2H1/Real-Hi-Res) itself stays at 1.12.1.
+**A cleaner window.** The menu bar is gone from both apps. Quality Check is always in the sidebar, the About box is on the Settings page, and the Quality Check page now looks like the rest of the player, in your theme: a page title with the scan's status under it, an accent-coloured Scan button, verdict chips with counts, and a **…** (More) button that holds what the old menus held. Every keyboard shortcut works as before. The **mouse's back and forward buttons** (and Alt+← / Alt+→, Cmd+[ / Cmd+] on a Mac) move between pages, as in a browser. The app has a new icon.
 
-**A music player.** The desktop app opens on your **Library**, in a window that looks and works much like Apple Music, and the fake-hi-res checker you know lives on inside it. Both versions, Python and Rust, are the same player.
+**Bit-perfect playback** (Settings → Playback, off by default) sends each song to your sound device exactly as it is in the file: at its own sample rate, without the equalizer, the volume control or resampling, and with the device to the app alone where the system allows it (WASAPI exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the device is switched to the song's rate). Set the volume on your amplifier or DAC. The Playback info says whether a song really plays bit-perfect, and if not, why. The tests check that 16-bit and 24-bit songs reach the output sample for sample; the exclusive device access could only be built and checked on CI, so please tell us how it works with your DAC.
 
-- **The Library page** leads to All Songs, Folders, Albums, Artists, Album Artists, Genres, Years, Composers, Playlists, Liked Songs, Disliked Songs, Recently Played, Recently Added and **Your Stats**, each with a count. Choose your music folder once (Settings → Library); the tags are read in the background and kept, so the next start is instant.
-- **Playback** through FFmpeg at each song's own sample rate where the sound device allows it (otherwise with the SoX resampler, and the Playback info says so), **gapless** from song to song, with a remembered volume, mode and last song.
-- **The playback bar**: Shuffle (off, this list, the whole library, same genre, same artist or same album), Previous, Play/Pause, Next, Repeat (off, song, album, stop after this song), a seek bar, a quality badge (**Hi-Res Lossless**, **Lossless** or the codec) that opens the **Playback info** (track, decoder, output, resampling, volume, equalizer and the song's Real-Hi-Res verdict), Like, **Dislike** (disliked songs are left out of shuffles), "…" (add to a playlist and more), Lyrics, Up Next, the equalizer and the volume.
-- **Now Playing** shows the album cover on the left and the **synced lyrics** on the right, following the music line by line (a click on a line jumps there); without lyrics the cover is centred, with a **Get lyrics** button.
-- **Playlists** of your own: make, rename, delete, reorder, and add songs from any song's menu.
-- **Your Stats**: what you played this year (or the last 30 days, last year, all time) as colourful cards in the style of a yearly music review, minutes, top song, artist, album and genre, your listening hour and day, your longest streak, and **Details** with charts by hour, weekday and month, your top 50 songs, artists, albums and genres, and what your library holds.
-- **The equalizer**: a 10-band graphic equalizer with 17 presets and a parametric equalizer with up to 10 bands, a response curve and "prevent clipping". **Name your own presets**, and **import and export** them as Real-Hi-Res `.json` files or as Equalizer APO / AutoEQ `.txt` files (so AutoEQ's headphone corrections can be loaded).
-- **Themes**: Match the system, eight built-in themes (Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), and **your own**, with a colour editor, import and export. **Theme files** put into the themes folder (Settings → Appearance → Open themes folder) appear in the theme menu as they are, and the Rust version imports a theme file dropped onto its window. On a Mac the app uses SF Pro (SF Pro Display Bold for headings); Windows and Linux use the similar Inter typeface, now built in; any installed font can be chosen.
-- **Edit song information**: Edit info… (a song's menu) and Edit album info… (an album page) change the title, artist, album, album artist, genre, release date, track, disc and composer of one song or a whole album. FLAC, MP3, Ogg Vorbis and Opus tags are written directly, other formats are copied by FFmpeg without re-encoding and checked sample for sample; the audio never changes, and the library and the saved check results follow.
-- **Lyrics inside the file**: Settings → Lyrics → Save lyrics as can write synced lyrics into FLAC (`LYRICS`) and MP3 (`SYLT`) files, or plain lyrics, or both an `.lrc` file and the tags, as LRCGET does; only the tags are rewritten, and the file's saved check result stays valid. **Download lyrics while scanning** fetches them as the scan goes.
-- **Everything else is in Settings**: Settings → Library → **Scan library** opens the quality checker of earlier versions with your library folders and checks them for fake hi-res and fake lossless files; **Check new songs when the app starts** does it in the background. Fix, the lyrics window, saved results, the album and artist views and all the settings are where they were, on the **Quality check** page.
+**Now Playing**
+- A switch above the lyrics: **Lyrics**, **Up Next** (the queue) and **Details** (the song's information, format, comment and Quality Check verdict).
+- The lyrics say whether they are synced or plain text and where they come from; **A− / A+** change their size (remembered); after you scroll synced lyrics, **Back to the current line** returns to the music.
+- The Lyrics button hides the lyrics and leaves you on the page, with the cover centred; the cover, title and artist form one centred block.
+- The album name opens the album and each artist name opens that artist (also in the playback bar). A click on the cover opens the new **Cover** window.
+- **Get lyrics** now downloads at once (it used to open a window that waited for a second click), from Now Playing and from every song's menu.
+- Lyrics saved by **LRCGET** now show synced: synced lyrics inside a file used to lose to a plain `.txt` next to it, and LRC text kept as plain lyrics now counts as synced.
 
-The command-line tools are unchanged, apart from reading the composer tag.
-
-**New requirements.** The Python packages bundle [miniaudio](https://github.com/irmen/pyminiaudio) for the sound output. The Linux packages use the system's ALSA library for sound, which every Linux desktop has (it also reaches PulseAudio and PipeWire). Running from source needs `pip install miniaudio` (or `pip install .`), and building the Rust version needs Rust 1.95 or newer and, on Linux, the ALSA headers.
+**Your library**
+- **Play Next** and **Add to Queue** in every song's menu.
+- Artists, Album Artists, Genres, Years and Composers are **card grids** like Albums.
+- **Several artists in one field** ("Mariah Carey, Michael Bublé") are separate artists, each with a page of its own and a link of its own; band names such as "Earth, Wind & Fire" stay whole.
+- **Rename** genres, composers and years, and **merge** genres (several at once, too); only the songs' tags change.
+- **Choose the columns** of song lists by right-clicking their headings (All Songs, Folders and album pages each remember their own); album pages show the full columns. Hovering a Quality cell shows the bit depth and sample rate.
+- **Your Stats** starts with a **calendar**: click a day to see what you played and when.
+- **Properties…** (formerly Edit Info) can be resized.
+- The **Cover** window shows a cover large, with its size and where it comes from, and can **change**, **save** or **remove** it for an album or a song (also **Cover…** in every song's menu). FLAC, MP3, Ogg and Opus are changed directly in their tags, M4A and AIFF by FFmpeg without re-encoding, checked sample for sample.
+- **Covers are kept** on disk and made ahead, so scrolling no longer waits for them, and scrolling big libraries is much smoother.
+- The equalizer's **Delete** works again for your own presets.
 
 ## Download
 
