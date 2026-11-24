@@ -102,6 +102,26 @@ def resolution(t: Track) -> str:
     return f"{t.bits}-bit{' float' if t.is_float else ''}/{khz}"
 
 
+def quality_detail(t: Track) -> str:
+    """The tooltip of the song tables' Quality column (which shows `quality()`): the
+    resolution ("24-bit/96 kHz", `resolution()`), and for a lossy song its codec, bit
+    rate and sample rate ("MP3 · 320 kbps · 44.1 kHz")."""
+    if t.is_lossy:
+        parts = [t.codec.upper()]
+        if t.bit_rate:
+            parts.append(f"{round(t.bit_rate / 1000)} kbps")
+        if t.sample_rate:
+            parts.append(f"{t.sample_rate / 1000:g} kHz")
+        return " · ".join(p for p in parts if p)
+    return resolution(t) or quality(t)
+
+
+def quality_sort(t: Track) -> tuple:
+    """What a click on the Quality heading sorts by: the bit depth (lossy songs, which
+    have none, first), then the sample rate (then integer before float, then the bit rate)."""
+    return (int(t.bits or 0), int(t.sample_rate or 0), bool(t.is_float), int(t.bit_rate or 0))
+
+
 def track_from_info(info, size: int = 0, mtime_ns: int = 0) -> Track:
     tags = info.tags or {}
     bits = 0 if info.is_lossy else (info.claimed_bits or (32 if info.is_float else 0))

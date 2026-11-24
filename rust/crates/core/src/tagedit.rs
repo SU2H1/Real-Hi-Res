@@ -694,25 +694,42 @@ pub fn save_tags(
     paths: &[String],
     changes: &Changes,
     cfg: Option<&Settings>,
+    progress: impl FnMut(usize, usize, &str),
+) -> Vec<TagOutcome> {
+    let items: Vec<(String, Changes)> = paths.iter().map(|p| (p.clone(), changes.clone())).collect();
+    save_tags_each(&items, cfg, progress)
+}
+
+/// `save_tags()` with changes of each file's own: (path, changes) (Python `save_tags_each`).
+pub fn save_tags_each(
+    items: &[(String, Changes)],
+    cfg: Option<&Settings>,
     mut progress: impl FnMut(usize, usize, &str),
 ) -> Vec<TagOutcome> {
-    let changes = match check_changes(changes) {
-        Ok(c) => c,
-        Err(e) => {
-            return paths
-                .iter()
-                .map(|p| TagOutcome { path: p.clone(), ok: false, message: e.0.clone(), tags: vec![] })
-                .collect()
-        }
-    };
+    let checked: Vec<(String, Result<Changes, TagError>)> =
+        items.iter().map(|(p, c)| (p.clone(), check_changes(c))).collect();
+    if checked.iter().all(|(_, c)| c.is_err()) {
+        return checked
+            .into_iter()
+            .map(|(path, c)| TagOutcome { path, ok: false, message: c.err().map(|e| e.0).unwrap_or_default(), tags: vec![] })
+            .collect();
+    }
     let store = cfg.and_then(crate::store::open_store);
     let lib = crate::musiclib::Library::open(None).ok();
     let mut out = vec![];
-    for (i, path) in paths.iter().enumerate() {
-        progress(i, paths.len(), path);
+    let n = checked.len();
+    for (i, (path, changes)) in checked.iter().enumerate() {
+        progress(i, n, path);
+        let changes = match changes {
+            Ok(c) => c,
+            Err(e) => {
+                out.push(TagOutcome { path: path.clone(), ok: false, message: e.0.clone(), tags: vec![] });
+                continue;
+            }
+        };
         let name = file_name(path);
         let before = crate::store::stat(path).map_err(|e| TagError(e.to_string())).and_then(|st| {
-            write_tags(path, &changes)?;
+            write_tags(path, changes)?;
             Ok(st)
         });
         let (size, mtime) = match before {
@@ -734,10 +751,96 @@ pub fn save_tags(
         if let Some(lib) = &lib {
             lib.update_file(path);
         }
-        out.push(TagOutcome { path: path.clone(), ok: true, message: kept_note(&name, &changes, &tags), tags });
+        out.push(TagOutcome { path: path.clone(), ok: true, message: kept_note(&name, changes, &tags), tags });
     }
-    progress(paths.len(), paths.len(), "");
+    progress(n, n, "");
     out
+}
+
+// ---------------------------------------------- renaming and merging groups ---
+// The Genres, Composers and Years pages rename a genre, composer or year in every
+// song of it, and merge genres, through save_tags_each(): only the tag changes.
+
+/// The tag field of a grouping ("genres" → "genre", "years" → "date").
+pub fn group_field(kind: &str) -> &'static str {
+    match kind {
+        "genres" => "genre",
+        "composers" => "composer",
+        _ => "date",
+    }
+}
+
+/// "genre", "composer" or "year".
+pub fn group_noun(kind: &str) -> &'static str {
+    match kind {
+        "genres" => "genre",
+        "composers" => "composer",
+        _ => "year",
+    }
+}
+
+/// The release date with its year replaced and the rest kept: "2001-05-03" with
+/// 2004 gives "2004-05-03"; a date without a year ("", "May 2001") gives "2004".
+pub fn renamed_date(old: &str, year: &str) -> String {
+    let old = clean_value(old);
+    if starts_with_year(&old) {
+        format!("{year}{}", &old[4..])
+    } else {
+        year.to_string()
+    }
+}
+
+/// The new name of a genre, composer or year, cleaned (Python `check_group_name`).
+pub fn check_group_name(kind: &str, name: &str) -> Result<String, TagError> {
+    let name = clean_value(name);
+    let noun = group_noun(kind);
+    if name.is_empty() {
+        return Err(TagError(if kind == "years" { "Write the year, such as 2004.".into() } else { format!("Give the {noun} a name.") }));
+    }
+    if kind == "years" && !(name.len() == 4 && digits(&name)) {
+        return Err(TagError("Write the year as four digits, such as 2004.".into()));
+    }
+    if name.chars().count() > MAX_VALUE {
+        return Err(TagError(format!(
+            "The {noun} is too long: at most {} characters fit.",
+            crate::stats::thousands(MAX_VALUE as i64)
+        )));
+    }
+    Ok(name)
+}
+
+/// What a song whose tags are `tags` gets when its genre, composer or year becomes `name`.
+pub fn group_changes(kind: &str, name: &str, tags: &Tags) -> Changes {
+    if kind == "years" {
+        let old = tags.iter().find(|(k, _)| k == "date").map(|(_, v)| v.as_str()).unwrap_or("");
+        return vec![("date".into(), renamed_date(old, name))];
+    }
+    vec![(group_field(kind).into(), name.to_string())]
+}
+
+/// Give every song in `paths` the genre, composer or year `name` (a year replaces
+/// only the year of each song's release date).  Never fails; one outcome per file.
+pub fn rename_group(
+    kind: &str,
+    paths: &[String],
+    name: &str,
+    cfg: Option<&Settings>,
+    progress: impl FnMut(usize, usize, &str),
+) -> Vec<TagOutcome> {
+    let name = match check_group_name(kind, name) {
+        Ok(n) => n,
+        Err(e) => {
+            return paths.iter().map(|p| TagOutcome { path: p.clone(), ok: false, message: e.0.clone(), tags: vec![] }).collect()
+        }
+    };
+    let items: Vec<(String, Changes)> = paths
+        .iter()
+        .map(|p| {
+            let tags = if kind == "years" { probe::probe(p).map(|i| i.tags).unwrap_or_default() } else { vec![] };
+            (p.clone(), group_changes(kind, &name, &tags))
+        })
+        .collect();
+    save_tags_each(&items, cfg, progress)
 }
 
 /// (headline, sentences) for the editor after saving.

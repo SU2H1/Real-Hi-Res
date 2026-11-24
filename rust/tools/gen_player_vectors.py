@@ -1,7 +1,8 @@
 """Writes the Python answers the Rust player core is tested against:
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
 python_eqfiles.json, python_themes.json, python_playerstate.json and
-python_tagedit.json (the tag editor and the themes folder).  Run from
+python_tagedit.json (the tag editor and the themes folder) and python_library.json
+(the Quality column's tooltip and sort, renaming groups, the EQ preset match).  Run from
 the repository root:
 
     python3 rust/tools/gen_player_vectors.py
@@ -409,3 +410,44 @@ with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh
                "folder": {"own": own, "files": folder_files, "loaded": loaded},
                "ogg_inputs": {name: data.hex() for name, data in oggs.items()}, "ogg": ogg_cases,
                "crc": crcs}, fh, indent=0, ensure_ascii=False)
+
+# -------------------------------------- quality column, renaming groups ---
+# python_library.json: the Quality column's tooltip and sort, the EQ preset match,
+# and renaming a genre, composer or year
+q_tracks = list(tracks) + [
+    Track(path="/q/a.ogg", codec="vorbis", is_lossy=True, sample_rate=48000, bit_rate=0),
+    Track(path="/q/b.opus", codec="opus", is_lossy=True, sample_rate=0, bit_rate=128499),
+    Track(path="/q/c.wav", codec="pcm_s24le", sample_rate=0, bits=24),
+    Track(path="/q/d.flac", codec="flac", sample_rate=88200, bits=0),
+    Track(path="/q/e.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True),
+    Track(path="/q/f.mp3", codec="mp3", is_lossy=True, sample_rate=44100, bit_rate=320000),
+]
+quality = [{"track": x.to_json(), "quality": musiclib.quality(x), "detail": musiclib.quality_detail(x),
+            "sort": list(musiclib.quality_sort(x))} for x in q_tracks]
+dates = [[old, year, tagedit.renamed_date(old, year)] for old, year in (
+    ("2001-05-03", "2004"), ("2001", "1999"), ("", "2004"), ("May 2001", "2004"), (" 1987-11 ", "1990"),
+    ("12345", "2000"), ("199", "2000"), ("２００１", "2002"))]
+group_names = []
+for kind, name in (("genres", "  Rock   Pop "), ("genres", ""), ("composers", "Ann"), ("composers", " "),
+                   ("years", "2004"), ("years", " 1999 "), ("years", "99"), ("years", "20045"),
+                   ("years", "２００４"), ("years", ""), ("genres", "x" * 1001)):
+    try:
+        group_names.append({"kind": kind, "name": name, "ok": tagedit.check_group_name(kind, name)})
+    except tagedit.TagError as exc:
+        group_names.append({"kind": kind, "name": name, "error": str(exc)})
+group_cases = [{"kind": k, "name": n, "tags": tg, "changes": tagedit.group_changes(k, n, tg)} for k, n, tg in (
+    ("genres", "Jazz", {"genre": "jazz", "date": "2001"}), ("composers", "Ann", {}),
+    ("years", "2004", {"date": "2001-05-03"}), ("years", "2004", {}), ("years", "1990", {"date": "Spring"}))]
+pst = playerstate.PlayerState()
+pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+pst.eq["enabled"] = False
+pst.save_eq_preset("Quiet", pst.eq)
+matches = []
+for enabled, nudge in ((False, 0.0), (True, 0.0), (True, 0.5)):
+    pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+    pst.eq["enabled"] = enabled
+    pst.eq["graphic"]["gains"][0] += nudge
+    matches.append({"eq": eq.normalize(pst.eq), "match": pst.matching_eq_preset()})
+with open(os.path.join(OUT, "python_library.json"), "w", encoding="utf-8") as fh:
+    json.dump({"quality": quality, "dates": dates, "group_names": group_names, "group_changes": group_cases,
+               "presets": pst.to_json()["eq_presets"], "matches": matches}, fh, indent=0, ensure_ascii=False)
