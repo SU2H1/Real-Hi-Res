@@ -3,6 +3,7 @@
 import json
 import os
 import random
+import re
 import shutil
 import ssl
 import subprocess
@@ -294,6 +295,33 @@ def test_skip_rules(tmp_path):
     cfg.lyrics_existing = lyrics.EXISTING_CLI["replace"]
     assert lyrics.skip_reason(str(song), cfg) == ""
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.INSTRUMENTAL
+
+
+def test_lrclib_and_lrcget_are_credited():
+    """The user asked for the lyrics code to be credited: LRCLIB and LRCGET (both MIT, by tranxuanthang)
+    are named in both apps (lyrics window, About box), the packaged READMEs, the README and the
+    release notes, and the Rust version shows the same texts."""
+    root = Path(__file__).resolve().parent.parent
+    for name in ("README.md", "packaging/README-RELEASE.txt", "packaging/README-RUST.txt"):
+        text = (root / name).read_text(encoding="utf-8")
+        for needed in ("lrclib.net", "github.com/tranxuanthang/lrcget", "Copyright (c) 2023 tranxuanthang",
+                       "Copyright (c) 2024 tranxuanthang", "MIT License"):
+            assert needed in text, f"{name} lacks {needed!r}"
+    notes = (root / "packaging" / "RELEASE_NOTES.md").read_text(encoding="utf-8")
+    assert "LRCGET by tranxuanthang" in notes and "MIT-licensed" in notes
+    assert "LRCLIB" in lyrics.CREDIT and "LRCGET by tranxuanthang" in lyrics.CREDIT
+    assert "LRCGET by tranxuanthang (MIT License)" in lyrics.ABOUT_CREDIT
+    rust = (root / "rust" / "crates" / "core" / "src" / "lyrics.rs").read_text(encoding="utf-8")
+
+    def rust_const(name):
+        m = re.search(r'pub const %s: &str = "((?:[^"\\]|\\.)*)";' % name, rust, re.S)
+        assert m, name
+        return re.sub(r"\\\n\s*", "", m.group(1))  # a backslash at a line end joins the lines
+
+    assert rust_const("CREDIT") == lyrics.CREDIT
+    assert rust_const("ABOUT_CREDIT") == lyrics.ABOUT_CREDIT
+    assert "CREDIT.into()" in (root / "rust" / "crates" / "gui" / "src" / "lyrics.rs").read_text(encoding="utf-8")
+    assert "ABOUT_CREDIT" in (root / "rust" / "crates" / "gui" / "src" / "app.rs").read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------- GUI ---

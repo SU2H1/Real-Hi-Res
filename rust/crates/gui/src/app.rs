@@ -1428,6 +1428,11 @@ impl App {
                 ui.heading(format!("Real-Hi-Res {}", realhires::VERSION));
                 ui.label("Finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.");
                 ui.label("This is the Rust version; it shares its settings and saved results with the Python version.");
+                ui.label(realhires::lyrics::ABOUT_CREDIT);
+                ui.horizontal_wrapped(|ui| {
+                    ui.hyperlink_to("LRCLIB", "https://lrclib.net");
+                    ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
+                });
                 ui.hyperlink("https://github.com/SU2H1/Real-Hi-Res");
             });
             self.about = open;

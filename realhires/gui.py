@@ -1119,6 +1119,7 @@ class LyricsDialog(tk.Toplevel):
                          f"{'is' if one else 'are'} skipped (listed last, in grey); choose 'Download again and "
                          "replace them' to look them up again.")
         lines.append("Songs without title and artist tags cannot be looked up. Lyrics files are never deleted.")
+        lines.append(lyrics_mod.CREDIT)
         self.note.configure(text="\n".join(lines))
         self.start_btn.configure(state="normal" if n else "disabled")
         self.pb.configure(maximum=max(n, 1), value=0)
@@ -2946,6 +2947,7 @@ class App(ttk.Frame):
             "About Real-Hi-Res",
             f"Real-Hi-Res {__version__}\n\nFinds fake hi-res audio (upsampled or 16-bit padded) and fake "
             "lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.\n\n"
+            f"{lyrics_mod.ABOUT_CREDIT}\n\n"
             "https://github.com/SU2H1/Real-Hi-Res")
 
     def quit_app(self) -> None:
