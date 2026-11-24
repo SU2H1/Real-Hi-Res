@@ -196,6 +196,8 @@ impl Player {
         let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| abspath(f)).collect();
         let sep = std::path::MAIN_SEPARATOR;
         let under = |root: &str, t: &Track| t.path.starts_with(&format!("{}{sep}", root.trim_end_matches(sep)));
+        // with one library folder, Folders opens it at once
+        let folder = folder.or_else(|| (roots.len() == 1).then(|| roots[0].clone()));
         let Some(folder) = folder else {
             page_title(ui, pal, "Folders");
             if roots.is_empty() {
@@ -212,7 +214,7 @@ impl Player {
         // breadcrumb from the library folder that holds it
         let root = roots.iter().filter(|r| folder == **r || folder.starts_with(&format!("{}{sep}", r.trim_end_matches(sep)))).max_by_key(|r| r.len()).cloned();
         ui.horizontal_wrapped(|ui| {
-            if back_link(ui, pal, "Folders").clicked() {
+            if roots.len() > 1 && back_link(ui, pal, "Folders").clicked() {
                 self.go(Page::Folders(None));
             }
             if let Some(root) = &root {

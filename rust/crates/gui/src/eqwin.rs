@@ -291,7 +291,10 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                         ui.label(RichText::new("My presets").small().color(pal.secondary));
                         for (name, st) in &presets {
                             if ui.selectable_label(mine == *name, name).clicked() {
+                                // a preset keeps the equalizer on when it was on
+                                let on = state.enabled;
                                 state = st.clone();
+                                state.enabled = state.enabled || on;
                             }
                         }
                     }

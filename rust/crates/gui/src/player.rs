@@ -1827,6 +1827,7 @@ mod tests {
         std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
         std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
         let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 2.0);
         let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.5);
         let b1 = song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 1.5);
@@ -1962,17 +1963,17 @@ mod tests {
         p.eq_open = false;
 
         // a theme of one's own: made from Midnight, a colour changed, in use
-        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
         p.set_theme("Midnight");
         frame(&ctx, &mut p);
         assert!(ctx.global_style().visuals.dark_mode);
         p.apply_name(NameAction::NewTheme("Midnight".into()), "My Night").unwrap();
         assert_eq!(p.scanner.cfg.theme, "My Night");
-        p.custom_themes[0].colors[5] = "#00ff00".into();
+        let mine = p.custom_themes.iter().position(|t| t.name == "My Night").unwrap();
+        p.custom_themes[mine].colors[5] = "#00ff00".into();
         p.themes_changed();
         frame(&ctx, &mut p);
         assert_eq!(crate::look::current(&ctx).accent, crate::look::parse_hex("#00ff00"));
-        assert_eq!(realhires::themes::load_custom(None)[0].colors[5], "#00ff00");
+        assert_eq!(realhires::themes::load_custom(None)[mine].colors[5], "#00ff00");
         p.go(Page::Settings);
         p.settings_group = realhires::settings::GROUPS.iter().position(|g| *g == "Appearance").unwrap();
         frame(&ctx, &mut p);

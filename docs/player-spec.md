@@ -254,3 +254,18 @@ cannot be edited; editing one offers to make a copy. The user's themes are saved
 The buttons are: Update the library now; **Scan library** (opens the Quality check page, as in the first version,
 with the library folders as its sources, and starts the scan); Download lyrics for the whole library…; Open the
 quality checker; Clear the play history….
+
+### Details settled while building both apps
+
+- With one library folder, Folders opens it at once (the breadcrumb starts at that folder's name); the list of
+  library folders appears only with several.
+- The playlist mosaic shows the covers of up to four different albums of the playlist's songs; with fewer than four
+  albums it shows the first album's cover full size.
+- Your Stats → Details is a page of its own with a back link.
+- New theme… makes the copy at once, named by `copy_name()`, and selects it; Rename… asks for a name.
+- Choosing one of your own EQ presets keeps the equalizer on if it was on.
+- When nothing plays, Previous, Next, the heart, the dislike button and "…" are disabled; Shuffle, Repeat, the
+  volume, EQ, Lyrics and Up Next stay usable.
+- A song counts in the play history from one second of listening; the seconds are the forward steps of the position
+  while playing (the Python app ignores steps over 1.5 s, the Rust app over 2 s, between screen updates), so seeking
+  never counts.

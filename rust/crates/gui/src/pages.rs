@@ -912,7 +912,7 @@ impl Player {
         ui.horizontal_wrapped(|ui| {
             if ui.button("New theme…").on_hover_text("A copy of the theme in use, to change as you like").clicked() {
                 let name = themes::copy_name(&current.name, &self.custom_themes);
-                self.ask_name("New Theme", &name, crate::player::NameAction::NewTheme(current.name.clone()));
+                let _ = self.apply_name(crate::player::NameAction::NewTheme(current.name.clone()), &name);
             }
             if ui.button("Import…").clicked() {
                 if let Some(path) = rfd::FileDialog::new().add_filter("Real-Hi-Res theme", &["json"]).pick_file() {
