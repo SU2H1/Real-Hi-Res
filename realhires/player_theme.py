@@ -731,8 +731,9 @@ class Slider(tk.Canvas):
         self.bind("<ButtonRelease-1>", lambda e: self._drag(e, True))
         self.bind("<Double-Button-1>", self._reset)
         self.bind("<MouseWheel>", self._wheel)
-        self.bind("<Button-4>", lambda e: self._step(1))
-        self.bind("<Button-5>", lambda e: self._step(-1))
+        if self.tk.call("tk", "windowingsystem") == "x11":  # elsewhere 4 and 5 are the back and forward buttons
+            self.bind("<Button-4>", lambda e: self._step(1))
+            self.bind("<Button-5>", lambda e: self._step(-1))
 
     def _length(self) -> float:
         n = self.winfo_width() if self.orient == "horizontal" else self.winfo_height()

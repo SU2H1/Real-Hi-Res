@@ -26,7 +26,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from . import APP_NAME, PROJECT_URL, __version__, gui, musiclib, playerstate, stats, themes
 from . import lyrics as lyrics_mod
@@ -49,6 +49,22 @@ TICK_MS = 100
 SKIP_AFTER_ERROR_MS = 2000
 MOD = "Command" if sys.platform == "darwin" else "Control"
 ACC = "Cmd" if sys.platform == "darwin" else "Ctrl"
+# Back and Forward between pages (2.1): Alt+Left / Alt+Right, Cmd+[ / Cmd+] on macOS
+NAV_KEYS = (("<Command-bracketleft>", "<Command-bracketright>") if sys.platform == "darwin"
+            else ("<Alt-Left>", "<Alt-Right>"))
+
+
+def nav_button(num: int, windowing: str, tk_version: float) -> str:
+    """Where the mouse button `num` goes: "back", "forward" or "" (not a page button).
+    X11 reports the side buttons as 8 and 9 (4 and 5 are the wheel there).  Tk 8.6 on
+    Windows and macOS reports them as 4 and 5 (the wheel is <MouseWheel> there), and
+    Tk 8.7 and 9 as 8 and 9 everywhere.  Tk 8.6 refuses <Button-8> in a binding, so
+    the buttons come through a plain <ButtonPress> and its number."""
+    if num in (8, 9):
+        return "back" if num == 8 else "forward"
+    if num in (4, 5) and windowing != "x11" and tk_version < 8.7:
+        return "back" if num == 4 else "forward"
+    return ""
 
 
 # ------------------------------------------------------ the 1.x scanner ---
@@ -543,11 +559,13 @@ class PlayerApp:
         self.pages: Dict[str, tk.Frame] = {}
         self.dirty: set = set()
         self.history: List[tuple] = []
+        self.forward: List[tuple] = []  # the pages left with Back, for Forward (2.1)
         self.up_next_shown = False
         self.lyrics_hidden = False  # Now Playing without its lyrics column (the Lyrics button, 2.1)
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
-        self.edit_window: Optional[EditInfoWindow] = None  # one Edit Info window at a time
+        self.edit_window: Optional[EditInfoWindow] = None  # one Properties window at a time
+        self.edit_size: Optional[Tuple[int, int]] = None  # its size, once resized (kept for the session)
         self._info_time = 0.0
         self._search_job: Optional[str] = None
         self._search_from: Optional[tuple] = None
@@ -727,6 +745,25 @@ class PlayerApp:
         r.bind(f"<{MOD}-f>", mine(self.sidebar.focus_search))
         r.bind(f"<{MOD}-l>", mine(self.toggle_now_playing))
         r.bind(f"<{MOD}-comma>", mine(lambda: self.show_page("settings")))
+        # Back and Forward between pages: the keys (not while typing) and the mouse's
+        # side buttons, on every page of the main window (2.1)
+        for seq, fn in zip(NAV_KEYS, (self.go_back, self.go_forward)):
+            r.bind(seq, lambda e, fn=fn: None if self._typing(e) else (fn(), "break")[1])
+        r.bind("<ButtonPress>", self._nav_button, add="+")
+
+    def _typing(self, e) -> bool:
+        w = e.widget
+        return isinstance(w, tk.Misc) and w.winfo_class() in ("Entry", "TEntry", "Text", "TCombobox", "TSpinbox")
+
+    def _nav_button(self, e) -> Optional[str]:
+        where = nav_button(e.num, self.root.tk.call("tk", "windowingsystem"), tk.TkVersion)
+        if not where:
+            return None
+        if where == "back":
+            self.go_back()
+        else:
+            self.go_forward()
+        return "break"
 
     # ---- pages ----------------------------------------------------------
     def page(self, name: str):
@@ -738,6 +775,7 @@ class PlayerApp:
         if self.page_name and self.page_name != name and remember and name != "search":
             self.history.append((self.page_name, self._page_args()))
             del self.history[:-20]
+            self.forward = []  # a new page: nothing to go forward to, as in a browser
         if self.page_name == "search" and name != "search":
             self._search_from = None
         old = self.pages.get(self.page_name)
@@ -773,14 +811,28 @@ class PlayerApp:
             return {"pid": p.pid}
         if self.page_name == "folders" and isinstance(p, FoldersPage):
             return {"folder": p.folder}
+        if self.page_name == "search" and isinstance(p, SearchPage):
+            return {"text": p.text}
         return {}
 
     def go_back(self) -> None:
         if self.history:
+            self.forward.append((self.page_name, self._page_args()))
             name, args = self.history.pop()
             self.show_page(name, remember=False, **args)
-        else:
+        elif self.page_name != "library":
+            self.forward.append((self.page_name, self._page_args()))
             self.show_page("library", remember=False)
+
+    def go_forward(self) -> None:
+        """Forward (the mouse's forward button, Alt+Right, Cmd+] on macOS): the page
+        left last with Back (2.1)."""
+        if self.forward:
+            name, args = self.forward.pop()
+            if self.page_name:
+                self.history.append((self.page_name, self._page_args()))
+                del self.history[:-20]
+            self.show_page(name, remember=False, **args)
 
     def open_album(self, album: dict) -> None:
         self.show_page("album", album=album)
@@ -1034,7 +1086,7 @@ class PlayerApp:
         if album is not None:
             m.add_command(label="Show album", command=lambda: self.open_album(album))
         if os.path.exists(path):
-            m.add_command(label="Edit info…", command=lambda: self.edit_info([track]))
+            m.add_command(label="Properties…", command=lambda: self.edit_info([track]))
             m.add_command(label="Show in folder", command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
             m.add_command(label="Playback Info…", command=self.open_info)
@@ -1044,8 +1096,8 @@ class PlayerApp:
 
     # ---- song information ------------------------------------------------------
     def edit_info(self, tracks: List[Track], heading: str = "", subheading: str = "") -> Optional[EditInfoWindow]:
-        """The Edit Info window for these songs; while one is open it is brought to the
-        front instead (one at a time)."""
+        """The Properties window (2.0 "Edit Info") for these songs; while one is open it
+        is brought to the front instead (one at a time)."""
         w = self.edit_window
         if w is not None:
             try:
@@ -1125,6 +1177,7 @@ class PlayerApp:
         self.save_state()
         if self.page_name == "playlist" and self.pages["playlist"].pid == pid:
             self.history = [h for h in self.history if h[1].get("pid") != pid]
+            self.forward = [h for h in self.forward if h[1].get("pid") != pid]
             self.show_page("playlists", remember=False)
         self.playlists_changed()
 

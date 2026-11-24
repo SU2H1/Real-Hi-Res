@@ -272,6 +272,8 @@ pub struct Player {
     lib_stop: Arc<AtomicBool>,
     pub page: Page,
     pub back: Vec<Page>,
+    /// the pages left with Back (the mouse's back button, Alt+Left), for Forward (2.1)
+    pub forward: Vec<Page>,
     pub search: String,
     search_due: Option<Instant>,
     pub search_query: String,
@@ -319,6 +321,8 @@ pub struct Player {
     listening: Option<Listening>,
     pub stats_period: String,
     stats_cache: Option<(String, u64, realhires::stats::Stats)>,
+    /// the calendar of Your Stats (2.1)
+    pub calendar: crate::library_pages::Calendar,
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
     pub name_dialog: Option<NameDialog>,
     pub confirm: Option<ConfirmAction>,
@@ -359,6 +363,7 @@ impl Player {
             lib_stop: Arc::new(AtomicBool::new(false)),
             page: if quality_first { Page::Quality } else { Page::Library },
             back: vec![],
+            forward: vec![],
             search: String::new(),
             search_due: None,
             search_query: String::new(),
@@ -396,6 +401,7 @@ impl Player {
             listening: None,
             stats_period: realhires::stats::DEFAULT_PERIOD.to_string(),
             stats_cache: None,
+            calendar: Default::default(),
             recent_cache: None,
             name_dialog: None,
             confirm: None,
@@ -1146,7 +1152,10 @@ impl Player {
             ConfirmAction::DeletePlaylist(id) => {
                 self.state.delete_playlist(&id);
                 self.save_state();
-                if self.page == Page::Playlist(id) {
+                let gone = Page::Playlist(id);
+                self.back.retain(|p| *p != gone);
+                self.forward.retain(|p| *p != gone);
+                if self.page == gone {
                     self.page = Page::Playlists;
                 }
             }
@@ -1286,25 +1295,42 @@ impl Player {
 
     // -------------------------------------------------------------- pages ---
 
+    /// Open a page (a new page clears the Forward list, as in a browser).
     pub fn go(&mut self, page: Page) {
         if self.page != page {
-            let old = std::mem::replace(&mut self.page, page);
-            if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
-                self.back.push(old);
-                if self.back.len() > 20 {
-                    self.back.remove(0);
-                }
+            self.forward.clear();
+            self.enter(page);
+        }
+    }
+
+    /// Show `page`, remembering the page left for Back (not Now Playing, Search,
+    /// the Quality check or Settings).
+    fn enter(&mut self, page: Page) {
+        let old = std::mem::replace(&mut self.page, page);
+        if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
+            self.back.push(old);
+            if self.back.len() > 20 {
+                self.back.remove(0);
             }
-            if self.page == Page::Settings {
-                self.settings_draft = None;
-                self.fill_choices();
-            }
+        }
+        if self.page == Page::Settings {
+            self.settings_draft = None;
+            self.fill_choices();
         }
     }
 
     pub fn go_back(&mut self) {
         if let Some(p) = self.back.pop() {
-            self.page = p;
+            let left = std::mem::replace(&mut self.page, p);
+            self.forward.push(left);
+        }
+    }
+
+    /// Forward (the mouse's forward button, Alt+Right, Cmd+] on macOS): the page
+    /// left last with Back (2.1).
+    pub fn go_forward(&mut self) {
+        if let Some(p) = self.forward.pop() {
+            self.enter(p);
         }
     }
 
@@ -1396,7 +1422,31 @@ impl Player {
     }
 
     fn keys(&mut self, ctx: &egui::Context) {
-        if self.page == Page::Quality || ctx.egui_wants_keyboard_input() {
+        // the mouse's back and forward buttons, on every page; Alt+Left / Alt+Right
+        // (Cmd+[ / Cmd+] on macOS) when no text field has the keyboard (2.1)
+        let typing = ctx.egui_wants_keyboard_input();
+        let (back, forward) = ctx.input(|i| {
+            let mac = cfg!(target_os = "macos");
+            let key = |arrow, bracket| {
+                if mac {
+                    i.modifiers.mac_cmd && i.key_pressed(bracket)
+                } else {
+                    i.modifiers.alt && !i.modifiers.ctrl && i.key_pressed(arrow)
+                }
+            };
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                    || (!typing && key(egui::Key::ArrowLeft, egui::Key::OpenBracket)),
+                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                    || (!typing && key(egui::Key::ArrowRight, egui::Key::CloseBracket)),
+            )
+        });
+        if back {
+            self.go_back();
+        } else if forward {
+            self.go_forward();
+        }
+        if self.page == Page::Quality || typing {
             return;
         }
         let (space, right, left, cmd_f, cmd_l) = ctx.input(|i| {
@@ -1946,6 +1996,27 @@ mod tests {
         ctx.run_ui(input, |ui| p.ui(ui)).drop_without_applying_deltas();
     }
 
+    /// A frame with these input events; a key's modifiers are held during the frame
+    /// and let go in the next one.
+    fn frame_with(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) {
+        let held = events.iter().find_map(|e| if let egui::Event::Key { modifiers, .. } = e { Some(*modifiers) } else { None });
+        let run = |p: &mut Player, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| p.ui(ui)).drop_without_applying_deltas();
+        };
+        match held {
+            Some(m) => {
+                run(p, std::iter::once(egui::Event::ModifiersChanged(m)).chain(events).collect());
+                run(p, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)]);
+            }
+            None => run(p, events),
+        }
+    }
+
     fn run_until(ctx: &egui::Context, p: &mut Player, what: &str, done: impl Fn(&Player) -> bool) {
         let t0 = Instant::now();
         while !done(p) {
@@ -2014,6 +2085,34 @@ mod tests {
         let (subs, songs) = musiclib::folder_view(&p.lib.tracks, &music_dir);
         assert_eq!((subs.len(), songs.len()), (2, 0));
 
+        // Back and Forward between pages (2.1): the mouse's side buttons and Alt+Left/Right
+        // (Cmd+[ / Cmd+] on macOS); a new page clears the Forward list
+        p.go(Page::Albums);
+        p.go(Page::Genres);
+        // a click of a side button: pressed and let go
+        let side = |button| {
+            [true, false]
+                .map(|pressed| egui::Event::PointerButton { pos: pos2(700.0, 500.0), button, pressed, modifiers: egui::Modifiers::NONE })
+                .to_vec()
+        };
+        frame_with(&ctx, &mut p, side(egui::PointerButton::Extra1));
+        assert_eq!((&p.page, &p.forward), (&Page::Albums, &vec![Page::Genres]));
+        frame_with(&ctx, &mut p, side(egui::PointerButton::Extra2));
+        assert_eq!(p.page, Page::Genres);
+        assert!(p.forward.is_empty() && p.back.last() == Some(&Page::Albums));
+        let key = |key, mac_key| {
+            let (key, modifiers) =
+                if cfg!(target_os = "macos") { (mac_key, egui::Modifiers::MAC_CMD) } else { (key, egui::Modifiers::ALT) };
+            egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+        };
+        frame_with(&ctx, &mut p, vec![key(egui::Key::ArrowLeft, egui::Key::OpenBracket)]);
+        assert_eq!((&p.page, &p.forward), (&Page::Albums, &vec![Page::Genres]));
+        p.go(Page::Years);
+        assert!(p.forward.is_empty(), "a new page: nothing to go forward to");
+        p.go_back();
+        frame_with(&ctx, &mut p, vec![key(egui::Key::ArrowRight, egui::Key::CloseBracket)]);
+        assert_eq!(p.page, Page::Years);
+
         // play the album from its first song; the next song follows gaplessly
         let key = p.lib.track(&a1).unwrap().song().album_key();
         p.go(Page::Album(key.clone()));
@@ -2076,6 +2175,29 @@ mod tests {
             p.go(page);
             frame(&ctx, &mut p);
         }
+        // the calendar of Your Stats (2.1): the month of the plays, the day's plays newest
+        // first, and a song of the list plays the day's songs from it
+        p.go(Page::Stats);
+        frame(&ctx, &mut p);
+        let first = realhires::stats::local_parts(p.history.as_ref().unwrap().plays(0.0, None)[0].started);
+        p.calendar.month = (first.year, first.month);
+        frame(&ctx, &mut p);
+        let today = first.day as usize - 1;
+        assert!(p.calendar.minutes[today] > 0.0 && p.calendar.levels[today] >= 1, "{:?}", p.calendar.minutes);
+        p.calendar_choose(first.day);
+        frame(&ctx, &mut p);
+        let rows: Vec<(&str, &str, &str)> =
+            p.calendar.rows.iter().map(|r| (r.title.as_str(), r.artist.as_str(), r.minutes.as_str())).collect();
+        assert_eq!(rows, vec![("Paper in the Rain", "Mira Calloway", "<1 min"), ("Lanterns Over Water", "Mira Calloway", "<1 min")]);
+        let lp = realhires::stats::local_parts(p.calendar.rows[1].started);
+        assert_eq!(p.calendar.rows[1].time, format!("{:02}:{:02}", lp.hour, lp.minute));
+        p.calendar_play(1);
+        assert_eq!(p.now.as_ref().unwrap().path, a1);
+        assert_eq!(p.queue.as_ref().unwrap().context, vec![a2.clone(), a1.clone()]);
+        p.engine.stop();
+        p.calendar_choose(first.day);
+        frame(&ctx, &mut p);
+        assert!(p.calendar.day.is_none() && p.calendar.rows.is_empty(), "the chosen day again hides the list");
 
         // playlists: make one, add, play from it, rename, delete
         p.apply_name(NameAction::NewPlaylist(vec![b1.clone()]), "Road Trip").unwrap();
@@ -2265,11 +2387,28 @@ mod tests {
         p.reload_file_themes();
         assert!(p.scanner.choices["theme"].contains(&"Neon 2".to_string()));
 
-        // Edit Info on one song: the composer and the release date
+        // Properties (2.0 "Edit Info") on one song: the composer and the release date
         p.go(Page::AllSongs);
         p.edit_song_info(&a1);
         run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
         assert_eq!(p.edit_info.as_ref().unwrap().text[0], "Lanterns Over Water");
+        // the window can be made bigger by its corner (2.1), and keeps that size for the next one
+        frame(&ctx, &mut p);
+        let window = || ctx.memory(|m| m.area_rect(egui::Id::new(crate::editinfo::WINDOW_ID))).unwrap();
+        let before = window();
+        assert!(before.width() >= 420.0, "{before:?}");
+        let corner = before.max - vec2(3.0, 3.0);
+        let wider = corner + vec2(200.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(corner)]);
+        frame_with(&ctx, &mut p, vec![button(corner, true)]);
+        for i in 1..=4 {
+            frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(corner + vec2(50.0 * i as f32, 0.0))]);
+        }
+        frame_with(&ctx, &mut p, vec![button(wider, false)]);
+        frame(&ctx, &mut p);
+        let after = window();
+        assert!(after.width() >= before.width() + 150.0, "{before:?} → {after:?}");
         {
             let cfg = p.scanner.cfg.clone();
             let w = p.edit_info.as_mut().unwrap();
@@ -2288,6 +2427,8 @@ mod tests {
         // a bad track number is refused and nothing is written
         p.edit_song_info(&a2);
         run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        frame(&ctx, &mut p);
+        assert_eq!(window().width(), after.width(), "the size is kept for the session");
         {
             let cfg = p.scanner.cfg.clone();
             let w = p.edit_info.as_mut().unwrap();

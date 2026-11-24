@@ -1,8 +1,10 @@
-//! The Edit Info window (2.0, `docs/player-spec.md` → "Song information"):
-//! the title, artist, album, album artist, genre, release date, track, disc
-//! and composer of one song or of an album's songs.  The tags are read with
-//! ffprobe in a thread, the changes are checked with `tagedit::check_changes()`
-//! and written in a thread with `tagedit::save_tags()`.
+//! The Properties window (2.0 "Edit Info", `docs/player-spec.md` → "Song
+//! information"; called Properties since 2.1): the title, artist, album, album
+//! artist, genre, release date, track, disc and composer of one song or of an
+//! album's songs.  The tags are read with ffprobe in a thread, the changes are
+//! checked with `tagedit::check_changes()` and written in a thread with
+//! `tagedit::save_tags()`.  The window can be resized and its fields follow its
+//! width; egui keeps its size (under the fixed `WINDOW_ID`) for the session.
 
 use std::sync::mpsc::{self, Receiver};
 
@@ -49,6 +51,12 @@ pub enum Outcome {
 }
 
 pub const SEVERAL: &str = "Several values: kept unless you type here";
+/// The window's title (2.1: "Properties", as the menu items "Properties…" and "Album Properties…").
+pub const TITLE: &str = "Properties";
+/// One id for every Properties window, so its size and place stay for the session.
+pub const WINDOW_ID: &str = "player-edit-info";
+/// The narrowest a field gets.
+const MIN_FIELD: f32 = 220.0;
 
 impl EditInfo {
     pub fn new(ctx: &egui::Context, paths: Vec<String>, heading: String, subheading: String) -> Self {
@@ -164,10 +172,12 @@ impl EditInfo {
         };
         let mut close = false;
         let n = self.paths.len();
-        egui::Window::new("Edit Info")
-            .id(egui::Id::new("player-edit-info"))
+        egui::Window::new(TITLE)
+            .id(egui::Id::new(WINDOW_ID))
             .collapsible(false)
-            .resizable(false)
+            .resizable([true, true])
+            .default_width(560.0)
+            .min_width(420.0)
             .pivot(Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
@@ -206,7 +216,9 @@ impl EditInfo {
                     for (i, f) in FIELDS.iter().enumerate() {
                         ui.label(tagedit::label(f));
                         ui.vertical(|ui| {
-                            let mut edit = egui::TextEdit::singleline(&mut self.text[i]).desired_width(400.0);
+                            // the fields grow with the window (the grid's last column takes the rest)
+                            let width = ui.available_width().max(MIN_FIELD);
+                            let mut edit = egui::TextEdit::singleline(&mut self.text[i]).desired_width(width);
                             if self.initial[i].is_none() {
                                 edit = edit.hint_text(SEVERAL);
                             }

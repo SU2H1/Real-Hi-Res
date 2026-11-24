@@ -48,8 +48,9 @@ def show_scrollbar(sb: ttk.Scrollbar, need: bool, bg_role: str = "bg") -> None:
 
 def bind_wheel(widget: tk.Widget, fn: Callable[[int], None]) -> None:
     widget.bind("<MouseWheel>", lambda e: fn(scroll_units(e)))
-    widget.bind("<Button-4>", lambda e: fn(-1))
-    widget.bind("<Button-5>", lambda e: fn(1))
+    if widget.tk.call("tk", "windowingsystem") == "x11":  # elsewhere 4 and 5 are the back and forward buttons
+        widget.bind("<Button-4>", lambda e: fn(-1))
+        widget.bind("<Button-5>", lambda e: fn(1))
 
 
 @dataclass

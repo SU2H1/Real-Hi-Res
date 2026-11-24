@@ -42,6 +42,31 @@ def _has_miniaudio():
         return False
 
 
+def _has_tkinter():
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _has_tkinter(), reason="needs Tkinter")
+def test_mouse_back_and_forward_buttons():
+    """The mouse's side buttons as Tk reports them: 8 and 9 on X11 (where 4 and 5 are
+    the wheel), 4 and 5 with Tk 8.6 on Windows and macOS (whose wheel is <MouseWheel>),
+    8 and 9 everywhere with Tk 8.7 and 9."""
+    from realhires.player_gui import nav_button
+
+    for ws in ("x11", "win32", "aqua"):
+        for version in (8.6, 9.0):
+            assert (nav_button(8, ws, version), nav_button(9, ws, version)) == ("back", "forward")
+            assert nav_button(1, ws, version) == nav_button(3, ws, version) == ""
+    assert nav_button(4, "x11", 8.6) == nav_button(5, "x11", 8.6) == ""  # the wheel
+    for ws in ("win32", "aqua"):
+        assert (nav_button(4, ws, 8.6), nav_button(5, ws, 8.6)) == ("back", "forward")
+        assert nav_button(4, ws, 9.0) == ""
+
+
 def _has_mp3_encoder():
     out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     return " libmp3lame " in out
@@ -404,7 +429,7 @@ LIB = {json.dumps(lib)}
 TMP = {str(tmp_path)!r}
 S = LIB["songs"]
 import tkinter as tk
-from realhires import player_gui, playerstate, themes
+from realhires import player_gui, playerstate, stats, themes
 from realhires.player_collections import TILES
 player_gui.messagebox.askyesno = lambda *a, **k: True  # confirmations say yes
 state = {{}}
@@ -453,6 +478,32 @@ def loaded():
         app.show_page(key)
         root.update()
         assert app.page_name == key and app.pages[key].winfo_ismapped(), key
+    # Back and Forward between pages (2.1): the mouse's side buttons (8 and 9 on X11, 4 and 5
+    # with Tk 8.6 on Windows and macOS) and Alt+Left / Alt+Right (Cmd+[ / Cmd+] on macOS)
+    app.show_page("albums")
+    app.show_page("genres")
+    root.update()
+    back, forward = player_gui.nav_button(8, "x11", 8.6), player_gui.nav_button(9, "x11", 8.6)
+    assert (back, forward) == ("back", "forward") and player_gui.nav_button(4, "x11", 8.6) == ""
+    side = 8 if root.tk.call("tk", "windowingsystem") == "x11" or tk.TkVersion >= 8.7 else 4
+    app.pages["genres"].event_generate("<ButtonPress>", button=side, x=5, y=5)
+    root.update()
+    assert app.page_name == "albums" and app.forward[-1][0] == "genres", (app.page_name, app.forward)
+    app.pages["albums"].event_generate("<ButtonPress>", button=side + 1, x=5, y=5)
+    root.update()
+    assert app.page_name == "genres" and app.forward == [] and app.history[-1][0] == "albums"
+    root.focus_force()
+    root.update()
+    keys = player_gui.NAV_KEYS
+    root.event_generate(keys[0])
+    root.update()
+    assert app.page_name == "albums" and [f[0] for f in app.forward] == ["genres"], (app.page_name, app.forward)
+    app.show_page("years")  # a new page: nothing to go forward to
+    assert app.forward == []
+    app.go_back()
+    root.event_generate(keys[1])
+    root.update()
+    assert app.page_name == "years", app.page_name
     assert [g["name"] for g in app.page("composers").items] == ["Lena Frost", "Mika Rowe", "Unknown Composer"]
     assert [g["name"] for g in app.page("years").items] == ["2023", "2021", "2019", "2018"]
     assert app.page("songs").title_l.cget("text") == "All Songs"
@@ -541,6 +592,34 @@ def second_heard():
     cards = texts(st.area.c)
     assert st.st["logged"] == 2 and "MINUTES LISTENED" in cards and "YOUR TOP SONG" in cards, cards
     assert "Glacier Song" in cards or "First Light" in cards, cards
+    # the calendar (2.1): the month of the plays, minutes on their day; a click on the day lists
+    # its plays (local time, title, artist, minutes), newest first; a click on a song plays it
+    first = time.localtime(plays[0].started)
+    st.show_month(first.tm_year, first.tm_mon)
+    root.update()
+    c = st.area.c
+    assert st.minutes[first.tm_mday - 1] > 0 and st.levels[first.tm_mday - 1] >= 1, st.minutes
+    assert stats.month_title(first.tm_year, first.tm_mon) in texts(c)
+    day = next(i for i in c.find_all() if c.type(i) == "text" and c.itemcget(i, "text") == str(first.tm_mday))
+    x, y = c.coords(day)
+    c.event_generate("<Button-1>", x=int(x), y=int(y))
+    root.update()
+    assert st.day == (first.tm_year, first.tm_mon, first.tm_mday), st.day
+    want = [p for p in reversed(plays) if time.localtime(p.started)[:3] == first[:3]]
+    assert [r["path"] for r in st.day_rows] == [p.path for p in want], st.day_rows
+    shown = texts(c)
+    assert stats.day_title(*st.day) in shown and stats.day_summary(st.day_rows) in shown
+    row = st.day_rows[-1]
+    assert row["time"] == time.strftime("%H:%M", time.localtime(row["started"])) and row["time"] in shown
+    assert row["title"] == "First Light" and row["artist"] == "Aurora Fields" and row["minutes"] == "<1 min"
+    item = next(i for i in c.find_all() if c.type(i) == "text" and c.itemcget(i, "text") == "First Light")
+    x, y = c.coords(item)
+    c.event_generate("<Button-1>", x=int(x), y=int(y))
+    root.update()
+    assert app.current == S["First Light"] and app.context_name == "Your Stats"
+    app.engine.pause()
+    st.choose_day(first.tm_mday)  # the chosen day again: the list goes
+    assert st.day is None and st.day_rows == []
     app.show_page("stats_details")
     root.update()
     shown = texts(app.page("stats_details").area.c)
@@ -602,8 +681,10 @@ root.mainloop()
 @pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
 def test_theme_files_and_edit_info(tmp_path):
     """Theme files in the themes folder appear in the theme menu, read-only in the
-    editor; Edit Info changes one song's album artist and release date, an album's
-    genre for all its songs, and refuses a bad track number without writing."""
+    editor; the Properties window (2.0 "Edit Info") changes one song's album artist
+    and release date, an album's genre for all its songs, and refuses a bad track
+    number without writing; it can be made bigger, its fields grow with it, and the
+    size it was given is kept for the next one."""
     lib = make_library(tmp_path, seconds=2, mp3=False)
     from realhires import settings
 
@@ -670,9 +751,10 @@ def loaded():
     assert "Zed" in page.theme_values()  # read again when the menu opens
     os.remove(os.path.join(folder, "neon.json"))
     app.select_theme("Light")
-    # Edit info… is in a song's menu; one Edit Info window at a time
+    # Properties… is in a song's menu; one Properties window at a time
     taxi = app.track(S["Taxi Lights"])
-    assert "Edit info…" in menu_labels(app.song_menu(taxi))
+    labels = menu_labels(app.song_menu(taxi))
+    assert "Properties…" in labels and not any("Edit info" in x for x in labels), labels
     w = app.edit_info([taxi])
     assert app.edit_info([app.track(S["Blue Kettle"])]) is w
     state["w"] = w
@@ -682,6 +764,14 @@ state = {{}}
 
 def one_ready():
     w = state["w"]
+    assert w.win.title() == "Properties"
+    # the user makes the window bigger: the fields grow with it
+    root.update()
+    width = w.entries["title"].winfo_width()
+    w.win.geometry("%dx%d" % (w.win.winfo_width() + 300, w.win.winfo_height() + 40))
+    root.update()
+    assert w.entries["title"].winfo_width() >= width + 250, (width, w.entries["title"].winfo_width())
+    state["size"] = (w.win.winfo_width(), w.win.winfo_height())
     assert w.vars["title"].get() == "Taxi Lights" and w.vars["album_artist"].get() == "The Paper Boats"
     assert w.vars["date"].get() == "2019" and w.vars["track"].get() == "2/3"
     w.vars["album_artist"].set("Paper Boats Collective")
@@ -705,7 +795,10 @@ def one_saved():
     assert "Paper Boats Collective" in names, names
     # a bad track number: the error is shown and nothing is written
     before = os.stat(S["Blue Kettle"]).st_mtime_ns
+    assert app.edit_size == state["size"], (app.edit_size, state["size"])
     w = app.edit_info([app.track(S["Blue Kettle"])])
+    root.update()
+    assert (w.win.winfo_width(), w.win.winfo_height()) == state["size"]  # the size is kept
     state["w"] = w
     state["before"] = before
     wait(lambda: w.ready, bad_ready, what="tags read again")
@@ -718,16 +811,19 @@ def bad_ready():
     assert os.stat(S["Blue Kettle"]).st_mtime_ns == state["before"]
     w.cancel()
     assert app.edit_window is None
-    # Edit album info…: every song of the album
+    # Album Properties…: every song of the album
     album = next(a for a in app.albums if a["title"] == "Small Hours")
     app.open_album(album)
     root.update()
+    assert app.page("album").edit_b.text == "Album Properties…"
     w = app.page("album").edit_info()
     state["w"] = w
     wait(lambda: w.ready, album_ready, what="album tags read")
 
 def album_ready():
     w = state["w"]
+    root.update()
+    assert w.win.winfo_width() == state["size"][0] and w.win.winfo_height() >= w.win.winfo_reqheight() - 2
     assert w.initial["title"] is None and w.SEVERAL in w.notes["title"].cget("text")
     assert w.vars["title"].get() == "" and w.vars["album"].get() == "Small Hours"
     w.vars["genre"].set("Bossa Nova")
