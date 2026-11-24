@@ -569,3 +569,29 @@ Format (codec, e.g. "FLAC"), Bit rate ("1,411 kbps"), Date added (the file's dat
 Defaults: songs and folders: Title, Artist, Album, Genre, Time, Quality, heart; album: #, Title, Artist, Album,
 Genre, Time, Quality, heart. Any shown column can sort the list, as before. An unknown column name in the file is
 ignored; an empty list falls back to the default.
+
+### Inspecting and changing a cover (asked for later on 2026-11-24)
+
+"When user is playing a song and entered fullscreen then clicks on jacket, allow user to inspect, change jacket
+photo etc." On Now Playing, a click on the cover opens the **Cover** window (this replaces "the cover opens the
+album" of the earlier request; the album name still opens the album, and the LCD's cover still opens/leaves Now
+Playing). The window shows the cover as large as fits (resizable window), with under it: its size in pixels, its
+format and where it comes from ("Inside 01 Song.flac", "cover.jpg in the album's folder"); and the buttons:
+
+- **Change cover…**: choose a JPEG or PNG image; a choice "All N songs of this album" (default) or "This song only",
+  and a check "Also save it as cover.jpg in the album's folder" (off by default; a PNG is saved as cover.png).
+  The picture is embedded as the front cover: FLAC natively (a PICTURE metadata block, type 3, replacing earlier
+  front covers), MP3 natively (an APIC frame, type 3, replacing earlier ones), Ogg Vorbis/Opus natively
+  (METADATA_BLOCK_PICTURE), and other formats FFmpeg can write through a stream copy with the picture as an
+  attached_pic stream, kept only when the audio decodes to the same samples (`pcm_digest()`), as Edit Info does;
+  formats that cannot hold a picture (WAV, AIFF without ID3, APE, DSF…) are listed as not changed (and only the
+  folder file helps them). Only the tag changes; the saved scan results follow (`ResultStore.retag()`), the
+  library re-reads the songs and the cover caches show the new picture at once. A summary says what was changed.
+- **Save image as…**: writes the picture as it is stored (JPEG or PNG) to a chosen file.
+- **Remove cover**: after a confirmation, removes the embedded front cover from the album's songs (the same choice
+  as above); a folder image is not deleted.
+- **Show album**, and **Close** (Esc).
+
+The core lives with the tag editor: `tagedit.set_cover(paths, image_bytes, mime, cfg)` / `remove_cover(...)`, and
+`covers.cover_source(paths)` (where the shown cover comes from), in both versions, with the native FLAC/MP3/Ogg
+results byte-identical between them (parity vectors) and tests on real files.
