@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import os
 import re
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -14,7 +15,7 @@ from typing import Iterable, List, Optional
 from . import __version__
 from . import settings as settings_mod
 from .pool import MultiProcessPool, effective_jobs
-from .probe import ToolMissingError, require_tools
+from .probe import ToolMissingError, external_env, require_tools
 from .report import (eprint, header, row, setup_console, summary, summary_bars, use_color, write_csv,
                      write_json, write_svg)
 from .eta import ScanEta, file_sizes
@@ -188,8 +189,56 @@ def write_spectrogram_png(r: FileResult, out_dir: str, cfg: settings_mod.Setting
     return path
 
 
+DOUBLE_CLICK_MESSAGE = (
+    "This is the command-line tool of Real-Hi-Res. It checks the folders or files you name, for example\n"
+    "  {cli} \"D:\\Music\"\n"
+    "in a terminal. The desktop app is {gui} in the same folder.\n\nPress Enter to close this window.")
+
+
+def started_from_explorer() -> bool:
+    """Windows: True when this program has a console window of its own, which is what
+    happens when it is double-clicked in Explorer rather than started from a terminal."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        ids = (ctypes.c_uint32 * 4)()
+        return ctypes.windll.kernel32.GetConsoleProcessList(ids, 4) == 1
+    except Exception:  # noqa: BLE001 - no console API: not double-clicked
+        return False
+
+
+def open_app_instead(argv, gui_name: str = "RealHiRes.exe", cli_name: str = "realhires-cli.exe",
+                     started=started_from_explorer, launch=None, wait=input) -> Optional[int]:
+    """A double-clicked command-line tool (no arguments, its own console) opens the desktop app
+    next to it instead of printing a usage error into a window that closes at once.  Returns
+    the exit code, or None when the command line should run as usual."""
+    if argv or not started():
+        return None
+    gui = os.path.join(os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False)
+                                                       else sys.argv[0])), gui_name)
+    if os.path.isfile(gui):
+        try:
+            # PYINSTALLER_RESET_ENVIRONMENT: the app is a program of its own, not a child of this one
+            (launch or subprocess.Popen)([gui], env=dict(external_env(), PYINSTALLER_RESET_ENVIRONMENT="1"))
+            return 0
+        except OSError:
+            pass
+    print(DOUBLE_CLICK_MESSAGE.format(cli=cli_name, gui=gui_name), flush=True)
+    try:
+        wait()
+    except (EOFError, KeyboardInterrupt):
+        pass
+    return 2
+
+
 def main(argv=None) -> int:
     setup_console()
+    if argv is None:
+        opened = open_app_instead(sys.argv[1:])
+        if opened is not None:
+            return opened
     args = build_parser().parse_args(argv)
     try:
         cfg = _load_settings(args)

@@ -63,6 +63,8 @@ and can delete them); the command-line tool uses them too (--rescan,
 
 Command line
 ------------
+realhires-cli is the command-line tool, for a terminal.  On Windows, double-
+clicking realhires-cli.exe opens the app instead.
   Windows : realhires-cli.exe "D:\Music"
   macOS   : /Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music
   Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)

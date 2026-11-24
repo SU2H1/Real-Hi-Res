@@ -223,7 +223,55 @@ fn write_spectrogram_png(r: &FileResult, out_dir: &str, cfg: &Settings) -> Optio
 }
 
 fn main() {
+    if let Some(code) = open_app_instead(std::env::args_os().len() > 1, started_from_explorer()) {
+        std::process::exit(code);
+    }
     std::process::exit(run());
+}
+
+const DOUBLE_CLICK_MESSAGE: &str = "This is the command-line tool of Real-Hi-Res. It checks the folders or files you \
+     name, for example\n  realhires.exe \"D:\\Music\"\nin a terminal. The desktop app is realhires-gui.exe in the same \
+     folder.\n\nPress Enter to close this window.";
+
+/// Windows: true when this program has a console window of its own, which is
+/// what happens when it is double-clicked in Explorer rather than started from
+/// a terminal.
+#[cfg(windows)]
+fn started_from_explorer() -> bool {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+    }
+    let mut ids = [0u32; 4];
+    // SAFETY: the buffer holds `count` entries
+    unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) == 1 }
+}
+
+#[cfg(not(windows))]
+fn started_from_explorer() -> bool {
+    false
+}
+
+/// A double-clicked command-line tool (no arguments, its own console) opens
+/// the desktop app next to it instead of printing a usage error into a window
+/// that closes at once (the Python version's `cli.open_app_instead()`).
+/// Returns the exit code, or None when the command line should run as usual.
+fn open_app_instead(has_args: bool, started: bool) -> Option<i32> {
+    if has_args || !started {
+        return None;
+    }
+    let gui = std::env::current_exe()
+        .ok()
+        .map(|p| p.with_file_name(if cfg!(windows) { "realhires-gui.exe" } else { "realhires-gui" }));
+    if let Some(gui) = gui.filter(|g| g.is_file()) {
+        if std::process::Command::new(gui).spawn().is_ok() {
+            return Some(0);
+        }
+    }
+    println!("{DOUBLE_CLICK_MESSAGE}");
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    Some(2)
 }
 
 fn run() -> i32 {
@@ -612,5 +660,17 @@ fn run_fixes(
         1
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_double_click_without_arguments_opens_the_app() {
+        assert_eq!(open_app_instead(true, true), None); // a real command line
+        assert_eq!(open_app_instead(false, false), None); // started from a terminal
+        assert!(!cfg!(not(windows)) || !started_from_explorer());
     }
 }
