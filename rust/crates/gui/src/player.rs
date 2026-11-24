@@ -23,13 +23,26 @@ use crate::look::{self, Palette};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
-    Recent,
+    /// the start page with the fourteen entries
+    Library,
+    AllSongs,
+    /// a library folder or one of its subfolders (None: the library folders)
+    Folders(Option<String>),
     Albums,
     Album(String),
     Artists,
-    Songs,
+    AlbumArtists,
     Genres,
+    Years,
+    Composers,
+    Playlists,
+    Playlist(String),
     Liked,
+    Disliked,
+    RecentlyPlayed,
+    Recent,
+    Stats,
+    StatsDetails,
     Search,
     NowPlaying,
     Settings,
@@ -39,18 +52,67 @@ pub enum Page {
 impl Page {
     pub fn title(&self) -> &'static str {
         match self {
-            Page::Recent => "Recently Added",
+            Page::Library => "Library",
+            Page::AllSongs => "All Songs",
+            Page::Folders(_) => "Folders",
             Page::Albums | Page::Album(_) => "Albums",
             Page::Artists => "Artists",
-            Page::Songs => "Songs",
+            Page::AlbumArtists => "Album Artists",
             Page::Genres => "Genres",
+            Page::Years => "Years",
+            Page::Composers => "Composers",
+            Page::Playlists | Page::Playlist(_) => "Playlists",
             Page::Liked => "Liked Songs",
+            Page::Disliked => "Disliked Songs",
+            Page::RecentlyPlayed => "Recently Played",
+            Page::Recent => "Recently Added",
+            Page::Stats | Page::StatsDetails => "Your Stats",
             Page::Search => "Search",
             Page::NowPlaying => "Now Playing",
             Page::Settings => "Settings",
             Page::Quality => "Quality check",
         }
     }
+}
+
+/// A small window that asks for a name (new playlist, preset, theme...).
+pub struct NameDialog {
+    pub title: String,
+    pub text: String,
+    pub action: NameAction,
+    pub error: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NameAction {
+    NewPlaylist(Vec<String>),
+    RenamePlaylist(String),
+    SaveEqPreset,
+    RenameEqPreset(String),
+    NewTheme(String),
+    RenameTheme(String),
+}
+
+/// A question before something is deleted.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfirmAction {
+    DeletePlaylist(String),
+    DeleteEqPreset(String),
+    DeleteTheme(String),
+    ClearHistory,
+}
+
+/// The song being listened to, for the play history.
+struct Listening {
+    token: u64,
+    path: String,
+    started: f64,
+    seconds: f64,
+    last_pos: f64,
+}
+
+fn wall_clock() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
 enum LibMsg {
@@ -66,7 +128,10 @@ pub struct LibView {
     pub albums: Vec<Album>,
     pub album_index: HashMap<String, usize>,
     pub artists: Vec<Group>,
+    pub album_artists: Vec<Group>,
     pub genres: Vec<Group>,
+    pub years: Vec<Group>,
+    pub composers: Vec<Group>,
     /// album indices, newest first
     pub recent: Vec<usize>,
     pub songs: Vec<Song>,
@@ -83,7 +148,10 @@ impl LibView {
         recent.sort_by(|a, b| newest(&albums[*b]).cmp(&newest(&albums[*a])));
         LibView {
             artists: musiclib::artists(&tracks),
+            album_artists: musiclib::album_artists(&tracks),
             genres: musiclib::genres(&tracks),
+            years: musiclib::years(&tracks),
+            composers: musiclib::composers(&tracks),
             songs: tracks.iter().map(Track::song).collect(),
             tracks,
             by_path,
@@ -227,14 +295,30 @@ pub struct Player {
     pub lyrics_scrolled: Option<Instant>,
     pub lyrics_line: Option<usize>,
     pub song_sort: (SongCol, bool),
-    applied_look: Option<(String, String)>,
+    applied_look: Option<(String, String, u64)>,
     pub font_used: String,
     pub selected_song: Option<String>,
     /// "Check new songs when the app starts": scan once the library is read
     check_after_update: bool,
-    pub artist_sel: Option<String>,
-    pub genre_sel: Option<String>,
+    /// the name chosen on each grouped page (Artists, Genres, Years...)
+    pub group_sel: HashMap<&'static str, String>,
     seed: u64,
+    // 2.0 additions
+    pub custom_themes: Vec<realhires::themes::Theme>,
+    themes_gen: u64,
+    /// the play history (`library.sqlite`)
+    pub history: Option<Library>,
+    pub history_gen: u64,
+    listening: Option<Listening>,
+    pub stats_period: String,
+    stats_cache: Option<(String, u64, realhires::stats::Stats)>,
+    recent_cache: Option<(u64, Vec<(String, f64)>)>,
+    pub name_dialog: Option<NameDialog>,
+    pub confirm: Option<ConfirmAction>,
+    /// what the last EQ import said
+    pub eq_notes: Vec<String>,
+    /// the playlist whose page is shown (its songs get Remove/Move)
+    pub table_playlist: Option<String>,
 }
 
 fn seed_now() -> u64 {
@@ -266,7 +350,7 @@ impl Player {
             lib_rx: None,
             lib_progress: None,
             lib_stop: Arc::new(AtomicBool::new(false)),
-            page: if quality_first { Page::Quality } else { Page::Albums },
+            page: if quality_first { Page::Quality } else { Page::Library },
             back: vec![],
             search: String::new(),
             search_due: None,
@@ -293,8 +377,19 @@ impl Player {
             font_used: String::new(),
             selected_song: None,
             check_after_update: false,
-            artist_sel: None,
-            genre_sel: None,
+            group_sel: HashMap::new(),
+            custom_themes: realhires::themes::load_custom(None),
+            themes_gen: 0,
+            history: Library::open(None).ok(),
+            history_gen: 0,
+            listening: None,
+            stats_period: realhires::stats::DEFAULT_PERIOD.to_string(),
+            stats_cache: None,
+            recent_cache: None,
+            name_dialog: None,
+            confirm: None,
+            eq_notes: vec![],
+            table_playlist: None,
             seed: seed_now(),
             state,
             state_dirty: false,
@@ -391,6 +486,7 @@ impl Player {
             if std::mem::take(&mut self.check_after_update) && !self.scanner.scanning {
                 let page = self.page.clone();
                 self.check_library();
+                self.scanner.quiet_scan = true;
                 self.page = page;
             }
         }
@@ -409,13 +505,17 @@ impl Player {
 
     fn make_queue(&mut self, list: Vec<String>, name: &str) {
         self.seed = self.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        self.queue = Some(PlayQueue::new(self.lib.songs.clone(), list, &self.state.shuffle, &self.state.repeat, self.seed));
+        let mut q = PlayQueue::new(self.lib.songs.clone(), list, &self.state.shuffle, &self.state.repeat, self.seed);
+        q.disliked = self.state.disliked.iter().cloned().collect();
+        self.queue = Some(q);
         self.queue_name = name.to_string();
     }
 
     /// Play `list` (paths) from `start` (None: from the first song, or a random
     /// one when shuffle is on); `name` is shown as "Playing from …".
     pub fn play_list(&mut self, list: Vec<String>, start: Option<&str>, name: &str) {
+        // songs whose files are gone (in a playlist) are skipped
+        let list: Vec<String> = list.into_iter().filter(|p| self.lib.by_path.contains_key(p)).collect();
         if list.is_empty() {
             return;
         }
@@ -653,7 +753,8 @@ impl Player {
         if let Some((_, Some(at))) = &self.message {
             if Instant::now() >= *at {
                 self.message.as_mut().unwrap().1 = None;
-                match self.queue.as_mut().and_then(|q| q.next(true)) {
+                // a manual next, so "repeat song" does not loop over a file that fails
+                match self.queue.as_mut().and_then(|q| q.next(false)) {
                     Some(p) => {
                         let keep = self.message.take();
                         self.play_path(&p);
@@ -679,7 +780,9 @@ impl Player {
                 .map(|i| self.lib.albums[*i].tracks.iter().map(|t| t.path.clone()).collect())
                 .unwrap_or_default(),
             Page::Liked => self.liked_songs().iter().map(|t| t.path.clone()).collect(),
-            Page::Songs => self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect(),
+            Page::AllSongs => self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect(),
+            Page::Playlist(id) => self.playlist_songs(id),
+            Page::Disliked => self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).map(|t| t.path.clone()).collect(),
             _ => all(),
         }
     }
@@ -739,12 +842,259 @@ impl Player {
     // ------------------------------------------------------------ settings ---
 
     fn apply_look(&mut self, ctx: &egui::Context) {
-        let want = (self.scanner.cfg.font_family.clone(), self.scanner.cfg.theme.clone());
+        let want = (self.scanner.cfg.font_family.clone(), self.scanner.cfg.theme.clone(), self.themes_gen);
         if self.applied_look.as_ref() != Some(&want) {
-            self.font_used = look::install_fonts(ctx, &want.0);
-            look::install_theme(ctx, &want.1);
+            if self.applied_look.as_ref().is_none_or(|a| a.0 != want.0) {
+                self.font_used = look::install_fonts(ctx, &want.0);
+            }
+            look::install_theme(ctx, &want.1, &self.custom_themes);
             self.applied_look = Some(want);
         }
+    }
+
+    /// The user's themes changed: save them and draw with them.
+    pub fn themes_changed(&mut self) {
+        if let Err(e) = realhires::themes::save_custom(&self.custom_themes, None) {
+            self.scanner.info = Some(("Themes".into(), format!("The themes could not be saved: {e}.")));
+        }
+        self.themes_gen += 1;
+        self.fill_choices();
+    }
+
+    /// Use the theme called `name` (saved in the settings at once).
+    pub fn set_theme(&mut self, name: &str) {
+        let mut cfg = self.scanner.cfg.clone();
+        cfg.theme = name.to_string();
+        self.scanner.apply_settings(cfg.clone());
+        if let Some(d) = self.settings_draft.as_mut() {
+            d.theme = name.to_string();
+        }
+    }
+
+    // ----------------------------------------------- history and stats ---
+
+    /// Follow what is heard, and log a song to the play history when it stops
+    /// being the current one.
+    fn track_listening(&mut self) {
+        let cur = self.now.as_ref().filter(|n| n.active).map(|n| (n.token, n.path.clone()));
+        let pos = self.engine.position().unwrap_or(0.0);
+        let same = match (&self.listening, &cur) {
+            (Some(l), Some((token, _))) => l.token == *token,
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            self.flush_listening();
+            if let Some((token, path)) = cur {
+                self.listening = Some(Listening { token, path, started: wall_clock(), seconds: 0.0, last_pos: pos });
+            }
+            return;
+        }
+        let playing = self.is_playing();
+        if let Some(l) = self.listening.as_mut() {
+            if playing {
+                let d = pos - l.last_pos;
+                if d > 0.0 && d < 2.0 {
+                    l.seconds += d;
+                }
+            }
+            l.last_pos = pos;
+        }
+    }
+
+    fn flush_listening(&mut self) {
+        let Some(l) = self.listening.take() else { return };
+        let track = self.lib.track(&l.path).cloned().unwrap_or_else(|| Track { path: l.path.clone(), ..Default::default() });
+        if let Some(h) = &self.history {
+            if h.add_play(&track, l.started, l.seconds) {
+                self.history_gen += 1;
+            }
+        }
+    }
+
+    /// (stats of the chosen period), computed again when there are new plays.
+    pub fn stats(&mut self) -> realhires::stats::Stats {
+        let key = (self.stats_period.clone(), self.history_gen);
+        if let Some((p, g, st)) = &self.stats_cache {
+            if *p == key.0 && *g == key.1 {
+                return st.clone();
+            }
+        }
+        let (since, until) = realhires::stats::period_range(&self.stats_period, wall_clock());
+        let plays = self.history.as_ref().map(|h| h.plays(since, until)).unwrap_or_default();
+        let st = realhires::stats::compute(&plays, &realhires::stats::local_parts);
+        self.stats_cache = Some((key.0, key.1, st.clone()));
+        st
+    }
+
+    /// The songs played last, newest first, with when.
+    pub fn recently_played(&mut self) -> Vec<(String, f64)> {
+        if let Some((g, v)) = &self.recent_cache {
+            if *g == self.history_gen {
+                return v.clone();
+            }
+        }
+        let mut v = vec![];
+        if let Some(h) = &self.history {
+            let paths = h.recently_played(200);
+            let plays = h.plays(0.0, None);
+            let mut last: HashMap<&str, f64> = HashMap::new();
+            for p in &plays {
+                last.insert(p.path.as_str(), p.started);
+            }
+            v = paths.into_iter().map(|p| {
+                let t = last.get(p.as_str()).copied().unwrap_or(0.0);
+                (p, t)
+            }).collect();
+        }
+        self.recent_cache = Some((self.history_gen, v.clone()));
+        v
+    }
+
+    pub fn clear_history(&mut self) {
+        if let Some(h) = &self.history {
+            h.clear_history();
+        }
+        self.history_gen += 1;
+    }
+
+    // ------------------------------------------- playlists and dislikes ---
+
+    pub fn playlist_songs(&self, id: &str) -> Vec<String> {
+        self.state.playlist(id).map(|p| p.songs.clone()).unwrap_or_default()
+    }
+
+    pub fn new_playlist(&mut self, name: &str, songs: &[String]) -> String {
+        let id = self.state.create_playlist(name, songs, wall_clock());
+        self.save_state();
+        id
+    }
+
+    pub fn add_to_playlist(&mut self, id: &str, songs: &[String]) {
+        let n = self.state.add_to_playlist(id, songs);
+        self.save_state();
+        if let Some(p) = self.state.playlist(id) {
+            self.message_info(&format!(
+                "{} added to “{}”.",
+                crate::style::plural(n, "song"),
+                p.name
+            ));
+        }
+    }
+
+    fn message_info(&mut self, text: &str) {
+        self.scanner.status = text.to_string();
+    }
+
+    pub fn toggle_dislike(&mut self, path: &str) {
+        let d = self.state.is_disliked(path);
+        self.state.set_disliked(path, !d);
+        self.save_state();
+        if let Some(q) = self.queue.as_mut() {
+            q.disliked = self.state.disliked.iter().cloned().collect();
+        }
+        self.update_next();
+    }
+
+    /// Run what a name dialog was opened for; Err keeps it open with the message.
+    pub fn apply_name(&mut self, action: NameAction, text: &str) -> Result<(), String> {
+        match action {
+            NameAction::NewPlaylist(songs) => {
+                if realhires::playerstate::clean_name(text).is_empty() {
+                    return Err("Give the playlist a name.".into());
+                }
+                let id = self.new_playlist(text, &songs);
+                if songs.is_empty() {
+                    self.go(Page::Playlist(id));
+                }
+            }
+            NameAction::RenamePlaylist(id) => {
+                self.state.rename_playlist(&id, text).map_err(|e| e.0)?;
+                self.save_state();
+            }
+            NameAction::SaveEqPreset => {
+                let eq = self.state.eq.clone();
+                self.state.save_eq_preset(text, &eq, false).map_err(|e| e.0)?;
+                self.save_state();
+            }
+            NameAction::RenameEqPreset(old) => {
+                self.state.rename_eq_preset(&old, text).map_err(|e| e.0)?;
+                self.save_state();
+            }
+            NameAction::NewTheme(base) => {
+                let name = realhires::themes::check_name(text, &self.custom_themes, "").map_err(|e| e.0)?;
+                let mut t = realhires::themes::resolve(&base, self.ctx.global_style().visuals.dark_mode, &self.custom_themes);
+                t.name = name.clone();
+                self.custom_themes.push(t);
+                self.themes_changed();
+                self.set_theme(&name);
+            }
+            NameAction::RenameTheme(old) => {
+                let name = realhires::themes::check_name(text, &self.custom_themes, &old).map_err(|e| e.0)?;
+                if let Some(t) = self.custom_themes.iter_mut().find(|t| t.name == old) {
+                    t.name = name.clone();
+                }
+                self.themes_changed();
+                if self.scanner.cfg.theme == old {
+                    self.set_theme(&name);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn confirmed(&mut self, action: ConfirmAction) {
+        match action {
+            ConfirmAction::DeletePlaylist(id) => {
+                self.state.delete_playlist(&id);
+                self.save_state();
+                if self.page == Page::Playlist(id) {
+                    self.page = Page::Playlists;
+                }
+            }
+            ConfirmAction::DeleteEqPreset(name) => {
+                self.state.delete_eq_preset(&name);
+                self.save_state();
+            }
+            ConfirmAction::DeleteTheme(name) => {
+                self.custom_themes.retain(|t| t.name != name);
+                self.themes_changed();
+                if self.scanner.cfg.theme == name {
+                    self.set_theme(realhires::themes::SYSTEM);
+                }
+            }
+            ConfirmAction::ClearHistory => self.clear_history(),
+        }
+    }
+
+    pub fn ask_name(&mut self, title: &str, text: &str, action: NameAction) {
+        self.name_dialog = Some(NameDialog { title: title.into(), text: text.into(), action, error: String::new() });
+    }
+
+    /// Import an equalizer preset file's text: applied and kept under its name.
+    pub fn import_eq_text(&mut self, text: &str, file_name: &str) -> Result<String, String> {
+        let (name, st, notes) = realhires::eq::import_eq(text, file_name).map_err(|e| e.0)?;
+        let mut candidate = name.clone();
+        let mut n = 2;
+        while let Err(e) = self.state.check_preset_name(&candidate, "") {
+            if candidate.is_empty() || e.0.contains("built-in") {
+                candidate = format!("{name} (imported)");
+                if self.state.check_preset_name(&candidate, "").is_ok() {
+                    break;
+                }
+            }
+            candidate = format!("{name} {n}");
+            n += 1;
+            if n > 999 {
+                return Err(e.0);
+            }
+        }
+        let saved = self.state.save_eq_preset(&candidate, &st, false).map_err(|e| e.0)?;
+        self.state.eq = st;
+        self.set_eq();
+        self.save_state();
+        self.eq_notes = notes;
+        Ok(saved)
     }
 
     /// The Settings page edits a draft that is applied after a short pause.
@@ -794,6 +1144,7 @@ impl Player {
         let mut devices = vec![String::new()];
         devices.extend(crate::audio::output_devices());
         self.scanner.choices.insert("output_device", devices);
+        self.scanner.choices.insert("theme", realhires::themes::names(&self.custom_themes));
     }
 
     pub fn add_library_folder(&mut self) {
@@ -840,7 +1191,7 @@ impl Player {
     pub fn go(&mut self, page: Page) {
         if self.page != page {
             let old = std::mem::replace(&mut self.page, page);
-            if matches!(old, Page::Album(_) | Page::Albums | Page::Artists | Page::Genres | Page::Recent | Page::Songs | Page::Liked | Page::Search) {
+            if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
                 self.back.push(old);
                 if self.back.len() > 20 {
                     self.back.remove(0);
@@ -883,6 +1234,7 @@ impl Player {
         self.covers.poll(&ctx);
         self.poll_library();
         self.poll_engine();
+        self.track_listening();
         self.apply_settings_due(&ctx);
         if let Some(at) = self.search_due {
             if Instant::now() >= at {
@@ -979,32 +1331,70 @@ impl Player {
         if ui.add(search).changed() {
             self.search_due = Some(Instant::now() + Duration::from_millis(200));
         }
-        ui.add_space(14.0);
+        ui.add_space(10.0);
         let section = |ui: &mut Ui, text: &str| {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.label(RichText::new(text).font(look::title(11.5)).color(pal.secondary));
             ui.add_space(2.0);
         };
-        section(ui, "Library");
-        let items: [(Icon, &str, Page); 5] = [
-            (Icon::Clock, "Recently Added", Page::Recent),
-            (Icon::Person, "Artists", Page::Artists),
-            (Icon::Albums, "Albums", Page::Albums),
-            (Icon::Note, "Songs", Page::Songs),
-            (Icon::Genres, "Genres", Page::Genres),
-        ];
-        for (icon, label, page) in items {
-            let selected = self.page == page
-                || matches!((&self.page, &page), (Page::Album(_), Page::Albums));
-            if sidebar_item(ui, pal, icon, label, selected).clicked() {
+        let height = ui.available_height() - 64.0;
+        egui::ScrollArea::vertical().id_salt("sidebar").max_height(height.max(100.0)).auto_shrink([false, true]).show(ui, |ui| {
+            if sidebar_item(ui, pal, Icon::Library, "Library", self.page == Page::Library).clicked() {
                 self.back.clear();
-                self.go(page);
+                self.go(Page::Library);
             }
-        }
-        section(ui, "Playlists");
-        if sidebar_item(ui, pal, Icon::Heart, "Liked Songs", self.page == Page::Liked).clicked() {
-            self.go(Page::Liked);
-        }
+            section(ui, "Library");
+            let items: [(Icon, &str, Page); 8] = [
+                (Icon::Note, "All Songs", Page::AllSongs),
+                (Icon::Folder, "Folders", Page::Folders(None)),
+                (Icon::Albums, "Albums", Page::Albums),
+                (Icon::Person, "Artists", Page::Artists),
+                (Icon::People, "Album Artists", Page::AlbumArtists),
+                (Icon::Genres, "Genres", Page::Genres),
+                (Icon::Calendar, "Years", Page::Years),
+                (Icon::Composer, "Composers", Page::Composers),
+            ];
+            for (icon, label, page) in items {
+                let selected = self.page == page
+                    || matches!((&self.page, &page), (Page::Album(_), Page::Albums) | (Page::Folders(Some(_)), Page::Folders(None)));
+                if sidebar_item(ui, pal, icon, label, selected).clicked() {
+                    self.back.clear();
+                    self.go(page);
+                }
+            }
+            section(ui, "Playlists");
+            if sidebar_item(ui, pal, Icon::Playlist, "Playlists", self.page == Page::Playlists).clicked() {
+                self.go(Page::Playlists);
+            }
+            if sidebar_item(ui, pal, Icon::Heart, "Liked Songs", self.page == Page::Liked).clicked() {
+                self.go(Page::Liked);
+            }
+            if sidebar_item(ui, pal, Icon::ThumbDown, "Disliked Songs", self.page == Page::Disliked).clicked() {
+                self.go(Page::Disliked);
+            }
+            let lists: Vec<(String, String)> = self.state.playlists.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
+            for (id, name) in lists {
+                let page = Page::Playlist(id);
+                if sidebar_item(ui, pal, Icon::Note, &name, self.page == page).clicked() {
+                    self.go(page);
+                }
+            }
+            if sidebar_item(ui, pal, Icon::Playlist, "New Playlist…", false).clicked() {
+                self.ask_name("New Playlist", "New Playlist", NameAction::NewPlaylist(vec![]));
+            }
+            section(ui, "History");
+            let items: [(Icon, &str, Page); 3] = [
+                (Icon::Clock, "Recently Played", Page::RecentlyPlayed),
+                (Icon::Albums, "Recently Added", Page::Recent),
+                (Icon::Chart, "Your Stats", Page::Stats),
+            ];
+            for (icon, label, page) in items {
+                let selected = self.page == page || (page == Page::Stats && self.page == Page::StatsDetails);
+                if sidebar_item(ui, pal, icon, label, selected).clicked() {
+                    self.go(page);
+                }
+            }
+        });
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             if let Some(s) = self.library_status() {
                 ui.label(RichText::new(s).small().color(pal.secondary));
@@ -1065,7 +1455,7 @@ impl Player {
                 }
             });
             // right part is laid out from the right edge
-            let right_w = 300.0;
+            let right_w = 360.0;
             let lcd_w = (ui.available_width() - right_w - 16.0).clamp(280.0, 720.0);
             let gap = ((ui.available_width() - right_w - lcd_w) / 2.0).max(8.0);
             ui.add_space(gap);
@@ -1095,10 +1485,21 @@ impl Player {
                         self.go(Page::NowPlaying);
                     }
                 }
-                let liked = self.now.as_ref().is_some_and(|n| self.state.is_liked(&n.path));
+                let now_path = self.now.as_ref().map(|n| n.path.clone());
+                let r = icons::button(ui, Icon::More, 28.0, false, has, "More");
+                if let Some(p) = now_path.clone() {
+                    egui::Popup::menu(&r).show(|ui| self.song_menu(ui, &p));
+                }
+                let disliked = now_path.as_ref().is_some_and(|p| self.state.is_disliked(p));
+                if icons::button(ui, Icon::ThumbDown, 28.0, disliked, has, if disliked { "Remove dislike" } else { "Dislike" }).clicked() {
+                    if let Some(p) = now_path.clone() {
+                        self.toggle_dislike(&p);
+                    }
+                }
+                let liked = now_path.as_ref().is_some_and(|p| self.state.is_liked(p));
                 let heart = if liked { Icon::HeartFilled } else { Icon::Heart };
                 if icons::button(ui, heart, 28.0, liked, has, if liked { "Unlike" } else { "Like" }).clicked() {
-                    if let Some(p) = self.now.as_ref().map(|n| n.path.clone()) {
+                    if let Some(p) = now_path {
                         self.toggle_like(&p);
                     }
                 }
@@ -1224,6 +1625,7 @@ impl Player {
     }
 
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
+        self.dialogs(ctx, pal);
         // Esc closes the topmost of the player's windows
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() {
             if self.eq_open {
@@ -1241,7 +1643,94 @@ impl Player {
         }
     }
 
+    /// The name and confirmation dialogs.
+    fn dialogs(&mut self, ctx: &egui::Context, pal: &Palette) {
+        if let Some(mut d) = self.name_dialog.take() {
+            let mut open = true;
+            let mut done: Option<bool> = None;
+            egui::Window::new(d.title.clone())
+                .id(egui::Id::new("player-name-dialog"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .pivot(Align2::CENTER_CENTER)
+                .default_pos(ctx.content_rect().center())
+                .show(ctx, |ui| {
+                    ui.label("Name");
+                    let r = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
+                    r.request_focus();
+                    if !d.error.is_empty() {
+                        ui.label(RichText::new(&d.error).color(pal.accent));
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("OK").strong()).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        }
+                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            done = Some(false);
+                        }
+                    });
+                });
+            match (open, done) {
+                (false, _) | (_, Some(false)) => {}
+                (_, Some(true)) => {
+                    if let Err(e) = self.apply_name(d.action.clone(), &d.text) {
+                        d.error = e;
+                        self.name_dialog = Some(d);
+                    }
+                }
+                _ => self.name_dialog = Some(d),
+            }
+        }
+        if let Some(action) = self.confirm.clone() {
+            let (title, text, button) = match &action {
+                ConfirmAction::DeletePlaylist(id) => (
+                    "Delete playlist",
+                    format!("Delete the playlist “{}”? Its songs stay in your library.", self.state.playlist(id).map(|p| p.name.as_str()).unwrap_or("")),
+                    "Delete",
+                ),
+                ConfirmAction::DeleteEqPreset(n) => ("Delete preset", format!("Delete the equalizer preset “{n}”?"), "Delete"),
+                ConfirmAction::DeleteTheme(n) => ("Delete theme", format!("Delete the theme “{n}”?"), "Delete"),
+                ConfirmAction::ClearHistory => (
+                    "Clear the play history",
+                    "Forget every song played so far? Recently Played and Your Stats start again from nothing.".to_string(),
+                    "Clear",
+                ),
+            };
+            let mut open = true;
+            let mut done: Option<bool> = None;
+            egui::Window::new(title)
+                .id(egui::Id::new("player-confirm"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .pivot(Align2::CENTER_CENTER)
+                .default_pos(ctx.content_rect().center())
+                .show(ctx, |ui| {
+                    ui.set_max_width(380.0);
+                    ui.label(text);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new(button).strong().color(pal.accent)).clicked() {
+                            done = Some(true);
+                        }
+                        if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            done = Some(false);
+                        }
+                    });
+                });
+            if !open || done.is_some() {
+                self.confirm = None;
+            }
+            if done == Some(true) {
+                self.confirmed(action);
+            }
+        }
+    }
+
     pub fn on_exit(&mut self) {
+        self.flush_listening();
         self.save_state();
         self.lib_stop.store(true, Ordering::Relaxed);
         self.engine.stop();
@@ -1352,14 +1841,38 @@ mod tests {
 
         let ctx = egui::Context::default();
         let mut p = Player::new(&ctx, cfg.clone(), vec![]);
-        assert_eq!(p.page, Page::Albums);
+        assert_eq!(p.page, Page::Library);
         run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 3 && p.lib_rx.is_none());
         assert_eq!(p.lib.albums.len(), 2);
         assert_eq!((p.lib.artists.len(), p.lib.genres.len()), (2, 2));
-        for page in [Page::Recent, Page::Artists, Page::Songs, Page::Genres, Page::Liked] {
+        // the Library page and every one of its entries
+        let music_dir = realhires::paths::abspath(&music.to_string_lossy());
+        for page in [
+            Page::Library,
+            Page::AllSongs,
+            Page::Folders(None),
+            Page::Folders(Some(music_dir.clone())),
+            Page::Folders(Some(format!("{music_dir}{}Paper Lanterns", std::path::MAIN_SEPARATOR))),
+            Page::Albums,
+            Page::Artists,
+            Page::AlbumArtists,
+            Page::Genres,
+            Page::Years,
+            Page::Composers,
+            Page::Playlists,
+            Page::Liked,
+            Page::Disliked,
+            Page::RecentlyPlayed,
+            Page::Recent,
+            Page::Stats,
+            Page::StatsDetails,
+        ] {
             p.go(page);
             frame(&ctx, &mut p);
         }
+        assert_eq!(p.lib.album_artists.len(), 2);
+        let (subs, songs) = musiclib::folder_view(&p.lib.tracks, &music_dir);
+        assert_eq!((subs.len(), songs.len()), (2, 0));
 
         // play the album from its first song; the next song follows gaplessly
         let key = p.lib.track(&a1).unwrap().song().album_key();
@@ -1393,6 +1906,80 @@ mod tests {
         assert_eq!(p.queue.as_ref().unwrap().current(), Some(a2.as_str()));
         // then the album ends: playback stops (repeat off)
         run_until(&ctx, &mut p, "the end of the album", |p| p.now.as_ref().is_some_and(|n| !n.active));
+        frame(&ctx, &mut p);
+        // both songs are in the play history, the newest first
+        let recent: Vec<String> = p.recently_played().into_iter().map(|(x, _)| x).collect();
+        assert_eq!(recent, vec![a2.clone(), a1.clone()]);
+        let st = p.stats();
+        assert_eq!((st.logged, st.songs), (2, 2), "{st:?}");
+        assert!(!realhires::stats::cards(&st).is_empty());
+        for page in [Page::Library, Page::RecentlyPlayed, Page::Stats, Page::StatsDetails] {
+            p.go(page);
+            frame(&ctx, &mut p);
+        }
+
+        // playlists: make one, add, play from it, rename, delete
+        p.apply_name(NameAction::NewPlaylist(vec![b1.clone()]), "Road Trip").unwrap();
+        let pid = p.state.playlists[0].id.clone();
+        p.add_to_playlist(&pid, &[a2.clone(), "/gone/song.flac".to_string()]);
+        assert_eq!(p.playlist_songs(&pid), vec![b1.clone(), a2.clone(), "/gone/song.flac".to_string()]);
+        p.go(Page::Playlist(pid.clone()));
+        frame(&ctx, &mut p);
+        p.play_list(p.playlist_songs(&pid), None, "Road Trip");
+        assert_eq!(p.queue.as_ref().unwrap().context, vec![b1.clone(), a2.clone()], "missing files are skipped");
+        p.engine.stop();
+        p.apply_name(NameAction::RenamePlaylist(pid.clone()), "Night Drive").unwrap();
+        assert_eq!(playerstate::load(None).playlists[0].name, "Night Drive");
+        assert!(p.apply_name(NameAction::NewPlaylist(vec![]), "   ").is_err());
+        p.confirmed(ConfirmAction::DeletePlaylist(pid));
+        assert!(playerstate::load(None).playlists.is_empty());
+
+        // a disliked song is left out of a shuffle
+        p.toggle_dislike(&a2);
+        assert!(playerstate::load(None).is_disliked(&a2));
+        p.set_shuffle("library");
+        p.play_list(vec![a1.clone(), a2.clone(), b1.clone()], Some(&a1), "Shuffle");
+        assert!(!p.queue.as_ref().unwrap().order.contains(&a2), "{:?}", p.queue.as_ref().unwrap().order);
+        p.set_shuffle("off");
+        p.toggle_dislike(&a2);
+        p.engine.stop();
+
+        // EQ presets: save, rename, import an AutoEQ file, export both ways
+        p.state.eq.apply_preset("Jazz");
+        p.apply_name(NameAction::SaveEqPreset, "My Jazz").unwrap();
+        assert!(p.apply_name(NameAction::SaveEqPreset, "rock").is_err());
+        p.apply_name(NameAction::RenameEqPreset("My Jazz".into()), "Late Jazz").unwrap();
+        assert_eq!(p.state.matching_eq_preset(), "Late Jazz");
+        let auto = "Preamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 3.5 dB Q 0.70\nFilter 2: ON LSC Fc 105 Hz Gain 4.1 dB Q 0.71\n";
+        assert_eq!(p.import_eq_text(auto, "HD 600").unwrap(), "HD 600");
+        assert_eq!(p.import_eq_text(auto, "HD 600").unwrap(), "HD 600 2");
+        assert!(p.state.eq.parametric_enabled && p.state.eq.bands.len() == 2);
+        assert!(realhires::eq::export_apo("HD 600", &p.state.eq).contains("Filter 2: ON LSC Fc 105.0 Hz Gain 4.1 dB Q 0.71"));
+        assert!(realhires::eq::import_eq(&realhires::eq::export_json("x", &p.state.eq), "y").is_ok());
+        assert_eq!(playerstate::load(None).eq_presets.len(), 3);
+        p.eq_open = true;
+        frame(&ctx, &mut p);
+        p.eq_open = false;
+
+        // a theme of one's own: made from Midnight, a colour changed, in use
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        p.set_theme("Midnight");
+        frame(&ctx, &mut p);
+        assert!(ctx.global_style().visuals.dark_mode);
+        p.apply_name(NameAction::NewTheme("Midnight".into()), "My Night").unwrap();
+        assert_eq!(p.scanner.cfg.theme, "My Night");
+        p.custom_themes[0].colors[5] = "#00ff00".into();
+        p.themes_changed();
+        frame(&ctx, &mut p);
+        assert_eq!(crate::look::current(&ctx).accent, crate::look::parse_hex("#00ff00"));
+        assert_eq!(realhires::themes::load_custom(None)[0].colors[5], "#00ff00");
+        p.go(Page::Settings);
+        p.settings_group = realhires::settings::GROUPS.iter().position(|g| *g == "Appearance").unwrap();
+        frame(&ctx, &mut p);
+        p.confirmed(ConfirmAction::DeleteTheme("My Night".into()));
+        assert_eq!(p.scanner.cfg.theme, realhires::themes::SYSTEM);
+        p.set_theme("Light");
+        frame(&ctx, &mut p);
 
         // shuffle and repeat modes go to the queue and the saved state
         p.play_list(album.clone(), Some(&a1), "Paper Lanterns");
@@ -1409,6 +1996,7 @@ mod tests {
         // the windows
         p.open_info();
         p.eq_open = true;
+        p.state.eq = realhires::eq::EqState::default();
         p.state.eq.enabled = true;
         p.state.eq.apply_preset("Rock");
         p.set_eq();

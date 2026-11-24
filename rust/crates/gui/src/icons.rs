@@ -29,6 +29,15 @@ pub enum Icon {
     Check,
     Search,
     Back,
+    ThumbDown,
+    More,
+    Folder,
+    Playlist,
+    Calendar,
+    Composer,
+    Chart,
+    Library,
+    People,
 }
 
 fn heart_points(c: Pos2, s: f32) -> Vec<Pos2> {
@@ -279,6 +288,99 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             let h = s * 0.3;
             p.circle_stroke(pos2(c.x - h * 0.2, c.y - h * 0.2), h * 0.6, stroke);
             p.line_segment([pos2(c.x + h * 0.25, c.y + h * 0.25), pos2(c.x + h * 0.8, c.y + h * 0.8)], stroke);
+        }
+        Icon::ThumbDown => {
+            let h = s * 0.32;
+            // the cuff at the top, the hand below it with the thumb pointing down
+            let cuff = Rect::from_min_max(pos2(c.x - h * 0.95, c.y - h), pos2(c.x - h * 0.45, c.y + h * 0.15));
+            p.rect_stroke(cuff, 1.0, stroke, egui::StrokeKind::Middle);
+            poly(
+                p,
+                &[
+                    pos2(c.x - h * 0.3, c.y - h),
+                    pos2(c.x + h * 0.75, c.y - h),
+                    pos2(c.x + h * 0.95, c.y - h * 0.1),
+                    pos2(c.x + h * 0.85, c.y + h * 0.15),
+                    pos2(c.x + h * 0.15, c.y + h * 0.15),
+                    pos2(c.x + h * 0.3, c.y + h * 0.75),
+                    pos2(c.x + h * 0.05, c.y + h * 1.0),
+                    pos2(c.x - h * 0.3, c.y + h * 0.2),
+                    pos2(c.x - h * 0.3, c.y - h),
+                ],
+                stroke,
+                false,
+            );
+        }
+        Icon::More => {
+            for dx in [-1.0f32, 0.0, 1.0] {
+                p.circle_filled(pos2(c.x + dx * s * 0.22, c.y), (s * 0.07).max(1.5), color);
+            }
+        }
+        Icon::Folder => {
+            let h = s * 0.32;
+            let r = Rect::from_min_max(pos2(c.x - h, c.y - h * 0.55), pos2(c.x + h, c.y + h * 0.75));
+            p.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Middle);
+            poly(p, &[pos2(r.left(), r.top()), pos2(r.left(), r.top() - h * 0.3), pos2(c.x - h * 0.2, r.top() - h * 0.3), pos2(c.x, r.top())], stroke, false);
+        }
+        Icon::Playlist => {
+            let h = s * 0.3;
+            for k in 0..3 {
+                let y = c.y - h * 0.8 + k as f32 * h * 0.55;
+                p.line_segment([pos2(c.x - h, y), pos2(c.x + h * (if k == 2 { 0.1 } else { 0.6 }), y)], stroke);
+            }
+            p.circle_filled(pos2(c.x + h * 0.45, c.y + h * 0.75), h * 0.28, color);
+            p.line_segment([pos2(c.x + h * 0.7, c.y + h * 0.75), pos2(c.x + h * 0.7, c.y - h * 0.05)], stroke);
+            p.line_segment([pos2(c.x + h * 0.7, c.y - h * 0.05), pos2(c.x + h * 1.05, c.y + h * 0.1)], stroke);
+        }
+        Icon::Calendar => {
+            let h = s * 0.32;
+            let r = Rect::from_center_size(pos2(c.x, c.y + h * 0.1), vec2(h * 2.0, h * 1.7));
+            p.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Middle);
+            p.line_segment([pos2(r.left(), r.top() + h * 0.5), pos2(r.right(), r.top() + h * 0.5)], stroke);
+            for dx in [-0.5f32, 0.5] {
+                p.line_segment([pos2(c.x + dx * h, r.top() - h * 0.25), pos2(c.x + dx * h, r.top() + h * 0.2)], stroke);
+            }
+        }
+        Icon::Composer => {
+            // a pen nib
+            let h = s * 0.34;
+            poly(
+                p,
+                &[pos2(c.x, c.y + h), pos2(c.x - h * 0.55, c.y - h * 0.1), pos2(c.x - h * 0.3, c.y - h), pos2(c.x + h * 0.3, c.y - h), pos2(c.x + h * 0.55, c.y - h * 0.1)],
+                stroke,
+                true,
+            );
+            p.line_segment([pos2(c.x, c.y + h), pos2(c.x, c.y - h * 0.05)], stroke);
+            p.circle_filled(pos2(c.x, c.y - h * 0.15), w * 0.9, color);
+        }
+        Icon::Chart => {
+            let h = s * 0.34;
+            for (k, hh) in [(-1.0f32, 0.8f32), (0.0, 1.6), (1.0, 1.15)] {
+                let x = c.x + k * h * 0.7;
+                p.rect_filled(Rect::from_min_max(pos2(x - h * 0.22, c.y + h - hh * h), pos2(x + h * 0.22, c.y + h)), 1.0, color);
+            }
+        }
+        Icon::Library => {
+            let h = s * 0.34;
+            for k in 0..2 {
+                let x = c.x - h * 0.85 + k as f32 * h * 0.55;
+                p.line_segment([pos2(x, c.y - h), pos2(x, c.y + h)], Stroke::new(w * 1.3, color));
+            }
+            p.line_segment([pos2(c.x + h * 0.15, c.y - h * 0.9), pos2(c.x + h * 0.85, c.y + h)], Stroke::new(w * 1.3, color));
+        }
+        Icon::People => {
+            let h = s * 0.3;
+            for (dx, k) in [(-0.45f32, 0.85f32), (0.45, 1.0)] {
+                let cx = c.x + dx * h;
+                p.circle_stroke(pos2(cx, c.y - h * 0.4), h * 0.38 * k, stroke);
+                let pts: Vec<Pos2> = (0..=12)
+                    .map(|i| {
+                        let a = std::f32::consts::PI * (1.0 + i as f32 / 12.0);
+                        pos2(cx + h * 0.7 * k * a.cos(), c.y + h * 0.95 + h * 0.6 * k * a.sin())
+                    })
+                    .collect();
+                p.add(Shape::line(pts, stroke));
+            }
         }
         Icon::Back => {
             let h = s * 0.3;

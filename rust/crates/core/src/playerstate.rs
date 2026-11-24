@@ -257,7 +257,8 @@ impl PlayerState {
             .put("volume", self.volume)
             .put("muted", self.muted)
             .put("shuffle", self.shuffle.as_str())
-            .put("repeat", self.repeat.as_str())
+            // "stop after this song" is for the song playing now, never for the next start
+            .put("repeat", if self.repeat == "stop" { "off" } else { self.repeat.as_str() })
             .put("eq", self.eq.to_json())
             .put(
                 "last",

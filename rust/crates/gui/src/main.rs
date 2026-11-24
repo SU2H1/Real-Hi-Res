@@ -9,6 +9,7 @@ mod dialogs;
 mod eqwin;
 mod icons;
 mod look;
+mod library_pages;
 mod lyrics;
 mod pages;
 mod player;

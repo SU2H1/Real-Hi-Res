@@ -7,7 +7,7 @@ use realhires::playerstate::PlayerState;
 
 use crate::audio::OutputInfo;
 use crate::look::{self, Palette};
-use crate::player::{gain_of, Player};
+use crate::player::{gain_of, ConfirmAction, NameAction, Player};
 
 /// "44.1 kHz", "96 kHz".
 pub fn khz(rate: i64) -> String {
@@ -249,18 +249,75 @@ fn response_plot(ui: &mut egui::Ui, pal: &Palette, state: &eq::EqState) {
     p.add(Shape::line(pts, Stroke::new(2.0, color)));
 }
 
+enum EqAction {
+    SaveAs,
+    Rename(String),
+    Delete(String),
+    Import,
+    Export(String),
+}
+
 pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let mut open = true;
     let mut state = p.state.eq.clone();
     let mut tab = p.eq_tab;
+    let mine = p.state.matching_eq_preset();
+    let presets: Vec<(String, eq::EqState)> = p.state.eq_presets.iter().map(|x| (x.name.clone(), x.eq.clone())).collect();
+    let notes = p.eq_notes.clone();
+    let mut action: Option<EqAction> = None;
     egui::Window::new("Equalizer")
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .fixed_size([640.0, 470.0])
+        .fixed_size([660.0, 520.0])
         .pivot(Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
+            // presets: the built-in ones (graphic gains) and the user's own (the whole EQ)
+            ui.horizontal(|ui| {
+                ui.label("Preset");
+                let shown = if !mine.is_empty() { mine.clone() } else { state.preset.clone() };
+                egui::ComboBox::from_id_salt("eq-all-presets").selected_text(shown).width(170.0).height(440.0).show_ui(ui, |ui| {
+                    ui.label(RichText::new("Built-in").small().color(pal.secondary));
+                    for (name, _) in PRESETS.iter() {
+                        if ui.selectable_label(mine.is_empty() && state.preset == *name, *name).clicked() {
+                            state.apply_preset(name);
+                            state.graphic_enabled = true;
+                            state.enabled = true;
+                        }
+                    }
+                    if !presets.is_empty() {
+                        ui.separator();
+                        ui.label(RichText::new("My presets").small().color(pal.secondary));
+                        for (name, st) in &presets {
+                            if ui.selectable_label(mine == *name, name).clicked() {
+                                state = st.clone();
+                            }
+                        }
+                    }
+                });
+                if ui.button("Save as preset…").clicked() {
+                    action = Some(EqAction::SaveAs);
+                }
+                ui.add_enabled_ui(!mine.is_empty(), |ui| {
+                    if ui.button("Rename…").clicked() {
+                        action = Some(EqAction::Rename(mine.clone()));
+                    }
+                    if ui.button("Delete…").clicked() {
+                        action = Some(EqAction::Delete(mine.clone()));
+                    }
+                });
+                if ui.button("Import…").on_hover_text("Real-Hi-Res presets (.json) and Equalizer APO or AutoEQ files (.txt)").clicked() {
+                    action = Some(EqAction::Import);
+                }
+                if ui.button("Export…").on_hover_text("As a Real-Hi-Res preset (.json) or as Equalizer APO / AutoEQ text (.txt)").clicked() {
+                    action = Some(EqAction::Export(if mine.is_empty() { state.preset.clone() } else { mine.clone() }));
+                }
+            });
+            for n in &notes {
+                ui.label(RichText::new(n).small().color(pal.secondary));
+            }
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.enabled, RichText::new("Equalizer on").strong());
                 ui.add_space(12.0);
@@ -288,6 +345,40 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
             });
         });
     p.eq_tab = tab;
+    match action {
+        Some(EqAction::SaveAs) => p.ask_name("Save Equalizer Preset", "My Preset", NameAction::SaveEqPreset),
+        Some(EqAction::Rename(n)) => p.ask_name("Rename Preset", &n.clone(), NameAction::RenameEqPreset(n)),
+        Some(EqAction::Delete(n)) => p.confirm = Some(ConfirmAction::DeleteEqPreset(n)),
+        Some(EqAction::Import) => {
+            if let Some(path) = rfd::FileDialog::new().add_filter("Equalizer presets", &["json", "txt"]).pick_file() {
+                let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());
+                let result = std::fs::read(&path)
+                    .map_err(|e| format!("The file could not be read: {e}."))
+                    .and_then(|b| p.import_eq_text(&String::from_utf8_lossy(&b), &stem));
+                match result {
+                    Ok(name) => p.eq_notes.insert(0, format!("Imported as “{name}”.")),
+                    Err(e) => p.eq_notes = vec![e],
+                }
+                state = p.state.eq.clone();
+            }
+        }
+        Some(EqAction::Export(name)) => {
+            let file = rfd::FileDialog::new()
+                .add_filter("Real-Hi-Res preset", &["json"])
+                .add_filter("Equalizer APO / AutoEQ", &["txt"])
+                .set_file_name(format!("{name}.json"))
+                .save_file();
+            if let Some(path) = file {
+                let apo = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("txt"));
+                let text = if apo { eq::export_apo(&name, &state) } else { eq::export_json(&name, &state) };
+                p.eq_notes = vec![match std::fs::write(&path, text) {
+                    Ok(()) => format!("Exported to {}.", path.display()),
+                    Err(e) => format!("The preset could not be saved: {e}."),
+                }];
+            }
+        }
+        None => {}
+    }
     if state != p.state.eq {
         p.state.eq = state;
         p.set_eq();
@@ -301,20 +392,6 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
 fn graphic(ui: &mut egui::Ui, _pal: &Palette, s: &mut eq::EqState) {
     ui.horizontal(|ui| {
         ui.checkbox(&mut s.graphic_enabled, "Use the graphic equalizer");
-        ui.add_space(16.0);
-        ui.label("Preset");
-        let mut preset = s.preset.clone();
-        egui::ComboBox::from_id_salt("eq-preset").selected_text(preset.clone()).width(150.0).height(400.0).show_ui(ui, |ui| {
-            for (name, _) in PRESETS.iter() {
-                ui.selectable_value(&mut preset, name.to_string(), *name);
-            }
-            if s.preset == eq::CUSTOM {
-                ui.selectable_value(&mut preset, eq::CUSTOM.to_string(), eq::CUSTOM);
-            }
-        });
-        if preset != s.preset && preset != eq::CUSTOM {
-            s.apply_preset(&preset);
-        }
     });
     ui.add_space(6.0);
     ui.add_enabled_ui(s.graphic_enabled, |ui| {

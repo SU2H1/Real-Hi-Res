@@ -265,6 +265,99 @@ fn spawn_decoder(shared: Arc<Shared>, job: Job) {
         .expect("decoder thread");
 }
 
+enum Decoded {
+    /// frames pushed, whether FFmpeg ended well, its error text
+    Done(usize, bool, String),
+    Cancelled,
+    Failed(String),
+}
+
+/// Run FFmpeg for `job` from `start` seconds, dropping the first `skip`
+/// frames, and push its audio into the buffer while it is not cancelled.
+fn run_decoder(shared: &Shared, job: &Job, gen: u64, start: f64, mut skip: usize) -> Decoded {
+    let args = decode_args(&job.seg.path, start, job.seg.song_rate, job.seg.rate, job.mono);
+    let child = command(tool("ffmpeg"))
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child: Child = match child {
+        Ok(c) => c,
+        Err(e) => return Decoded::Failed(format!("FFmpeg could not be started: {e}.")),
+    };
+    let stderr = child.stderr.take().map(|err| {
+        std::thread::spawn(move || {
+            std::io::BufReader::new(err).lines().map_while(Result::ok).collect::<Vec<String>>().join(" ")
+        })
+    });
+    let mut out = child.stdout.take().unwrap();
+    let ahead = (AHEAD_SECONDS * job.seg.rate as f64) as usize;
+    let mut bytes = vec![0u8; BLOCK_FRAMES * CHANNELS * 4];
+    let mut have = 0usize;
+    let mut decoded = 0usize;
+    let mut cancelled = false;
+    loop {
+        // wait while enough is buffered
+        loop {
+            let (frames, g) = {
+                let b = shared.buf.lock().unwrap();
+                (b.frames, b.gen)
+            };
+            if g != gen {
+                cancelled = true;
+                break;
+            }
+            if frames < ahead {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if cancelled {
+            break;
+        }
+        let n = match out.read(&mut bytes[have..]) {
+            Ok(0) | Err(_) => 0,
+            Ok(n) => n,
+        };
+        have += n;
+        let whole = have - have % (CHANNELS * 4);
+        if whole > 0 && (n == 0 || have == bytes.len()) {
+            let mut samples: Vec<f32> =
+                bytes[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            bytes.copy_within(whole..have, 0);
+            have -= whole;
+            if skip > 0 {
+                let drop = skip.min(samples.len() / CHANNELS);
+                samples.drain(..drop * CHANNELS);
+                skip -= drop;
+            }
+            let frames = samples.len() / CHANNELS;
+            if frames > 0 {
+                decoded += frames;
+                let mut buf = shared.buf.lock().unwrap();
+                if buf.gen != gen {
+                    cancelled = true;
+                    break;
+                }
+                buf.frames += frames;
+                buf.items.push_back(Item::Audio(samples, 0));
+            }
+        }
+        if n == 0 {
+            break;
+        }
+    }
+    if cancelled {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Decoded::Cancelled;
+    }
+    let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+    let errors = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
+    Decoded::Done(decoded, ok, errors)
+}
+
 fn decode_loop(shared: Arc<Shared>, mut job: Job) {
     loop {
         let gen = job.gen;
@@ -276,86 +369,25 @@ fn decode_loop(shared: Arc<Shared>, mut job: Job) {
             }
             buf.items.push_back(Item::Begin(job.seg.id));
         }
-        let args = decode_args(&job.seg.path, job.seg.start, job.seg.song_rate, job.seg.rate, job.mono);
-        let child = command(tool("ffmpeg"))
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let mut child: Child = match child {
-            Ok(c) => c,
-            Err(e) => {
+        let mut result = run_decoder(&shared, &job, gen, job.seg.start, 0);
+        // FFmpeg cannot seek in some short files (FLAC without a seek table) and
+        // then gives nothing: decode from the start and drop the audio before
+        if matches!(result, Decoded::Done(0, true, _)) && job.seg.start > 0.0 {
+            let skip = (job.seg.start * job.seg.rate as f64).round() as usize;
+            result = run_decoder(&shared, &job, gen, 0.0, skip);
+        }
+        let (decoded, ok, errors) = match result {
+            Decoded::Done(d, ok, e) => (d, ok, e),
+            Decoded::Cancelled => return,
+            Decoded::Failed(why) => {
                 let mut buf = shared.buf.lock().unwrap();
                 if buf.gen == gen {
-                    buf.items.push_back(Item::Fail(job.seg.id, format!("FFmpeg could not be started: {e}.")));
+                    buf.items.push_back(Item::Fail(job.seg.id, why));
                 }
                 return;
             }
         };
-        let stderr = child.stderr.take().map(|err| {
-            std::thread::spawn(move || {
-                std::io::BufReader::new(err).lines().map_while(Result::ok).collect::<Vec<String>>().join(" ")
-            })
-        });
-        let mut out = child.stdout.take().unwrap();
-        let ahead = (AHEAD_SECONDS * job.seg.rate as f64) as usize;
-        let mut bytes = vec![0u8; BLOCK_FRAMES * CHANNELS * 4];
-        let mut have = 0usize;
-        let mut decoded = 0usize;
-        let mut cancelled = false;
-        loop {
-            // wait while enough is buffered
-            loop {
-                let (frames, g) = {
-                    let b = shared.buf.lock().unwrap();
-                    (b.frames, b.gen)
-                };
-                if g != gen {
-                    cancelled = true;
-                    break;
-                }
-                if frames < ahead {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            if cancelled {
-                break;
-            }
-            let n = match out.read(&mut bytes[have..]) {
-                Ok(0) | Err(_) => 0,
-                Ok(n) => n,
-            };
-            have += n;
-            let whole = if n == 0 { have - have % (CHANNELS * 4) } else { have - have % (CHANNELS * 4) };
-            if whole > 0 && (n == 0 || have == bytes.len()) {
-                let samples: Vec<f32> =
-                    bytes[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-                let frames = samples.len() / CHANNELS;
-                decoded += frames;
-                let mut buf = shared.buf.lock().unwrap();
-                if buf.gen != gen {
-                    cancelled = true;
-                    break;
-                }
-                buf.frames += frames;
-                buf.items.push_back(Item::Audio(samples, 0));
-                bytes.copy_within(whole..have, 0);
-                have -= whole;
-            }
-            if n == 0 {
-                break;
-            }
-        }
-        if cancelled {
-            let _ = child.kill();
-            let _ = child.wait();
-            return;
-        }
-        let status = child.wait();
-        let errors = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
-        let failed = decoded == 0 && !status.map(|s| s.success()).unwrap_or(false);
+        let failed = decoded == 0 && !ok;
         // gapless: go straight on with the next song when it has the same output rate
         let next = if !failed && shared.gapless.load(Ordering::Relaxed) {
             let mut slot = shared.next.lock().unwrap();

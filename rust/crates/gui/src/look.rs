@@ -3,7 +3,7 @@
 //! Inter (SIL Open Font License) on Windows and Linux, or the family chosen in
 //! Settings → Appearance; light and dark palettes close to Apple Music's.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 
@@ -72,8 +72,52 @@ pub fn palette(dark: bool) -> Palette {
     }
 }
 
+/// The palettes in use for light and dark mode (set by `install_theme`).
+static ACTIVE: RwLock<Option<(Palette, Palette)>> = RwLock::new(None);
+
 pub fn current(ctx: &egui::Context) -> Palette {
-    palette(ctx.global_style().visuals.dark_mode)
+    let dark = ctx.global_style().visuals.dark_mode;
+    match *ACTIVE.read().unwrap() {
+        Some((l, d)) => {
+            if dark {
+                d
+            } else {
+                l
+            }
+        }
+        None => palette(dark),
+    }
+}
+
+/// "#rrggbb" -> colour (black when it cannot be read).
+pub fn parse_hex(v: &str) -> Color32 {
+    let v = v.trim_start_matches('#');
+    u32::from_str_radix(v, 16).map(hex).unwrap_or(Color32::BLACK)
+}
+
+/// `a` moved towards `b` by `t` (0..1).
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+pub fn to_hex(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
+pub fn palette_of(t: &realhires::themes::Theme) -> Palette {
+    let c = |k: &str| parse_hex(t.color(k));
+    Palette {
+        bg: c("background"),
+        sidebar: c("sidebar"),
+        text: c("text"),
+        secondary: c("secondary"),
+        separator: c("separator"),
+        accent: c("accent"),
+        lcd: c("panel"),
+        hover: c("hover"),
+        dark: t.dark,
+    }
 }
 
 /// The installed font families (for the menu in Settings), read once.
@@ -155,15 +199,28 @@ pub fn install_fonts(ctx: &egui::Context, family: &str) -> String {
     used
 }
 
-/// Light and dark visuals with the palette's colours, and the theme setting.
-pub fn install_theme(ctx: &egui::Context, theme: &str) {
-    for dark in [false, true] {
-        let p = palette(dark);
+/// The visuals of the chosen theme (2.0: built-in or the user's own; "Match
+/// the system" uses Light and Dark as the system switches).
+pub fn install_theme(ctx: &egui::Context, theme: &str, custom: &[realhires::themes::Theme]) {
+    use realhires::themes;
+    let (light, dark, pref) = if theme == themes::SYSTEM || themes::builtin(theme).is_none() && !custom.iter().any(|t| t.name == theme) {
+        (
+            palette_of(&themes::builtin("Light").unwrap()),
+            palette_of(&themes::builtin("Dark").unwrap()),
+            egui::ThemePreference::System,
+        )
+    } else {
+        let p = palette_of(&themes::resolve(theme, false, custom));
+        (p, p, if p.dark { egui::ThemePreference::Dark } else { egui::ThemePreference::Light })
+    };
+    *ACTIVE.write().unwrap() = Some((light, dark));
+    for (slot_dark, p) in [(false, light), (true, dark)] {
+        let dark = p.dark;
         let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
         v.panel_fill = p.bg;
         v.window_fill = p.bg;
-        v.extreme_bg_color = if dark { hex(0x161618) } else { hex(0xffffff) };
-        v.faint_bg_color = if dark { hex(0x232325) } else { hex(0xf7f7f9) };
+        v.extreme_bg_color = if dark { mix(p.bg, Color32::BLACK, 0.25) } else { mix(p.bg, Color32::WHITE, 0.7) };
+        v.faint_bg_color = mix(p.bg, p.text, 0.035);
         v.override_text_color = None;
         v.hyperlink_color = p.accent;
         v.selection.bg_fill = p.accent.gamma_multiply(if dark { 0.55 } else { 0.85 });
@@ -180,16 +237,16 @@ pub fn install_theme(ctx: &egui::Context, theme: &str) {
             w.corner_radius = egui::CornerRadius::same(6);
         }
         v.widgets.noninteractive.bg_stroke.color = p.separator;
-        v.widgets.inactive.weak_bg_fill = if dark { hex(0x3a3a3c) } else { hex(0xececf0) };
+        v.widgets.inactive.weak_bg_fill = mix(p.bg, p.text, if dark { 0.14 } else { 0.08 });
         v.widgets.inactive.bg_fill = v.widgets.inactive.weak_bg_fill;
         v.widgets.hovered.weak_bg_fill = p.hover;
         v.widgets.hovered.bg_fill = p.hover;
         v.slider_trailing_fill = true;
-        ctx.set_visuals_of(if dark { egui::Theme::Dark } else { egui::Theme::Light }, v);
+        v.panel_fill = p.bg;
+        v.window_fill = p.bg;
+        v.widgets.noninteractive.fg_stroke.color = p.text;
+        v.widgets.inactive.fg_stroke.color = p.text;
+        ctx.set_visuals_of(if slot_dark { egui::Theme::Dark } else { egui::Theme::Light }, v);
     }
-    ctx.set_theme(match theme {
-        "Light" => egui::ThemePreference::Light,
-        "Dark" => egui::ThemePreference::Dark,
-        _ => egui::ThemePreference::System,
-    });
+    ctx.set_theme(pref);
 }

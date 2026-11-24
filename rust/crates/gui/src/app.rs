@@ -184,6 +184,8 @@ pub struct App {
     pub choices: HashMap<&'static str, Vec<String>>,
     /// counts lyrics saved by any worker, so the player reads them again
     pub lyrics_gen: u64,
+    /// the next scan ends without the summary and without fixing (2.0)
+    pub quiet_scan: bool,
 }
 
 fn index_of(v: Verdict) -> usize {
@@ -272,6 +274,7 @@ impl App {
             last_stopped: false,
             choices: HashMap::new(),
             lyrics_gen: 0,
+            quiet_scan: false,
         };
         let start = !initial.is_empty();
         for p in initial {
@@ -584,10 +587,12 @@ impl App {
                 self.select_only(&first);
             }
         }
-        if !self.results.is_empty() && self.cfg.show_summary_popup {
+        // the player's background scan at start-up (2.0) neither pops up nor fixes
+        let quiet = std::mem::take(&mut self.quiet_scan);
+        if !self.results.is_empty() && self.cfg.show_summary_popup && !quiet {
             self.summary_due = Some(Instant::now());
         }
-        if !stopped {
+        if !stopped && !quiet {
             self.fix_due = Some(Instant::now());
         }
     }

@@ -2,6 +2,7 @@
 //! the album page, song tables, artists, genres, search, Now Playing with the
 //! lyrics, and Settings with every function of the 1.x app.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,11 +59,18 @@ fn matches(t: &Track, q: &str) -> bool {
 impl Player {
     pub fn content(&mut self, ui: &mut Ui, pal: &Palette) {
         let page = self.page.clone();
-        if self.lib.tracks.is_empty() && !matches!(page, Page::Settings | Page::NowPlaying | Page::Quality) {
+        let needs_songs = !matches!(
+            page,
+            Page::Settings | Page::NowPlaying | Page::Quality | Page::Library | Page::Stats | Page::StatsDetails
+                | Page::Playlists | Page::Playlist(_) | Page::RecentlyPlayed
+        );
+        if self.lib.tracks.is_empty() && needs_songs {
             self.empty_library(ui, pal);
             return;
         }
+        self.table_playlist = None;
         match page {
+            Page::Library => self.library_home(ui, pal),
             Page::Recent => {
                 page_title(ui, pal, "Recently Added");
                 let list = self.lib.recent.clone();
@@ -74,31 +82,61 @@ impl Player {
                 self.album_grid(ui, pal, &list);
             }
             Page::Album(key) => self.album_page(ui, pal, &key),
-            Page::Artists => self.artists_page(ui, pal),
-            Page::Songs => {
-                page_title(ui, pal, "Songs");
+            Page::Artists => self.group_page(ui, pal, "artists"),
+            Page::AlbumArtists => self.group_page(ui, pal, "album_artists"),
+            Page::Genres => self.group_page(ui, pal, "genres"),
+            Page::Years => self.group_page(ui, pal, "years"),
+            Page::Composers => self.group_page(ui, pal, "composers"),
+            Page::AllSongs => {
+                page_title(ui, pal, "All Songs");
                 let list: Vec<String> = self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect();
-                self.song_table(ui, pal, &list, "Songs", true);
+                ui.horizontal(|ui| {
+                    if pill(ui, pal, Icon::Play, "Play").clicked() {
+                        self.play_list(list.clone(), Some(&list[0]), "All Songs");
+                    }
+                    if pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
+                        self.shuffle_list(list.clone(), "All Songs");
+                    }
+                });
+                ui.add_space(10.0);
+                self.song_table(ui, pal, &list, "All Songs", true);
             }
-            Page::Genres => self.genres_page(ui, pal),
-            Page::Liked => {
-                page_title(ui, pal, "Liked Songs");
-                let list: Vec<String> = self.sorted_songs(self.liked_songs()).iter().map(|t| t.path.clone()).collect();
+            Page::Folders(folder) => self.folders_page(ui, pal, folder),
+            Page::Playlists => self.playlists_page(ui, pal),
+            Page::Playlist(id) => self.playlist_page(ui, pal, &id),
+            Page::Liked | Page::Disliked => {
+                let liked = page == Page::Liked;
+                let title = if liked { "Liked Songs" } else { "Disliked Songs" };
+                page_title(ui, pal, title);
+                let songs: Vec<&Track> = if liked {
+                    self.liked_songs()
+                } else {
+                    self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).collect()
+                };
+                let list: Vec<String> = self.sorted_songs(songs).iter().map(|t| t.path.clone()).collect();
                 if list.is_empty() {
-                    ui.label(RichText::new("Songs you like appear here. Click the heart next to a song, or in the playback bar while it plays.").color(pal.secondary));
+                    let hint = if liked {
+                        "Songs you like appear here. Click the heart next to a song, or in the playback bar while it plays."
+                    } else {
+                        "Songs you dislike appear here, and shuffling leaves them out. Dislike a song with the thumbs-down button in the playback bar or from a song's menu."
+                    };
+                    ui.label(RichText::new(hint).color(pal.secondary));
                 } else {
                     ui.horizontal(|ui| {
                         if pill(ui, pal, Icon::Play, "Play").clicked() {
-                            self.play_list(list.clone(), Some(&list[0]), "Liked Songs");
+                            self.play_list(list.clone(), Some(&list[0]), title);
                         }
-                        if pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
-                            self.shuffle_list(list.clone(), "Liked Songs");
+                        if liked && pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
+                            self.shuffle_list(list.clone(), title);
                         }
                     });
                     ui.add_space(10.0);
-                    self.song_table(ui, pal, &list, "Liked Songs", true);
+                    self.song_table(ui, pal, &list, title, true);
                 }
             }
+            Page::RecentlyPlayed => self.recently_played_page(ui, pal),
+            Page::Stats => self.stats_page(ui, pal),
+            Page::StatsDetails => self.stats_details_page(ui, pal),
             Page::Search => self.search_page(ui, pal),
             Page::NowPlaying => self.now_playing(ui, pal),
             Page::Settings => self.settings_page(ui, pal),
@@ -126,7 +164,7 @@ impl Player {
         });
     }
 
-    fn album_card(&mut self, ui: &mut Ui, pal: &Palette, album: usize, size: f32) {
+    pub fn album_card(&mut self, ui: &mut Ui, pal: &Palette, album: usize, size: f32) {
         let (rect, resp) = ui.allocate_exact_size(vec2(size, size + 44.0), Sense::click());
         if !ui.is_rect_visible(rect) {
             return;
@@ -290,11 +328,51 @@ impl Player {
     }
 
     /// The right-click menu of a song.
-    fn song_menu(&mut self, ui: &mut Ui, path: &str) {
+    pub fn song_menu(&mut self, ui: &mut Ui, path: &str) {
         let liked = self.state.is_liked(path);
         if ui.button(if liked { "Unlike" } else { "Like" }).clicked() {
             self.toggle_like(path);
             ui.close();
+        }
+        let disliked = self.state.is_disliked(path);
+        if ui.button(if disliked { "Remove dislike" } else { "Dislike" }).clicked() {
+            self.toggle_dislike(path);
+            ui.close();
+        }
+        ui.menu_button("Add to playlist", |ui| {
+            let lists: Vec<(String, String)> = self.state.playlists.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
+            for (id, name) in lists {
+                if ui.button(name).clicked() {
+                    self.add_to_playlist(&id, &[path.to_string()]);
+                    ui.close();
+                }
+            }
+            if !self.state.playlists.is_empty() {
+                ui.separator();
+            }
+            if ui.button("New Playlist…").clicked() {
+                self.ask_name("New Playlist", "New Playlist", crate::player::NameAction::NewPlaylist(vec![path.to_string()]));
+                ui.close();
+            }
+        });
+        if let Some(id) = self.table_playlist.clone() {
+            ui.separator();
+            if ui.button("Remove from this playlist").clicked() {
+                self.state.remove_from_playlist(&id, &[path.to_string()]);
+                self.save_state();
+                ui.close();
+            }
+            if ui.button("Move up").clicked() {
+                self.state.move_in_playlist(&id, path, -1);
+                self.save_state();
+                ui.close();
+            }
+            if ui.button("Move down").clicked() {
+                self.state.move_in_playlist(&id, path, 1);
+                self.save_state();
+                ui.close();
+            }
+            ui.separator();
         }
         if let Some(a) = self.lib.album_of(path) {
             let key = a.key.clone();
@@ -322,15 +400,29 @@ impl Player {
 
     /// A table of songs (Songs, Liked Songs, a genre, search results).
     pub fn song_table(&mut self, ui: &mut Ui, pal: &Palette, list: &[String], name: &str, sortable: bool) {
+        self.song_table_ex(ui, pal, list, name, sortable, None);
+    }
+
+    /// The same, with a "Played" column instead of Genre (Recently Played).
+    pub fn song_table_ex(
+        &mut self,
+        ui: &mut Ui,
+        pal: &Palette,
+        list: &[String],
+        name: &str,
+        sortable: bool,
+        played: Option<&HashMap<String, f64>>,
+    ) {
         let w = ui.available_width();
         let cols: [(SongCol, &str, f32); 6] = [
             (SongCol::Title, "Title", 0.30),
             (SongCol::Artist, "Artist", 0.20),
             (SongCol::Album, "Album", 0.22),
-            (SongCol::Genre, "Genre", 0.11),
+            (SongCol::Genre, if played.is_some() { "Played" } else { "Genre" }, 0.11),
             (SongCol::Time, "Time", 0.06),
             (SongCol::Quality, "Quality", 0.11),
         ];
+        let sortable = sortable && played.is_none();
         let heart_w = 30.0;
         let usable = w - heart_w;
         let mut xs = vec![];
@@ -365,7 +457,17 @@ impl Player {
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt(("songs", name)).show_rows(ui, 30.0, list.len(), |ui, range| {
             for i in range {
                 let path = &list[i];
-                let Some(t) = self.lib.track(path).cloned() else { continue };
+                let Some(t) = self.lib.track(path).cloned() else {
+                    // a playlist song whose file is gone
+                    let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
+                    let p = ui.painter_at(rect);
+                    let g = elided(ui, &realhires::paths::file_name(path), look::text(13.0), pal.secondary.gamma_multiply(0.7), usable * 0.5);
+                    p.galley(pos2(rect.left() + xs[0] + 4.0, rect.center().y - g.size().y / 2.0), g, pal.secondary);
+                    p.text(pos2(rect.left() + xs[2] + 4.0, rect.center().y), Align2::LEFT_CENTER, "Not in the library", look::text(12.0), pal.secondary.gamma_multiply(0.7));
+                    let p2 = path.clone();
+                    resp.context_menu(|ui| self.song_menu(ui, &p2));
+                    continue;
+                };
                 let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
                 let selected = self.selected_song.as_deref() == Some(path.as_str());
                 let playing = now.as_deref() == Some(path.as_str());
@@ -380,7 +482,11 @@ impl Player {
                 if liked || resp.hovered() {
                     icons::paint(&p, heart, if liked { Icon::HeartFilled } else { Icon::Heart }, pal.accent);
                 }
-                let vals = [t.display_title(), t.display_artist(), t.display_album(), t.genre.clone(), fmt_time(t.duration), musiclib::quality(&t)];
+                let fourth = match played {
+                    Some(m) => played_label(m.get(path).copied().unwrap_or(0.0)),
+                    None => t.genre.clone(),
+                };
+                let vals = [t.display_title(), t.display_artist(), t.display_album(), fourth, fmt_time(t.duration), musiclib::quality(&t)];
                 for (k, v) in vals.iter().enumerate() {
                     let color = if k == 0 && playing { pal.accent } else if k == 0 { pal.text } else { pal.secondary };
                     let font = if k == 0 { look::text(13.0) } else { look::text(12.5) };
@@ -414,7 +520,7 @@ impl Player {
         }
     }
 
-    fn side_list(&mut self, ui: &mut Ui, pal: &Palette, names: &[(String, usize)], selected: &Option<String>) -> Option<String> {
+    pub fn side_list(&mut self, ui: &mut Ui, pal: &Palette, names: &[(String, usize)], selected: &Option<String>) -> Option<String> {
         let mut pick = None;
         egui::ScrollArea::vertical().id_salt(("side", self.page.title())).auto_shrink([false, false]).show(ui, |ui| {
             for (name, n) in names {
@@ -437,83 +543,69 @@ impl Player {
         pick
     }
 
-    fn artists_page(&mut self, ui: &mut Ui, pal: &Palette) {
-        page_title(ui, pal, "Artists");
-        let names: Vec<(String, usize)> = self.lib.artists.iter().map(|g| (g.name.clone(), g.tracks.len())).collect();
-        if self.artist_sel.as_ref().is_none_or(|s| !names.iter().any(|(n, _)| n == s)) {
-            self.artist_sel = names.first().map(|(n, _)| n.clone());
+    /// Artists, Album Artists (album cards), Genres, Years, Composers (song
+    /// tables): the names on the left, the chosen one's music on the right.
+    fn group_page(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str) {
+        let (title, groups, cards) = match kind {
+            "artists" => ("Artists", &self.lib.artists, true),
+            "album_artists" => ("Album Artists", &self.lib.album_artists, true),
+            "genres" => ("Genres", &self.lib.genres, false),
+            "years" => ("Years", &self.lib.years, false),
+            _ => ("Composers", &self.lib.composers, false),
+        };
+        page_title(ui, pal, title);
+        let names: Vec<(String, usize)> = groups.iter().map(|g| (g.name.clone(), g.tracks.len())).collect();
+        if self.group_sel.get(kind).is_none_or(|s| !names.iter().any(|(n, _)| n == s)) {
+            if let Some((n, _)) = names.first() {
+                self.group_sel.insert(kind, n.clone());
+            }
         }
-        let sel = self.artist_sel.clone();
+        let sel = self.group_sel.get(kind).cloned();
         let height = ui.available_height();
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(240.0, height), Layout::top_down(Align::Min), |ui| {
                 if let Some(p) = self.side_list(ui, pal, &names, &sel) {
-                    self.artist_sel = Some(p);
+                    self.group_sel.insert(kind, p);
                 }
             });
             ui.add_space(20.0);
             ui.vertical(|ui| {
                 let Some(name) = sel else { return };
-                let Some(g) = self.lib.artists.iter().find(|g| g.name == name) else { return };
-                let paths: Vec<String> = g.tracks.iter().map(|t| t.path.clone()).collect();
-                let keys: Vec<String> = {
-                    let mut k: Vec<String> = vec![];
-                    for t in &g.tracks {
-                        let key = t.song().album_key();
-                        if !k.contains(&key) {
-                            k.push(key);
-                        }
-                    }
-                    k
+                let groups = match kind {
+                    "artists" => &self.lib.artists,
+                    "album_artists" => &self.lib.album_artists,
+                    "genres" => &self.lib.genres,
+                    "years" => &self.lib.years,
+                    _ => &self.lib.composers,
                 };
-                ui.label(RichText::new(&name).font(look::title(22.0)).color(pal.text));
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if pill(ui, pal, Icon::Play, "Play").clicked() {
-                        self.play_list(paths.clone(), Some(&paths[0]), &name);
-                    }
-                    if pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
-                        self.shuffle_list(paths.clone(), &name);
-                    }
-                });
-                ui.add_space(14.0);
-                let albums: Vec<usize> = keys.iter().filter_map(|k| self.lib.album_index.get(k).copied()).collect();
-                self.album_grid(ui, pal, &albums);
-            });
-        });
-    }
-
-    fn genres_page(&mut self, ui: &mut Ui, pal: &Palette) {
-        page_title(ui, pal, "Genres");
-        let names: Vec<(String, usize)> = self.lib.genres.iter().map(|g| (g.name.clone(), g.tracks.len())).collect();
-        if self.genre_sel.as_ref().is_none_or(|s| !names.iter().any(|(n, _)| n == s)) {
-            self.genre_sel = names.first().map(|(n, _)| n.clone());
-        }
-        let sel = self.genre_sel.clone();
-        let height = ui.available_height();
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(vec2(220.0, height), Layout::top_down(Align::Min), |ui| {
-                if let Some(p) = self.side_list(ui, pal, &names, &sel) {
-                    self.genre_sel = Some(p);
-                }
-            });
-            ui.add_space(20.0);
-            ui.vertical(|ui| {
-                let Some(name) = sel else { return };
-                let Some(g) = self.lib.genres.iter().find(|g| g.name == name) else { return };
-                let list: Vec<String> = self.sorted_songs(g.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect();
+                let Some(g) = groups.iter().find(|g| g.name == name) else { return };
+                let tracks = g.tracks.clone();
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&name).font(look::title(22.0)).color(pal.text));
                     ui.add_space(14.0);
+                    let list: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
                     if pill(ui, pal, Icon::Play, "Play").clicked() {
                         self.play_list(list.clone(), Some(&list[0]), &name);
                     }
                     if pill(ui, pal, Icon::Shuffle, "Shuffle").clicked() {
-                        self.shuffle_list(list.clone(), &name);
+                        self.shuffle_list(list, &name);
                     }
                 });
-                ui.add_space(10.0);
-                self.song_table(ui, pal, &list, &name, true);
+                ui.add_space(12.0);
+                if cards {
+                    let mut keys: Vec<String> = vec![];
+                    for t in &tracks {
+                        let key = t.song().album_key();
+                        if !keys.contains(&key) {
+                            keys.push(key);
+                        }
+                    }
+                    let albums: Vec<usize> = keys.iter().filter_map(|k| self.lib.album_index.get(k).copied()).collect();
+                    self.album_grid(ui, pal, &albums);
+                } else {
+                    let list: Vec<String> = self.sorted_songs(tracks.iter().collect()).iter().map(|t| t.path.clone()).collect();
+                    self.song_table(ui, pal, &list, &name, true);
+                }
             });
         });
     }
@@ -730,7 +822,7 @@ impl Player {
                     if ui.add_enabled(!busy, egui::Button::new("Update the library now")).clicked() {
                         self.update_library();
                     }
-                    if ui.button("Check the library for fake files").clicked() {
+                    if ui.button("Scan library").on_hover_text("Check the library folders for fake hi-res and fake lossless files in the quality checker").clicked() {
                         self.check_library();
                     }
                     if ui.button("Download lyrics for the whole library…").clicked() {
@@ -738,6 +830,9 @@ impl Player {
                     }
                     if ui.button("Open the quality checker").clicked() {
                         self.go(Page::Quality);
+                    }
+                    if ui.button("Clear the play history…").clicked() {
+                        self.confirm = Some(crate::player::ConfirmAction::ClearHistory);
                     }
                 });
                 let n = self.lib.tracks.len();
@@ -756,6 +851,9 @@ impl Player {
                         self.fill_choices();
                     }
                 });
+            }
+            "Appearance" => {
+                self.theme_editor(ui, pal);
             }
             "Lyrics" => {
                 ui.horizontal_wrapped(|ui| {
@@ -800,6 +898,90 @@ impl Player {
     }
 }
 
+impl Player {
+    /// Settings → Appearance: make, edit, import and export themes.
+    fn theme_editor(&mut self, ui: &mut Ui, pal: &Palette) {
+        use realhires::themes;
+        let chosen = self.settings_draft().theme.clone();
+        let dark_now = ui.ctx().global_style().visuals.dark_mode;
+        let current = themes::resolve(&chosen, dark_now, &self.custom_themes);
+        let custom = self.custom_themes.iter().position(|t| t.name == chosen);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("New theme…").on_hover_text("A copy of the theme in use, to change as you like").clicked() {
+                let name = themes::copy_name(&current.name, &self.custom_themes);
+                self.ask_name("New Theme", &name, crate::player::NameAction::NewTheme(current.name.clone()));
+            }
+            if ui.button("Import…").clicked() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Real-Hi-Res theme", &["json"]).pick_file() {
+                    match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| {
+                        themes::import_theme(&String::from_utf8_lossy(&b), &self.custom_themes).map_err(|e| e.0)
+                    }) {
+                        Ok(t) => {
+                            let name = t.name.clone();
+                            self.custom_themes.push(t);
+                            self.themes_changed();
+                            self.set_theme(&name);
+                        }
+                        Err(e) => self.scanner.info = Some(("Import theme".into(), e)),
+                    }
+                }
+            }
+            if ui.button("Export…").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Real-Hi-Res theme", &["json"])
+                    .set_file_name(format!("{}.json", current.name))
+                    .save_file()
+                {
+                    if let Err(e) = std::fs::write(&path, themes::export_theme(&current)) {
+                        self.scanner.info = Some(("Export theme".into(), format!("The theme could not be saved: {e}.")));
+                    }
+                }
+            }
+            if let Some(i) = custom {
+                if ui.button("Rename…").clicked() {
+                    let n = self.custom_themes[i].name.clone();
+                    self.ask_name("Rename Theme", &n.clone(), crate::player::NameAction::RenameTheme(n));
+                }
+                if ui.button("Delete…").clicked() {
+                    self.confirm = Some(crate::player::ConfirmAction::DeleteTheme(self.custom_themes[i].name.clone()));
+                }
+            }
+        });
+        ui.add_space(6.0);
+        let Some(i) = custom else {
+            ui.label(
+                RichText::new(format!(
+                    "“{}” is a built-in theme and cannot be changed; “New theme…” makes a copy you can edit.",
+                    if chosen == themes::SYSTEM { format!("{} ({})", chosen, current.name) } else { chosen.clone() }
+                ))
+                .color(pal.secondary),
+            );
+            return;
+        };
+        let mut t = self.custom_themes[i].clone();
+        let before = t.clone();
+        egui::Grid::new("theme-colours").num_columns(4).spacing([14.0, 8.0]).show(ui, |ui| {
+            ui.label("Dark theme");
+            ui.checkbox(&mut t.dark, "");
+            ui.end_row();
+            for (k, key) in themes::COLOR_KEYS.iter().enumerate() {
+                ui.label(themes::color_label(key));
+                let mut c = look::parse_hex(&t.colors[k]);
+                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
+                    t.colors[k] = look::to_hex(c);
+                }
+                if k % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+        if t != before {
+            self.custom_themes[i] = t;
+            self.themes_changed();
+        }
+    }
+}
+
 fn back_link(ui: &mut Ui, pal: &Palette, label: &str) -> egui::Response {
     let font = look::text(13.0);
     let w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), pal.accent).size().x) + 22.0;
@@ -808,4 +990,21 @@ fn back_link(ui: &mut Ui, pal: &Palette, label: &str) -> egui::Response {
     ui.painter().text(pos2(rect.left() + 18.0, rect.center().y), Align2::LEFT_CENTER, label, font, pal.accent);
     ui.add_space(6.0);
     resp
+}
+
+/// "Today 14:05", "Yesterday 09:12" or "24 Nov 2026".
+pub fn played_label(ts: f64) -> String {
+    if ts <= 0.0 {
+        return String::new();
+    }
+    let now = realhires::stats::local_parts(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0));
+    let t = realhires::stats::local_parts(ts);
+    let day = |p: &realhires::stats::LocalParts| chrono::NaiveDate::from_ymd_opt(p.year, p.month, p.day);
+    let secs = ts.floor() as i64;
+    let minute = chrono::DateTime::from_timestamp(secs, 0).map(|d| d.with_timezone(&chrono::Local).format("%H:%M").to_string()).unwrap_or_default();
+    match (day(&now), day(&t)) {
+        (Some(a), Some(b)) if a == b => format!("Today {minute}"),
+        (Some(a), Some(b)) if a.pred_opt() == Some(b) => format!("Yesterday {minute}"),
+        _ => realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", t.year, t.month, t.day)),
+    }
 }

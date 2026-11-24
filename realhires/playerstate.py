@@ -188,7 +188,7 @@ class PlayerState:
 
     def to_json(self) -> dict:
         return {"_version": STATE_VERSION, "liked": sorted(set(self.liked)), "volume": self.volume,
-                "muted": self.muted, "shuffle": self.shuffle, "repeat": self.repeat, "eq": eq.normalize(self.eq),
+                "muted": self.muted, "shuffle": self.shuffle, "repeat": "off" if self.repeat == "stop" else self.repeat, "eq": eq.normalize(self.eq),
                 "last": {"path": self.last_path, "position": self.last_position},
                 "disliked": sorted(set(self.disliked)),
                 "eq_presets": [{"name": p["name"], "eq": eq.normalize(p["eq"])} for p in self.eq_presets],
