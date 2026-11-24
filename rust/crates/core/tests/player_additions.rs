@@ -309,6 +309,12 @@ fn player_state_matches_python() {
     ops.rename_eq_preset("Other", "Bright").unwrap();
     ops.step_lyrics_size(1);
     ops.step_lyrics_size(1);
+    ops.toggle_column("songs", "year");
+    ops.toggle_column("songs", "like");
+    ops.toggle_column("songs", "title");
+    ops.toggle_column("album", "file");
+    ops.set_columns("folders", &["bit_rate".to_string(), "format".to_string()]);
+    ops.toggle_column("folders", "format");
     same(&ops.to_json(), data.get("ops_out").unwrap(), "ops");
     // Now Playing's lyrics size (A− / A+)
     let limits: Vec<i64> =

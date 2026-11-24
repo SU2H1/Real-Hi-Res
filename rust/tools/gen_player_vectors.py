@@ -2,8 +2,9 @@
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
 python_eqfiles.json, python_themes.json, python_playerstate.json,
 python_tagedit.json (the tag editor and the themes folder),
-python_bitperfect.json (bit-perfect playback's decisions and texts) and python_covers.json
-(the names of covers kept on disk).  Run from the repository root:
+python_bitperfect.json (bit-perfect playback's decisions and texts), python_covers.json
+(the names of covers kept on disk) and python_library.json (the Quality column's tooltip
+and sort, renaming groups, the EQ preset match).  Run from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -273,7 +274,8 @@ messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume":
          "eq_presets": [{"name": " Night  Mode ", "eq": mixed}, {"name": "night mode", "eq": {}}, {"name": ""}, 7],
          "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
                        {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}],
-         "lyrics_size": "31.5"}
+         "lyrics_size": "31.5",
+         "columns": {"songs": ["nope", "year", "artist", 3], "album": [], "folders": "x", "other": ["title"]}}
 ps = playerstate.PlayerState.from_json(messy)
 # Now Playing's lyrics size (A− / A+): what player.json may hold, and the steps
 sizes = [[v, playerstate.PlayerState.from_json({"lyrics_size": v}).lyrics_size]
@@ -298,6 +300,12 @@ ops.save_eq_preset("Other", eq.default_state())
 ops.rename_eq_preset("Other", "Bright")
 ops.step_lyrics_size(1)
 ops.step_lyrics_size(1)
+ops.toggle_column("songs", "year")
+ops.toggle_column("songs", "like")
+ops.toggle_column("songs", "title")
+ops.toggle_column("album", "file")
+ops.set_columns("folders", ["bit_rate", "format"])
+ops.toggle_column("folders", "format")
 errors = []
 for name in ("rock", "my jazz", "", "  "):
     try:
@@ -614,3 +622,43 @@ with tempfile.TemporaryDirectory() as root:
 with open(os.path.join(OUT, "python_covers.json"), "w", encoding="utf-8") as fh:
     json.dump({"version": covers.CACHE_VERSION, "paths": covers.CACHE_PATHS, "names": cover_names,
                "layout": cover_layout, "files": cover_files}, fh, indent=0, ensure_ascii=False)
+# -------------------------------------- quality column, renaming groups ---
+# python_library.json: the Quality column's tooltip and sort, the EQ preset match,
+# and renaming a genre, composer or year
+q_tracks = list(tracks) + [
+    Track(path="/q/a.ogg", codec="vorbis", is_lossy=True, sample_rate=48000, bit_rate=0),
+    Track(path="/q/b.opus", codec="opus", is_lossy=True, sample_rate=0, bit_rate=128499),
+    Track(path="/q/c.wav", codec="pcm_s24le", sample_rate=0, bits=24),
+    Track(path="/q/d.flac", codec="flac", sample_rate=88200, bits=0),
+    Track(path="/q/e.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True),
+    Track(path="/q/f.mp3", codec="mp3", is_lossy=True, sample_rate=44100, bit_rate=320000),
+]
+quality = [{"track": x.to_json(), "quality": musiclib.quality(x), "detail": musiclib.quality_detail(x),
+            "sort": list(musiclib.quality_sort(x))} for x in q_tracks]
+dates = [[old, year, tagedit.renamed_date(old, year)] for old, year in (
+    ("2001-05-03", "2004"), ("2001", "1999"), ("", "2004"), ("May 2001", "2004"), (" 1987-11 ", "1990"),
+    ("12345", "2000"), ("199", "2000"), ("２００１", "2002"))]
+group_names = []
+for kind, name in (("genres", "  Rock   Pop "), ("genres", ""), ("composers", "Ann"), ("composers", " "),
+                   ("years", "2004"), ("years", " 1999 "), ("years", "99"), ("years", "20045"),
+                   ("years", "２００４"), ("years", ""), ("genres", "x" * 1001)):
+    try:
+        group_names.append({"kind": kind, "name": name, "ok": tagedit.check_group_name(kind, name)})
+    except tagedit.TagError as exc:
+        group_names.append({"kind": kind, "name": name, "error": str(exc)})
+group_cases = [{"kind": k, "name": n, "tags": tg, "changes": tagedit.group_changes(k, n, tg)} for k, n, tg in (
+    ("genres", "Jazz", {"genre": "jazz", "date": "2001"}), ("composers", "Ann", {}),
+    ("years", "2004", {"date": "2001-05-03"}), ("years", "2004", {}), ("years", "1990", {"date": "Spring"}))]
+pst = playerstate.PlayerState()
+pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+pst.eq["enabled"] = False
+pst.save_eq_preset("Quiet", pst.eq)
+matches = []
+for enabled, nudge in ((False, 0.0), (True, 0.0), (True, 0.5)):
+    pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+    pst.eq["enabled"] = enabled
+    pst.eq["graphic"]["gains"][0] += nudge
+    matches.append({"eq": eq.normalize(pst.eq), "match": pst.matching_eq_preset()})
+with open(os.path.join(OUT, "python_library.json"), "w", encoding="utf-8") as fh:
+    json.dump({"quality": quality, "dates": dates, "group_names": group_names, "group_changes": group_cases,
+               "presets": pst.to_json()["eq_presets"], "matches": matches}, fh, indent=0, ensure_ascii=False)

@@ -267,3 +267,104 @@ impl EditInfo {
         result
     }
 }
+
+enum JobMsg {
+    Progress(usize, usize),
+    Saved(Vec<TagOutcome>),
+}
+
+/// Renaming a genre, composer or year, or merging genres (2.1): `tagedit::rename_group()`
+/// writes the new name into every file in a thread; the window shows how far it is, then
+/// the outcome as Edit Info does (`tagedit::save_summary()`, files that could not be
+/// changed included).  The player reads the library again when it is done.
+pub struct RenameJob {
+    pub title: String,
+    pub kind: &'static str,
+    pub name: String,
+    pub paths: Vec<String>,
+    rx: Receiver<JobMsg>,
+    progress: (usize, usize),
+    pub outcomes: Option<Vec<TagOutcome>>,
+    reported: bool,
+}
+
+impl RenameJob {
+    pub fn new(ctx: &egui::Context, title: String, kind: &'static str, paths: Vec<String>, name: String, cfg: Settings) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let (list, new, ctx2) = (paths.clone(), name.clone(), ctx.clone());
+        let _ = std::thread::Builder::new().name("rename-group".into()).spawn(move || {
+            let progress_tx = tx.clone();
+            let ctx3 = ctx2.clone();
+            let out = tagedit::rename_group(kind, &list, &new, Some(&cfg), move |i, n, _| {
+                let _ = progress_tx.send(JobMsg::Progress(i, n));
+                ctx3.request_repaint();
+            });
+            let _ = tx.send(JobMsg::Saved(out));
+            ctx2.request_repaint();
+        });
+        let n = paths.len();
+        RenameJob { title, kind, name, paths, rx, progress: (0, n), outcomes: None, reported: false }
+    }
+
+    pub fn done(&self) -> bool {
+        self.outcomes.is_some()
+    }
+
+    /// Draw the window; (still open, the files were just written).
+    pub fn show(&mut self, ctx: &egui::Context, pal: &Palette) -> (bool, bool) {
+        while let Ok(m) = self.rx.try_recv() {
+            match m {
+                JobMsg::Progress(i, n) => self.progress = (i, n),
+                JobMsg::Saved(out) => self.outcomes = Some(out),
+            }
+        }
+        let finished = self.outcomes.is_some() && !self.reported;
+        if finished {
+            self.reported = true;
+        }
+        let mut close = false;
+        let noun = tagedit::group_noun(self.kind);
+        let n = self.paths.len();
+        egui::Window::new(self.title.clone())
+            .id(egui::Id::new("player-rename-job"))
+            .collapsible(false)
+            .resizable(false)
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Giving {} song{} the {noun} “{}”",
+                        realhires::stats::thousands(n as i64),
+                        if n == 1 { "" } else { "s" },
+                        self.name
+                    ))
+                    .strong(),
+                );
+                ui.add_space(6.0);
+                match &self.outcomes {
+                    None => {
+                        let (i, total) = self.progress;
+                        ui.label(RichText::new(format!("Saving {} of {}…", (i + 1).min(total.max(1)), total)).color(pal.secondary));
+                        ui.add(egui::ProgressBar::new(if total > 0 { i as f32 / total as f32 } else { 0.0 }));
+                    }
+                    Some(out) => {
+                        let (head, lines) = tagedit::save_summary(out);
+                        ui.label(head);
+                        for l in lines.iter().take(12) {
+                            ui.label(RichText::new(l).color(pal.secondary));
+                        }
+                        if lines.len() > 12 {
+                            ui.label(RichText::new(format!("… and {} more.", lines.len() - 12)).color(pal.secondary));
+                        }
+                        ui.add_space(6.0);
+                        if ui.button("Close").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            close = true;
+                        }
+                    }
+                }
+            });
+        (!close, finished)
+    }
+}

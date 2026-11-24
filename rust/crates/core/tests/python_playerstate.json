@@ -98,10 +98,49 @@
 "songs": "x"
 }
 ],
-"lyrics_size": "31.5"
+"lyrics_size": "31.5",
+"columns": {
+"songs": [
+"nope",
+"year",
+"artist",
+3
+],
+"album": [],
+"folders": "x",
+"other": [
+"title"
+]
+}
 },
 "messy_out": {
 "_version": 1,
+"columns": {
+"songs": [
+"title",
+"artist",
+"year"
+],
+"folders": [
+"title",
+"artist",
+"album",
+"genre",
+"time",
+"quality",
+"like"
+],
+"album": [
+"num",
+"title",
+"artist",
+"album",
+"genre",
+"time",
+"quality",
+"like"
+]
+},
 "liked": [
 "/a",
 "/b"
@@ -225,6 +264,32 @@
 },
 "ops_out": {
 "_version": 1,
+"columns": {
+"songs": [
+"title",
+"artist",
+"album",
+"genre",
+"year",
+"time",
+"quality"
+],
+"folders": [
+"title",
+"bit_rate"
+],
+"album": [
+"num",
+"title",
+"artist",
+"album",
+"genre",
+"time",
+"quality",
+"file",
+"like"
+]
+},
 "liked": [],
 "volume": 0.8,
 "muted": false,

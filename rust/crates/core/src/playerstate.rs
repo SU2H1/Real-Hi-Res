@@ -35,6 +35,34 @@ pub fn plain_lyrics_size(size: i64) -> i64 {
     crate::pyfmt::round_int(size.clamp(LYRICS_SIZE_MIN, LYRICS_SIZE_MAX) as f64 * 0.7)
 }
 
+/// The columns of song lists (2.1, chosen by the user per kind of list,
+/// "columns" in player.json): every column in table order, and the defaults
+/// (Python `SONG_COLUMNS`, `DEFAULT_COLUMNS`).
+pub const SONG_COLUMNS: [&str; 16] = [
+    "num", "title", "artist", "album", "album_artist", "composer", "genre", "year", "disc", "time", "quality", "format",
+    "bit_rate", "added", "file", "like",
+];
+pub const COLUMN_KINDS: [&str; 3] = ["songs", "folders", "album"];
+
+pub fn default_columns(kind: &str) -> Vec<String> {
+    let cols: &[&str] = if kind == "album" {
+        &["num", "title", "artist", "album", "genre", "time", "quality", "like"]
+    } else {
+        &["title", "artist", "album", "genre", "time", "quality", "like"]
+    };
+    cols.iter().map(|c| c.to_string()).collect()
+}
+
+/// The known column names of `names`, in table order, with Title always there;
+/// the default when none is left (Python `normalize_columns`).
+pub fn normalize_columns(kind: &str, names: &[String]) -> Vec<String> {
+    let wanted: Vec<&str> = SONG_COLUMNS.iter().copied().filter(|c| names.iter().any(|n| n == c)).collect();
+    if wanted.is_empty() {
+        return default_columns(kind);
+    }
+    SONG_COLUMNS.iter().filter(|c| **c == "title" || wanted.contains(c)).map(|c| c.to_string()).collect()
+}
+
 /// A playlist or preset name that cannot be used; the message says why.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InvalidName(pub String);
@@ -87,6 +115,8 @@ pub struct PlayerState {
     pub playlists: Vec<Playlist>,
     /// pixels, Now Playing's A− / A+
     pub lyrics_size: i64,
+    /// the columns the user chose per kind of song list ("songs", "folders", "album")
+    pub columns: Vec<(String, Vec<String>)>,
 }
 
 impl Default for PlayerState {
@@ -104,6 +134,7 @@ impl Default for PlayerState {
             eq_presets: vec![],
             playlists: vec![],
             lyrics_size: LYRICS_SIZE_DEFAULT,
+            columns: vec![],
         }
     }
 }
@@ -195,9 +226,15 @@ impl PlayerState {
         self.eq_presets.retain(|p| p.name != name);
     }
 
-    /// The name of the user preset the current EQ is, or "".
+    /// The name of the user preset the current EQ is, or "".  Whether the
+    /// equalizer is on is not part of a preset (choosing one keeps the equalizer
+    /// on), so it is not compared (Python `matching_eq_preset`).
     pub fn matching_eq_preset(&self) -> String {
-        self.eq_presets.iter().find(|p| p.eq == self.eq).map(|p| p.name.clone()).unwrap_or_default()
+        self.eq_presets
+            .iter()
+            .find(|p| EqState { enabled: self.eq.enabled, ..p.eq.clone() } == self.eq)
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
     }
 
     // -------------------------------------------------------- playlists ---
@@ -279,12 +316,52 @@ impl PlayerState {
         p.songs.insert(j, s);
     }
 
+    // ------------------------------------------------------------ columns ---
+    /// The columns a kind of song list shows ("songs", "folders", "album").
+    pub fn columns_of(&self, kind: &str) -> Vec<String> {
+        match self.columns.iter().find(|(k, _)| k == kind) {
+            Some((_, c)) => normalize_columns(kind, c),
+            None => default_columns(kind),
+        }
+    }
+
+    pub fn set_columns(&mut self, kind: &str, names: &[String]) -> Vec<String> {
+        let cols = normalize_columns(kind, names);
+        self.columns.retain(|(k, _)| k != kind);
+        self.columns.push((kind.to_string(), cols.clone()));
+        cols
+    }
+
+    /// Show or hide one column (Title stays).
+    pub fn toggle_column(&mut self, kind: &str, name: &str) -> Vec<String> {
+        let mut cols = self.columns_of(kind);
+        if name == "title" || !SONG_COLUMNS.contains(&name) {
+            return cols;
+        }
+        if cols.iter().any(|c| c == name) {
+            cols.retain(|c| c != name);
+        } else {
+            cols.push(name.to_string());
+        }
+        self.set_columns(kind, &cols)
+    }
+
+    pub fn reset_columns(&mut self, kind: &str) -> Vec<String> {
+        self.columns.retain(|(k, _)| k != kind);
+        self.columns_of(kind)
+    }
+
     pub fn to_json(&self) -> Value {
         let mut liked = self.liked.clone();
         liked.sort();
         liked.dedup();
+        let mut columns = ObjectBuilder::new();
+        for k in COLUMN_KINDS {
+            columns = columns.put(k, Value::Array(self.columns_of(k).into_iter().map(Value::Str).collect()));
+        }
         ObjectBuilder::new()
             .put("_version", STATE_VERSION)
+            .put("columns", columns.build())
             .put("liked", Value::Array(liked.into_iter().map(Value::Str).collect()))
             .put("volume", self.volume)
             .put("muted", self.muted)
@@ -407,6 +484,17 @@ impl PlayerState {
             }
         }
         st.lyrics_size = clean_lyrics_size(data.get("lyrics_size"));
+        if let Some(cols @ Value::Object(_)) = data.get("columns") {
+            for k in COLUMN_KINDS {
+                if let Some(v) = cols.get(k) {
+                    let names: Vec<String> = match v {
+                        Value::Array(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                        _ => vec![],
+                    };
+                    st.columns.push((k.to_string(), normalize_columns(k, &names)));
+                }
+            }
+        }
         if let Some(last @ Value::Object(_)) = data.get("last") {
             st.last_path = last.get("path").and_then(Value::as_str).unwrap_or("").to_string();
             st.last_position = last.get("position").and_then(as_num).filter(|v| !v.is_nan()).unwrap_or(0.0).max(0.0);
@@ -470,5 +558,21 @@ mod tests {
         assert_eq!((again.shuffle.as_str(), again.repeat.as_str(), again.volume), ("genre", "off", 0.5));
         assert_eq!(again.eq.preset, "Jazz");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_preset_saved_with_the_equalizer_off_is_found_once_it_is_on() {
+        let mut st = PlayerState::default();
+        st.eq.apply_preset("Rock");
+        st.eq.enabled = false;
+        let saved = st.eq.clone();
+        st.save_eq_preset("Quiet", &saved, false).unwrap();
+        st.eq.enabled = true; // choosing a preset keeps the equalizer on
+        assert_eq!(st.matching_eq_preset(), "Quiet");
+        st.eq.gains[0] += 0.5; // changed since: no preset any more
+        assert_eq!(st.matching_eq_preset(), "");
+        st.eq = saved;
+        st.delete_eq_preset("Quiet");
+        assert!(st.eq_presets.is_empty() && st.matching_eq_preset().is_empty());
     }
 }

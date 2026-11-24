@@ -181,6 +181,35 @@ pub fn resolution(t: &Track) -> String {
     format!("{}-bit{}/{khz}", t.bits, if t.is_float { " float" } else { "" })
 }
 
+/// The tooltip of the song tables' Quality column (which shows `quality()`):
+/// the resolution ("24-bit/96 kHz"), and for a lossy song its codec, bit rate
+/// and sample rate ("MP3 · 320 kbps · 44.1 kHz") (Python `quality_detail`).
+pub fn quality_detail(t: &Track) -> String {
+    if t.is_lossy {
+        let mut parts = vec![t.codec.to_uppercase()];
+        if t.bit_rate > 0 {
+            parts.push(format!("{} kbps", crate::pyfmt::round_int(t.bit_rate as f64 / 1000.0)));
+        }
+        if t.sample_rate > 0 {
+            parts.push(format!("{} kHz", crate::pyfmt::g(t.sample_rate as f64 / 1000.0)));
+        }
+        return parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · ");
+    }
+    let r = resolution(t);
+    if r.is_empty() {
+        quality(t)
+    } else {
+        r
+    }
+}
+
+/// What a click on the Quality heading sorts by: the bit depth (lossy songs,
+/// which have none, first), then the sample rate (then integer before float,
+/// then the bit rate) (Python `quality_sort`).
+pub fn quality_sort(t: &Track) -> (i64, i64, bool, i64) {
+    (t.bits, t.sample_rate, t.is_float, t.bit_rate)
+}
+
 pub fn track_from_info(info: &AudioInfo, size: i64, mtime_ns: i64) -> Track {
     let t = |k: &str| tag(&info.tags, k).unwrap_or("").to_string();
     let bits =

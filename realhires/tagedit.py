@@ -496,13 +496,23 @@ def save_tags(paths: List[str], changes: Dict[str, str], cfg=None,
               progress: Optional[Callable[[int, int, str], None]] = None) -> List[TagOutcome]:
     """Write the changes into every file, keep their saved results and update the
     library.  Never raises; one outcome per file."""
+    return save_tags_each([(p, changes) for p in paths], cfg, progress)
+
+
+def save_tags_each(items: List[Tuple[str, Dict[str, str]]], cfg=None,
+                   progress: Optional[Callable[[int, int, str], None]] = None) -> List[TagOutcome]:
+    """`save_tags()` with changes of each file's own: [(path, changes)].  Never raises."""
     from . import musiclib, store as store_mod
     from .probe import probe
 
-    try:
-        changes = check_changes(changes)
-    except TagError as exc:
-        return [TagOutcome(p, False, str(exc)) for p in paths]
+    checked: List[Tuple[str, Optional[Dict[str, str]], str]] = []
+    for path, changes in items:
+        try:
+            checked.append((path, check_changes(changes), ""))
+        except TagError as exc:
+            checked.append((path, None, str(exc)))
+    if all(c is None for _, c, _ in checked):
+        return [TagOutcome(p, False, err) for p, _, err in checked]
     results = []
     st = store_mod.open_store(cfg) if cfg is not None and getattr(cfg, "save_results", True) else None
     lib = None
@@ -511,9 +521,12 @@ def save_tags(paths: List[str], changes: Dict[str, str], cfg=None,
     except Exception:  # noqa: BLE001
         lib = None
     try:
-        for i, path in enumerate(paths):
+        for i, (path, changes, err) in enumerate(checked):
             if progress is not None:
-                progress(i, len(paths), path)
+                progress(i, len(checked), path)
+            if changes is None:
+                results.append(TagOutcome(path, False, err))
+                continue
             name = os.path.basename(path)
             try:
                 before = os.stat(path)
@@ -531,13 +544,69 @@ def save_tags(paths: List[str], changes: Dict[str, str], cfg=None,
                 lib.update_file(path)
             results.append(TagOutcome(path, True, kept_note(name, changes, tags), tags))
         if progress is not None:
-            progress(len(paths), len(paths), "")
+            progress(len(checked), len(checked), "")
     finally:
         if st is not None:
             st.close()
         if lib is not None:
             lib.close()
     return results
+
+
+# ------------------------------------------- renaming and merging groups ---
+# The Genres, Composers and Years pages rename a genre, composer or year in every
+# song of it, and merge genres, through save_tags_each(): only the tag changes.
+GROUP_FIELD = {"genres": "genre", "composers": "composer", "years": "date"}
+GROUP_NOUN = {"genres": "genre", "composers": "composer", "years": "year"}
+
+
+def renamed_date(old: str, year: str) -> str:
+    """The release date with its year replaced and the rest kept: "2001-05-03" with
+    2004 gives "2004-05-03"; a date without a year ("", "May 2001") gives "2004"."""
+    old = clean_value(old)
+    return year + old[4:] if _YEAR.match(old) else year
+
+
+def check_group_name(kind: str, name: str) -> str:
+    """The new name of a genre, composer or year, cleaned, or TagError."""
+    name = clean_value(name)
+    noun = GROUP_NOUN[kind]
+    if not name:
+        raise TagError(f"Give the {noun} a name." if kind != "years" else "Write the year, such as 2004.")
+    if kind == "years" and not re.match(r"^[0-9]{4}$", name):
+        raise TagError("Write the year as four digits, such as 2004.")
+    if len(name) > MAX_VALUE:
+        raise TagError(f"The {noun} is too long: at most {MAX_VALUE:,} characters fit.")
+    return name
+
+
+def group_changes(kind: str, name: str, tags: Dict[str, str]) -> Dict[str, str]:
+    """What a song whose tags are `tags` gets when its genre, composer or year becomes `name`."""
+    if kind == "years":
+        return {"date": renamed_date(tags.get("date", ""), name)}
+    return {GROUP_FIELD[kind]: name}
+
+
+def rename_group(kind: str, paths: List[str], name: str, cfg=None,
+                 progress: Optional[Callable[[int, int, str], None]] = None) -> List[TagOutcome]:
+    """Give every song in `paths` the genre, composer or year `name` (a year replaces
+    only the year of each song's release date).  Never raises; one outcome per file."""
+    try:
+        name = check_group_name(kind, name)
+    except TagError as exc:
+        return [TagOutcome(p, False, str(exc)) for p in paths]
+    items = []
+    for path in paths:
+        tags: Dict[str, str] = {}
+        if kind == "years":
+            from .probe import probe
+
+            try:
+                tags = probe(path).tags or {}
+            except Exception:  # noqa: BLE001 - an unreadable file fails when it is written
+                tags = {}
+        items.append((path, group_changes(kind, name, tags)))
+    return save_tags_each(items, cfg, progress)
 
 
 def save_summary(outcomes: List[TagOutcome]) -> Tuple[str, List[str]]:

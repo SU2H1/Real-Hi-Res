@@ -1,0 +1,944 @@
+{
+"quality": [
+{
+"track": {
+"path": "/lib/A/sub/00.flac",
+"title": "Song 0",
+"artist": "Mira Calloway",
+"album": "Paper Lanterns",
+"album_artist": "Various",
+"genre": "Pop",
+"composer": "",
+"disc": 1,
+"track": 0,
+"year": "2001",
+"duration": 20.0,
+"codec": "flac",
+"sample_rate": 44100,
+"bits": 16,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "Lossless",
+"detail": "16-bit/44.1 kHz",
+"sort": [
+16,
+44100,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/01.flac",
+"title": "Song 1",
+"artist": "The Northern Quay",
+"album": "Harbour Lights",
+"album_artist": "",
+"genre": "jazz",
+"composer": "Zed",
+"disc": 2,
+"track": 1,
+"year": "1999",
+"duration": 180.0,
+"codec": "mp3",
+"sample_rate": 48000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 1000,
+"mtime_ns": 1
+},
+"quality": "MP3",
+"detail": "MP3 · 48 kHz",
+"sort": [
+0,
+48000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/02.flac",
+"title": "Song 2",
+"artist": "Juniper Vale",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "zed",
+"disc": 1,
+"track": 2,
+"year": "x",
+"duration": 240.5,
+"codec": "alac",
+"sample_rate": 96000,
+"bits": 24,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 2000,
+"mtime_ns": 2
+},
+"quality": "Hi-Res Lossless",
+"detail": "24-bit/96 kHz",
+"sort": [
+24,
+96000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/sub/03.flac",
+"title": "Song 3",
+"artist": "",
+"album": "Static Bloom",
+"album_artist": "",
+"genre": "Jazz",
+"composer": "Ann",
+"disc": 2,
+"track": 3,
+"year": "",
+"duration": 61.0,
+"codec": "aac",
+"sample_rate": 192000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 3000,
+"mtime_ns": 3
+},
+"quality": "AAC",
+"detail": "AAC · 192 kHz",
+"sort": [
+0,
+192000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/04.flac",
+"title": "Song 4",
+"artist": "mira calloway",
+"album": "Paper Lanterns",
+"album_artist": "",
+"genre": "Pop",
+"composer": "",
+"disc": 1,
+"track": 4,
+"year": "2024",
+"duration": 20.0,
+"codec": "flac",
+"sample_rate": 44100,
+"bits": 16,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 4000,
+"mtime_ns": 4
+},
+"quality": "Lossless",
+"detail": "16-bit/44.1 kHz",
+"sort": [
+16,
+44100,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/05.flac",
+"title": "Song 5",
+"artist": "Mira Calloway",
+"album": "Harbour Lights",
+"album_artist": "Various",
+"genre": "jazz",
+"composer": "Zed",
+"disc": 2,
+"track": 5,
+"year": "2001",
+"duration": 180.0,
+"codec": "mp3",
+"sample_rate": 48000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 5000,
+"mtime_ns": 5
+},
+"quality": "MP3",
+"detail": "MP3 · 48 kHz",
+"sort": [
+0,
+48000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/sub/06.flac",
+"title": "Song 6",
+"artist": "The Northern Quay",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "zed",
+"disc": 1,
+"track": 0,
+"year": "1999",
+"duration": 240.5,
+"codec": "alac",
+"sample_rate": 96000,
+"bits": 24,
+"is_float": true,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 6000,
+"mtime_ns": 6
+},
+"quality": "Hi-Res Lossless",
+"detail": "24-bit float/96 kHz",
+"sort": [
+24,
+96000,
+true,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/07.flac",
+"title": "Song 7",
+"artist": "Juniper Vale",
+"album": "Static Bloom",
+"album_artist": "",
+"genre": "Jazz",
+"composer": "Ann",
+"disc": 2,
+"track": 1,
+"year": "x",
+"duration": 61.0,
+"codec": "aac",
+"sample_rate": 192000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 7000,
+"mtime_ns": 7
+},
+"quality": "AAC",
+"detail": "AAC · 192 kHz",
+"sort": [
+0,
+192000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/08.flac",
+"title": "Song 8",
+"artist": "",
+"album": "Paper Lanterns",
+"album_artist": "",
+"genre": "Pop",
+"composer": "",
+"disc": 1,
+"track": 2,
+"year": "",
+"duration": 20.0,
+"codec": "flac",
+"sample_rate": 44100,
+"bits": 16,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 8000,
+"mtime_ns": 8
+},
+"quality": "Lossless",
+"detail": "16-bit/44.1 kHz",
+"sort": [
+16,
+44100,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/sub/09.flac",
+"title": "Song 9",
+"artist": "mira calloway",
+"album": "Harbour Lights",
+"album_artist": "",
+"genre": "jazz",
+"composer": "Zed",
+"disc": 2,
+"track": 3,
+"year": "2024",
+"duration": 180.0,
+"codec": "mp3",
+"sample_rate": 48000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 9000,
+"mtime_ns": 9
+},
+"quality": "MP3",
+"detail": "MP3 · 48 kHz",
+"sort": [
+0,
+48000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/10.flac",
+"title": "Song 10",
+"artist": "Mira Calloway",
+"album": "",
+"album_artist": "Various",
+"genre": "",
+"composer": "zed",
+"disc": 1,
+"track": 4,
+"year": "2001",
+"duration": 240.5,
+"codec": "alac",
+"sample_rate": 96000,
+"bits": 24,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 10000,
+"mtime_ns": 10
+},
+"quality": "Hi-Res Lossless",
+"detail": "24-bit/96 kHz",
+"sort": [
+24,
+96000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/11.flac",
+"title": "Song 11",
+"artist": "The Northern Quay",
+"album": "Static Bloom",
+"album_artist": "",
+"genre": "Jazz",
+"composer": "Ann",
+"disc": 2,
+"track": 5,
+"year": "1999",
+"duration": 61.0,
+"codec": "aac",
+"sample_rate": 192000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 11000,
+"mtime_ns": 11
+},
+"quality": "AAC",
+"detail": "AAC · 192 kHz",
+"sort": [
+0,
+192000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/A/sub/12.flac",
+"title": "Song 12",
+"artist": "Juniper Vale",
+"album": "Paper Lanterns",
+"album_artist": "",
+"genre": "Pop",
+"composer": "",
+"disc": 1,
+"track": 0,
+"year": "x",
+"duration": 20.0,
+"codec": "flac",
+"sample_rate": 44100,
+"bits": 16,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 12000,
+"mtime_ns": 12
+},
+"quality": "Lossless",
+"detail": "16-bit/44.1 kHz",
+"sort": [
+16,
+44100,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/lib/B/13.flac",
+"title": "Song 13",
+"artist": "",
+"album": "Harbour Lights",
+"album_artist": "",
+"genre": "jazz",
+"composer": "Zed",
+"disc": 2,
+"track": 1,
+"year": "",
+"duration": 180.0,
+"codec": "mp3",
+"sample_rate": 48000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 13000,
+"mtime_ns": 13
+},
+"quality": "MP3",
+"detail": "MP3 · 48 kHz",
+"sort": [
+0,
+48000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/q/a.ogg",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "vorbis",
+"sample_rate": 48000,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "VORBIS",
+"detail": "VORBIS · 48 kHz",
+"sort": [
+0,
+48000,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/q/b.opus",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "opus",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 128499,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "OPUS 128 kbps",
+"detail": "OPUS · 128 kbps",
+"sort": [
+0,
+0,
+false,
+128499
+]
+},
+{
+"track": {
+"path": "/q/c.wav",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "pcm_s24le",
+"sample_rate": 0,
+"bits": 24,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "Hi-Res Lossless",
+"detail": "Hi-Res Lossless",
+"sort": [
+24,
+0,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/q/d.flac",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "flac",
+"sample_rate": 88200,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "Hi-Res Lossless",
+"detail": "88.2 kHz",
+"sort": [
+0,
+88200,
+false,
+0
+]
+},
+{
+"track": {
+"path": "/q/e.wav",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "pcm_f32le",
+"sample_rate": 192000,
+"bits": 32,
+"is_float": true,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "Hi-Res Lossless",
+"detail": "32-bit float/192 kHz",
+"sort": [
+32,
+192000,
+true,
+0
+]
+},
+{
+"track": {
+"path": "/q/f.mp3",
+"title": "",
+"artist": "",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "mp3",
+"sample_rate": 44100,
+"bits": 0,
+"is_float": false,
+"is_lossy": true,
+"channels": 0,
+"bit_rate": 320000,
+"size": 0,
+"mtime_ns": 0
+},
+"quality": "MP3 320 kbps",
+"detail": "MP3 · 320 kbps · 44.1 kHz",
+"sort": [
+0,
+44100,
+false,
+320000
+]
+}
+],
+"dates": [
+[
+"2001-05-03",
+"2004",
+"2004-05-03"
+],
+[
+"2001",
+"1999",
+"1999"
+],
+[
+"",
+"2004",
+"2004"
+],
+[
+"May 2001",
+"2004",
+"2004"
+],
+[
+" 1987-11 ",
+"1990",
+"1990-11"
+],
+[
+"12345",
+"2000",
+"20005"
+],
+[
+"199",
+"2000",
+"2000"
+],
+[
+"２００１",
+"2002",
+"2002"
+]
+],
+"group_names": [
+{
+"kind": "genres",
+"name": "  Rock   Pop ",
+"ok": "Rock Pop"
+},
+{
+"kind": "genres",
+"name": "",
+"error": "Give the genre a name."
+},
+{
+"kind": "composers",
+"name": "Ann",
+"ok": "Ann"
+},
+{
+"kind": "composers",
+"name": " ",
+"error": "Give the composer a name."
+},
+{
+"kind": "years",
+"name": "2004",
+"ok": "2004"
+},
+{
+"kind": "years",
+"name": " 1999 ",
+"ok": "1999"
+},
+{
+"kind": "years",
+"name": "99",
+"error": "Write the year as four digits, such as 2004."
+},
+{
+"kind": "years",
+"name": "20045",
+"error": "Write the year as four digits, such as 2004."
+},
+{
+"kind": "years",
+"name": "２００４",
+"error": "Write the year as four digits, such as 2004."
+},
+{
+"kind": "years",
+"name": "",
+"error": "Write the year, such as 2004."
+},
+{
+"kind": "genres",
+"name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+"error": "The genre is too long: at most 1,000 characters fit."
+}
+],
+"group_changes": [
+{
+"kind": "genres",
+"name": "Jazz",
+"tags": {
+"genre": "jazz",
+"date": "2001"
+},
+"changes": {
+"genre": "Jazz"
+}
+},
+{
+"kind": "composers",
+"name": "Ann",
+"tags": {},
+"changes": {
+"composer": "Ann"
+}
+},
+{
+"kind": "years",
+"name": "2004",
+"tags": {
+"date": "2001-05-03"
+},
+"changes": {
+"date": "2004-05-03"
+}
+},
+{
+"kind": "years",
+"name": "2004",
+"tags": {},
+"changes": {
+"date": "2004"
+}
+},
+{
+"kind": "years",
+"name": "1990",
+"tags": {
+"date": "Spring"
+},
+"changes": {
+"date": "1990"
+}
+}
+],
+"presets": [
+{
+"name": "Quiet",
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Rock",
+"preamp": 0.0,
+"gains": [
+4.5,
+3.5,
+2.5,
+1.0,
+-0.5,
+-1.0,
+0.5,
+2.0,
+3.0,
+3.5
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+}
+}
+],
+"matches": [
+{
+"eq": {
+"enabled": false,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Rock",
+"preamp": 0.0,
+"gains": [
+4.5,
+3.5,
+2.5,
+1.0,
+-0.5,
+-1.0,
+0.5,
+2.0,
+3.0,
+3.5
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+},
+"match": "Quiet"
+},
+{
+"eq": {
+"enabled": true,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Rock",
+"preamp": 0.0,
+"gains": [
+4.5,
+3.5,
+2.5,
+1.0,
+-0.5,
+-1.0,
+0.5,
+2.0,
+3.0,
+3.5
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+},
+"match": "Quiet"
+},
+{
+"eq": {
+"enabled": true,
+"prevent_clipping": true,
+"graphic": {
+"enabled": true,
+"preset": "Rock",
+"preamp": 0.0,
+"gains": [
+5.0,
+3.5,
+2.5,
+1.0,
+-0.5,
+-1.0,
+0.5,
+2.0,
+3.0,
+3.5
+]
+},
+"parametric": {
+"enabled": false,
+"preamp": 0.0,
+"bands": [
+{
+"type": "peak",
+"freq": 1000.0,
+"gain": 0.0,
+"q": 1.0,
+"on": true
+}
+]
+}
+},
+"match": ""
+}
+]
+}

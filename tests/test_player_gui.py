@@ -270,7 +270,7 @@ def lyrics_ok():
             self.x, self.y = (box[1] + box[3]) / 2, (box[2] + box[4]) / 2
     links = {{b[0]: b for b in np.links}}
     np._art_click(At(links["artist"])); root.update()
-    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "Aurora Fields"
+    assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "Aurora Fields"
     app.go_back(); root.update()
     np._art_click(At(links["album_name"])); root.update()
     assert app.page_name == "album" and app.page("album").title_l.cget("text") == "Northern Lights"
@@ -288,24 +288,24 @@ def lyrics_ok():
     assert names == ["June Harbor", "Aurora Fields"], np.links
     second = next(b for b in np.links if b[5] == "Aurora Fields")
     np._art_click(At(second)); root.update()
-    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "Aurora Fields"
+    assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "Aurora Fields"
     app.go_back(); root.update()
     lcd = app.bar.lcd
     assert lcd.artists == {{"artist:0": "June Harbor", "artist:1": "Aurora Fields"}}, lcd.artists
     lcd._release(At(("artist:0",) + tuple(lcd.geo["artist:0"]))); root.update()
-    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "June Harbor"
+    assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "June Harbor"
     app.go_back(); root.update()
     np.switch.choose("details"); root.update()
     assert "Artist: June Harbor, Aurora Fields" in np.details.text()
     assert [x[4] for x in np.details.links] == ["June Harbor", "Aurora Fields"]
     np.details._click(At((None,) + tuple(np.details.links[0][:4]))); root.update()
-    assert app.page_name == "artists" and app.page("artists").chosen["name"] == "June Harbor"
+    assert app.page_name == "group" and app.page("group").kind == "artists" and app.page("group").name == "June Harbor"
     app.go_back(); root.update()
     tr.artist = "Aurora Fields"
     app.toggle_now_playing(); root.update()
     assert app.np_tab == "lyrics"
     lcd = app.bar.lcd  # in the LCD: the title and the album open the album, the artist the artist
-    for what, page in (("title", "album"), ("album", "album"), ("artist:0", "artists")):
+    for what, page in (("title", "album"), ("album", "album"), ("artist:0", "group")):
         g = lcd.geo[what]
         lcd._release(At((what,) + tuple(g))); root.update()
         assert app.page_name == page, (what, app.page_name)
@@ -1289,3 +1289,247 @@ def test_now_playing_details(tmp_path):
     assert rows["Quality check"] == "Fake hi-res" and rows["Why"] == "Upsampled from 44.1 kHz"
     rows = dict(song_details(Track("y.flac", title="Y"), 0, "", None))
     assert rows["Quality check"] == "Not checked yet" and "Comment" not in rows and rows["Format"] == "—"
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not _has_miniaudio(), reason="miniaudio not installed")
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_grids_renames_columns_tooltips_and_preset_delete(tmp_path):
+    """Ten more requests (2.1): the grouping pages as card grids that open each group's
+    page, open_artist() with several artists in one field, renaming genres, composers and
+    years and merging genres (the files change, the library follows), the columns of song
+    lists chosen per kind of list, the Quality tooltip and sort, the album page's columns,
+    scrolling without full redraws, and the Equalizer's Delete… for a preset saved while
+    the equalizer was off."""
+    lib = make_library(tmp_path, seconds=2, mp3=False)
+    from realhires import settings, tagedit
+
+    first = lib["songs"]["First Light"]  # a full release date: a year rename keeps month and day
+    assert all(o.ok for o in tagedit.save_tags([first], {"date": "2021-03-04"}))
+    cfg = settings.Settings()
+    cfg.library_folders = [lib["music"]]
+    cfg.theme = "Light"
+    settings.save(cfg, str(tmp_path / "settings.json"))
+    env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
+               REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
+               REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_THEMES=str(tmp_path / "themes.json"),
+               REALHIRES_AUDIO_BACKEND="null")
+    body = f"""
+LIB = {json.dumps(lib)}
+S = LIB["songs"]
+import tkinter as tk
+import tkinter.ttk
+from realhires import eq, player_gui, player_pages, playerstate
+from realhires.probe import probe
+player_gui.messagebox.askyesno = lambda *a, **k: True  # confirmations say yes
+player_gui.messagebox.showinfo = lambda *a, **k: None
+state = {{}}
+
+def fail(exc, val, tb):
+    import traceback
+    traceback.print_exception(exc, val, tb)
+    os._exit(1)
+
+def wait(cond, then, timeout=60.0, what="", start=None):
+    start = start or time.monotonic()
+    if cond():
+        return root.after(50, then)
+    assert time.monotonic() - start < timeout, "timed out: " + what
+    root.after(100, lambda: wait(cond, then, timeout, what, start))
+
+def answer(name):  # fills in the next name dialog, once it is on the screen
+    def go(tries=0):
+        d = app.name_dialog
+        if d is None:
+            return root.after(50, lambda: go(tries))
+        if not d.win.winfo_viewable() and tries < 40:
+            return root.after(50, lambda: go(tries + 1))
+        state["choices"] = list(d.entry.cget("values")) if isinstance(d.entry, tk.ttk.Combobox) else None
+        d.var.set(name)
+        d.submit()
+    root.after(50, go)
+
+def labels(m):
+    return [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"]
+
+def index(m, label):
+    return next(i for i in range(m.index("end") + 1) if m.type(i) != "separator" and m.entrycget(i, "label") == label)
+
+def genre_of(path):
+    return probe(path).tags.get("genre", "")
+
+root = tk.Tk()
+root.geometry("1280x800")
+root.report_callback_exception = fail
+app = player_gui.PlayerApp(root)
+
+def loaded():
+    # Artists, Album Artists, Composers, Years and Genres are card grids
+    for kind in ("artists", "album_artists", "genres", "years", "composers"):
+        app.show_page(kind)
+        root.update()
+        assert app.pages[kind].grid_w.winfo_ismapped(), kind
+    cards = app.page("artists").grid_w.albums
+    assert [c["title"] for c in cards] == ["Aurora Fields", "June Harbor", "The Paper Boats", "Velvet Static"]
+    assert cards[0]["artist"] == "1 album · 4 songs" and len(cards[0]["mosaic"]) == 1
+    assert [c["title"] for c in app.page("years").grid_w.albums] == ["2023", "2021", "2019", "2018"]
+    comp = app.page("composers").grid_w.albums
+    assert [c["title"] for c in comp] == ["Lena Frost", "Mika Rowe", "Unknown Composer"]
+    assert comp[0]["artist"] == "2 albums · 6 songs" and len(comp[0]["mosaic"]) == 2
+    # a click opens the same page as before: an artist's albums, a genre's songs
+    app.show_page("artists")
+    app.page("artists")._open(cards[0])
+    root.update()
+    page = app.page("group")
+    assert app.page_name == "group" and page.title_l.cget("text") == "Aurora Fields"
+    assert [a["title"] for a in page.grid_w.albums] == ["Northern Lights"]
+    app.go_back()
+    assert app.page_name == "artists"
+    # open_artist(): an artist of the library, or the first artist of a field that is not one
+    app.open_artist("Aurora Fields & Somebody New")
+    assert app.page_name == "group" and app.page("group").name == "Aurora Fields"
+    # the album page: one link per artist, the All Songs columns with # first, track order, sortable
+    album = next(a for a in app.albums if a["title"] == "Northern Lights")
+    app.open_album(album)
+    root.update()
+    ap = app.page("album")
+    assert [w.cget("text") for w in ap.artist_links] == ["Aurora Fields"]
+    assert [c.key for c in ap.table.columns] == ["num", "title", "artist", "album", "genre", "time", "quality",
+                                                 "like"]
+    assert [t.display_title for t in ap.table.rows] == ["First Light", "Glacier Song", "Midnight Sun", "Polar Drift"]
+    ap.table.sort_by("title")
+    ap.table.sort_by("title")
+    assert ap.table.rows[0].display_title == "Polar Drift"
+    # the Quality column: "Hi-Res Lossless", the resolution as its tooltip; sorted by bits, then rate
+    assert player_pages.track_value(ap.table.rows[0], "quality") == "Hi-Res Lossless"
+    assert ap.table.show_tip(0, "quality") == "24-bit/96 kHz" and ap.table.tip_text == "24-bit/96 kHz"
+    ap.table.hide_tip()
+    app.show_page("songs")
+    root.update()
+    table = app.page("songs").table
+    table.sort_by("quality")
+    q = [(t.bits, t.sample_rate) for t in table.rows]
+    assert q == sorted(q), q
+    # a scroll step moves the rows and draws only the new ones; a hover recolours one row
+    rows = list(table.rows)
+    table.set_rows(rows * 8)  # more rows than fit
+    root.update()
+    full = table.full_redraws
+    table.scroll(table.rh)
+    table._set_hover(2)
+    assert table.full_redraws == full and table.top == table.rh, (table.full_redraws, full, table.top)
+    assert len(table._drawn) <= table.canvas.winfo_height() // table.rh + 3
+    table.set_rows(rows)
+    # choosing columns: the headings' menu, kept per kind of list in player.json
+    assert table.on_heading_context is not None
+    m = player_pages.columns_menu(app, "songs")
+    assert labels(m)[:3] == ["# (track number)", "Title", "Artist"] and "Reset columns" in labels(m)
+    assert m.entrycget(index(m, "Title"), "state") == "disabled"
+    m.invoke(index(m, "Year"))
+    assert "year" in [c.key for c in table.columns] and "year" in playerstate.load().columns_of("songs")
+    assert "year" not in [c.key for c in ap.table.columns]  # album pages keep their own choice
+    m = player_pages.columns_menu(app, "songs")
+    m.invoke(index(m, "Reset columns"))
+    assert [c.key for c in table.columns] == list(playerstate.DEFAULT_COLUMNS["songs"])
+    # rename a genre from its page ("…"): the files change, the page follows the new name
+    app.show_page("group", kind="genres", group="Jazz")
+    gp = app.page("group")
+    assert labels(gp.menu()) == ["Play", "Shuffle", "Rename genre…", "Merge into…"]
+    answer("Smooth Jazz")
+    job = player_pages.rename_group(app, "genres", "Jazz")
+    state["job"] = job
+    wait(lambda: job.done and not app.library_busy(), renamed, what="genre renamed")
+
+def renamed():
+    job = state["job"]
+    assert all(o.ok for o in job.outcomes) and len(job.outcomes) == 2, job.outcomes
+    assert job.headline == "Saved the information of 2 songs.", job.headline
+    assert genre_of(S["Blue Kettle"]) == "Smooth Jazz" and genre_of(S["Porch Lamp"]) == "Smooth Jazz"
+    assert app.track(S["Blue Kettle"]).genre == "Smooth Jazz"
+    gp = app.page("group")
+    assert app.page_name == "group" and gp.title_l.cget("text") == "Smooth Jazz"
+    assert [t.display_title for t in gp.table.rows] == ["Blue Kettle", "Porch Lamp"]
+    job.close()
+    # merge two genres selected with Ctrl-click
+    app.show_page("genres")
+    root.update()
+    page = app.page("genres")
+    names = [c["title"] for c in page.grid_w.albums]
+    assert names == ["Ambient", "Electronic", "Indie Pop", "Smooth Jazz"], names
+    page.grid_w.toggle(names.index("Electronic"))
+    page.grid_w.toggle(names.index("Indie Pop"))
+    assert labels(page.selection_menu()) == ["Merge 2 genres…", "Clear selection"]
+    answer("Pop")
+    job = page.merge_selected()
+    assert state["choices"] == ["Indie Pop", "Electronic"], state["choices"]  # the biggest first
+    state["job"] = job
+    wait(lambda: job.done and not app.library_busy(), merged, what="genres merged")
+
+def merged():
+    job = state["job"]
+    assert all(o.ok for o in job.outcomes) and len(job.outcomes) == 5
+    assert {{genre_of(S[t]) for t in ("Carrier Wave", "Low Pass", "Umbrella Weather")}} == {{"Pop"}}
+    page = app.page("genres")
+    assert [c["title"] for c in page.grid_w.albums] == ["Ambient", "Pop", "Smooth Jazz"]
+    assert not page.grid_w.selected
+    job.close()
+    # Merge into… one genre: the other genres are offered
+    answer("Ambient")
+    job = player_pages.merge_groups(app, "genres", ["Smooth Jazz"])
+    assert state["choices"] == ["Ambient", "Pop"], state["choices"]
+    state["job"] = job
+    wait(lambda: job.done and not app.library_busy(), merged_into, what="merged into")
+
+def merged_into():
+    state["job"].close()
+    assert genre_of(S["Porch Lamp"]) == "Ambient"
+    # a year: only the year of each release date changes
+    job = player_pages.rename_group(app, "years", "2021", "2020")
+    state["job"] = job
+    wait(lambda: job.done and not app.library_busy(), year_renamed, what="year renamed")
+
+def year_renamed():
+    state["job"].close()
+    assert probe(S["First Light"]).tags["date"] == "2020-03-04"
+    assert probe(S["Glacier Song"]).tags["date"] == "2020"
+    app.show_page("years")  # refreshed when shown
+    assert [c["title"] for c in app.page("years").grid_w.albums][:2] == ["2023", "2020"]
+    # a composer, and the same name again changes nothing
+    job = player_pages.rename_group(app, "composers", "Mika Rowe", "Mika Rowe-Lind")
+    state["job"] = job
+    wait(lambda: job.done and not app.library_busy(), composer_renamed, what="composer renamed")
+
+def composer_renamed():
+    state["job"].close()
+    assert probe(S["Taxi Lights"]).tags["composer"] == "Mika Rowe-Lind"
+    assert player_pages.rename_group(app, "composers", "Mika Rowe-Lind", "Mika Rowe-Lind") is None
+    # the equalizer: a preset saved while the equalizer was off, chosen with it on, then deleted
+    app.open_eq()
+    w = app.eq_window
+    w._preset("Rock")
+    w.v_on.set(False); w._toggles()
+    w.save_preset("Quiet Rock")
+    w.v_on.set(True); w._toggles()
+    w._preset("Flat")
+    w.use_preset("Quiet Rock")
+    assert w.preset_label() == "Quiet Rock" and w.state["enabled"]
+    before = eq.normalize(w.state)
+    w._delete()  # the Delete… button
+    assert playerstate.load().eq_presets == [] and app.state.eq_presets == []
+    assert "Quiet Rock" not in labels(w.build_preset_menu())
+    assert eq.normalize(w.state) == before and eq.normalize(app.state.eq) == before  # the EQ stays as it was
+    assert w.preset_label() == "Rock" and "Deleted" in w.note.cget("text")
+    # set to none of the user's presets: Delete… offers them
+    w.save_preset("Mine A")
+    w._preset("Jazz")
+    assert labels(w.build_delete_menu()) == ["Delete which preset?", "Mine A"]
+    w.delete_menu.invoke(1)
+    assert app.state.eq_presets == [] and playerstate.load().eq_presets == []
+    w.close()
+    print("OK")
+    app.quit()
+
+wait(lambda: len(app.tracks) == len(S) and not app.library_busy(), loaded, what="library")
+root.mainloop()
+"""
+    run_script(tmp_path, body, env)

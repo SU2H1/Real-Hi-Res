@@ -313,10 +313,26 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                     if ui.button("Rename…").clicked() {
                         action = Some(EqAction::Rename(mine.clone()));
                     }
+                });
+                // Delete…: the preset the equalizer is set to, else a menu of the user's presets
+                // (before, it was greyed out unless the EQ matched one exactly, on/off switch included)
+                if !mine.is_empty() {
                     if ui.button("Delete…").clicked() {
                         action = Some(EqAction::Delete(mine.clone()));
                     }
-                });
+                } else if presets.is_empty() {
+                    ui.add_enabled(false, egui::Button::new("Delete…")).on_disabled_hover_text("You have no presets of your own yet.");
+                } else {
+                    ui.menu_button("Delete…", |ui| {
+                        ui.label(RichText::new("Delete which preset?").small().color(pal.secondary));
+                        for (name, _) in &presets {
+                            if ui.button(name).clicked() {
+                                action = Some(EqAction::Delete(name.clone()));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 if ui.button("Import…").on_hover_text("Presets of this app (.json) and Equalizer APO or AutoEQ files (.txt)").clicked() {
                     action = Some(EqAction::Import);
                 }
@@ -363,7 +379,9 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     match action {
         Some(EqAction::SaveAs) => p.ask_name("Save Equalizer Preset", "My Preset", NameAction::SaveEqPreset),
         Some(EqAction::Rename(n)) => p.ask_name("Rename Preset", &n.clone(), NameAction::RenameEqPreset(n)),
-        Some(EqAction::Delete(n)) => p.confirm = Some(ConfirmAction::DeleteEqPreset(n)),
+        Some(EqAction::Delete(n)) => {
+            p.eq_delete(Some(n));
+        }
         Some(EqAction::Import) => {
             if let Some(path) = rfd::FileDialog::new().add_filter("Equalizer presets", &["json", "txt"]).pick_file() {
                 let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());

@@ -43,11 +43,13 @@ def _window(app: "PlayerApp", title: str) -> tk.Toplevel:
 
 
 class NameDialog:
-    """Asks for a name (playlist, preset, theme); `check(name)` returns the cleaned
-    name or raises an error whose message is shown under the field."""
+    """Asks for a name (playlist, preset, theme, genre); `check(name)` returns the
+    cleaned name or raises an error whose message is shown under the field.  With
+    `choices` the field is a drop-down of them that can also be typed into."""
 
     def __init__(self, app: "PlayerApp", title: str, prompt: str, initial: str = "",
-                 check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None):
+                 check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None,
+                 choices: Optional[List[str]] = None):
         self.app, t = app, app.theme
         self.check = check
         self.result: Optional[str] = None
@@ -58,9 +60,13 @@ class NameDialog:
         self.win.bind("<<Close>>", lambda e: self.cancel())
         box = frame(self.win, t)
         box.pack(fill="both", expand=True, padx=22, pady=18)
-        label(box, t, prompt, "body_b").pack(anchor="w")
+        label(box, t, prompt, "body_b", wraplength=420, justify="left").pack(anchor="w")
         self.var = tk.StringVar(value=initial)
-        self.entry = ttk.Entry(box, textvariable=self.var, width=40, style="P.TEntry", font=t.f("body"))
+        if choices:
+            self.entry = ttk.Combobox(box, textvariable=self.var, values=list(choices), width=40, font=t.f("body"),
+                                      height=min(len(choices), 14))
+        else:
+            self.entry = ttk.Entry(box, textvariable=self.var, width=40, style="P.TEntry", font=t.f("body"))
         self.entry.pack(anchor="w", fill="x", pady=(6, 0))
         self.error = label(box, t, "", "small", fg="error", wraplength=360, justify="left")
         self.error.pack(anchor="w", pady=(4, 0))
@@ -106,9 +112,10 @@ class NameDialog:
 
 
 def ask_name(app: "PlayerApp", title: str, prompt: str, initial: str = "",
-             check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None) -> Optional[str]:
+             check: Optional[Callable[[str], str]] = None, ok: str = "OK", parent=None,
+             choices: Optional[List[str]] = None) -> Optional[str]:
     """A name from the user, or None when they cancel (waits for the dialog)."""
-    return NameDialog(app, title, prompt, initial, check, ok, parent).run()
+    return NameDialog(app, title, prompt, initial, check, ok, parent, choices).run()
 
 
 class PlaybackInfoWindow:
@@ -214,13 +221,17 @@ class EqualizerWindow:
         self.preset_btn.pack(side="left")
         for text, cmd in (("Export…", self._export), ("Import…", self._import), ("Delete…", self._delete),
                           ("Rename…", self._rename), ("Save as preset…", self._save_as)):
-            PillButton(presets, t, text, kind="plain", command=cmd).pack(side="right", padx=(8, 0))
+            b = PillButton(presets, t, text, kind="plain", command=cmd)
+            b.pack(side="right", padx=(8, 0))
+            if cmd == self._delete:
+                self.delete_btn = b
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
         # bit-perfect playback bypasses the equalizer (its settings are kept)
         self.bypass = label(box, t, "", "body", fg="accent", wraplength=640, justify="left")
         self.bypass.pack(anchor="w", pady=(4, 0))
         self.preset_menu: Optional[tk.Menu] = None
+        self.delete_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
         t.reg(self.curve, bg="lcd")
         self.curve.pack(fill="x", pady=(10, 10))
@@ -536,14 +547,43 @@ class EqualizerWindow:
                 self.rename_preset(old, new)
 
     def _delete(self) -> None:
+        """Delete…: the preset the equalizer is set to; when it is set to none of the
+        user's presets (changed since, or never chosen), a menu of them to pick from."""
+        name = self.app.state.matching_eq_preset()
+        if name:
+            self.delete_preset(name)
+            return
+        if not self.app.state.eq_presets:
+            self.note.configure(text="You have no presets of your own yet: Save as preset… keeps the current "
+                                     "settings as one.", fg=self.t.c("error"))
+            return
+        b = self.delete_btn
+        self.build_delete_menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def build_delete_menu(self) -> tk.Menu:
+        m = tk.Menu(self.win, tearoff=False)
+        self.app.theme_menu(m)
+        m.add_command(label="Delete which preset?", state="disabled")
+        for p in self.app.state.eq_presets:
+            m.add_command(label=p["name"], command=lambda n=p["name"]: self.delete_preset(n))
+        self.delete_menu = m
+        return m
+
+    def delete_preset(self, name: str, confirm: bool = True) -> bool:
+        """Delete one of the user's presets (after asking); the equalizer keeps its settings."""
         from tkinter import messagebox
 
-        name = self._mine()
-        if name and messagebox.askyesno("Delete preset", f"Delete your preset “{name}”?", parent=self.win):
-            self.app.state.delete_eq_preset(name)
-            self.app.save_state()
-            self._show_preset()
-            self.note.configure(text=f"Deleted “{name}”.", fg=self.t.c("text2"))
+        if self.app.state.eq_preset(name) is None:
+            return False
+        if confirm and not messagebox.askyesno(
+                "Delete preset", f"Delete your preset “{name}”? The equalizer keeps its current settings.",
+                parent=self.win):
+            return False
+        self.app.state.delete_eq_preset(name)
+        self.app.save_state()
+        self._show_preset()
+        self.note.configure(text=f"Deleted “{name}”.", fg=self.t.c("text2"))
+        return True
 
     def import_file(self, path: str) -> str:
         """Read a .json or Equalizer APO / AutoEQ .txt preset, apply it and save it under
@@ -852,4 +892,89 @@ class EditInfoWindow:
         close_window(self.win)
 
 
-__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "NameDialog", "ask_name"]
+class TagJobWindow:
+    """Renaming a genre, composer or year, or merging genres (player_pages.rename_group()
+    / merge_groups()): tagedit.rename_group() writes the new name into every file in a
+    thread, the window shows how far it is, then the outcome as Edit Info does
+    (tagedit.save_summary(), files that could not be changed included), and the library
+    is read again."""
+
+    def __init__(self, app: "PlayerApp", title: str, kind: str, paths: List[str], name: str):
+        from .settings import Settings
+
+        self.app, t = app, app.theme
+        self.kind, self.paths, self.name = kind, list(paths), name
+        self.cfg = Settings.from_dict(app.cfg.to_dict())  # the thread gets its own copy
+        self.q: "queue.Queue" = queue.Queue()
+        self.done = False
+        self.outcomes: list = []
+        self.headline, self.lines = "", []
+        self.win = _window(app, title)
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.bind("<<Close>>", lambda e: self.close())
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=24, pady=18)
+        n = len(self.paths)
+        noun = tagedit.GROUP_NOUN[kind]
+        label(box, t, f"Giving {n:,} song{'s' if n != 1 else ''} the {noun} “{name}”", "h2", wraplength=480,
+              justify="left").pack(anchor="w")
+        self.status = label(box, t, "Starting…", "small", fg="text2")
+        self.status.pack(anchor="w", pady=(6, 0))
+        self.bar = ttk.Progressbar(box, maximum=max(n, 1), length=440, mode="determinate")
+        self.bar.pack(anchor="w", fill="x", pady=(8, 0))
+        self.summary = label(box, t, "", "body", wraplength=480, justify="left")
+        self.summary.pack(anchor="w", pady=(8, 0))
+        self.btns = frame(box, t)
+        self.btns.pack(fill="x", pady=(12, 0))
+        self.win.minsize(500, 0)
+        threading.Thread(target=self._work, daemon=True, name="realhires-rename").start()
+        self.win.after(100, self._poll)
+
+    def _work(self) -> None:
+        try:
+            out = tagedit.rename_group(self.kind, self.paths, self.name, self.cfg,
+                                       progress=lambda i, n, p: self.q.put(("progress", i, n)))
+        except Exception as exc:  # noqa: BLE001 (rename_group never raises; this is a last resort)
+            out = [tagedit.TagOutcome(p, False, f"Could not save the information: {exc}") for p in self.paths]
+        self.q.put(("saved", out))
+
+    def _poll(self) -> None:
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            while True:
+                kind, *rest = self.q.get_nowait()
+                if kind == "progress":
+                    i, n = rest
+                    self.bar.configure(value=i)
+                    if i < n:
+                        self.status.configure(text=f"Saving {i + 1:,} of {n:,}…")
+                elif kind == "saved":
+                    self._saved(rest[0])
+                    return
+        except queue.Empty:
+            pass
+        self.win.after(100, self._poll)
+
+    def _saved(self, outcomes: list) -> None:
+        self.done = True
+        self.outcomes = outcomes
+        self.app.tags_saved([o.path for o in outcomes if o.ok])
+        self.headline, self.lines = tagedit.save_summary(outcomes)
+        self.status.configure(text="")
+        self.bar.pack_forget()
+        self.summary.configure(text="\n\n".join([self.headline] + self.lines[:12] +
+                                                 ([f"… and {len(self.lines) - 12:,} more."] if len(self.lines) > 12
+                                                  else [])))
+        PillButton(self.btns, self.app.theme, "Close", command=self.close).pack(side="right")
+
+    def close(self) -> None:
+        if not self.done:
+            return  # the files are being written; the window closes when that is done
+        close_window(self.win)
+
+
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "TagJobWindow", "NameDialog", "ask_name"]

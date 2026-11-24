@@ -12,7 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from . import musiclib, stats
 from .musiclib import Track
-from .player_pages import (Page, album_order, frame, label, plural, song_table, track_sort,
+from .player_pages import (Page, album_order, frame, label, library_groups, plural, song_table, track_sort,
                            track_value)
 from .player_theme import IconButton, PillButton, draw_icon, fit_text, mix, round_rect
 from .player_widgets import (AlbumGrid, Column, SongList, bind_wheel, draw_cover, draw_mosaic,
@@ -121,11 +121,11 @@ class LibraryPage(Page):
             "songs": count(n(tr), "song"),
             "folders": count(n({os.path.dirname(t.path) for t in tr}), "folder"),
             "albums": count(n(app.albums), "album"),
-            "artists": count(n(musiclib.artists(tr)), "artist"),
-            "album_artists": count(n(musiclib.album_artists(tr)), "album artist"),
-            "genres": count(n(musiclib.genres(tr)), "genre"),
-            "years": count(n(musiclib.years(tr)), "year"),
-            "composers": count(n(musiclib.composers(tr)), "composer"),
+            "artists": count(n(library_groups(app, "artists")), "artist"),  # grouped once per library
+            "album_artists": count(n(library_groups(app, "album_artists")), "album artist"),
+            "genres": count(n(library_groups(app, "genres")), "genre"),
+            "years": count(n(library_groups(app, "years")), "year"),
+            "composers": count(n(library_groups(app, "composers")), "composer"),
             "playlists": count(n(app.state.playlists), "playlist"),
             "liked": count(n(app.state.liked), "song"),
             "disliked": count(n(app.state.disliked), "song"),
@@ -241,7 +241,8 @@ class FoldersPage(Page):
                              lambda r, k: "folder" if k == "icon" else (r[1] if k == "name" else plural(r[2], "song")),
                              header=False, zebra=False, row_height=36,
                              on_select=lambda i: self.open(self.dirs.rows[i][0]))
-        self.table = song_table(self, self, on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
+        self.table = song_table(self, self, kind="folders",
+                                on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
         self.parts: List[Tuple[str, Optional[str]]] = []
 
     def roots(self) -> List[str]:
@@ -405,10 +406,10 @@ class PlaylistPage(Page):
         PillButton(btns, t, "Delete…", kind="plain", command=lambda: self.pid and app.delete_playlist(self.pid)
                    ).pack(side="left", padx=(8, 0))
         self.pos: Dict[int, int] = {}
-        cols = [Column("pos", "", 34, anchor="e", kind="num"), Column("title", "Title", 300, True),
-                Column("artist", "Artist", 200, True), Column("album", "Album", 200, True),
-                Column("time", "Time", 52, anchor="e"), Column("like", "", 30, kind="heart")]
-        self.table = song_table(self, self, cols, value=self._value, extra_menu=self._extra, sortable=False,
+        # the playlist position, then the columns the user chose for song lists (not sortable: the
+        # order is the playlist's)
+        self.table = song_table(self, self, value=self._value, extra_menu=self._extra, sortable=False,
+                                kind="songs", prefix=[Column("pos", "", 34, anchor="e", kind="num")],
                                 on_activate=lambda i: self.app.play_list(self.table.rows, i, self.list_name),
                                 empty_text="This playlist is empty. Add songs with “Add to playlist” in a song's "
                                            "menu (right click).")

@@ -5,14 +5,15 @@ Quality check page is the 1.x scanner, `gui.App`)."""
 from __future__ import annotations
 
 import os
+import sys
+import time
 import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from . import APP_NAME, embed
 from . import lyrics as lyrics_mod
-from . import musiclib
-from . import playerstate
+from . import musiclib, playerstate, stats, tagedit
 from . import settings as settings_mod
 from .musiclib import Track
 from .player_theme import DEFAULT_FONT_LABEL, IconButton, PillButton, Theme, fit_text, font_families, round_rect
@@ -31,6 +32,12 @@ def label(parent, theme: Theme, text: str = "", font: str = "body", fg: str = "t
 
 def frame(parent, theme: Theme, bg: str = "bg", **kw) -> tk.Frame:
     return theme.reg(tk.Frame(parent, bd=0, highlightthickness=0, **kw), bg=bg)
+
+
+def format_label(t: Track) -> str:
+    """The Format column: the codec ("FLAC", "MP3"; PCM for WAV and AIFF samples)."""
+    c = (t.codec or "").lower()
+    return "PCM" if c.startswith("pcm_") else c.upper()
 
 
 def track_value(t: Track, key: str) -> str:
@@ -52,15 +59,39 @@ def track_value(t: Track, key: str) -> str:
         return t.year
     if key == "composer":
         return t.composer
+    if key == "album_artist":
+        return t.album_artist
+    if key == "disc":
+        return str(t.disc) if t.disc else ""
+    if key == "format":
+        return format_label(t)
+    if key == "bit_rate":
+        return f"{round(t.bit_rate / 1000):,} kbps" if t.bit_rate else ""
+    if key == "added":
+        if not t.mtime_ns:
+            return ""
+        lt = time.localtime(t.mtime_ns / 1e9)
+        return stats.day_label(f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}")
+    if key == "file":
+        return os.path.basename(t.path)
     return ""
 
 
 def track_sort(t: Track, key: str):
+    title = t.display_title.casefold()
     if key == "time":
         return t.duration
     if key == "num":
-        return (t.disc or 9999, t.track or 9999, t.display_title.casefold())
-    return (track_value(t, key).casefold(), t.display_title.casefold(), t.path)
+        return (t.disc or 9999, t.track or 9999, title)
+    if key == "disc":
+        return (t.disc or 9999, t.track or 9999, title)
+    if key == "quality":  # bits, then rate (musiclib.quality_sort)
+        return (musiclib.quality_sort(t), title, t.path)
+    if key == "bit_rate":
+        return (t.bit_rate, title, t.path)
+    if key == "added":
+        return (t.mtime_ns, title, t.path)
+    return (track_value(t, key).casefold(), title, t.path)
 
 
 def album_order(tracks: List[Track]) -> List[Track]:
@@ -71,12 +102,34 @@ def plural(n: int, one: str, many: str = "") -> str:
     return f"{n:,} {one if n == 1 else (many or one + 's')}"
 
 
-SONG_COLUMNS = [Column("title", "Title", 300, True), Column("artist", "Artist", 200, True),
-                Column("album", "Album", 200, True), Column("genre", "Genre", 110),
-                Column("time", "Time", 52, anchor="e"), Column("quality", "Quality", 118),
-                Column("like", "", 30, kind="heart")]
+# The columns a song list can show (2.1: the user chooses them per kind of list,
+# playerstate.SONG_COLUMNS, kept in player.json), and their names in the menu.
+COLUMN_DEFS = {
+    "num": Column("num", "#", 34, anchor="e", kind="num"),
+    "title": Column("title", "Title", 300, True),
+    "artist": Column("artist", "Artist", 200, True),
+    "album": Column("album", "Album", 200, True),
+    "album_artist": Column("album_artist", "Album Artist", 170, True),
+    "composer": Column("composer", "Composer", 150, True),
+    "genre": Column("genre", "Genre", 110),
+    "year": Column("year", "Year", 48, anchor="e"),
+    "disc": Column("disc", "Disc", 40, anchor="e"),
+    "time": Column("time", "Time", 52, anchor="e"),
+    "quality": Column("quality", "Quality", 118, tip=True),
+    "format": Column("format", "Format", 64),
+    "bit_rate": Column("bit_rate", "Bit rate", 86, anchor="e"),
+    "added": Column("added", "Date added", 100),
+    "file": Column("file", "File", 180, True),
+    "like": Column("like", "", 30, kind="heart"),
+}
+COLUMN_LABELS = {"num": "# (track number)", "like": "Heart (like)"}
 
 
+def song_columns(names) -> List[Column]:
+    return [COLUMN_DEFS[n] for n in names if n in COLUMN_DEFS]
+
+
+SONG_COLUMNS = song_columns(playerstate.DEFAULT_COLUMNS["songs"])
 class Page(tk.Frame):
     """One page of the content area."""
 
@@ -129,9 +182,13 @@ class Page(tk.Frame):
             self.app.play_list(songs, 0, self.list_name, shuffle=shuffle)
 
 
-def song_table(page: Page, parent, columns=None, value=None, extra_menu=None, sort_value=None, **kw) -> SongList:
+def song_table(page: Page, parent, columns=None, value=None, extra_menu=None, sort_value=None,
+               kind: Optional[str] = None, prefix=(), **kw) -> SongList:
     """A song table with likes, the playing mark and the song menu (right click);
-    `extra_menu(index)` gives more (label, command) entries, e.g. a playlist's."""
+    `extra_menu(index)` gives more (label, command) entries, e.g. a playlist's.
+    With `kind` ("songs", "folders", "album") it shows the columns the user chose
+    for that kind of list (after the `prefix` columns), and a right click on its
+    headings lets them choose."""
     app = page.app
     table: SongList
 
@@ -139,11 +196,71 @@ def song_table(page: Page, parent, columns=None, value=None, extra_menu=None, so
         app.song_menu(table.rows[i], extra_menu(i) if extra_menu else (), list_name=page.list_name,
                       rows=table.rows, index=i).tk_popup(e.x_root, e.y_root)
 
+    def heading_menu(e) -> None:
+        m = columns_menu(app, kind)
+        m.tk_popup(e.x_root, e.y_root)
+
+    if kind is not None:
+        columns = list(prefix) + song_columns(app.state.columns_of(kind))
     table = SongList(parent, page.theme, columns or SONG_COLUMNS, value or track_value, sort_value or track_sort,
                      on_heart=lambda r: app.toggle_like(r.path), is_liked=lambda r: app.is_liked(r.path),
                      is_current=lambda r: r.path == app.current, on_context=context,
-                     is_dim=lambda r: getattr(r, "missing", False), **kw)
+                     is_dim=lambda r: getattr(r, "missing", False), tip_value=track_tip,
+                     on_heading_context=heading_menu if kind is not None else None, **kw)
+    if kind is not None:
+        table.column_kind, table.column_prefix = kind, list(prefix)
+        _song_tables(app).append(table)
     return table
+
+
+def _song_tables(app) -> list:
+    """The song tables whose columns follow the user's choice (pruned when destroyed)."""
+    if not hasattr(app, "song_tables"):
+        app.song_tables = []
+    return app.song_tables
+
+
+def columns_menu(app, kind: str) -> tk.Menu:
+    """The menu of a song table's headings: a check item per column (Title stays) and
+    Reset columns."""
+    m = tk.Menu(app.root, tearoff=False)
+    shown = app.state.columns_of(kind)
+    m.vars = []  # type: ignore[attr-defined]  # the check items' variables live as long as the menu
+    for name in playerstate.SONG_COLUMNS:
+        v = tk.BooleanVar(master=m, value=name in shown)
+        m.vars.append(v)  # type: ignore[attr-defined]
+        m.add_checkbutton(label=COLUMN_LABELS.get(name, COLUMN_DEFS[name].title), variable=v,
+                          state="disabled" if name == "title" else "normal",
+                          command=lambda n=name: set_columns(app, kind, app.state.toggle_column(kind, n)))
+    m.add_separator()
+    m.add_command(label="Reset columns", command=lambda: set_columns(app, kind, app.state.reset_columns(kind)))
+    app.theme_menu(m)
+    app.last_menu = m
+    return m
+
+
+def set_columns(app, kind: str, names: List[str]) -> None:
+    """The user chose the columns of a kind of list: save them, and show them in every
+    table of that kind."""
+    app.save_state()
+    tables = _song_tables(app)
+    for table in list(tables):
+        try:
+            if not table.winfo_exists():
+                tables.remove(table)
+                continue
+        except tk.TclError:
+            tables.remove(table)
+            continue
+        if table.column_kind == kind:
+            table.set_columns(table.column_prefix + song_columns(names))
+
+
+def track_tip(t: Track, key: str) -> str:
+    """The tooltip of a cell: the Quality column's resolution ("24-bit/96 kHz")."""
+    if key == "quality" and not getattr(t, "missing", False):
+        return musiclib.quality_detail(t)
+    return ""
 
 
 # --------------------------------------------------------------- albums ---
@@ -216,9 +333,11 @@ class AlbumPage(Page):
         info.pack(side="left", fill="both", expand=True, padx=(24, 0))
         self.title_l = label(info, t, "", "big", wraplength=600, justify="left")
         self.title_l.pack(anchor="w", pady=(60, 2))
-        self.artist_l = label(info, t, "", "h2", fg="accent", cursor="hand2")
-        self.artist_l.pack(anchor="w")
-        self.artist_l.bind("<Button-1>", lambda e: self.album and app.open_artist(self.album["artist"]))
+        # the album artist: each artist of the field ("A, B") its own link to its page
+        self.artist_box = frame(info, t)
+        self.artist_box.pack(anchor="w")
+        self.artist_links: List[tk.Label] = []
+        self.artist_l: Optional[tk.Label] = None  # the first link
         self.meta_l = label(info, t, "", "body", fg="text2")
         self.meta_l.pack(anchor="w", pady=(2, 14))
         btns = frame(info, t)
@@ -228,9 +347,9 @@ class AlbumPage(Page):
                                                                                               padx=(10, 0))
         self.edit_b = PillButton(btns, t, "Album Properties…", kind="plain", command=self.edit_info)
         self.edit_b.pack(side="left", padx=(10, 0))
-        cols = [Column("num", "", 34, anchor="e", kind="num"), Column("title", "", 400, True),
-                Column("like", "", 30, kind="heart"), Column("time", "", 52, anchor="e")]
-        self.table = song_table(self, self, cols, header=False, sortable=False,
+        # the columns the user chose for album pages (the track number first by default),
+        # sortable; in track order at first
+        self.table = song_table(self, self, kind="album",
                                 on_activate=lambda i: self.app.play_list(self.table.rows, i, self.list_name))
         self.table.pack(fill="both", expand=True, padx=(16, 16))
         app.covers.listeners.append(self._cover_ready)
@@ -261,9 +380,12 @@ class AlbumPage(Page):
         a = self.album
         if a is None:
             return
+        if a["key"] != getattr(self, "_shown_key", None):  # another album: in track order again
+            self._shown_key = a["key"]
+            self.table.sort_key, self.table.sort_rev = None, False
         self.list_name = a["title"]
         self.title_l.configure(text=a["title"])
-        self.artist_l.configure(text=a["artist"])
+        self._artist_links(a["artist"])
         meta = " · ".join(x for x in (a["genre"], a["year"]) if x)
         self.meta_l.configure(text=meta)
         self.table.set_rows(a["tracks"])
@@ -271,6 +393,23 @@ class AlbumPage(Page):
         self.table.footer = f"{plural(len(a['tracks']), 'song')}, {plural(minutes, 'minute')}"
         self.table.redraw()
         self._draw_cover()
+
+    def _artist_links(self, field: str) -> None:
+        """One link per artist of the field (musiclib.split_artists()), ", " between them."""
+        t = self.theme
+        for w in self.artist_box.winfo_children():
+            w.destroy()
+        t.prune()
+        names = musiclib.split_artists(field, known_artists(self.app)) or ([field] if field else [])
+        self.artist_links = []
+        for i, name in enumerate(names):
+            if i:
+                label(self.artist_box, t, ", ", "h2", fg="text2", padx=0).pack(side="left")
+            link = label(self.artist_box, t, name, "h2", fg="accent", cursor="hand2", padx=0)
+            link.pack(side="left")
+            link.bind("<Button-1>", lambda e, n=name: self.app.open_artist(n))
+            self.artist_links.append(link)
+        self.artist_l = self.artist_links[0] if self.artist_links else None
 
     def _draw_cover(self) -> None:
         if self.album is None:
@@ -295,99 +434,344 @@ class AlbumPage(Page):
 
 
 # ------------------------------------------------------------ groupings ---
-GROUPINGS = {  # page: (title, musiclib grouping, noun, what the right side shows)
-    "artists": ("Artists", musiclib.artists, "artist", "albums"),
-    "album_artists": ("Album Artists", musiclib.album_artists, "album artist", "albums"),
-    "genres": ("Genres", musiclib.genres, "genre", "songs"),
-    "years": ("Years", musiclib.years, "year", "songs"),
-    "composers": ("Composers", musiclib.composers, "composer", "songs"),
+GROUPINGS = {  # page: (title, musiclib grouping, noun, what its page shows, icon of a card without covers)
+    "artists": ("Artists", musiclib.artists, "artist", "albums", "artist"),
+    "album_artists": ("Album Artists", musiclib.album_artists, "album artist", "albums", "mic"),
+    "genres": ("Genres", musiclib.genres, "genre", "songs", "genre"),
+    "years": ("Years", musiclib.years, "year", "songs", "calendar"),
+    "composers": ("Composers", musiclib.composers, "composer", "songs", "piano"),
 }
+RENAMABLE = ("genres", "composers", "years")  # their menus have Rename… (Genres also Merge into…)
+UNKNOWN = {"genres": "Unknown Genre", "composers": "Unknown Composer", "years": "Unknown Year"}
+MOD_NAME = "Cmd" if sys.platform == "darwin" else "Ctrl"
+
+
+def _library_cache(app) -> dict:
+    """What is worked out once per library (app.tracks is a new list after each update)."""
+    cache = getattr(app, "_lib_cache", None)
+    if cache is None or cache.get("tracks") is not app.tracks:
+        cache = {"tracks": app.tracks, "order": {a["key"]: i for i, a in enumerate(app.albums)}}
+        app._lib_cache = cache
+    return cache
+
+
+def library_groups(app, kind: str) -> List[dict]:
+    """The groups of a grouping page ({"name", "tracks", "albums": album keys in album
+    order}), made once per library, so showing or scrolling a page never regroups."""
+    cache = _library_cache(app)
+    if kind not in cache:
+        order, key_of = cache["order"], app._album_key
+        out = []
+        for g in GROUPINGS[kind][1](app.tracks):
+            keys = {key_of.get(t.path, "") for t in g["tracks"]} - {""}
+            out.append(dict(g, albums=sorted(keys, key=lambda k: order.get(k, 1 << 30))))
+        cache[kind] = out
+    return cache[kind]
+
+
+def known_artists(app) -> set:
+    cache = _library_cache(app)
+    if "known" not in cache:
+        cache["known"] = musiclib.known_artists(app.tracks)
+    return cache["known"]
+
+
+def find_group(app, kind: str, name: str) -> Optional[dict]:
+    key = name.strip().casefold()
+    return next((g for g in library_groups(app, kind) if g["name"].strip().casefold() == key), None)
+
+
+def group_card(app, kind: str, g: dict) -> dict:
+    """A card of a grouping page: a mosaic of up to four of its album covers, the name,
+    "N albums · M songs"."""
+    quarters = []
+    for key in g["albums"][:4]:
+        a = app.album_by_key.get(key)
+        if a is not None:
+            quarters.append((key, [t.path for t in a["tracks"][:4]]))
+    sub = f"{plural(len(g['albums']), 'album')} · {plural(len(g['tracks']), 'song')}"
+    return {"key": f"{kind}:{g['name'].strip().casefold()}", "title": g["name"], "artist": sub, "mosaic": quarters,
+            "icon": GROUPINGS[kind][4], "tracks": g["tracks"], "name": g["name"]}
 
 
 class GroupPage(Page):
-    """Artists, Album Artists, Genres, Years, Composers: the names on the left with
-    their song counts, the chosen one's albums (cards) or songs (a table) on the right."""
+    """Artists, Album Artists, Genres, Years, Composers: a card each (a mosaic of up to
+    four of its album covers, the name in bold, "N albums · M songs" in grey), in the
+    grouping's order; a click opens its page ("group").  A card's menu (right click)
+    plays it, and on Genres, Composers and Years renames it; on Genres several cards can
+    be selected with Ctrl/Cmd-click and merged ("Merge N genres…")."""
 
     def __init__(self, app, kind: str):
         super().__init__(app)
         t = self.theme
         self.kind = kind
-        self.title, self.group_fn, self.noun, self.shows = GROUPINGS[kind]
+        self.title, self.group_fn, self.noun, self.shows, _icon = GROUPINGS[kind]
         self.list_name = self.title
         head, self.title_l, self.sub = self.heading(self, self.title, buttons=False)
-        head.pack(fill="x", padx=28, pady=(22, 8))
-        body = frame(self, t)
-        body.pack(fill="both", expand=True)
-        self.left = SongList(body, t, [Column("name", "", 200, True), Column("count", "", 44, anchor="e")],
-                             lambda r, k: r["name"] if k == "name" else f"{len(r['tracks']):,}", header=False,
-                             zebra=False, on_select=self._chosen, on_activate=self._activate, row_height=34)
-        self.left.configure(width=270)
-        self.left.pack(side="left", fill="y", padx=(12, 0))
-        self.left.pack_propagate(False)
-        frame(body, t, bg="sep", width=1).pack(side="left", fill="y", padx=(8, 0))
-        self.right = frame(body, t)
-        self.right.pack(side="left", fill="both", expand=True)
-        rh, self.r_title, self.r_sub = self.heading(self.right, "", buttons=True)
-        self.r_title.configure(font=t.f("h1"))
-        rh.pack(fill="x", padx=24, pady=(6, 8))
+        head.pack(fill="x", padx=28, pady=(22, 6))
+        self.merge_b = PillButton(head, t, "Merge genres…", command=lambda: self.merge_selected())
+        self.clear_b = PillButton(head, t, "Clear selection", kind="plain",
+                                  command=lambda: self.grid_w.clear_selection())
         self.items: List[dict] = []
-        self.chosen: Optional[dict] = None
-        if self.shows == "albums":
-            self.grid_w = AlbumGrid(self.right, t, app.covers, app.open_album)
-            self.grid_w.pack(fill="both", expand=True)
-        else:
-            self.table = song_table(self, self.right, on_activate=lambda i: app.play_list(
-                self.table.rows, i, self.list_name))
-            self.table.pack(fill="both", expand=True, padx=(8, 12))
+        self.grid_w = AlbumGrid(self, t, app.covers, self._open, on_context=self._context,
+                                multi=kind == "genres", on_selection=self._selection,
+                                empty_text=f"No {self.noun}s yet.")
+        self.grid_w.pack(fill="both", expand=True)
         self.refresh()
 
     def refresh(self) -> None:
-        self.items = self.group_fn(self.app.tracks)
-        self.sub.configure(text=plural(len(self.items), self.noun) if self.items else "")
-        names = [i["name"] for i in self.items]
-        keep = self.chosen["name"] if self.chosen else None
-        self.left.set_rows(self.items, keep=True)
-        idx = names.index(keep) if keep in names else (0 if self.items else None)
-        self.left.selected = idx
-        self.left.redraw()
-        self._chosen(idx)
+        self.items = library_groups(self.app, self.kind)
+        self.grid_w.set_albums([group_card(self.app, self.kind, g) for g in self.items], keep=True)
+        self._selection()
 
-    def _chosen(self, i: Optional[int]) -> None:
-        self.chosen = self.items[i] if i is not None and i < len(self.items) else None
-        item = self.chosen
-        self.r_title.configure(text=item["name"] if item else "")
-        self.list_name = item["name"] if item else self.title
-        if self.shows == "albums":
-            albums = musiclib.albums(item["tracks"]) if item else []
-            self.r_sub.configure(text=f"{plural(len(albums), 'album')}, {plural(len(item['tracks']), 'song')}"
-                                 if item else "")
-            self.grid_w.set_albums(albums)
+    def _selection(self) -> None:
+        n = len(self.grid_w.selected)
+        text = plural(len(self.items), self.noun) if self.items else ""
+        if self.kind == "genres" and self.items:
+            text += (f" · {n} selected" if n else f" · {MOD_NAME}-click genres to select several and merge them")
+        self.sub.configure(text=text)
+        if n >= 2:
+            self.merge_b.set(text=f"Merge {n} genres…")
+            if not self.merge_b.winfo_ismapped():
+                self.clear_b.pack(side="right")
+                self.merge_b.pack(side="right", padx=(0, 10))
         else:
-            self.r_sub.configure(text=plural(len(item["tracks"]), "song") if item else "")
-            self.table.set_rows(item["tracks"] if item else [])
+            self.merge_b.pack_forget()
+            self.clear_b.pack_forget()
 
-    def _activate(self, i: int) -> None:
-        self._chosen(i)
-        self._play(False)
+    def _open(self, card: dict) -> None:
+        self.app.show_page("group", kind=self.kind, group=card["name"])
 
     def choose(self, name: str) -> None:
-        for i, item in enumerate(self.items):
-            if item["name"].casefold() == name.casefold():
-                self.left.select(i)
-                return
+        """Open the page of `name` (as a click on its card)."""
+        g = find_group(self.app, self.kind, name)
+        if g is not None:
+            self.app.show_page("group", kind=self.kind, group=g["name"])
+
+    def _context(self, i: int, e) -> None:
+        card = self.grid_w.albums[i]
+        sel = self.grid_w.selected_items()
+        if len(sel) > 1 and card["key"] in self.grid_w.selected:
+            m = self.selection_menu()
+        else:
+            m = group_menu(self.app, self.kind, card["name"])
+        m.tk_popup(e.x_root, e.y_root)
+
+    def selection_menu(self) -> tk.Menu:
+        m = tk.Menu(self.app.root, tearoff=False)
+        n = len(self.grid_w.selected)
+        m.add_command(label=f"Merge {n} genres…", command=self.merge_selected)
+        m.add_command(label="Clear selection", command=self.grid_w.clear_selection)
+        self.app.theme_menu(m)
+        self.app.last_menu = m
+        return m
+
+    def merge_selected(self, target: Optional[str] = None, confirm: bool = True):
+        names = [c["name"] for c in self.grid_w.selected_items()]
+        if len(names) < 2:
+            return None
+        job = merge_groups(self.app, self.kind, names, target, confirm)
+        if job is not None:
+            self.grid_w.clear_selection()
+        return job
+
+
+class GroupItemPage(Page):
+    """One artist, album artist, genre, year or composer (a card of its grouping page):
+    its albums as cards (artists) or its songs (the others), Play, Shuffle and "…"
+    (its menu: Rename…, Merge into…)."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        t = self.theme
+        self.kind, self.name, self.old = "artists", "", ""
+        self.item: Optional[dict] = None
+        top, self.title_l, self.sub = self.heading(self, "", back=True)
+        top.pack(fill="x", padx=28, pady=(22, 6))
+        self.more_b = IconButton(top, t, "dots", command=self._more, size=32, icon_size=18,
+                                 tooltip=lambda: "More")
+        self.more_b.pack(side="right", padx=(0, 10))
+        self.grid_w = AlbumGrid(self, t, app.covers, app.open_album)
+        self.table = song_table(self, self, kind="songs",
+                                on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
+
+    def show(self, kind: Optional[str] = None, group: Optional[str] = None, **kw) -> None:
+        if kind is not None and group is not None and (kind, group) != (self.kind, self.name):
+            self.kind, self.name, self.old = kind, group, ""
+        self.refresh()
+
+    def renamed(self, new: str) -> None:
+        """Its songs are being given a new name: follow them to it."""
+        self.old, self.name = self.name, new
+
+    def refresh(self) -> None:
+        g = find_group(self.app, self.kind, self.name) or (find_group(self.app, self.kind, self.old)
+                                                            if self.old else None)
+        self.item = g
+        noun = GROUPINGS[self.kind][2]
+        self.title_l.configure(text=g["name"] if g else self.name)
+        self.list_name = g["name"] if g else self.name
+        if self.kind in RENAMABLE:
+            self.more_b.pack(side="right", padx=(0, 10))
+        else:
+            self.more_b.pack_forget()
+        if GROUPINGS[self.kind][3] == "albums":
+            albums = [self.app.album_by_key[k] for k in (g["albums"] if g else []) if k in self.app.album_by_key]
+            self.sub.configure(text=f"{noun.capitalize()} · {plural(len(albums), 'album')}, "
+                                    f"{plural(len(g['tracks']), 'song')}" if g else "")
+            self.table.pack_forget()
+            self.grid_w.pack(fill="both", expand=True)
+            self.grid_w.set_albums(albums)
+        else:
+            self.sub.configure(text=f"{noun.capitalize()} · {plural(len(g['tracks']), 'song')}" if g else
+                               f"No songs have this {noun} any more.")
+            self.grid_w.pack_forget()
+            self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+            self.table.set_rows(g["tracks"] if g else [], keep=True)
+
+    def menu(self) -> tk.Menu:
+        return group_menu(self.app, self.kind, self.item["name"] if self.item else self.name, here=True)
+
+    def _more(self) -> None:
+        b = self.more_b
+        self.menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
 
     def songs(self) -> List[Track]:
-        if not self.chosen:
+        if self.item is None:
             return []
-        return album_order(self.chosen["tracks"]) if self.shows == "albums" else list(self.table.rows)
+        return album_order(self.item["tracks"]) if GROUPINGS[self.kind][3] == "albums" else list(self.table.rows)
 
     def likes_changed(self) -> None:
-        if self.shows == "songs":
-            self.table.redraw()
+        self.table.redraw()
 
     def song_changed(self) -> None:
-        if self.shows == "songs":
-            self.table.redraw()
+        self.table.redraw()
+
+
+# ------------------------------------------------- renaming and merging ---
+def group_menu(app, kind: str, name: str, here: bool = False) -> tk.Menu:
+    """The menu of a genre, year, composer or artist: Open, Play, Shuffle, and for
+    genres, composers and years Rename… (genres also Merge into…)."""
+    m = tk.Menu(app.root, tearoff=False)
+    noun = GROUPINGS[kind][2]
+
+    def songs() -> List[Track]:
+        g = find_group(app, kind, name)
+        return album_order(g["tracks"]) if g else []
+    if not here:
+        m.add_command(label="Open", command=lambda: app.show_page("group", kind=kind, group=name))
+    m.add_command(label="Play", command=lambda: songs() and app.play_list(songs(), 0, name))
+    m.add_command(label="Shuffle", command=lambda: songs() and app.play_list(songs(), 0, name, shuffle=True))
+    if kind in RENAMABLE:
+        m.add_separator()
+        m.add_command(label=f"Rename {noun}…", command=lambda: rename_group(app, kind, name))
+        if kind == "genres":
+            m.add_command(label="Merge into…", command=lambda: merge_groups(app, kind, [name]))
+    app.theme_menu(m)
+    app.last_menu = m
+    return m
+
+
+def _value_of(kind: str, t: Track) -> str:
+    return t.year if kind == "years" else tagedit.clean_value(getattr(t, tagedit.GROUP_FIELD[kind]))
+
+
+def _check(kind: str) -> Callable[[str], str]:
+    def check(name: str) -> str:
+        try:
+            return tagedit.check_group_name(kind, name)
+        except tagedit.TagError as exc:
+            raise ValueError(str(exc)) from exc  # the name dialog shows the message
+    return check
+
+
+def rename_group(app, kind: str, name: str, new: Optional[str] = None, confirm: bool = True):
+    """Rename… a genre, composer or year: every song of it gets the new name (a year
+    only replaces the year of the release date).  Returns the TagJobWindow, or None."""
+    noun = GROUPINGS[kind][2]
+    g = find_group(app, kind, name)
+    if g is None:
+        return None
+    unknown = g["name"] == UNKNOWN.get(kind)
+    if new is None:
+        prompt = (f"Give the songs without a {noun} this {noun}:" if unknown else
+                  f"New name of the {noun} “{g['name']}”:" if kind != "years" else
+                  f"Change the year {g['name']} of these songs to:")
+        new = ask_name_dialog(app, f"Rename {noun}", prompt, "" if unknown else g["name"], _check(kind), "Rename")
+    if not new:
+        return None
+    new = tagedit.check_group_name(kind, new)
+    what = (f"Give {{n}} without a {noun} the {noun} “{new}”?" if unknown else
+            f"Change the year {g['name']} to {new}? The release date of {{n}} changes (only its year)."
+            if kind == "years" else f"Rename the {noun} “{g['name']}” to “{new}”? The {noun} of {{n}} changes.")
+    return _retag(app, kind, [g], new, confirm, f"Rename {noun}", what)
+
+
+def merge_groups(app, kind: str, names: List[str], target: Optional[str] = None, confirm: bool = True):
+    """Merge into… (one genre) or Merge N genres… (several): their songs get one genre."""
+    groups = [g for g in (find_group(app, kind, n) for n in names) if g is not None]
+    if not groups:
+        return None
+    if target is None:
+        if len(groups) == 1:
+            mine = groups[0]["name"].strip().casefold()
+            others = [g["name"] for g in library_groups(app, kind)
+                      if g["name"].strip().casefold() != mine and g["name"] != UNKNOWN.get(kind)]
+            target = ask_name_dialog(app, "Merge into", f"Merge the genre “{groups[0]['name']}” into which genre? "
+                                     "Choose one, or type a new name.", "", _check(kind), "Merge", choices=others)
+        else:
+            biggest = sorted(groups, key=lambda g: -len(g["tracks"]))
+            names_ = [g["name"] for g in biggest if g["name"] != UNKNOWN.get(kind)]
+            target = ask_name_dialog(app, f"Merge {len(groups)} genres", f"Merge {len(groups)} genres into one. "
+                                     "Its name:", names_[0] if names_ else "", _check(kind), "Merge", choices=names_)
+    if not target:
+        return None
+    target = tagedit.check_group_name(kind, target)
+    if len(groups) == 1:
+        what = f"Merge the genre “{groups[0]['name']}” into “{target}”? The genre of {{n}} becomes “{target}”."
+    else:
+        listed = ", ".join(f"“{g['name']}”" for g in groups)
+        what = f"Merge {len(groups)} genres ({listed}) into “{target}”? The genre of {{n}} becomes “{target}”."
+    return _retag(app, kind, groups, target, confirm, "Merge genres", what)
+
+
+def ask_name_dialog(app, title, prompt, initial, check, ok, choices=None) -> Optional[str]:
+    from .player_windows import ask_name
+
+    return ask_name(app, title, prompt, initial, check=check, ok=ok, choices=choices)
+
+
+def _retag(app, kind: str, groups: List[dict], new: str, confirm: bool, title: str, what: str):
+    """Confirm, then write the new name into the files that do not have it yet."""
+    from tkinter import messagebox
+
+    from .player_windows import TagJobWindow
+
+    job = getattr(app, "tag_job", None)
+    if job is not None and not job.done:
+        messagebox.showinfo(title, "Songs are still being changed; try again when that has finished.",
+                            parent=app.root)
+        return None
+    seen, tracks = set(), []
+    for g in groups:
+        for t in g["tracks"]:
+            if t.path not in seen and _value_of(kind, t) != new:
+                seen.add(t.path)
+                tracks.append(t)
+    noun = GROUPINGS[kind][2]
+    if not tracks:
+        messagebox.showinfo(title, f"Every song already has the {noun} “{new}”: nothing to change.",
+                            parent=app.root)
+        return None
+    n = plural(len(tracks), "song")
+    if confirm and not messagebox.askyesno(title, what.format(n=n) + " Only the information in the files is "
+                                           "changed; the music itself is not touched.", parent=app.root):
+        return None
+    page = app.pages.get("group")
+    if isinstance(page, GroupItemPage) and page.kind == kind and any(page.item is g for g in groups):
+        page.renamed(new)
+    app.tag_job = TagJobWindow(app, title, kind, [t.path for t in tracks], new)
+    return app.tag_job
 
 
 # ---------------------------------------------------------------- songs ---
@@ -404,8 +788,8 @@ class SongsPage(Page):
         self.title, self.which, self.list_name = title, which, title
         head, self.title_l, self.sub = self.heading(self, title)
         head.pack(fill="x", padx=28, pady=(22, 8))
-        self.table = song_table(self, self, on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name),
-                                empty_text=self.EMPTY[which])
+        self.table = song_table(self, self, kind="songs", empty_text=self.EMPTY[which],
+                                on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
         self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.refresh()
 
@@ -453,7 +837,8 @@ class SearchPage(Page):
         self.grid_w.pack(fill="both", expand=True)
         self.song_head = label(self, t, "Songs", "h2")
         self.song_head.pack(anchor="w", padx=28, pady=(4, 2))
-        self.table = song_table(self, self, on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
+        self.table = song_table(self, self, kind="songs",
+                                on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
         self.table.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.text = ""
 
