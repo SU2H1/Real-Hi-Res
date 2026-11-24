@@ -1798,21 +1798,22 @@ class App(ttk.Frame):
         # the toolbar: sources and the quick-scan switch; Scan (or Stop), Settings… and More
         bar = ttk.Frame(self)
         bar.grid(row=1, column=0, sticky="ew", padx=P, pady=(12, 0))
+        # the right side first: in a narrow window the quick-scan switch gives way, not Scan
+        self.more_btn = IconButton(bar, t, "dots", command=self.show_more_menu, size=32, icon_size=17,
+                                   tooltip=lambda: "More")
+        self.more_btn.pack(side="right")
+        Button(bar, t, "Settings…", command=self.open_settings, icon="gear").pack(side="right", padx=(8, 6))
+        slot = ttk.Frame(bar)
+        slot.pack(side="right", padx=(12, 0))
+        self.scan_btn = Button(slot, t, "Scan", command=self.start_scan, kind="accent", icon="check")
+        self.stop_btn = Button(slot, t, "Stop", command=self.stop_scan, kind="accent", state="disabled")
+        self.scan_btn.pack()
         Button(bar, t, "Add Folder…", command=self.add_folder, icon="folder").pack(side="left")
         Button(bar, t, "Add Files…", command=self.add_files, icon="note").pack(side="left", padx=(8, 0))
         Button(bar, t, "Clear", command=self.clear).pack(side="left", padx=(8, 16))
         self.quick_cb = ttk.Checkbutton(bar, variable=self.quick_var)
         self.quick_cb.pack(side="left")
         self._update_quick_label()
-        self.more_btn = IconButton(bar, t, "dots", command=self.show_more_menu, size=32, icon_size=17,
-                                   tooltip=lambda: "More")
-        self.more_btn.pack(side="right")
-        Button(bar, t, "Settings…", command=self.open_settings, icon="gear").pack(side="right", padx=(8, 6))
-        slot = ttk.Frame(bar)
-        slot.pack(side="right")
-        self.scan_btn = Button(slot, t, "Scan", command=self.start_scan, kind="accent", icon="check")
-        self.stop_btn = Button(slot, t, "Stop", command=self.stop_scan, kind="accent", state="disabled")
-        self.scan_btn.pack()
 
         # Sources to scan: a rounded panel with rows like a song table
         src = RoundFrame(self, t, bg_role="lcd")
@@ -1825,7 +1826,7 @@ class App(ttk.Frame):
         self.src_tree.heading("kind", text="Type")
         self.src_tree.heading("files", text="Audio files")
         self.src_tree.heading("problems", text="Fake / suspicious")
-        self.src_tree.column("#0", width=560, stretch=True)
+        self.src_tree.column("#0", width=300, stretch=True)
         self.src_tree.column("kind", width=70, anchor="center", stretch=False)
         self.src_tree.column("files", width=130, anchor="center", stretch=False)
         self.src_tree.column("problems", width=130, anchor="center", stretch=False)
@@ -1876,7 +1877,7 @@ class App(ttk.Frame):
         for v in VERDICT_ORDER:
             self.filter_checks[v] = Chip(self.filt, t, VERDICT_STYLE[v][0], VERDICT_STYLE[v][1], self.show_vars[v],
                                          command=self.refresh)
-        self.filt.bind("<Configure>", lambda e: self._flow_chips(e.width))
+        self.filt.bind("<Configure>", lambda e: self._flow_chips(e.width) if e.width != self._chips_width else None)
         self._flow_chips(0)
 
         # browser-style find bar (Ctrl/Cmd+F)
@@ -1951,6 +1952,9 @@ class App(ttk.Frame):
         board = RoundFrame(panes, t, bg_role="lcd", radius=12)
         dash = ttk.PanedWindow(board, orient="horizontal", style="Panel.TPanedwindow")
         dash.pack(fill="both", expand=True, padx=14, pady=(12, 8))
+        self.dash = dash
+        self._dash_split_done = False
+        dash.bind("<Configure>", lambda e: self._first_dash_split(e.width), add="+")
         info = ttk.Frame(dash, style="Panel.TFrame", padding=(2, 0, 10, 0))
         info.columnconfigure(1, weight=1)
         info.rowconfigure(4, weight=1)
@@ -1977,16 +1981,16 @@ class App(ttk.Frame):
                 row=i // 2, column=(i % 2) * 2 + 1, sticky="w", padx=(0, 22), pady=1,
                 columnspan=3 if key == "After fix" else 1)
         btns = ttk.Frame(info, style="Panel.TFrame")
-        btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 8))
+        btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 4))
         kw = dict(height=30, fill="field", hover_fill="sep", bg_role="lcd", state="disabled")
         self.open_folder_btn = Button(btns, t, "Open Folder", command=self.reveal, **kw)
         self.open_file_btn = Button(btns, t, "Open File", command=self.open_file, **kw)
         self.copy_btn = Button(btns, t, "Copy Path", command=self.copy_path, **kw)
         self.fix_btn = Button(btns, t, "Fix to real resolution…", command=self.fix_selected, **kw)
         self.lyrics_btn = Button(btns, t, "Get lyrics…", command=self.lyrics_selected, **kw)
-        for i, b in enumerate((self.open_folder_btn, self.open_file_btn, self.copy_btn, self.fix_btn,
-                               self.lyrics_btn)):
-            b.pack(side="left", padx=(0 if i == 0 else 12 if i == 3 else 6, 0))
+        self.dash_buttons = (self.open_folder_btn, self.open_file_btn, self.copy_btn, self.fix_btn, self.lyrics_btn)
+        btns.bind("<Configure>", lambda e: self._flow(btns, self.dash_buttons, e.width))  # wraps when narrow
+        self._flow(btns, self.dash_buttons, 0)
         txt_frame = ttk.Frame(info, style="Panel.TFrame")  # Details: the reasons, notes and the path
         txt_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
         txt_frame.rowconfigure(0, weight=1)
@@ -2061,17 +2065,26 @@ class App(ttk.Frame):
 
     def _flow_chips(self, width: int) -> None:
         """The verdict chips in as many rows as the page's width needs."""
-        if width <= 1:
-            width = 100000
         self._chips_width = width
-        x = row = col = 0
-        for chip in self.filter_checks.values():
-            w = int(chip.cget("width")) + 6
-            if col and x + w > width:
-                row, col, x = row + 1, 0, 0
-            chip.grid(row=row, column=col, padx=(0, 6), pady=(0, 4), sticky="w")
-            x += w
-            col += 1
+        self._flow(self.filt, self.filter_checks.values(), width)
+
+    @staticmethod
+    def _flow(container, widgets, width: int, gap: int = 6, vgap: int = 6) -> None:
+        """Canvas widgets (chips, buttons) placed in rows in `container`, as many per row
+        as `width` holds (all in one row while the width is not known yet)."""
+        widgets = list(widgets)
+        if width <= 1:
+            width = sum(int(w.cget("width")) + gap for w in widgets)
+        x = y = row_h = 0
+        for w in widgets:
+            ww, wh = int(w.cget("width")), int(w.cget("height"))
+            if x and x + ww > width:
+                x, y, row_h = 0, y + row_h + vgap, 0
+            w.place(x=x, y=y)
+            x += ww + gap
+            row_h = max(row_h, wh)
+        one_row = sum(int(w.cget("width")) + gap for w in widgets) - gap
+        container.configure(height=y + row_h, width=min(one_row, max(width, 1)))
 
     def _fit_sources(self) -> None:
         """The source list grows with the sources, from one row to four."""
@@ -2094,6 +2107,14 @@ class App(ttk.Frame):
             return
         self._split_done = True
         self.after_idle(lambda: self.panes.sashpos(0, int(height * 0.4)))
+
+    def _first_dash_split(self, width: int) -> None:
+        """The dashboard's facts get about 62 % of its width at first (the five buttons in one
+        row in a window of 1280 pixels), the plots the rest."""
+        if self._dash_split_done or width < 400:
+            return
+        self._dash_split_done = True
+        self.after_idle(lambda: self.dash.sashpos(0, int(width * 0.62)))
 
     def _plot_tab(self) -> None:
         self.plots.select(self.PLOT_TABS.index(self.plot_tabs.get()))
@@ -2159,8 +2180,15 @@ class App(ttk.Frame):
             self.set_filters(new.shown_verdicts)
         self._update_quick_label()
         self.spectrogram.redraw()
-        self.status_var.set("Settings saved. Files without a result for the new detection settings are "
-                            "analysed when you press Scan." if detection else "Settings saved.")
+        if detection:
+            self.status_var.set("Settings saved. Files without a result for the new detection settings are "
+                                "analysed when you press Scan.")
+        elif self.embedded and self.results:
+            # the player's Settings page saves every change at once (theme, volume, ...): the
+            # page's status line keeps saying what the scan found
+            self._update_status(final=not self.scanning, stopped=self._last_stopped)
+        elif not self.embedded:
+            self.status_var.set("Settings saved.")
 
     # ---------- sources --------------------------------------------------
     def _add_source(self, path: str) -> None:

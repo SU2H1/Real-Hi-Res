@@ -385,7 +385,7 @@ class Theme:
         for prefix, back in (("", bg), ("Panel.", panel)):
             name = f"{prefix}Treeview"
             s.configure(name, background=back, fieldbackground=back, foreground=c["text"], font=body,
-                        rowheight=30 if not prefix else 26, borderwidth=0, relief="flat", bordercolor=back,
+                        rowheight=32 if not prefix else 26, borderwidth=0, relief="flat", bordercolor=back,
                         lightcolor=back, darkcolor=back)
             s.map(name, background=[("selected", c["accent"])], foreground=[("selected", c["on_accent"])])
             s.layout(name, [("Treeview.treearea", {"sticky": "nswe"})])
@@ -1050,6 +1050,7 @@ class Segmented(tk.Canvas):
         self.bind("<Motion>", lambda e: self._hov(self._at(e.x)))
         self.bind("<Leave>", lambda e: self._hov(None))
         self.bind("<ButtonRelease-1>", self._click)
+        self.bind("<Configure>", lambda e: self.redraw())  # squeezed: drawn smaller (see redraw)
         self.redraw()
 
     def _at(self, x: float) -> Optional[int]:
@@ -1082,8 +1083,18 @@ class Segmented(tk.Canvas):
         t = self.theme
         font = t.f("body_b")
         widths = [font.measure(o) + 28 for o in self.options]
-        w = sum(widths) + 6
-        self.configure(width=w)
+        natural = sum(widths) + 6
+        if int(self.cget("width")) != natural:
+            self.configure(width=natural)  # what it asks for; a narrow window may give it less
+        have = self.winfo_width()
+        w = natural
+        if 1 < have < natural:  # less room: less padding, then the small font
+            for name, pad in (("body_b", 16), ("small_b", 12), ("small_b", 6)):
+                font = t.f(name)
+                widths = [font.measure(o) + pad for o in self.options]
+                w = sum(widths) + 6
+                if w <= have:
+                    break
         self.delete("all")
         track = t.c("field") if self.bg_role == "lcd" else t.c("lcd")
         round_rect(self, 0, 0, w, self.h, 9, fill=track, outline="")
