@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, OnceLock, RwLock};
 
-use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
+use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle};
 
 /// The variable Inter, with its licence in `realhires/assets/fonts/`.
 const INTER: &[u8] = include_bytes!("../../../../realhires/assets/fonts/InterVariable.ttf");
@@ -237,6 +237,8 @@ pub fn install_theme(ctx: &egui::Context, theme: &str, custom: &[realhires::them
             w.corner_radius = egui::CornerRadius::same(6);
         }
         v.widgets.noninteractive.bg_stroke.color = p.separator;
+        // text fields and buttons get a hairline, so a field on the page background shows
+        v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.separator);
         v.widgets.inactive.weak_bg_fill = mix(p.bg, p.text, if dark { 0.14 } else { 0.08 });
         v.widgets.inactive.bg_fill = v.widgets.inactive.weak_bg_fill;
         v.widgets.hovered.weak_bg_fill = p.hover;

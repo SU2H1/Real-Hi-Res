@@ -435,7 +435,7 @@ impl Player {
                     ui.spacing_mut().item_spacing.x = gap;
                     for (i, (label, big, detail)) in row.iter().enumerate() {
                         let k = r * cols + i;
-                        let height = if k == 0 { 150.0 } else { 132.0 };
+                        let height = 140.0;
                         let (rect, _) = ui.allocate_exact_size(vec2(cw, height), Sense::hover());
                         let base = crate::style::hex(CARD_COLORS[k % CARD_COLORS.len()]);
                         ui.painter().rect_filled(rect, CornerRadius::same(14), base);
@@ -474,25 +474,23 @@ impl Player {
                 ui.label(RichText::new("No listening yet in this period. Play some music and come back.").color(pal.secondary));
             } else {
                 section(ui, pal, "Totals");
-                egui::Grid::new("stats-totals").num_columns(4).spacing([28.0, 6.0]).show(ui, |ui| {
-                    let totals = [
-                        ("Minutes", stats::thousands((st.seconds / 60.0).round() as i64)),
-                        ("Plays", stats::thousands(st.plays)),
-                        ("Songs", stats::thousands(st.songs as i64)),
-                        ("Artists", stats::thousands(st.artists as i64)),
-                        ("Albums", stats::thousands(st.albums as i64)),
-                        ("Genres", stats::thousands(st.genres as i64)),
-                        ("Days with music", stats::thousands(st.days as i64)),
-                        ("Longest streak", plural(st.streak, "day")),
-                    ];
-                    for (i, (k, v)) in totals.iter().enumerate() {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(*k).color(pal.secondary));
-                            ui.label(RichText::new(v).font(look::title(20.0)).color(pal.text));
-                        });
-                        if i % 4 == 3 {
-                            ui.end_row();
-                        }
+                let totals = [
+                    ("Minutes", stats::thousands((st.seconds / 60.0).round() as i64)),
+                    ("Plays", stats::thousands(st.plays)),
+                    ("Songs", stats::thousands(st.songs as i64)),
+                    ("Artists", stats::thousands(st.artists as i64)),
+                    ("Albums", stats::thousands(st.albums as i64)),
+                    ("Genres", stats::thousands(st.genres as i64)),
+                    ("Days with music", stats::thousands(st.days as i64)),
+                    ("Longest streak", plural(st.streak, "day")),
+                ];
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+                    for (k, v) in totals {
+                        let (rect, _) = ui.allocate_exact_size(vec2(160.0, 62.0), Sense::hover());
+                        ui.painter().rect_filled(rect, CornerRadius::same(10), pal.lcd);
+                        ui.painter().text(rect.left_top() + vec2(14.0, 10.0), Align2::LEFT_TOP, k, look::text(12.0), pal.secondary);
+                        ui.painter().text(rect.left_top() + vec2(14.0, 28.0), Align2::LEFT_TOP, v, look::title(20.0), pal.text);
                     }
                 });
                 section(ui, pal, "By hour of the day (minutes)");
@@ -510,7 +508,7 @@ impl Player {
                         .map(|(m, _)| {
                             let (y, mo) = m.split_at(4);
                             let mo: usize = mo.trim_start_matches('-').parse().unwrap_or(1);
-                            format!("{} {}", stats::MONTHS[mo.clamp(1, 12) - 1], &y[2..])
+                            format!("{} {y}", stats::MONTHS[mo.clamp(1, 12) - 1])
                         })
                         .collect();
                     bars(ui, pal, &vals, &labels);
@@ -533,7 +531,10 @@ impl Player {
                     plural(lib.songs, "song"),
                     plural(lib.albums, "album"),
                     plural(lib.artists, "artist"),
-                    crate::style::fmt_duration(Some(lib.seconds)),
+                    {
+                        let m = (lib.seconds / 60.0).round() as i64;
+                        if m >= 60 { format!("{} hr {} min", stats::thousands(m / 60), m % 60) } else { format!("{m} min") }
+                    },
                     if gb >= 1.0 { format!("{} GB", realhires::pyfmt::f(gb, 1)) } else { format!("{} MB", realhires::pyfmt::f(gb * 1000.0, 0)) }
                 ))
                 .color(pal.text),

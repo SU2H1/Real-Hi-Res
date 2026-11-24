@@ -792,9 +792,15 @@ impl Player {
                         *self.settings_draft() = draft;
                         self.settings_changed();
                     }
-                    if group == "Appearance" && !self.font_used.is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(format!("Font in use: {}.", self.font_used)).color(pal.secondary));
+                    if group == "Appearance" {
+                        if !self.font_used.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(format!("Font in use: {}.", self.font_used)).color(pal.secondary));
+                        }
+                        ui.add_space(14.0);
+                        ui.label(RichText::new("Themes").font(look::title(15.0)).color(pal.text));
+                        ui.add_space(4.0);
+                        self.theme_editor(ui, pal);
                     }
                     ui.add_space(16.0);
                     if ui.button("Restore the defaults of this group").clicked() {
@@ -851,9 +857,6 @@ impl Player {
                         self.fill_choices();
                     }
                 });
-            }
-            "Appearance" => {
-                self.theme_editor(ui, pal);
             }
             "Lyrics" => {
                 ui.horizontal_wrapped(|ui| {
