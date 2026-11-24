@@ -70,7 +70,7 @@ def header() -> str:
     return f"{'VERDICT':<14} {'CLAIMED':<10} {'REAL(EST)':<11} {'BANDWIDTH':<9}  FILE"
 
 
-def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = False) -> str:
+def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = False, cfg=None) -> str:
     name = os.path.relpath(r.path, base) if base else r.path
     line = (paint(f"{r.verdict:<14}", r.verdict, color)
             + f" {r.claimed:<10} {r.estimated:<11} {_bw(r):<9}  {name}")
@@ -82,6 +82,11 @@ def row(r: FileResult, color: bool, base: Optional[str] = None, verbose: bool = 
             line += f"{pad}- {reason}"
         for note in r.notes:
             line += f"{pad}· {note}"
+        from .fix import fix_advice  # what Fix does with a fake file, and whether it stays fake
+
+        advice = fix_advice(r, cfg)
+        if advice:
+            line += f"{pad}· {advice}"
         if r.bit_usage:
             top = ", ".join(f"{b}-bit LSB {v:.1%}" for b, v in list(r.bit_usage.items())[:3])
             line += f"{pad}· Lowest-set-bit usage: {top}"
