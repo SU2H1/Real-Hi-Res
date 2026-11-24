@@ -19,6 +19,11 @@ After a file has been written, its saved quality-check results are moved to
 its new size and time with the new tags (`ResultStore.retag()`), because its
 audio did not change, and the library reads it again.
 
+The cover (2.1, `set_cover()`, `remove_cover()`, at the end of this module) is
+written the same way: a FLAC PICTURE block, an ID3v2 APIC frame or an Ogg
+METADATA_BLOCK_PICTURE comment natively, an attached picture through FFmpeg's
+stream copy for M4A and AIFF.
+
 The Rust version (`rust/crates/core/src/tagedit.rs`) writes the same bytes and
 runs the same FFmpeg command; `rust/tools/gen_player_vectors.py` writes the
 Python answers it is tested against.
@@ -585,6 +590,7 @@ FRONT_COVER = 3
 COVER_TYPES = (3, 0)
 MAX_PICTURE = 16_000_000
 PICTURE_FFMPEG = (".m4a", ".m4b", ".mp4", ".alac", ".aif", ".aiff", ".aifc")
+NO_PICTURE = (".wav", ".wave", ".w64", ".rf64", ".caf", ".au", ".snd", ".aac", ".adts", ".ac3", ".dts", ".amr")
 MBP = "METADATA_BLOCK_PICTURE"
 _B64 = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
@@ -784,8 +790,10 @@ def cannot_hold_cover(path: str) -> str:
     name = ext[1:].upper() or "These"
     if ext in NO_MUXER:
         return f"The cover of {name} files cannot be changed here, because FFmpeg can read them but not write them."
-    if ext not in NATIVE and ext not in PICTURE_FFMPEG:
+    if ext in NO_PICTURE:
         return f"{name} files have no place for a cover picture, so they were left as they are."
+    if ext not in NATIVE and ext not in PICTURE_FFMPEG:
+        return f"The cover of {name} files cannot be changed here, because FFmpeg cannot write pictures into them."
     return ""
 
 

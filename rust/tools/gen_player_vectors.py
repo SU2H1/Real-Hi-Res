@@ -456,3 +456,199 @@ with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh
                "folder": {"own": own, "files": folder_files, "loaded": loaded},
                "ogg_inputs": {name: data.hex() for name, data in oggs.items()}, "ogg": ogg_cases,
                "crc": crcs}, fh, indent=0, ensure_ascii=False)
+
+
+# ------------------------------------------------------------ covers (2.1) ---
+import random  # noqa: E402
+import zlib  # noqa: E402
+
+from realhires import covers, embed  # noqa: E402
+
+
+def png_image(w, h, color=2, bits=8, palette=0, noise=0):
+    rng = random.Random(w * 1000 + h)
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, bits, color, 0, 0, 0))
+    if palette:
+        out += chunk(b"PLTE", bytes(range(palette * 3)))
+    raw = bytes(rng.getrandbits(8) for _ in range(noise)) if noise else b"\x00" * h
+    return out + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def jpeg_image(w, h, sof=0xC0, comps=3, fill=False):
+    app0 = b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof_seg = bytes([0xFF, sof]) + struct.pack(">HBHHB", 8 + 3 * comps, 8, h, w, comps) + bytes(3 * comps)
+    return b"\xff\xd8" + app0 + (b"\xff\xff" if fill else b"") + sof_seg + b"\xff\xda\x00\x08SCANDATA\xff\xd9"
+
+
+images = {
+    "png_rgb": png_image(3, 2),
+    "png_rgba16": png_image(640, 480, color=6, bits=16),
+    "png_gray": png_image(9, 9, color=0, bits=1),
+    "png_palette": png_image(12, 7, color=3, bits=4, palette=5),
+    "png_palette_no_plte": png_image(12, 7, color=3, bits=4),
+    "jpeg": jpeg_image(1200, 1000),
+    "jpeg_progressive": jpeg_image(800, 600, sof=0xC2, fill=True),
+    "jpeg_gray": jpeg_image(31, 17, comps=1),
+    "jpeg_no_sof": b"\xff\xd8\xff\xe0\x00\x04ab\xff\xda\x00\x02",
+    "jpeg_short": b"\xff\xd8\xff",
+    "gif": b"GIF89a\x01\x00\x01\x00\x00\x00\x00;",
+    "bmp": b"BM" + b"\x00" * 30,
+    "webp": b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 8,
+    "text": b"hello",
+    "empty": b"",
+    "big_png": png_image(150, 150, noise=150 * 150 * 3),
+}
+infos = {}
+for name, data in images.items():
+    info = covers.image_info(data)
+    infos[name] = {"format": covers.image_format(data),
+                   "info": None if info is None else [info.mime, info.width, info.height, info.depth, info.colors]}
+checks_pic = []
+for name, mime in (("png_rgb", ""), ("jpeg", "image/jpeg"), ("jpeg", "image/JPG"), ("png_rgb", "image/gif"),
+                   ("gif", ""), ("text", "image/png"), ("png_palette_no_plte", "")):
+    try:
+        tagedit.check_picture(images[name], mime)
+        checks_pic.append({"image": name, "mime": mime, "error": ""})
+    except tagedit.TagError as exc:
+        checks_pic.append({"image": name, "mime": mime, "error": str(exc)})
+
+
+def picture_struct(kind, mime=b"image/png", desc=b"", payload=b"PIXELS"):
+    return (struct.pack(">II", kind, len(mime)) + mime + struct.pack(">I", len(desc)) + desc
+            + struct.pack(">IIIII", 1, 1, 24, 0, len(payload)) + payload)
+
+
+def flac_with_blocks(extra, padding=64):
+    base = flac_file(["TITLE=Old", "ARTIST=One"], padding=0)
+    blocks, audio = embed._flac_blocks(base, 0)
+    blocks = [b for b in blocks if b[0] != 6] + extra + ([(1, b"\x00" * padding)] if padding else [])
+    out = b"fLaC"
+    for i, (k, b) in enumerate(blocks):
+        out += bytes([k | (0x80 if i == len(blocks) - 1 else 0)]) + len(b).to_bytes(3, "big") + b
+    return out + base[audio:]
+
+
+cover_flacs = {
+    "plain": flacs["plain"],                     # its PICTURE-like block is a front cover
+    "no_padding": flacs["no_padding"],
+    "no_vorbis": flacs["no_vorbis"],
+    "id3_front": flacs["id3_front"],
+    "mixed": flac_with_blocks([(6, picture_struct(4, desc=b"back")), (2, b"APPLDATA"), (6, picture_struct(0)),
+                               (6, picture_struct(3, b"image/jpeg")), (6, b"\x00\x00")]),
+    "none": flac_with_blocks([], padding=10),
+    "not_flac": b"OggS-not-a-flac",
+}
+
+
+def id3_flagged(major, frames, padding=16):
+    body = b""
+    for fid, flags, fb in frames:
+        size = embed._to_syncsafe(len(fb)) if major == 4 else struct.pack(">I", len(fb))
+        body += fid + size + flags + fb
+    body += b"\x00" * padding
+    return b"ID3" + bytes([major, 0, 0]) + embed._to_syncsafe(len(body)) + body
+
+
+def apic(kind, mime=b"image/png"):
+    return b"\x00" + mime + b"\x00" + bytes([kind]) + b"desc\x00" + b"PIXELS"
+
+
+cover_mp3s = {
+    "v23": id3_flagged(3, [(b"TIT2", b"\x00\x00", b"\x00Old"), (b"APIC", b"\x00\x00", apic(4)),
+                           (b"APIC", b"\x00\x00", apic(0)), (b"APIC", b"\x00\x80", apic(3)),
+                           (b"APIC", b"\x00\x00", apic(3, b"image/jpeg"))]) + MP3_AUDIO,
+    "v24": id3_flagged(4, [(b"TIT2", b"\x00\x00", b"\x03Old"), (b"APIC", b"\x00\x00", apic(3)),
+                           (b"APIC", b"\x00\x01", apic(3)), (b"TPE1", b"\x00\x00", b"\x03Art")], padding=0) + MP3_AUDIO,
+    "no_apic": mp3s["v23"],
+    "none": MP3_AUDIO,
+    "v22": mp3s["v22"],
+    "short_apic": id3_flagged(3, [(b"APIC", b"\x00\x00", b"\x00x"), (b"APIC", b"\x00\x00", b"")]) + MP3_AUDIO,
+}
+
+
+def mbp(kind):
+    return "METADATA_BLOCK_PICTURE=" + tagedit.b64encode(picture_struct(kind)).decode()
+
+
+cover_oggs = {
+    "vorbis": ogg_file(VORBIS_ID, [vorbis_comment(b"\x03vorbis", small + [mbp(4), "COVERART=xyz", mbp(3), mbp(0),
+                                                                          "metadata_block_picture=!!!!!!!!"], b"\x01"),
+                                   SETUP]),
+    "vorbis_plain": oggs["vorbis"],
+    "opus": ogg_file(OPUS_HEAD, [vorbis_comment(b"OpusTags", small + [mbp(3)], b"\x00\x00padding")]),
+    "speex": oggs["speex"],
+}
+picks = [("png_rgb", images["png_rgb"]), ("jpeg", images["jpeg"]), ("remove", None)]
+cover_cases = []
+for kind, files, fn in (("flac", cover_flacs, tagedit.flac_with_cover), ("mp3", cover_mp3s, tagedit.mp3_with_cover),
+                        ("ogg", cover_oggs, tagedit.ogg_with_cover)):
+    for name, data in files.items():
+        for pick, image in picks:
+            case = {"kind": kind, "name": name, "image": pick}
+            try:
+                out, n = fn(data, image)
+                case.update(removed=n, sha1=hashlib.sha1(out).hexdigest(), size=len(out))
+                if len(out) < 4000:
+                    case["output"] = out.hex()
+            except tagedit.TagError as exc:
+                case["error"] = str(exc)
+            cover_cases.append(case)
+for kind, name, fn in (("ogg", "vorbis", tagedit.ogg_with_cover), ("flac", "mixed", tagedit.flac_with_cover),
+                       ("mp3", "v24", tagedit.mp3_with_cover)):
+    data = {"ogg": cover_oggs, "flac": cover_flacs, "mp3": cover_mp3s}[kind][name]
+    out, n = fn(data, images["big_png"])  # a picture over several pages (Ogg), or a tag that grows
+    cover_cases.append({"kind": kind, "name": name, "image": "big_png", "removed": n,
+                        "sha1": hashlib.sha1(out).hexdigest(), "size": len(out)})
+types = {"mbp": {c: tagedit.mbp_type(c.encode()) for c in (mbp(3), mbp(0), mbp(4), mbp(21), "METADATA_BLOCK_PICTURE=",
+                                                            "METADATA_BLOCK_PICTURE=AAAA", "X=AAAAAwAA",
+                                                            "METADATA_BLOCK_PICTURE=AAAA*wAA", "nothing")},
+         "apic": [[major, flags.hex(), body.hex(), tagedit.apic_type(major, flags, body)]
+                  for major, flags, body in ((3, b"\x00\x00", apic(3)), (3, b"\x00\x20", apic(3)),
+                                             (4, b"\x00\x40", apic(3)), (4, b"\x00\x80", apic(4)),
+                                             (3, b"\x00\x00", b"\x00image/png"), (3, b"\x00\x00", b""),
+                                             (4, b"\x00\x00", b"\x01\x00\x03"))],
+         "streams": [[a, c, tagedit.cover_stream(a, c)] for a in (True, False)
+                     for c in ("", "Other", "Cover (front)", " cover  (FRONT) ", "Cover (back)", "Artist/performer")]}
+cover_commands = []
+for src in ("/m/a.m4a", "/m/b.AIFF", "/m/c.mp3"):
+    for image in ("/tmp/realhires-cover-x.jpg", None):
+        for streams in ([], [(1, True)], [(1, False), (2, True), (3, True)]):
+            cover_commands.append({"src": src, "image": image, "streams": streams,
+                                   "args": tagedit.ffmpeg_cover_args(src, image, "/tmp/out", streams)})
+cannot_cover = {p: tagedit.cannot_hold_cover(p) for p in ("a.wav", "b.WV", "c.ape", "d.dsf", "e.flac", "f.M4A", "g.aif",
+                                                           "h.opus", "i.wma", "j.mka", "noext", "k.caf")}
+T = tagedit.TagOutcome
+cover_summaries = []
+for removing, oc, notes in ((False, [T("a", True), T("b", True)], []), (False, [T("a", True)], []),
+                            (False, [], []), (False, [T("a", False, "WAV x."), T("b", False, "WAV x."), T("c", True)],
+                                              [tagedit.folder_saved_note("/m/Album/cover.png")]),
+                            (False, [T("a", False, "No.")], [tagedit.folder_failed_note("/m/cover.jpg", "denied")]),
+                            (True, [T("a", True), T("b", True, "b had no cover inside.")],
+                             [tagedit.folder_kept_note("/m/Folder.JPG")]),
+                            (True, [T("a", True, "a had no cover inside.")], []),
+                            (True, [T("a", True, "a."), T("b", True, "b.")], []),
+                            (True, [T("a", True), T("b", True, "b."), T("c", True, "c."), T("d", False, "No.")], []),
+                            (True, [T("a", True, "a."), T("d", False, "No.")], ["", "x"]),
+                            (True, [T(str(i), True) for i in range(1200)], [])):
+    cover_summaries.append({"removing": removing, "outcomes": [[o.path, o.ok, o.message] for o in oc], "notes": notes,
+                            "summary": tagedit.cover_summary(oc, removing, notes)})
+texts = {"where": [[k, p, covers.where_text(k, p)] for k, p in (("embedded", "/m/A/01 Song.flac"),
+                                                                 ("folder", "/m/A/cover.jpg"),
+                                                                 ("embedded", "日本.mp3"))],
+         "details": [[w, h, f, n, covers.details_text(w, h, f, n)]
+                     for w, h, f, n in ((1200, 1200, "JPEG", 251187), (0, 0, "", 12), (64, 48, "PNG", 1023),
+                                        (12000, 9000, "WebP", 3 * 1024 * 1024), (5, 0, "GIF", 0))]}
+with open(os.path.join(OUT, "python_covers_embed.json"), "w", encoding="utf-8") as fh:
+    json.dump({"images": {k: v.hex() for k, v in images.items()}, "infos": infos, "checks": checks_pic,
+               "flac_inputs": {k: v.hex() for k, v in cover_flacs.items()},
+               "mp3_inputs": {k: v.hex() for k, v in cover_mp3s.items()},
+               "ogg_inputs": {k: v.hex() for k, v in cover_oggs.items()}, "cases": cover_cases,
+               "pictures": {k: tagedit.flac_picture(images[k]).hex() for k in ("png_rgb", "png_palette", "jpeg")},
+               "apic_bodies": {k: tagedit.apic_body(images[k]).hex() for k in ("png_rgb", "jpeg")},
+               "types": types, "commands": cover_commands, "cannot": cannot_cover, "summaries": cover_summaries,
+               "texts": texts}, fh, indent=0, ensure_ascii=False)
+print(len(cover_cases), "cover cases")
