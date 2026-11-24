@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from . import embed
+from . import APP_NAME, embed
 from . import lyrics as lyrics_mod
 from . import musiclib
 from . import settings as settings_mod
@@ -815,11 +815,16 @@ class SettingsPage(Page):
         label(head, t, f"Saved in {settings_mod.default_path()}", "small", fg="text2").pack(anchor="w")
         body = frame(self, t)
         body.pack(fill="both", expand=True)
-        self.sections = SongList(body, t, [Column("name", "", 160, True)], lambda r, k: r["name"], header=False,
+        side = frame(body, t, width=210)
+        side.pack(side="left", fill="y", padx=(12, 0))
+        side.pack_propagate(False)
+        # under the group list: About (there is no Help menu, docs/player-spec.md 2.1)
+        self.about_btn = PillButton(side, t, f"About {APP_NAME}", kind="plain", command=app.about)
+        self.about_btn.pack(side="bottom", anchor="w", padx=(6, 0), pady=(8, 18))
+        side.configure(width=max(210, int(self.about_btn.cget("width")) + 10))
+        self.sections = SongList(side, t, [Column("name", "", 160, True)], lambda r, k: r["name"], header=False,
                                  zebra=False, on_select=self._section, row_height=34)
-        self.sections.configure(width=210)
-        self.sections.pack(side="left", fill="y", padx=(12, 0))
-        self.sections.pack_propagate(False)
+        self.sections.pack(side="top", fill="both", expand=True)
         self.sections.set_rows([{"name": g} for g in settings_mod.GROUPS])
         frame(body, t, bg="sep", width=1).pack(side="left", fill="y", padx=(8, 0))
         outer = frame(body, t)
