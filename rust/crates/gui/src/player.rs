@@ -740,6 +740,12 @@ impl Player {
     }
 
     fn poll_engine(&mut self) {
+        // bit-perfect playback may also be switched in the Quality check page's Settings window
+        if self.engine.bit_perfect() != self.scanner.cfg.bit_perfect {
+            let on = self.scanner.cfg.bit_perfect;
+            self.engine.set_gain(engine_gain(&self.state, on));
+            self.engine.set_bit_perfect(on);
+        }
         for ev in self.engine.take_events() {
             match ev {
                 Event::Started { token, path } => {
