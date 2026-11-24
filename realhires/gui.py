@@ -46,7 +46,7 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
 from . import __version__
 from . import settings as settings_mod
 from .eta import ScanEta, file_sizes
-from .fix import FIXABLE_VERDICTS, fix_advice
+from .fix import FIXABLE_VERDICTS, fix_advice, fix_outlook
 from .listing import list_source
 from .pool import MultiProcessPool, effective_jobs
 from .probe import ToolMissingError, external_env, require_tools
@@ -1165,9 +1165,9 @@ class CardGrid(ttk.Frame):
 
 # -------------------------------------------------------------------- app ---
 class App(ttk.Frame):
-    COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "name", "folder")
+    COLUMNS = ("verdict", "why", "claimed", "estimated", "bandwidth", "fix", "name", "folder")
     HEADINGS = {"verdict": "Verdict", "why": "Why", "claimed": "Claimed", "estimated": "Real (est.)",
-                "bandwidth": "Bandwidth", "name": "File", "folder": "Folder"}
+                "bandwidth": "Bandwidth", "fix": "After fix", "name": "File", "folder": "Folder"}
 
     def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None, cfg=None):
         super().__init__(root, padding=8)
@@ -1399,11 +1399,11 @@ class App(ttk.Frame):
         self.tree = ttk.Treeview(table, columns=self.COLUMNS, show="headings", selectmode="extended",
                                  height=7)
         widths = {"verdict": 105, "why": 400, "claimed": 70, "estimated": 85, "bandwidth": 82,
-                  "name": 230, "folder": 220}
+                  "fix": 262, "name": 230, "folder": 220}
         for c in self.COLUMNS:
             self.tree.heading(c, text=self.HEADINGS[c], command=lambda c=c: self.sort_by(c))
             self.tree.column(c, width=widths[c], stretch=c in ("why", "name", "folder"),
-                             anchor="w" if c in ("name", "folder", "verdict", "why") else "center")
+                             anchor="w" if c in ("name", "folder", "verdict", "why", "fix") else "center")
         for v, (_, color, _) in VERDICT_STYLE.items():
             self.tree.tag_configure(v, foreground=color)
         self.tree.tag_configure(PENDING, foreground=PENDING_STYLE[1])
@@ -1449,13 +1449,14 @@ class App(ttk.Frame):
         facts.grid(row=2, column=0, columnspan=2, sticky="ew")
         self.fact_vars: Dict[str, tk.StringVar] = {}
         for i, key in enumerate(("Claimed", "Real (estimated)", "Bandwidth", "Bits used", "Format",
-                                 "Duration")):
+                                 "Duration", "After fix")):
             ttk.Label(facts, text=key + ":", foreground="#666").grid(row=i // 2, column=(i % 2) * 2,
                                                                        sticky="w", padx=(0, 4))
             var = tk.StringVar(value="–")
             self.fact_vars[key] = var
+            # "After fix" is the last and longest: it spans the second pair of columns too
             ttk.Label(facts, textvariable=var).grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w",
-                                                    padx=(0, 18))
+                                                    padx=(0, 18), columnspan=3 if key == "After fix" else 1)
         btns = ttk.Frame(info)
         btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 6))
         self.open_folder_btn = ttk.Button(btns, text="Open Folder", command=self.reveal, state="disabled")
@@ -1525,7 +1526,12 @@ class App(ttk.Frame):
         relist = (new.extension_set() != self.cfg.extension_set() or new.recursive != self.cfg.recursive)
         detection = settings_key(new) != settings_key(self.cfg)
         store_changed = (new.save_results, new.saved_graphs_mb) != (self.cfg.save_results, self.cfg.saved_graphs_mb)
+        fixing = new.fix_bits != self.cfg.fix_bits  # changes the "After fix" column
         self.cfg = new
+        if fixing and not detection:
+            self._values_cache.clear()
+            self.refresh()
+            self.show_details()
         if store_changed:
             if self.store is not None:
                 self.store.close()
@@ -1893,7 +1899,7 @@ class App(ttk.Frame):
             if path not in self.results:
                 shown += 1
                 if self.tree.exists(path) and PENDING in self.tree.item(path, "tags"):
-                    self.tree.item(path, values=(RUNNING_STYLE[0], "Analysing…", "", "", "",
+                    self.tree.item(path, values=(RUNNING_STYLE[0], "Analysing…", "", "", "", "",
                                                  os.path.basename(path), os.path.dirname(path)),
                                    tags=(RUNNING,))
             i += 1
@@ -2279,7 +2285,7 @@ class App(ttk.Frame):
             return cached[1]
         bw = f"{r.bandwidth_hz / 1000:.1f} kHz" if r.bandwidth_hz else "-"
         values = (VERDICT_STYLE[r.verdict][0], r.summary, r.claimed, r.estimated, bw,
-                  os.path.basename(r.path), os.path.dirname(r.path))
+                  fix_outlook(r, self.cfg), os.path.basename(r.path), os.path.dirname(r.path))
         self._values_cache[r.path] = (r, values)
         return values
 
@@ -2290,7 +2296,7 @@ class App(ttk.Frame):
 
     def _pending_values(self, path: str):
         why = "Waiting in the scan queue…" if self.scanning else "Not scanned yet: press Scan"
-        return (PENDING_STYLE[0], why, "", "", "", os.path.basename(path), os.path.dirname(path))
+        return (PENDING_STYLE[0], why, "", "", "", "", os.path.basename(path), os.path.dirname(path))
 
     def _search_ok(self, path: str, summary: str = "") -> bool:
         q = self.search_var.get().strip().lower()
@@ -2319,6 +2325,8 @@ class App(ttk.Frame):
             return (VERDICT_ORDER.index(r.verdict), r.path.lower())
         if c == "bandwidth":
             return (r.bandwidth_hz or 0.0, r.path.lower())
+        if c == "fix":
+            return (fix_outlook(r, self.cfg).lower(), r.path.lower())
         if c == "claimed":
             return (r.sample_rate, r.claimed_bits or 0, r.path.lower())
         if c == "estimated":
@@ -2358,7 +2366,8 @@ class App(ttk.Frame):
             if (path not in self.results and path not in shown and (not q or q in path.lower())
                     and self._in_group(path)):
                 pending = pending or self._pending_values(path)[:2]
-                self._add_row(path, pending + ("", "", "", os.path.basename(path), os.path.dirname(path)), PENDING)
+                self._add_row(path, pending + ("", "", "", "", os.path.basename(path), os.path.dirname(path)),
+                              PENDING)
                 shown.add(path)
         keep = [i for i in selected if self.tree.exists(i)]
         if keep:
@@ -2434,6 +2443,7 @@ class App(ttk.Frame):
                                         (str(bits) if bits else "–"))
         self.fact_vars["Format"].set(f"{r.codec}, {r.channels} ch" if r.codec else "–")
         self.fact_vars["Duration"].set(fmt_duration(r.duration) if r.duration else "?")
+        self.fact_vars["After fix"].set(fix_outlook(r, self.cfg) or "–")
         parts = [f"• {x}\n" for x in r.reasons] + [f"• {x}\n" for x in r.notes]
         advice = fix_advice(r, self.cfg)  # what Fix does with it, and whether it stays fake afterwards
         if advice:

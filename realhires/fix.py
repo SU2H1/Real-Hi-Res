@@ -290,6 +290,39 @@ def skip_summary(skipped) -> str:
     return f"{len(skipped)} file(s) are not changed: " + "; ".join(parts) + "."
 
 
+def _prospect(r: FileResult, cfg=None) -> Optional[Tuple[str, str, str]]:
+    """What Fix does with a fake file, without touching the disk: ("unknown" |
+    "same" | "convert", "bits/rate" target, the "Kept ..." note or ""), the
+    same decision plan_fix() makes; None for other verdicts."""
+    if r.verdict not in FIXABLE_VERDICTS:
+        return None
+    tgt = target_resolution(r, cfg)
+    if tgt is None:
+        return "unknown", "", ""
+    rate, bits, notes = tgt
+    cur_bits = 32 if r.is_float else (r.claimed_bits or 16)
+    kept = next((n for n in notes if n.startswith("Kept")), "")
+    same = rate == r.sample_rate and bits >= cur_bits
+    return ("same" if same else "convert"), _fmt(bits, rate), kept
+
+
+def fix_outlook(r: FileResult, cfg=None) -> str:
+    """A few words for the "After fix" column of the GUI list: what Fix turns
+    the file into and whether it is still marked fake then; "" if not fake."""
+    p = _prospect(r, cfg)
+    if p is None:
+        return ""
+    kind, target, kept = p
+    if kind == "unknown":
+        return "Not fixable: resolution unknown"
+    if r.verdict == FAKE_LOSSLESS:
+        return ("Stays fake: MP3/AAC source" if kind == "same"
+                else f"{target}, stays fake: MP3/AAC source")
+    if kept:
+        return "Stays fake: rate kept" if kind == "same" else f"{target}, stays fake: rate kept"
+    return f"Already {target}" if kind == "same" else f"Fixable to {target}"
+
+
 def _keeps(note: str) -> str:
     """'Kept 96 kHz instead of ...: the spectrum ...' -> 'keeps 96 kHz instead of ..., because the spectrum ...'."""
     return "keeps " + note[len("Kept "):].replace(": the spectrum", ", because the spectrum", 1).rstrip(".")
@@ -299,32 +332,29 @@ def fix_advice(r: FileResult, cfg=None) -> Optional[str]:
     """What "Fix to real resolution" does with a fake file, and whether it is
     still marked fake afterwards (shown in the details, so a file that stays
     fake after fixing and re-scanning says why); None for other verdicts."""
-    if r.verdict not in FIXABLE_VERDICTS:
+    p = _prospect(r, cfg)
+    if p is None:
         return None
-    plan, why = plan_fix(r, cfg)
+    kind, target, kept = p
     lossy = ("because it was made from an MP3/AAC, and no conversion can bring back what the lossy "
              "encoder removed. Only a genuine lossless copy is better.")
-    if plan is None:
-        tgt = target_resolution(r, cfg)
-        if tgt is None:
-            return "Fix to real resolution leaves it unchanged, because its real resolution could not be determined."
-        rate, bits, notes = tgt
+    if kind == "unknown":
+        return "Fix to real resolution leaves it unchanged, because its real resolution could not be determined."
+    if kind == "same":
         if r.verdict == FAKE_LOSSLESS:
-            return (f"Fix to real resolution leaves it unchanged: it is already {_fmt(bits, rate)}, the resolution "
+            return (f"Fix to real resolution leaves it unchanged: it is already {target}, the resolution "
                     f"it really has. It stays marked fake lossless, also after fixing and re-scanning, {lossy}")
-        kept = [n for n in notes if n.startswith("Kept")]
         if kept:
-            return (f"Fix to real resolution leaves it unchanged: it {_keeps(kept[0])}, and all its {bits} bits "
+            bits = target.split("/")[0]
+            return (f"Fix to real resolution leaves it unchanged: it {_keeps(kept)}, and all its {bits} bits "
                     "are used, so nothing would change. It stays marked fake hi-res, also after fixing and "
                     "re-scanning.")
-        return f"Fix to real resolution leaves it unchanged: it is already {_fmt(bits, rate)}."
-    target = _fmt(plan.target_bits, plan.target_rate)
+        return f"Fix to real resolution leaves it unchanged: it is already {target}."
     if r.verdict == FAKE_LOSSLESS:
         return (f"Fix to real resolution converts it to {target}, the resolution it really has, but it stays "
                 f"marked fake lossless even then, {lossy}")
-    kept = [n for n in plan.notes if n.startswith("Kept")]
     if kept:
-        return (f"Fix to real resolution converts it to {target}, but it {_keeps(kept[0])}. It therefore "
+        return (f"Fix to real resolution converts it to {target}, but it {_keeps(kept)}. It therefore "
                 "stays marked fake hi-res after fixing and re-scanning.")
     return (f"Fix to real resolution converts it to {target}, the resolution it really has; a re-scan then "
             "no longer marks it fake.")
