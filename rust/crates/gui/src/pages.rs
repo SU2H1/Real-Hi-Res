@@ -254,7 +254,7 @@ impl Player {
                     }
                     ui.add_space(6.0);
                     if ui
-                        .add_enabled(self.edit_info.is_none(), egui::Button::new("Edit album info…"))
+                        .add_enabled(self.edit_info.is_none(), egui::Button::new("Album Properties…"))
                         .on_hover_text("Change the album, album artist, genre, release date… of all its songs")
                         .clicked()
                     {
@@ -402,7 +402,7 @@ impl Player {
             self.scanner.download_lyrics(vec![path.to_string()]);
             ui.close();
         }
-        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new("Edit info…")).clicked() {
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new("Properties…")).clicked() {
             self.edit_song_info(path);
             ui.close();
         }

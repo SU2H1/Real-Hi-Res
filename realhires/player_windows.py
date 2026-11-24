@@ -640,15 +640,20 @@ class EqualizerWindow:
 
 
 class EditInfoWindow:
-    """Edit Info: title, artist, album, album artist, genre, release date, track, disc
-    and composer of one song or of an album's songs (tagedit.FIELDS).  The tags are
-    read with ffprobe in a thread first; where the songs differ a field starts empty
-    with a note and is kept unless something is typed into it.  Save checks the
-    changes (tagedit.check_changes()), writes them in a thread (tagedit.save_tags())
-    and refreshes the library; it closes when everything was saved without a note,
-    else it shows tagedit.save_summary().  Results reach Tk through `self.q`."""
+    """Properties (2.0 "Edit Info", renamed in 2.1): title, artist, album, album
+    artist, genre, release date, track, disc and composer of one song or of an
+    album's songs (tagedit.FIELDS).  The tags are read with ffprobe in a thread
+    first; where the songs differ a field starts empty with a note and is kept
+    unless something is typed into it.  Save checks the changes
+    (tagedit.check_changes()), writes them in a thread (tagedit.save_tags()) and
+    refreshes the library; it closes when everything was saved without a note, else
+    it shows tagedit.save_summary().  Results reach Tk through `self.q`.  The window
+    can be resized (never smaller than its contents), the fields grow with its
+    width, and a size the user chose is kept in `app.edit_size` for the session."""
 
+    TITLE = "Properties"
     SEVERAL = "Several values: kept unless you type here"
+    MIN_WIDTH = 560
 
     def __init__(self, app: "PlayerApp", tracks: list, heading: str = "", subheading: str = ""):
         from .settings import Settings
@@ -660,7 +665,7 @@ class EditInfoWindow:
         self.ready = self.saving = self.done = False
         self.initial: Dict[str, Optional[str]] = {}
         self.outcomes: list = []
-        self.win = _window(app, "Edit Info")
+        self.win = _window(app, self.TITLE)
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<<Close>>", lambda e: self.cancel())
         box = frame(self.win, t)
@@ -705,7 +710,9 @@ class EditInfoWindow:
         self.save_b.pack(side="right")
         self.cancel_b = PillButton(self.btns, t, "Cancel", kind="plain", command=self.cancel)
         self.cancel_b.pack(side="right", padx=(0, 8))
-        self.win.minsize(560, 0)
+        if app.edit_size:
+            self.win.geometry("%dx%d" % app.edit_size)
+        self._fit()
         threading.Thread(target=self._read, daemon=True, name="realhires-edit-read").start()
         self.win.after(100, self._poll)
 
@@ -752,6 +759,15 @@ class EditInfoWindow:
         self.win.after(100, self._poll)
 
     # ---- the window ---------------------------------------------------------
+    def _fit(self) -> None:
+        """Never smaller than the contents, which change (notes, an error, the summary):
+        the minimum height follows them, so the buttons stay on the screen."""
+        try:
+            self.win.update_idletasks()
+            self.win.minsize(self.MIN_WIDTH, self.win.winfo_reqheight())
+        except tk.TclError:
+            pass
+
     def _fill(self, tags: List[dict]) -> None:
         self.initial = tagedit.common_values(tags)
         for f in tagedit.FIELDS:
@@ -764,6 +780,7 @@ class EditInfoWindow:
                 self.notes[f].grid()
         self.status.configure(text="")
         self.ready = True
+        self._fit()
         first = self.entries["title" if len(self.paths) == 1 else "album"]
         first.focus_set()
         first.select_range(0, "end")
@@ -789,6 +806,7 @@ class EditInfoWindow:
             changes = tagedit.check_changes(changes)
         except tagedit.TagError as exc:
             self.error.configure(text=str(exc))
+            self._fit()
             return
         self.error.configure(text="")
         if not changes:
@@ -814,6 +832,7 @@ class EditInfoWindow:
         self.status.configure(text="")
         self.summary.configure(text="\n\n".join([head] + lines))
         PillButton(self.btns, self.app.theme, "Close", command=self.close).pack(side="right")
+        self._fit()
 
     def cancel(self) -> None:
         if not self.saving:
@@ -824,6 +843,12 @@ class EditInfoWindow:
             return
         if self.app.edit_window is self:
             self.app.edit_window = None
+        try:  # a size the user chose (it differs from what the contents ask for) is kept
+            size = (self.win.winfo_width(), self.win.winfo_height())
+            if size != (self.win.winfo_reqwidth(), self.win.winfo_reqheight()) and min(size) > 1:
+                self.app.edit_size = size
+        except tk.TclError:
+            pass
         close_window(self.win)
 
 

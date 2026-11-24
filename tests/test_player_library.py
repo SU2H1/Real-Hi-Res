@@ -84,6 +84,53 @@ def test_play_history_and_stats(tmp_path):
     assert ls["qualities"] == [["Hi-Res Lossless", 0], ["Lossless", 3], ["Lossy", 1]]
 
 
+def test_stats_calendar(tmp_path):
+    """The month calendar of Your Stats: the grid, the minutes and tints of each
+    day, a day's plays newest first, and the local midnights the plays are read
+    between (local time is injected: Tokyo, UTC+9)."""
+    import calendar
+
+    def tokyo(ts):
+        return time.gmtime(ts + 9 * 3600)
+
+    def tokyo_mktime(tt):
+        return calendar.timegm(tt) - 9 * 3600
+
+    assert stats.month_grid(2026, 11)[0] == [0, 0, 0, 0, 0, 0, 1]
+    assert stats.month_grid(2026, 11)[-1] == [30, 0, 0, 0, 0, 0, 0] and len(stats.month_grid(2026, 11)) == 6
+    assert stats.month_grid(2021, 2) == [list(range(w, w + 7)) for w in (1, 8, 15, 22)]
+    assert stats.month_title(2026, 11) == "November 2026" and stats.day_title(2026, 11, 24) == "Tuesday 24 November 2026"
+    assert stats.shift_month(2026, 12, 1) == (2027, 1) and stats.shift_month(2026, 1, -13) == (2024, 12)
+    assert stats.month_bounds(2026, 12, mktime=tokyo_mktime) == (1796050800.0, 1798729200.0)
+    start, end = stats.day_bounds(2024, 2, 28, mktime=tokyo_mktime)
+    assert end - start == 86400.0 and tokyo(start)[:6] == (2024, 2, 28, 0, 0, 0)
+    assert stats.day_bounds(2024, 2, 29, mktime=tokyo_mktime)[1] == stats.month_bounds(2024, 3, mktime=tokyo_mktime)[0]
+
+    lib = musiclib.Library(str(tmp_path / "library.sqlite"))
+    midnight = stats.day_bounds(2026, 11, 24, mktime=tokyo_mktime)[0]
+    lib.add_play(LIB[0], midnight - 60, 120.0)           # 23:59 the day before
+    lib.add_play(LIB[1], midnight + 14 * 3600 + 300, 185.0)  # 14:05
+    lib.add_play(LIB[2], midnight + 20 * 3600, 20.0)      # 20:00, a third of a minute
+    lib.add_play(LIB[3], midnight + 2 * 86400, 600.0)     # 26 November
+    month = lib.plays(*stats.month_bounds(2026, 11, mktime=tokyo_mktime))
+    minutes = stats.month_minutes(month, 2026, 11, localtime=tokyo)
+    assert len(minutes) == 30 and minutes[22] == 2.0 and minutes[23] == pytest.approx(205.0 / 60) and minutes[25] == 10.0
+    assert sum(1 for m in minutes if m) == 3
+    levels = stats.month_levels(minutes)
+    assert (levels[22], levels[23], levels[25], levels[0]) == (1, 2, 4, 0)
+    assert stats.month_levels([0.0] * 30) == [0] * 30
+    day = lib.plays(*stats.day_bounds(2026, 11, 24, mktime=tokyo_mktime))
+    assert [p.path for p in day] == [LIB[1].path, LIB[2].path]
+    rows = stats.day_plays(day, 2026, 11, 24, localtime=tokyo)
+    assert [(r["time"], r["title"], r["artist"], r["minutes"]) for r in rows] == [
+        ("20:00", "Three", "Cy", "<1 min"), ("14:05", "Two", "Ann feat. Bo", "3 min")]
+    assert stats.day_plays(month, 2026, 11, 24, localtime=tokyo) == rows  # other days are left out
+    assert stats.day_summary(rows) == "2 songs played, 3 minutes"
+    assert stats.day_summary([]) == "No music on this day."
+    assert stats.minutes_label(74_043.0) == "1,234 min"
+    lib.close()
+
+
 def test_playlists_dislikes_and_eq_presets(tmp_path):
     st = playerstate.PlayerState()
     pid = st.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)

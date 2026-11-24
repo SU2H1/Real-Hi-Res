@@ -226,7 +226,7 @@ class AlbumPage(Page):
         PillButton(btns, t, "Play", icon="play", command=lambda: self._play(False)).pack(side="left")
         PillButton(btns, t, "Shuffle", icon="shuffle", command=lambda: self._play(True)).pack(side="left",
                                                                                               padx=(10, 0))
-        self.edit_b = PillButton(btns, t, "Edit album info…", kind="plain", command=self.edit_info)
+        self.edit_b = PillButton(btns, t, "Album Properties…", kind="plain", command=self.edit_info)
         self.edit_b.pack(side="left", padx=(10, 0))
         cols = [Column("num", "", 34, anchor="e", kind="num"), Column("title", "", 400, True),
                 Column("like", "", 30, kind="heart"), Column("time", "", 52, anchor="e")]
@@ -252,7 +252,7 @@ class AlbumPage(Page):
         self._fill()
 
     def edit_info(self):
-        """Edit album info…: the Edit Info window for every song of the album."""
+        """Album Properties…: the Properties window for every song of the album."""
         if self.album is not None:
             return self.app.edit_album_info(self.album)
         return None

@@ -516,10 +516,20 @@ class RecentlyPlayedPage(Page):
 
 
 # --------------------------------------------------------------- your stats ---
+def this_month(now: Optional[float] = None) -> Tuple[int, int]:
+    t = time.localtime(time.time() if now is None else now)
+    return t.tm_year, t.tm_mon
+
+
 class StatsPage(Page):
-    """A period menu and the summary cards (stats.cards()), each in its own colour."""
+    """A month calendar (2.1: ‹ month ›, Monday first, days tinted by the minutes
+    played, today outlined; a click on a day lists its plays under it, a click on
+    a song plays it), then the summary cards of the period chosen in the menu
+    (stats.cards()), each in its own colour."""
 
     list_name = "Your Stats"
+    CELL_W, CELL_H, ROW_H = 62, 44, 30
+    TINTS = (0.0, 0.25, 0.45, 0.7, 1.0)  # the share of the accent colour for stats.month_levels() 0..4
 
     def __init__(self, app):
         super().__init__(app)
@@ -541,6 +551,18 @@ class StatsPage(Page):
         self.area.pack(fill="both", expand=True)
         self.st: Optional[dict] = None
         self._fit: dict = {}
+        # the calendar: the month shown and the day chosen stay for the session
+        self.month: Tuple[int, int] = this_month()
+        self.day: Optional[Tuple[int, int, int]] = None
+        self.minutes: List[float] = []
+        self.levels: List[int] = []
+        self.day_rows: List[dict] = []
+        self.hits: List[Tuple[tuple, Callable[[], None]]] = []
+        self.hover: Optional[tuple] = None
+        c = self.area.c
+        c.bind("<Button-1>", self._click)
+        c.bind("<Motion>", self._motion)
+        c.bind("<Leave>", lambda e: self._set_hover(None))
 
     def _period(self) -> None:
         self.app.stats_period = self.period.get()
@@ -555,24 +577,169 @@ class StatsPage(Page):
         st = self.st
         self.sub.configure(text=(f"{self.app.stats_period}: {plural(int(st['seconds'] / 60 + 0.5), 'minute')}, "
                                  f"{plural(st['plays'], 'play')}") if st["logged"] else self.app.stats_period)
+        self._load_calendar()
         self.area.redraw()
+
+    def song_changed(self) -> None:
+        if self.day_rows:
+            self.area.redraw()
+
+    # ---- the calendar ---------------------------------------------------
+    def _load_calendar(self) -> None:
+        """The month's minutes per day and the chosen day's plays, read between local midnights."""
+        y, m = self.month
+        self.minutes = stats.month_minutes(self.app.plays(*stats.month_bounds(y, m)), y, m)
+        self.levels = stats.month_levels(self.minutes)
+        self.day_rows = stats.day_plays(self.app.plays(*stats.day_bounds(*self.day)), *self.day) if self.day else []
+
+    def show_month(self, year: int, month: int) -> None:
+        self.month = (year, month)
+        self._load_calendar()
+        self.area.redraw()
+
+    def step_month(self, delta: int) -> None:
+        self.show_month(*stats.shift_month(*self.month, delta))
+
+    def choose_day(self, day: Optional[int]) -> None:
+        """List the plays of this day of the month shown (None, or the chosen day again: hide the list)."""
+        chosen = (self.month[0], self.month[1], day) if day else None
+        self.day = None if chosen == self.day else chosen
+        self._load_calendar()
+        self.area.redraw()
+
+    def play_row(self, i: int) -> None:
+        """A click on a song of the day's list: play the day's songs (each once) from it."""
+        tracks: List[Track] = []
+        for r in self.day_rows:
+            tr = self.app.by_path.get(r["path"])
+            if tr is not None and tr not in tracks:
+                tracks.append(tr)
+        tr = self.app.by_path.get(self.day_rows[i]["path"]) if 0 <= i < len(self.day_rows) else None
+        if tr is not None:
+            self.app.play_list(tracks, tracks.index(tr), self.list_name)
+
+    def _hit(self, e) -> Optional[tuple]:
+        x, y = self.area.c.canvasx(e.x), self.area.c.canvasy(e.y)
+        for box, fn in self.hits:
+            if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                return box, fn
+        return None
+
+    def _click(self, e) -> None:
+        hit = self._hit(e)
+        if hit:
+            hit[1]()
+
+    def _motion(self, e) -> None:
+        hit = self._hit(e)
+        self.area.c.configure(cursor="hand2" if hit else "")
+        self._set_hover(hit[0] if hit else None)
+
+    def _set_hover(self, box: Optional[tuple]) -> None:
+        if box != self.hover:
+            self.hover = box
+            self.area.redraw()
+
+    def _draw_calendar(self, y: float) -> float:
+        t, c = self.theme, self.area.c
+        W = c.winfo_width()
+        m = 28
+        cw, ch = max(30.0, min(self.CELL_W, (W - 2 * m) / 7)), self.CELL_H
+        right = m + 7 * cw
+        year, month = self.month
+        title = c.create_text(m, y + 16, text=stats.month_title(year, month), anchor="w", fill=t.c("text"),
+                              font=t.f("h2"))
+        total = int(sum(self.minutes) + 0.5)
+        if total:
+            c.create_text(c.bbox(title)[2] + 10, y + 17, text=plural(total, "minute"), anchor="w",
+                          fill=t.c("text2"), font=t.f("body"))
+        newest = (year, month) >= this_month()  # no months after this one
+        for icon, cx, delta, on in (("back", right - 50, -1, True), ("chevron", right - 16, 1, not newest)):
+            box = (cx - 15, y + 1, cx + 15, y + 31)
+            if on and self.hover == box:
+                round_rect(c, *box, 8, fill=t.c("hover"), outline="")
+            draw_icon(c, icon, cx, y + 16, 18, t.c("accent") if on else t.c("disabled"))
+            if on:
+                self.hits.append((box, lambda d=delta: self.step_month(d)))
+        y += 42
+        for k, name in enumerate(stats.WEEKDAYS):
+            c.create_text(m + k * cw + cw / 2, y + 8, text=name[:3], fill=t.c("text2"), font=t.f("small_b"))
+        y += 22
+        now = time.localtime()
+        today = (now.tm_year, now.tm_mon, now.tm_mday)
+        accent, base = t.c("accent"), t.c("lcd")
+        for week in stats.month_grid(year, month):
+            for k, d in enumerate(week):
+                if not d:
+                    continue
+                box = (m + k * cw + 2, y + 2, m + (k + 1) * cw - 2, y + ch - 2)
+                level = self.levels[d - 1] if d - 1 < len(self.levels) else 0
+                fill = mix(base, accent, self.TINTS[level])
+                if self.hover == box:
+                    fill = mix(fill, t.c("text"), 0.1)
+                chosen, is_today = self.day == (year, month, d), today == (year, month, d)
+                outline, width = (t.c("text"), 3) if chosen else (accent, 2) if is_today else ("", 0)
+                round_rect(c, *box, 8, fill=fill, outline=outline, width=width)
+                c.create_text((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, text=str(d),
+                              fill=t.c("on_accent") if level >= 3 else t.c("text"),
+                              font=t.f("body_b" if chosen or is_today else "body"))
+                self.hits.append((box, lambda d=d: self.choose_day(d)))
+            y += ch
+        return y + 12
+
+    def _draw_day(self, y: float) -> float:
+        t, c = self.theme, self.area.c
+        W = c.winfo_width()
+        m = 28
+        if self.day is None:
+            c.create_text(m, y + 10, text="Click a day to see the songs you played on it.", anchor="w",
+                          fill=t.c("text2"), font=t.f("body"))
+            return y + 40
+        c.create_text(m, y + 12, text=stats.day_title(*self.day), anchor="w", fill=t.c("text"), font=t.f("h2"))
+        c.create_text(m, y + 36, text=stats.day_summary(self.day_rows), anchor="w", fill=t.c("text2"),
+                      font=t.f("body"))
+        y += 56
+        rest = W - 2 * m - 70 - 90
+        tw = rest * 0.55
+        aw = rest - tw - 16
+        for i, r in enumerate(self.day_rows):
+            box = (m, y, W - m, y + self.ROW_H)
+            playable = r["path"] in self.app.by_path
+            if playable and self.hover == box:
+                round_rect(c, *box, 6, fill=t.c("hover"), outline="")
+            elif i % 2:
+                round_rect(c, *box, 6, fill=t.c("zebra"), outline="")
+            mid = y + self.ROW_H / 2
+            playing = r["path"] == self.app.current
+            font = t.f("body_b" if playing else "body")
+            c.create_text(m + 12, mid, text=r["time"], anchor="w", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(m + 70, mid, text=fit_text(font, r["title"], int(tw), self._fit), anchor="w",
+                          fill=t.c("accent") if playing else t.c("text") if playable else t.c("text2"), font=font)
+            c.create_text(m + 70 + tw + 16, mid, text=fit_text(t.f("body"), r["artist"], int(aw), self._fit),
+                          anchor="w", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(W - m - 12, mid, text=r["minutes"], anchor="e", fill=t.c("text2"), font=t.f("body"))
+            if playable:
+                self.hits.append((box, lambda i=i: self.play_row(i)))
+            y += self.ROW_H
+        return y + 18
 
     def _draw(self) -> float:
         t, c = self.theme, self.area.c
         W = c.winfo_width()
         m, gap = 28, 16
+        self.hits = []
+        y0 = self._draw_day(self._draw_calendar(8))
         cards = stats.cards(self.st) if self.st else []
         if not cards:
-            c.create_text(W / 2, 120, text="No listening yet in this period. Play some music and come back.",
+            c.create_text(W / 2, y0 + 40, text="No listening yet in this period. Play some music and come back.",
                           fill=t.c("text2"), font=t.f("h2"), width=W - 80)
-            return 200
+            return y0 + 100
         cols = 3 if W >= 760 else 2 if W >= 480 else 1
         cw = (W - 2 * m - (cols - 1) * gap) / cols
         ch = 150
-        y = 8
         for i, (lab, big, detail) in enumerate(cards):
             r, k = divmod(i, cols)
-            x, y = m + k * (cw + gap), 8 + r * (ch + gap)
+            x, y = m + k * (cw + gap), y0 + r * (ch + gap)
             color = CARD_COLORS[i % len(CARD_COLORS)]
             round_rect(c, x, y, x + cw, y + ch, 16, fill=color, outline="")
             c.create_text(x + 20, y + 26, text=lab.upper(), anchor="w", fill=mix(color, "#ffffff", 0.78),
@@ -582,7 +749,7 @@ class StatsPage(Page):
             c.create_text(x + 20, y + 118, text=fit_text(t.f("stat_detail"), detail, int(cw - 40), self._fit),
                           anchor="w", fill=mix(color, "#ffffff", 0.85), font=t.f("stat_detail"))
         rows = (len(cards) + cols - 1) // cols
-        return 8 + rows * (ch + gap) + 20
+        return y0 + rows * (ch + gap) + 20
 
 
 class StatsDetailsPage(Page):
