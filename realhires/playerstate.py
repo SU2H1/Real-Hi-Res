@@ -25,6 +25,26 @@ STATE_VERSION = 1
 MAX_NAME = 80  # characters of a playlist or preset name
 
 
+# The columns of song lists (2.1, chosen by the user per kind of list, "columns" in
+# player.json): every column in the order the tables show them, and the defaults.
+SONG_COLUMNS = ("num", "title", "artist", "album", "album_artist", "composer", "genre", "year", "disc", "time",
+                "quality", "format", "bit_rate", "added", "file", "like")
+COLUMN_KINDS = ("songs", "folders", "album")
+DEFAULT_COLUMNS = {"songs": ("title", "artist", "album", "genre", "time", "quality", "like"),
+                   "folders": ("title", "artist", "album", "genre", "time", "quality", "like"),
+                   "album": ("num", "title", "artist", "album", "genre", "time", "quality", "like")}
+
+
+def normalize_columns(kind: str, names) -> List[str]:
+    """The known column names of `names`, in table order, with Title always there; the
+    default when none is left."""
+    wanted = {n for n in names if isinstance(n, str) and n in SONG_COLUMNS} if isinstance(names, list) else set()
+    if not wanted:
+        return list(DEFAULT_COLUMNS[kind])
+    wanted.add("title")
+    return [c for c in SONG_COLUMNS if c in wanted]
+
+
 class InvalidName(ValueError):
     """A playlist or preset name that cannot be used; the message says why."""
 
@@ -54,6 +74,8 @@ class PlayerState:
     eq_presets: List[dict] = field(default_factory=list)
     # [{"id", "name", "created", "songs": [paths]}]
     playlists: List[dict] = field(default_factory=list)
+    # {"songs" | "folders" | "album": [column names]}: the columns the user chose (2.1)
+    columns: dict = field(default_factory=dict)
 
     # ------------------------------------------------------ like/dislike ---
     def is_liked(self, path: str) -> bool:
@@ -188,8 +210,29 @@ class PlayerState:
         j = min(max(i + delta, 0), len(p["songs"]) - 1)
         p["songs"].insert(j, p["songs"].pop(i))
 
+    # ---------------------------------------------------------- columns ---
+    def columns_of(self, kind: str) -> List[str]:
+        """The columns a kind of song list shows ("songs", "folders", "album")."""
+        return normalize_columns(kind, self.columns.get(kind))
+
+    def set_columns(self, kind: str, names) -> List[str]:
+        self.columns[kind] = normalize_columns(kind, list(names))
+        return self.columns[kind]
+
+    def toggle_column(self, kind: str, name: str) -> List[str]:
+        """Show or hide one column (Title stays)."""
+        cols = self.columns_of(kind)
+        if name == "title" or name not in SONG_COLUMNS:
+            return cols
+        return self.set_columns(kind, [c for c in cols if c != name] if name in cols else cols + [name])
+
+    def reset_columns(self, kind: str) -> List[str]:
+        self.columns.pop(kind, None)
+        return self.columns_of(kind)
+
     def to_json(self) -> dict:
-        return {"_version": STATE_VERSION, "liked": sorted(set(self.liked)), "volume": self.volume,
+        return {"_version": STATE_VERSION, "columns": {k: self.columns_of(k) for k in COLUMN_KINDS},
+                "liked": sorted(set(self.liked)), "volume": self.volume,
                 "muted": self.muted, "shuffle": self.shuffle, "repeat": "off" if self.repeat == "stop" else self.repeat, "eq": eq.normalize(self.eq),
                 "last": {"path": self.last_path, "position": self.last_position},
                 "disliked": sorted(set(self.disliked)),
@@ -243,6 +286,9 @@ class PlayerState:
                     if isinstance(p.get("songs"), list) else []
                 st.playlists.append({"id": p["id"], "name": clean_name(p.get("name")) or "Playlist",
                                      "created": created, "songs": list(dict.fromkeys(songs))})
+        cols = data.get("columns")
+        if isinstance(cols, dict):
+            st.columns = {k: normalize_columns(k, cols[k]) for k in COLUMN_KINDS if k in cols}
         last = data.get("last")
         if isinstance(last, dict):
             st.last_path = last.get("path") if isinstance(last.get("path"), str) else ""

@@ -219,7 +219,8 @@ with open(os.path.join(OUT, "python_themes.json"), "w", encoding="utf-8") as fh:
 messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume": "0.4",
          "eq_presets": [{"name": " Night  Mode ", "eq": mixed}, {"name": "night mode", "eq": {}}, {"name": ""}, 7],
          "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
-                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}]}
+                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}],
+         "columns": {"songs": ["nope", "year", "artist", 3], "album": [], "folders": "x", "other": ["title"]}}
 ps = playerstate.PlayerState.from_json(messy)
 ops = playerstate.PlayerState()
 pid = ops.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)
@@ -233,6 +234,12 @@ ops.set_disliked("/m/z", True)
 ops.save_eq_preset("  My   Jazz ", eq.apply_preset(eq.default_state(), "Jazz"))
 ops.save_eq_preset("Other", eq.default_state())
 ops.rename_eq_preset("Other", "Bright")
+ops.toggle_column("songs", "year")
+ops.toggle_column("songs", "like")
+ops.toggle_column("songs", "title")
+ops.toggle_column("album", "file")
+ops.set_columns("folders", ["bit_rate", "format"])
+ops.toggle_column("folders", "format")
 errors = []
 for name in ("rock", "my jazz", "", "  "):
     try:

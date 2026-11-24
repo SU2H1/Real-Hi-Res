@@ -259,6 +259,12 @@ fn player_state_matches_python() {
     ops.save_eq_preset("  My   Jazz ", &jazz, false).unwrap();
     ops.save_eq_preset("Other", &EqState::default(), false).unwrap();
     ops.rename_eq_preset("Other", "Bright").unwrap();
+    ops.toggle_column("songs", "year");
+    ops.toggle_column("songs", "like");
+    ops.toggle_column("songs", "title");
+    ops.toggle_column("album", "file");
+    ops.set_columns("folders", &["bit_rate".to_string(), "format".to_string()]);
+    ops.toggle_column("folders", "format");
     same(&ops.to_json(), data.get("ops_out").unwrap(), "ops");
     for e in data.get("name_errors").unwrap().as_array().unwrap() {
         let e = e.as_array().unwrap();

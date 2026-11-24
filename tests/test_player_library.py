@@ -199,3 +199,58 @@ def test_several_artists_in_one_field():
     assert groups["Michael Bublé"] == ["/a", "/g", "/b"] and groups["Mariah Carey"] == ["/a"]
     assert "Earth, Wind & Fire" in groups and "Mariah Carey, Michael Bublé" not in groups
     assert [g["name"] for g in musiclib.album_artists(lib)][:3] == ["Drake", "Earth, Wind & Fire", "Mariah Carey"]
+
+
+def test_a_preset_saved_with_the_equalizer_off_can_be_found_and_deleted(tmp_path):
+    """The user's report "my preset delete button doesn't work": the preset match left
+    no preset to delete once the EQ was switched on (choosing a preset keeps it on)."""
+    st = playerstate.PlayerState()
+    st.eq = eq.apply_preset(eq.default_state(), "Rock")
+    st.eq["enabled"] = False
+    st.save_eq_preset("Quiet", st.eq)
+    st.eq = dict(st.eq, enabled=True)
+    assert st.matching_eq_preset() == "Quiet"
+    st.eq["graphic"] = dict(st.eq["graphic"], gains=[g + 0.5 for g in st.eq["graphic"]["gains"]])
+    assert st.matching_eq_preset() == ""
+
+
+def test_song_list_columns_round_trip(tmp_path):
+    st = playerstate.PlayerState()
+    assert st.columns_of("songs") == ["title", "artist", "album", "genre", "time", "quality", "like"]
+    assert st.columns_of("album")[:2] == ["num", "title"]
+    assert st.toggle_column("songs", "title") == st.columns_of("songs")  # Title cannot be hidden
+    st.toggle_column("songs", "year")
+    st.toggle_column("songs", "like")
+    st.toggle_column("folders", "bit_rate")
+    path = str(tmp_path / "player.json")
+    playerstate.save(st, path)
+    again = playerstate.load(path)
+    assert again.columns_of("songs") == ["title", "artist", "album", "genre", "year", "time", "quality"]
+    assert "bit_rate" in again.columns_of("folders") and again.columns_of("album") == st.columns_of("album")
+    again.reset_columns("songs")
+    assert again.columns_of("songs") == list(playerstate.DEFAULT_COLUMNS["songs"])
+    odd = playerstate.PlayerState.from_json({"columns": {"songs": ["nope", "file"], "album": [], "x": ["title"]}})
+    assert odd.columns_of("songs") == ["title", "file"] and odd.columns_of("album") == st.columns_of("album")
+
+
+def test_quality_tooltip_and_sort():
+    hi = Track("/a.flac", codec="flac", sample_rate=96000, bits=24)
+    cd = Track("/b.flac", codec="flac", sample_rate=44100, bits=16)
+    fl = Track("/c.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True)
+    mp3 = Track("/d.mp3", codec="mp3", is_lossy=True, sample_rate=44100, bit_rate=320000)
+    assert [musiclib.quality(t) for t in (hi, cd, mp3)] == ["Hi-Res Lossless", "Lossless", "MP3 320 kbps"]
+    assert [musiclib.quality_detail(t) for t in (hi, cd, fl, mp3)] == [
+        "24-bit/96 kHz", "16-bit/44.1 kHz", "32-bit float/192 kHz", "MP3 · 320 kbps · 44.1 kHz"]
+    assert sorted([fl, hi, mp3, cd], key=musiclib.quality_sort) == [mp3, cd, hi, fl]
+
+
+def test_renaming_a_group_keeps_the_rest_of_the_date():
+    from realhires import tagedit
+
+    assert tagedit.renamed_date("2001-05-03", "2004") == "2004-05-03"
+    assert tagedit.renamed_date("", "2004") == tagedit.renamed_date("May 2001", "2004") == "2004"
+    assert tagedit.group_changes("years", "2004", {"date": "2001-05"}) == {"date": "2004-05"}
+    assert tagedit.group_changes("genres", "Jazz", {}) == {"genre": "Jazz"}
+    with pytest.raises(tagedit.TagError, match="four digits"):
+        tagedit.check_group_name("years", "04")
+    assert tagedit.check_group_name("genres", "  Classic   Rock ") == "Classic Rock"
