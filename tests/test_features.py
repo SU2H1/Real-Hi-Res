@@ -694,7 +694,7 @@ def test_fix_done_summary_for_the_pop_up():
     copy.output = "/out/d.flac"
     head, lines = done_summary([FixOutcome(copy, True, "", "/out/d.flac", None, 10, 5)])
     assert head == "Saved corrected copies of 1 file"
-    assert "the corrected copies are in /out." in " ".join(lines)
+    assert f"the corrected copies are in {os.path.abspath('/out')}." in " ".join(lines)  # D:\\out on Windows
     assert done_summary([FixOutcome(plan("e"), False, "no")])[0] == "No file could be fixed"
     assert fmt_bytes(812) == "812 bytes" and fmt_bytes(1.5 * 1024 ** 3) == "1.5 GB"
 
