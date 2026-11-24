@@ -439,3 +439,54 @@ after every start (and the Python app forgot all but 600 images). Now, in both v
   that has none on disk yet, after the covers asked for on screen (those always go first), so the next scroll finds
   them ready; it stops when the app quits.
 - The sizes are the same in both apps where they can be, so the disk entries are shared.
+
+### Ten more requests (later on 2026-11-24)
+
+The user's words, then what both apps do:
+
+1. "Equaliser's my preset delete button doesn't work": find out why in both apps and fix it. Deleting one of the
+   user's own presets (after the confirmation) removes it from `player.json` (`PlayerState.delete_eq_preset()`), from
+   the preset menu, and leaves the current EQ settings as they are (the menu then shows "Custom" when they match no
+   preset). A test presses the button's handler and checks all three.
+2. "Quality tab should display bit/kHz instead of the current display": the **Quality column** of every song table
+   shows `musiclib.resolution()` ("24-bit/96 kHz", "16-bit/44.1 kHz", "32-bit float/192 kHz"); lossy songs show
+   the codec, bit rate and rate ("MP3 · 320 kbps · 44.1 kHz"). Sorting by it sorts by bits, then rate. (The LCD badge
+   keeps "Hi-Res Lossless" / "Lossless".)
+3. "When user scrolls down library, it lags a little": scrolling the song tables, album grids and the new grids of
+   item 10 must stay smooth on a library of 5,000 songs and 500 albums: nothing expensive per frame or per scroll
+   step (no FFmpeg, no file access, no re-sorting, no per-pixel image work on the UI thread; draw only the visible
+   rows/cards). Measure before and after (Tk: time a scroll step's redraw; egui: frame time) and say what changed.
+   (Cover loading itself is handled by "Album covers are kept".)
+4. "Allow user to merge genre folders, rename them etc": on the Genres page a genre's menu (right-click, and "…" on
+   its page) has **Rename genre…** (a name dialog; every song of that genre gets the new name through
+   `tagedit.save_tags()`, so the audio is untouched and the saved results and the library follow) and **Merge
+   into…** (choose another genre from a list, or type a name; the songs of this genre get that genre). The Genres
+   page also lets several genres be selected (Ctrl/Cmd-click) and merged at once ("Merge N genres…", asking for the
+   resulting name, defaulting to the genre with the most songs). A confirmation says how many files will be
+   changed; the outcome is reported as with Edit Info (`save_summary()`); files that cannot be changed are listed.
+   Composers and Years get Rename… the same way (Years: the date's year is replaced, the rest of the date kept).
+5. "The lyrics should display whether lyrics are synced or just a text": Now Playing shows a small label above the
+   lyrics: "Synced lyrics" or "Lyrics (not synced)", plus where they come from in secondary text (".lrc file",
+   "inside the file", ".txt file").
+6. "When user scrolls while lyrics are synced, a button should appear so they can go back to where the lyrics are
+   synced": while the user has scrolled synced lyrics away from the current line (the 3-second pause of the
+   automatic scrolling), a pill button "Back to the current line" floats at the bottom of the lyrics column; a click
+   scrolls back at once and resumes following. The button stays until clicked or the user scrolls the current line
+   back into view; the automatic scrolling stays paused while it is shown (no 3-second timeout any more).
+7. "Allow user to increase or decrease lyric font size and the jacket, album artist name on the left should be in
+   the middle as a set": two small buttons "A−" / "A+" by the lyrics label change the lyrics' size in steps (16 to
+   48 px, default 26 (Rust 24 → 26 as well)), saved in `player.json` as `lyrics_size` (PlayerState in both versions,
+   with the parity vectors); and the cover with the title and "Artist — Album" under it form one block centred
+   vertically (and horizontally) in the left half, as the centred layout without lyrics already is.
+8. "When user clicks the jacket/album name or the artist name, it should bring them to the album or artist": on Now
+   Playing the cover and the album name open the album page, the artist name opens the artist page (pointer cursor
+   and underline on hover). The same in the playback bar's LCD: the title/album line opens the album, the artist
+   opens the artist (the LCD's cover keeps opening/leaving Now Playing).
+9. "Get lyrics button doesn't work": find out why in both apps and fix it (the Now Playing "Get lyrics" button and
+   the song menus' Get lyrics): it must open the lyrics window for that song and start the download at once, and
+   when lyrics are saved, Now Playing shows them without leaving the page. A test presses it against `FakeLrclib`.
+10. "The artist, composer, year, genre etc tab should display like album, not series of artist names": Artists,
+    Album Artists, Composers, Years and Genres are card grids like Albums: each card a square picture (an artist,
+    album artist or composer: a mosaic of up to four of their album covers, or the one cover when there is one; a
+    genre or year: the same mosaic of its albums) with the name in bold and "N albums · M songs" in grey under it,
+    sorted as the list was. A click opens the same page as before. Unknown names keep their "Unknown …" label.
