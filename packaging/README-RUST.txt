@@ -44,8 +44,8 @@ Details shows the full numbers.  Settings > Appearance has the font, the
 theme (8 built-in themes, or your own: New theme... and the colour editor),
 Import theme..., Export... and "Open themes folder": theme .json files put
 into that folder appear in the theme menu as they are, and a theme file
-dropped onto the window is imported.  "Edit info..." in a
-song's menu and "Edit album info..." on an album page change the title,
+dropped onto the window is imported.  "Properties..." in a
+song's menu and "Album Properties..." on an album page change the title,
 artist, album, album artist, genre, release date, track, disc and composer
 (only the tags change, never the audio).  Every other function is in
 Settings too:

@@ -97,7 +97,7 @@ The sidebar lists the same pages, your playlists by name, and **Settings** at th
 
 **Your Stats.** It starts with a **calendar** of the month (‹ › change it): days with music are tinted by how much you listened, and a click on a day lists what you played that day, at what time and for how long; a click on a song plays it. Real-Hi-Res keeps a history of what you play (a song counts as a play once you have heard 30 seconds of it, or half of a shorter song; seeking does not count as listening). **Your Stats** sums it up for the last 30 days, this year, last year or all time, in colourful cards: the minutes you listened, your top song, artist, album and genre, how many songs and artists you played, the hour and the day of the week you listen most, your longest streak of days with music, and your biggest day. **Details** shows the totals, bar charts of your listening by hour, weekday and month, your top 50 songs, artists, albums and genres with plays and minutes, and what your library holds (songs, length, size, formats, and how many are Hi-Res Lossless, Lossless or lossy, by sample rate and bit depth). **Settings → Library → Clear the play history…** starts it again from nothing. The history stays on your computer.
 
-![Your Stats: cards with the minutes listened, the top song, artist, album and genre, the listening hour and day, the longest streak and the biggest day](docs/gui-player-stats.png)
+![Your Stats: the calendar of the month with a day chosen and the songs played that day, then the cards with the minutes listened, the top song, artist and album](docs/gui-player-stats.png)
 
 ![Your Stats details: totals, listening by hour, weekday and month, and the top songs, artists, albums and genres](docs/gui-player-stats-details.png)
 

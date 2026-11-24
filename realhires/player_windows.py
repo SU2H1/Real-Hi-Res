@@ -227,9 +227,9 @@ class EqualizerWindow:
                 self.delete_btn = b
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
-        # bit-perfect playback bypasses the equalizer (its settings are kept)
+        # bit-perfect playback bypasses the equalizer (its settings are kept); shown only then,
+        # so it leaves no empty line above the curve (show_bypass())
         self.bypass = label(box, t, "", "body", fg="accent", wraplength=640, justify="left")
-        self.bypass.pack(anchor="w", pady=(4, 0))
         self.preset_menu: Optional[tk.Menu] = None
         self.delete_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
@@ -256,7 +256,12 @@ class EqualizerWindow:
 
     def show_bypass(self) -> None:
         """'Bypassed while bit-perfect playback is on.' while that setting is on."""
-        self.bypass.configure(text=bitperfect.EQ_BYPASSED if self.app.cfg.bit_perfect else "")
+        on = bool(self.app.cfg.bit_perfect)
+        self.bypass.configure(text=bitperfect.EQ_BYPASSED if on else "")
+        if on:
+            self.bypass.pack(anchor="w", pady=(4, 0), before=self.curve)
+        else:
+            self.bypass.pack_forget()
 
     # ---- graphic --------------------------------------------------------
     def _build_graphic(self) -> None:

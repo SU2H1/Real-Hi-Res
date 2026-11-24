@@ -1156,6 +1156,7 @@ def switched():
     assert settings.load().bit_perfect  # saved at once, as every setting
     app.open_eq()
     assert app.eq_window.bypass.cget("text") == "Bypassed while bit-perfect playback is on."
+    assert app.eq_window.bypass.winfo_manager() == "pack"
     app.eq_window.close()
     app.open_info()
     info = app.info_window.text()
@@ -1174,6 +1175,9 @@ def off():
     app.open_info()
     assert "Bit-perfect: Off" in app.info_window.text(), app.info_window.text()
     app.info_window.close()
+    app.open_eq()  # no bypass note, and no empty line where it was
+    assert app.eq_window.bypass.cget("text") == "" and not app.eq_window.bypass.winfo_manager()
+    app.eq_window.close()
     print("OK")
     app.quit()
 
