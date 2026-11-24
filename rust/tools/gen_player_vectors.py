@@ -231,6 +231,7 @@ print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", 
 
 
 # ------------------------------------------------- tag editor, themes folder ---
+import hashlib  # noqa: E402
 import struct  # noqa: E402
 import tempfile  # noqa: E402
 
@@ -343,9 +344,68 @@ with tempfile.TemporaryDirectory() as d:
             fh.write(text)
     loaded = [{"theme": {k: v for k, v in t.items() if k != "file"}, "file": os.path.basename(t["file"])}
               for t in themes.load_folder(own, d)]
+
+
+def ogg_file(first, header_packets, serial=0x1234ABCD, audio_pages=3, other_serial=False):
+    """An Ogg file laid out as FFmpeg writes one: the identification header on the
+    first page, every other header packet on pages of its own, then audio pages."""
+    out = tagedit._ogg_page(2, b"\x00" * 8, serial, 0, [len(first)], first)
+    seq = 1
+    for pkt in header_packets:
+        pages = tagedit._ogg_pages_for([pkt], serial, seq)
+        out += b"".join(pages)
+        seq += len(pages)
+    if other_serial:
+        out += tagedit._ogg_page(2, b"\x00" * 8, serial + 1, 0, [5], b"OTHER")
+    for i in range(audio_pages):
+        body = bytes((i * 7 + k) % 256 for k in range(300))
+        out += tagedit._ogg_page(4 if i == audio_pages - 1 else 0, struct.pack("<q", 1024 * (i + 1)), serial,
+                                 seq, [255, 45], body)
+        seq += 1
+    return out
+
+
+def vorbis_comment(magic, comments, tail):
+    vendor = b"Lavf62.0.100"
+    body = struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", len(comments))
+    for c in comments:
+        c = c.encode("utf-8")
+        body += struct.pack("<I", len(c)) + c
+    return magic + body + tail
+
+
+VORBIS_ID = b"\x01vorbis" + b"\x00\x00\x00\x00\x02\x44\xac\x00\x00" + b"\x00" * 12 + b"\xb8\x01"
+OPUS_HEAD = b"OpusHead\x01\x02\x38\x01\x80\xbb\x00\x00\x00\x00\x00"
+SETUP = b"\x05vorbis" + bytes(range(256)) * 12
+small = ["TITLE=Old", "ARTIST=One", "ALBUMARTIST=AA", "TRACKNUMBER=2", "TRACKTOTAL=9", "DATE=2001"]
+oggs = {
+    "vorbis": ogg_file(VORBIS_ID, [vorbis_comment(b"\x03vorbis", small, b"\x01"), SETUP]),
+    "vorbis_big": ogg_file(VORBIS_ID, [vorbis_comment(b"\x03vorbis", small + ["COMMENT=" + "z" * 70000],
+                                                      b"\x01"), SETUP]),
+    "opus": ogg_file(OPUS_HEAD, [vorbis_comment(b"OpusTags", small, b"\x00\x00padding")]),
+    "speex": ogg_file(b"Speex   1.2" + b"\x00" * 69, [vorbis_comment(b"", small, b"")]),
+    "two_streams": ogg_file(VORBIS_ID, [vorbis_comment(b"\x03vorbis", small, b"\x01")], other_serial=True),
+    "not_ogg": b"RIFF....WAVEfmt ",
+}
+ogg_cases = []
+for name, data in oggs.items():
+    for ch in change_sets:
+        case = {"name": name, "changes": ch}
+        try:
+            out = tagedit.ogg_with_tags(data, tagedit.check_changes(ch))
+            case.update(sha1=hashlib.sha1(out).hexdigest(), size=len(out))
+            if name == "vorbis":
+                case["output"] = out.hex()
+        except tagedit.TagError as exc:
+            case["error"] = str(exc)
+        ogg_cases.append(case)
+crcs = {x: tagedit.ogg_crc(x.encode()) for x in ("", "123456789", "OggS")}
+
 with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh:
     json.dump({"cases": tag_cases, "checks": checks_tag, "commands": commands, "cannot": cannot, "notes": notes,
                "commons": [{"tags": c, "values": tagedit.common_values(c)} for c in commons],
                "summaries": [{"outcomes": [[o.path, o.ok, o.message] for o in oc],
                               "summary": tagedit.save_summary(oc)} for oc in outcomes],
-               "folder": {"own": own, "files": folder_files, "loaded": loaded}}, fh, indent=0, ensure_ascii=False)
+               "folder": {"own": own, "files": folder_files, "loaded": loaded},
+               "ogg_inputs": {name: data.hex() for name, data in oggs.items()}, "ogg": ogg_cases,
+               "crc": crcs}, fh, indent=0, ensure_ascii=False)

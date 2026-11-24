@@ -170,7 +170,7 @@ fn parse_vorbis(body: &[u8]) -> Result<(Vec<u8>, Vec<Vec<u8>>), EmbedError> {
     Ok((vendor, comments))
 }
 
-fn vorbis_body(vendor: &[u8], comments: &[Vec<u8>]) -> Vec<u8> {
+pub(crate) fn vorbis_body(vendor: &[u8], comments: &[Vec<u8>]) -> Vec<u8> {
     let mut out = (vendor.len() as u32).to_le_bytes().to_vec();
     out.extend_from_slice(vendor);
     out.extend_from_slice(&(comments.len() as u32).to_le_bytes());

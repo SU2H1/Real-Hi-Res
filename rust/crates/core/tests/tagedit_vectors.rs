@@ -150,3 +150,32 @@ fn the_themes_folder_is_read_as_in_python() {
     assert_eq!(themes::folder(Some(&dir.join("themes.json"))), dir.join("themes"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ogg_files_get_the_same_bytes_as_from_python() {
+    use sha1::{Digest, Sha1};
+    let d = load();
+    let inputs = d.get("ogg_inputs").unwrap();
+    for case in list(d.get("ogg").unwrap()) {
+        let name = text(case.get("name").unwrap());
+        let input = hex(inputs.get(&name).unwrap().as_str().unwrap());
+        let changes = tagedit::check_changes(&pairs(case.get("changes").unwrap())).unwrap();
+        let what = format!("{name} {:?}", case.get("changes"));
+        match (case.get("sha1"), tagedit::ogg_with_tags(&input, &changes)) {
+            (Some(sha), Ok(out)) => {
+                if let Some(full) = case.get("output") {
+                    assert_eq!(out, hex(full.as_str().unwrap()), "{what}");
+                }
+                let got: String = Sha1::digest(&out).iter().map(|b| format!("{b:02x}")).collect();
+                assert_eq!(got, text(sha), "{what}");
+            }
+            (None, Err(e)) => assert_eq!(e.0, text(case.get("error").unwrap()), "{what}"),
+            (s, g) => panic!("{what}: Python {s:?}, Rust {:?}", g.map(|o| o.len())),
+        }
+    }
+    if let Value::Object(crcs) = d.get("crc").unwrap() {
+        for (input, want) in crcs {
+            assert_eq!(tagedit::ogg_crc(input.as_bytes()) as i64, want.as_i64().unwrap(), "{input}");
+        }
+    }
+}

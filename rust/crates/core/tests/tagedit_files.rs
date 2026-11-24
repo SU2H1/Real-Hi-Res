@@ -1,6 +1,6 @@
-//! The tag editor on real files made with FFmpeg (skipped without it): FLAC
-//! natively and M4A through FFmpeg's stream copy keep their audio sample for
-//! sample, drop an emptied field, keep the fields that were not changed, and
+//! The tag editor on real files made with FFmpeg (skipped without it): FLAC,
+//! Ogg Vorbis and Opus natively and M4A through FFmpeg's stream copy keep their
+//! audio sample for sample, drop an emptied field, keep the fields that were not changed, and
 //! the saved result follows the new tags.
 
 use std::process::Command;
@@ -33,7 +33,16 @@ fn flac_and_m4a_keep_their_audio_and_saved_results() {
     std::env::set_var("REALHIRES_LIBRARY", dir.join("library.sqlite"));
     let cfg = Settings::default();
     let skey = store::settings_key(&cfg);
-    for (name, codec) in [("a.flac", "flac"), ("b.m4a", "aac")] {
+    let encoders = ffmpeg().args(["-hide_banner", "-encoders"]).output().map(|o| o.stdout).unwrap_or_default();
+    let encoders = String::from_utf8_lossy(&encoders).to_string();
+    let mut formats = vec![("a.flac", "flac"), ("b.m4a", "aac")];
+    // Ogg is written natively: FFmpeg 8's stream copy of Vorbis changes its samples
+    for (name, codec) in [("c.ogg", "libvorbis"), ("d.opus", "libopus")] {
+        if encoders.contains(codec) {
+            formats.push((name, codec));
+        }
+    }
+    for (name, codec) in formats {
         let song = dir.join(name).to_string_lossy().into_owned();
         let ok = ffmpeg()
             .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ac", "2"])

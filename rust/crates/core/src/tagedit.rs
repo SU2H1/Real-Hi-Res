@@ -1,10 +1,10 @@
 //! Editing a song's information (2.0), the counterpart of
 //! `realhires/tagedit.py`: title, artist, album, album artist, genre, release
-//! date, track, disc and composer.  FLAC and MP3 are written natively with the
-//! same bytes as the Python version (only the Vorbis comments or the ID3v2 tag
-//! change); other formats are copied by FFmpeg with `-c copy` and the same
-//! arguments, and the copy must have the original's audio before it replaces
-//! the file.  The saved results move to the new size and time with the new
+//! date, track, disc and composer.  FLAC, MP3, Ogg Vorbis and Opus are written
+//! natively with the same bytes as the Python version (only the Vorbis comments,
+//! the ID3v2 tag or the Ogg comment header pages change); other formats are
+//! copied by FFmpeg with `-c copy` and the same arguments, and the copy must
+//! decode to exactly the original's samples before it replaces the file.  The saved results move to the new size and time with the new
 //! tags, and the library reads the file again.
 
 use std::path::Path;
@@ -16,7 +16,7 @@ use crate::settings::Settings;
 
 pub const FIELDS: [&str; 9] = ["title", "artist", "album", "album_artist", "genre", "date", "track", "disc", "composer"];
 pub const MAX_VALUE: usize = 1000;
-pub const NATIVE: [&str; 2] = [".flac", ".mp3"];
+pub const NATIVE: [&str; 5] = [".flac", ".mp3", ".ogg", ".oga", ".opus"];
 pub const STREAM_TAGS: [&str; 4] = [".ogg", ".oga", ".opus", ".spx"];
 pub const ID3_CHUNK: [&str; 3] = [".aif", ".aiff", ".aifc"];
 pub const NO_MUXER: [&str; 7] = [".ape", ".dsf", ".dff", ".tak", ".mpc", ".ofr", ".tta"];
@@ -201,25 +201,232 @@ fn put_comments(comments: Vec<Vec<u8>>, removes: &[&str], new: Vec<Vec<u8>>) -> 
     put(comments, |c| removes.contains(&comment_key(c).as_str()), new)
 }
 
+/// Vorbis comments with the (checked) changes (Python `edit_comments`).
+pub fn edit_comments(mut comments: Vec<Vec<u8>>, changes: &Changes) -> Vec<Vec<u8>> {
+    for f in FIELDS {
+        let Some(value) = get(changes, f) else { continue };
+        let (key, removes) = flac_keys(f);
+        if let Some((tkey, tremoves)) = flac_total(f) {
+            let (number, total) = split_number(value);
+            comments = put_comments(comments, removes, comment(key, &number));
+            if !total.is_empty() || number.is_empty() {
+                comments = put_comments(comments, tremoves, comment(tkey, &total));
+            }
+        } else {
+            comments = put_comments(comments, removes, comment(key, value));
+        }
+    }
+    comments
+}
+
 /// The FLAC file with the (checked) changes in its Vorbis comments.
 pub fn flac_with_tags(data: &[u8], changes: &Changes) -> Result<Vec<u8>, TagError> {
-    let edit = |mut comments: Vec<Vec<u8>>| {
-        for f in FIELDS {
-            let Some(value) = get(changes, f) else { continue };
-            let (key, removes) = flac_keys(f);
-            if let Some((tkey, tremoves)) = flac_total(f) {
-                let (number, total) = split_number(value);
-                comments = put_comments(comments, removes, comment(key, &number));
-                if !total.is_empty() || number.is_empty() {
-                    comments = put_comments(comments, tremoves, comment(tkey, &total));
-                }
-            } else {
-                comments = put_comments(comments, removes, comment(key, value));
+    Ok(embed::flac_rewrite(data, |c| edit_comments(c, changes), "The tags are too long for a FLAC file.")?)
+}
+
+// -------------------------------------------------------------------- Ogg ---
+
+fn crc_table() -> &'static [u32; 256] {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = [0u32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            let mut r = (i as u32) << 24;
+            for _ in 0..8 {
+                r = if r & 0x8000_0000 != 0 { (r << 1) ^ 0x04C1_1DB7 } else { r << 1 };
+            }
+            *slot = r;
+        }
+        t
+    })
+}
+
+/// The Ogg page checksum (Python `ogg_crc`).
+pub fn ogg_crc(data: &[u8]) -> u32 {
+    let t = crc_table();
+    data.iter().fold(0u32, |crc, &b| (crc << 8) ^ t[(((crc >> 24) as u8) ^ b) as usize])
+}
+
+struct OggPage<'a> {
+    htype: u8,
+    granule: &'a [u8],
+    serial: u32,
+    seq: u32,
+    segs: &'a [u8],
+    body: &'a [u8],
+    end: usize,
+}
+
+fn ogg_page_at(data: &[u8], pos: usize) -> Result<OggPage<'_>, TagError> {
+    if data.len() < pos + 27 || &data[pos..pos + 4] != b"OggS" {
+        return Err(TagError("The Ogg file is damaged: a page does not start where it should.".into()));
+    }
+    let nsegs = data[pos + 26] as usize;
+    let start = pos + 27 + nsegs;
+    if start > data.len() {
+        return Err(TagError("The Ogg file ends inside a page.".into()));
+    }
+    let segs = &data[pos + 27..start];
+    let end = start + segs.iter().map(|v| *v as usize).sum::<usize>();
+    if end > data.len() {
+        return Err(TagError("The Ogg file ends inside a page.".into()));
+    }
+    let le = |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
+    Ok(OggPage {
+        htype: data[pos + 5],
+        granule: &data[pos + 6..pos + 14],
+        serial: le(pos + 14),
+        seq: le(pos + 18),
+        segs,
+        body: &data[start..end],
+        end,
+    })
+}
+
+fn ogg_page(htype: u8, granule: &[u8], serial: u32, seq: u32, segs: &[u8], body: &[u8]) -> Vec<u8> {
+    let mut page = b"OggS\x00".to_vec();
+    page.push(htype);
+    page.extend_from_slice(granule);
+    page.extend_from_slice(&serial.to_le_bytes());
+    page.extend_from_slice(&seq.to_le_bytes());
+    page.extend_from_slice(&[0, 0, 0, 0]);
+    page.push(segs.len() as u8);
+    page.extend_from_slice(segs);
+    page.extend_from_slice(body);
+    let crc = ogg_crc(&page);
+    page[22..26].copy_from_slice(&crc.to_le_bytes());
+    page
+}
+
+/// Header packets laid out in pages as libogg flushes them (Python `_ogg_pages_for`).
+fn ogg_pages_for(packets: &[Vec<u8>], serial: u32, mut seq: u32) -> Vec<Vec<u8>> {
+    let mut pages = vec![];
+    let (mut segs, mut body, mut cont): (Vec<u8>, Vec<u8>, bool) = (vec![], vec![], false);
+    let mut flush = |segs: &mut Vec<u8>, body: &mut Vec<u8>, cont: &mut bool, next: bool| {
+        let granule: [u8; 8] = if segs.iter().any(|v| *v < 255) { [0; 8] } else { [0xFF; 8] };
+        pages.push(ogg_page(u8::from(*cont), &granule, serial, seq, segs, body));
+        seq += 1;
+        segs.clear();
+        body.clear();
+        *cont = next;
+    };
+    for pkt in packets {
+        let mut lace = vec![255u8; pkt.len() / 255];
+        lace.push((pkt.len() % 255) as u8);
+        let mut pos = 0;
+        for (i, v) in lace.into_iter().enumerate() {
+            if segs.len() == 255 {
+                flush(&mut segs, &mut body, &mut cont, i > 0);
+            }
+            segs.push(v);
+            body.extend_from_slice(&pkt[pos..pos + v as usize]);
+            pos += v as usize;
+        }
+    }
+    if !segs.is_empty() {
+        flush(&mut segs, &mut body, &mut cont, false);
+    }
+    pages
+}
+
+fn damaged_comments() -> TagError {
+    TagError("The Ogg file's comment header is damaged.".into())
+}
+
+/// (vendor, comments, end offset) of a Vorbis comment structure at `start`.
+fn parse_comment_body(b: &[u8], start: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>, usize), TagError> {
+    let le = |at: usize| -> Result<usize, TagError> {
+        b.get(at..at + 4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]) as usize).ok_or_else(damaged_comments)
+    };
+    let vlen = le(start)?;
+    let vendor = b.get(start + 4..start + 4 + vlen).ok_or_else(damaged_comments)?.to_vec();
+    let mut pos = start + 4 + vlen;
+    let count = le(pos)?;
+    pos += 4;
+    let mut comments = vec![];
+    for _ in 0..count {
+        let n = le(pos)?;
+        comments.push(b.get(pos + 4..pos + 4 + n).ok_or_else(damaged_comments)?.to_vec());
+        pos += 4 + n;
+    }
+    Ok((vendor, comments, pos))
+}
+
+/// The Ogg Vorbis or Opus file with the (checked) changes in its comment
+/// header (Python `ogg_with_tags`).
+pub fn ogg_with_tags(data: &[u8], changes: &Changes) -> Result<Vec<u8>, TagError> {
+    let err = |m: &str| Err(TagError(m.to_string()));
+    let p0 = ogg_page_at(data, 0)?;
+    let (serial, first, first_end) = (p0.serial, p0.body.to_vec(), p0.end);
+    if p0.htype & 2 == 0 || p0.segs.len() != 1 || p0.segs[0] == 255 {
+        return err("The Ogg file does not start with a stream header page of its own.");
+    }
+    let (need, magic): (usize, &[u8]) = if first.starts_with(b"\x01vorbis") {
+        (3, b"\x03vorbis")
+    } else if first.starts_with(b"OpusHead") {
+        (2, b"OpusTags")
+    } else {
+        return err("Only Ogg files with Vorbis or Opus audio can be changed directly.");
+    };
+    let mut packets: Vec<Vec<u8>> = vec![first];
+    let mut cur: Vec<u8> = vec![];
+    let mut old_pages = 0usize;
+    let mut pos = first_end;
+    while packets.len() < need {
+        if pos >= data.len() {
+            return err("The Ogg file ends inside its headers.");
+        }
+        let p = ogg_page_at(data, pos)?;
+        if p.serial != serial {
+            return err("The Ogg file holds several streams, which cannot be changed directly.");
+        }
+        let mut off = 0;
+        for &v in p.segs {
+            if packets.len() == need {
+                return err("The Ogg file's headers share a page with the audio.");
+            }
+            cur.extend_from_slice(&p.body[off..off + v as usize]);
+            off += v as usize;
+            if v < 255 {
+                packets.push(std::mem::take(&mut cur));
             }
         }
-        comments
-    };
-    Ok(embed::flac_rewrite(data, edit, "The tags are too long for a FLAC file.")?)
+        old_pages += 1;
+        pos = p.end;
+    }
+    if !cur.is_empty() || packets.len() != need {
+        return err("The Ogg file's headers share a page with the audio.");
+    }
+    if !packets[1].starts_with(magic) {
+        return Err(damaged_comments());
+    }
+    let (vendor, comments, end) = parse_comment_body(&packets[1], magic.len())?;
+    let mut new_tags = magic.to_vec();
+    new_tags.extend_from_slice(&embed::vorbis_body(&vendor, &edit_comments(comments, changes)));
+    new_tags.extend_from_slice(&packets[1][end..]);
+    let mut header = vec![new_tags];
+    header.extend(packets[2..].iter().cloned());
+    let pages = ogg_pages_for(&header, serial, 1);
+    let mut out = data[..first_end].to_vec();
+    for p in &pages {
+        out.extend_from_slice(p);
+    }
+    let delta = pages.len() as i64 - old_pages as i64;
+    if delta == 0 {
+        out.extend_from_slice(&data[pos..]);
+        return Ok(out);
+    }
+    while pos < data.len() && data[pos..].starts_with(b"OggS") {
+        let p = ogg_page_at(data, pos)?;
+        if p.serial == serial {
+            out.extend(ogg_page(p.htype, p.granule, p.serial, (p.seq as i64 + delta) as u32, p.segs, p.body));
+        } else {
+            out.extend_from_slice(&data[pos..p.end]);
+        }
+        pos = p.end;
+    }
+    out.extend_from_slice(&data[pos..]);
+    Ok(out)
 }
 
 // -------------------------------------------------------------------- ID3 ---
@@ -326,6 +533,34 @@ pub fn cannot_edit(path: &str) -> String {
     String::new()
 }
 
+/// SHA-1 of the file's first audio stream decoded to 32-bit samples (Python `pcm_digest`).
+pub fn pcm_digest(path: &str) -> Result<String, TagError> {
+    use sha1::{Digest, Sha1};
+    use std::io::Read;
+    let mut child = probe::command(probe::tool("ffmpeg"))
+        .args(["-v", "error", "-nostdin", "-i", path, "-map", "0:a:0", "-f", "s32le", "-acodec", "pcm_s32le", "-"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| TagError(format!("FFmpeg could not be started: {e}.")))?;
+    let mut h = Sha1::new();
+    let mut buf = vec![0u8; 1 << 20];
+    if let Some(mut out) = child.stdout.take() {
+        loop {
+            match out.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => h.update(&buf[..n]),
+            }
+        }
+    }
+    let ok = child.wait().is_ok_and(|s| s.success());
+    if !ok {
+        return Err(TagError("FFmpeg could not decode the file to compare its audio.".into()));
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn ffmpeg_copy(path: &str, changes: &Changes) -> Result<(), TagError> {
     let why = cannot_edit(path);
     if !why.is_empty() {
@@ -357,13 +592,10 @@ fn ffmpeg_copy(path: &str, changes: &Changes) -> Result<(), TagError> {
                 last.unwrap_or(code)
             )));
         }
-        let before = probe::probe(path).map_err(|e| TagError(e.to_string()))?;
-        let after = probe::probe(&tmp).map_err(|e| TagError(e.to_string()))?;
-        let (b, a) = (before.duration.unwrap_or(0.0), after.duration.unwrap_or(0.0));
-        if after.sample_rate != before.sample_rate || after.channels != before.channels || (a - b).abs() > 0.5f64.max(0.01 * b)
-        {
+        if pcm_digest(&tmp)? != pcm_digest(path)? {
             return Err(TagError(
-                "FFmpeg's copy did not have the same audio as the original, so the file was left unchanged.".into(),
+                "FFmpeg's copy did not have exactly the same audio as the original, so the file was left unchanged."
+                    .into(),
             ));
         }
         if let Ok(meta) = std::fs::metadata(path) {
@@ -385,11 +617,16 @@ pub fn write_tags(path: &str, changes: &Changes) -> Result<&'static str, TagErro
     let ext = ext_of(path);
     if NATIVE.contains(&ext.as_str()) {
         let data = std::fs::read(path).map_err(|e| TagError(e.to_string()))?;
-        let new = if ext == ".flac" { flac_with_tags(&data, changes) } else { mp3_with_tags(&data, changes) };
+        let new = match ext.as_str() {
+            ".flac" => flac_with_tags(&data, changes),
+            ".mp3" => mp3_with_tags(&data, changes),
+            _ => ogg_with_tags(&data, changes),
+        };
         let new = match new {
             Ok(n) => n,
-            Err(_) if ext == ".mp3" => {
-                ffmpeg_copy(path, changes)?; // ID3v2.2 or unsynchronised tags: FFmpeg writes a new one
+            Err(_) if ext != ".flac" => {
+                // ID3v2.2 or unsynchronised MP3 tags, Ogg FLAC or Speex...: FFmpeg copies the file
+                ffmpeg_copy(path, changes)?;
                 return Ok("ffmpeg");
             }
             Err(e) => return Err(e),

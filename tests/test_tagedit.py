@@ -183,3 +183,39 @@ def test_themes_folder_files_appear_in_the_menu(tmp_path, monkeypatch):
     assert themes.resolve("Neon", False, own + files)["colors"]["accent"] == "#39ff14"
     themes.save_custom(own + files)  # a folder theme saved by mistake must not keep its file name
     assert all("file" not in t for t in themes.load_custom())
+
+
+def _clean_decode(path) -> str:
+    """FFmpeg's warnings while decoding the whole file (a bad page checksum shows here)."""
+    return subprocess.run(["ffmpeg", "-v", "warning", "-nostdin", "-i", str(path), "-f", "null", "-"],
+                          capture_output=True, text=True).stderr.strip()
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("ext,codec", [("ogg", "libvorbis"), ("opus", "libopus")])
+def test_ogg_headers_over_several_pages(tmp_path, ext, codec):
+    if codec not in _encoders():
+        pytest.skip(f"this FFmpeg has no {codec} encoder")
+    big = "Long title " * 9000  # about 100 KB: the comment header spans two pages
+    song = make(tmp_path / f"big.{ext}", ["-c:a", codec], {"title": big, "artist": "Art", "comment": "keep me"})
+    before = pcm(song)
+    out = tagedit.save_tags([song], {"title": "Short", "date": "1999"})  # the header shrinks to one page
+    assert out[0].ok, out[0].message
+    assert pcm(song) == before and _clean_decode(song) == ""
+    tags = probe(song).tags
+    assert (tags["title"], tags["artist"], tags["date"]) == ("Short", "Art", "1999")
+    with open(song, "rb") as fh:
+        data = fh.read()
+    grown = tmp_path / f"grown.{ext}"
+    grown.write_bytes(tagedit.ogg_with_tags(data, {"title": big.strip()}))  # and grows again
+    assert pcm(grown) == before and _clean_decode(grown) == ""
+    assert probe(str(grown)).tags["title"] == big.strip()
+    assert b"keep me" in grown.read_bytes()
+
+
+def test_ogg_crc_and_refusals():
+    assert tagedit.ogg_crc(b"") == 0 and tagedit.ogg_crc(b"123456789") == 0x89A1897F  # CRC-32/MPEG-2 without xor
+    with pytest.raises(tagedit.TagError):
+        tagedit.ogg_with_tags(b"OggS" + b"\x00" * 30, {"title": "x"})
+    with pytest.raises(tagedit.TagError):
+        tagedit.ogg_with_tags(b"not an ogg file at all, just some bytes", {"title": "x"})

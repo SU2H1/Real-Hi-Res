@@ -280,8 +280,8 @@ grey note "Several values: kept unless you type here". A field counts as changed
 from that of what it started with (for a "several values" field: when anything was typed, so emptying such a field
 leaves it as it is). **Save** checks the changes
 (`check_changes()`, its message in red under the fields, the window stays open), closes the window when nothing
-changed, and otherwise saves in a background thread with `save_tags()` ("Saving 3 of 12…"): FLAC and MP3 natively,
-other formats through FFmpeg's stream copy, saved results moved with the new tags, the library index updated.
+changed, and otherwise saves in a background thread with `save_tags()` ("Saving 3 of 12…"): FLAC, MP3, Ogg Vorbis and
+Opus natively, other formats through FFmpeg's stream copy (used only when the copy decodes to the same samples), saved results moved with the new tags, the library index updated.
 Then the app refreshes the library (its pages and the LCD show the new values). When every song was saved without a
 note the window closes; otherwise it shows `save_summary()` (headline and sentences) with a Close button.
 **Cancel** (or Esc) closes it without saving; while saving it cannot be closed.
