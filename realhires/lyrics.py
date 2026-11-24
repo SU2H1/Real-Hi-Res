@@ -18,6 +18,15 @@ installed or bundled.
 Lyrics files are never deleted: an existing ``.txt`` stays when a synced
 ``.lrc`` is added next to it, and existing files are only overwritten when the
 user chose "Download again and replace them".
+
+Credits: the lyrics come from LRCLIB and its contributors, and this feature is
+modelled on LRCGET.  Both are by tranxuanthang and MIT-licensed (LRCGET:
+"Copyright (c) 2023 tranxuanthang", https://github.com/tranxuanthang/lrcget;
+the LRCLIB server: "Copyright (c) 2024 tranxuanthang",
+https://github.com/tranxuanthang/lrclib).  This module was written for
+Real-Hi-Res and contains no code from either; it follows LRCGET's conventions
+and LRCLIB's published API.  CREDIT and ABOUT_CREDIT are shown in the desktop
+app (the lyrics window and the About box).
 """
 
 from __future__ import annotations
@@ -68,6 +77,12 @@ STATUS_LABEL = {
     FAILED: "Failed",
 }
 SAVED_STATUSES = (SYNCED, PLAIN, INSTRUMENTAL)
+
+# Shown in the lyrics window and the About box (the Rust version shows the same texts).
+CREDIT = ("Lyrics are provided by LRCLIB (lrclib.net) and its contributors. This window works like LRCGET "
+          "by tranxuanthang, the official LRCLIB client.")
+ABOUT_CREDIT = ("Synced lyrics come from LRCLIB (lrclib.net) and its contributors. The lyrics feature is modelled "
+                "on LRCGET by tranxuanthang (MIT License), the official LRCLIB client.")
 
 EXISTING_CHOICES = ["Skip songs that have synced lyrics", "Skip songs that have any lyrics",
                     "Download again and replace them"]

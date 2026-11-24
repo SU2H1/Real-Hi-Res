@@ -78,6 +78,18 @@ glibc 2.28 or newer (any distribution from 2018 onwards) and, for the app, a
 graphical desktop with OpenGL (X11 or Wayland).  The command-line tool also
 works on servers without a desktop.
 
+Credits
+-------
+Synced lyrics come from LRCLIB (https://lrclib.net), a free and open lyrics
+database, and from the people who contribute lyrics to it.  The lyrics
+feature is modelled on LRCGET (https://github.com/tranxuanthang/lrcget), the
+official LRCLIB client, and names and marks lyrics files the same way.
+LRCGET ("Copyright (c) 2023 tranxuanthang") and the LRCLIB server
+("Copyright (c) 2024 tranxuanthang", https://github.com/tranxuanthang/lrclib)
+are released under the MIT License.  Real-Hi-Res's lyrics code was written
+for Real-Hi-Res and contains no code from either project.  Thank you to
+tranxuanthang and to everyone who contributes lyrics to LRCLIB.
+
 Full documentation: https://github.com/SU2H1/Real-Hi-Res
 FFmpeg licence information: see FFMPEG-NOTICE.txt (Windows/Linux: in the
 "ffmpeg" folder; macOS: inside the app, right-click > Show Package Contents >

@@ -13,7 +13,7 @@ use egui::{Align2, Color32, FontId, RichText, TextFormat, Vec2};
 use realhires::eta::{fmt_about, ScanEta};
 use realhires::lyrics::{
     default_interval, existing_lyrics, lyrics_summary, read_lyrics_file, short_skip, short_status, sidecar,
-    skip_reason, splitlines, LyricsOutcome, Status, EXISTING_CHOICES,
+    skip_reason, splitlines, LyricsOutcome, Status, CREDIT, EXISTING_CHOICES,
 };
 use realhires::paths::file_name;
 use realhires::probe::tag;
@@ -218,6 +218,7 @@ impl LyricsWindow {
             ));
         }
         lines.push("Songs without title and artist tags cannot be looked up. Lyrics files are never deleted.".into());
+        lines.push(CREDIT.into());
         self.note = lines.join("\n");
         self.status.clear();
     }
