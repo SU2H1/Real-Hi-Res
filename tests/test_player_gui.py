@@ -190,6 +190,10 @@ def lyrics_ok():
     assert np.lyrics.itemcget(item, "text") == "Blue ice under a silver sky"
     assert str(np.lyrics.itemcget(item, "font")) == str(app.theme.f("lyrics_b"))
     assert str(np.lyrics.itemcget(np.lyrics.items[1], "font")) == str(app.theme.f("lyrics"))
+    # paused while the windows and menus are checked: the songs last 3 s, and a slow runner
+    # (macOS) took longer than that, so the next song had started before Up Next was read
+    app.play_pause()
+    assert not app.engine.playing
     # Playback info
     app.open_info()
     info = app.info_window.text()
@@ -241,6 +245,8 @@ def lyrics_ok():
     # the like button of the bar
     app.toggle_like_current()
     assert app.bar.heart.filled and glacier in playerstate.load().liked
+    app.play_pause()
+    assert app.current == glacier and app.engine.playing
     # the song ends: the next one starts by itself (gaplessly)
     wait(lambda: app.current == LIB["songs"]["Midnight Sun"], advanced, timeout=20, what="next song")
 
