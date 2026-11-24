@@ -126,6 +126,22 @@ for shuffle in ("off", "songs", "album"):
                 steps.append(q.current)
             steps.append(q.up_next(6))
         user_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": 11, "steps": steps})
+# several artists in one field (2.1): split_artists() and the groupings it gives
+art_tracks = [Track(path=f"/art/{i:02d}.flac", title=f"T{i}", artist=a, album_artist=aa)
+              for i, (a, aa) in enumerate([
+                  ("Mariah Carey, Michael Bublé", ""), ("Michael Bublé", ""), ("Earth, Wind & Fire", ""),
+                  ("Simon & Garfunkel", ""), ("Drake (feat. Rihanna)", ""), ("One;Two", "Two"),
+                  ("Michael Bublé & Someone x Other / More", "Michael Bublé"), ("A FEAT. b, B", ""),
+                  ("  Mira Calloway ;  ", "Mira Calloway, The Northern Quay"), ("The Northern Quay ft Ann", ""),
+                  ("", "Various, Michael Bublé"), ("Ünïcode x ÉCLAIR", ""), ("ÉCLAIR", "")])]
+art_known = musiclib.known_artists(art_tracks)
+with open(os.path.join(OUT, "python_artists.json"), "w", encoding="utf-8") as fh:
+    json.dump({"tracks": [x.to_json() for x in art_tracks], "known": sorted(art_known),
+               "split": [[t.artist, musiclib.split_artists(t.artist, art_known)] for t in art_tracks]
+               + [[n, musiclib.split_artists(n, art_known)] for n in ("Earth, Wind", "X (ft. Y))", "a;;b", "ab FT. cd")],
+               "artists": [[g["name"], [x.path for x in g["tracks"]]] for g in musiclib.artists(art_tracks)],
+               "album_artists": [[g["name"], [x.path for x in g["tracks"]]] for g in musiclib.album_artists(art_tracks)]},
+              fh, indent=0, ensure_ascii=False)
 rng = SplitMix64(2024)
 with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
     json.dump({"songs": [s.__dict__ for s in songs], "context": everything[:10], "start": everything[2],

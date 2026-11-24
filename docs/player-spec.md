@@ -540,3 +540,17 @@ song follows without a gap.
 8. A new app icon from the user's picture of a maki roll: the roll cut out of its (painted) checkerboard background
    onto transparency, centred with a small margin, as `realhires/assets/icon.png` (which every package, window and
    menu entry uses); `packaging/make_icon.py` makes it from `packaging/icon-source.png`.
+
+### Several artists in one field (asked for later on 2026-11-24)
+
+"When there are several artists, as an example 'Mariah Carey, Michael Bublé', and they click 'Michael Bublé', it
+should send the user to their library's Michael Bublé page." `musiclib.split_artists(name, known)` (both versions,
+vectors `python_artists.json`) gives the artists of an artist field: it always splits at ';' (how FFmpeg joins
+several ARTIST tags) and at "feat." / "ft." / "featuring" (also in brackets), and splits at ", ", " & ", " x " and
+" / " only when one of the names it gives stands on its own somewhere in the library (`known_artists()`: the
+artist and album artist fields of every song, split at the first kind only), so "Earth, Wind & Fire" and "Simon &
+Garfunkel" stay whole. Artists and Album Artists list every artist of the field on its own, and a song is on the
+page of each of its artists. Wherever an artist is shown as a link (the album page's artist line, Now Playing, the
+LCD, the Details view), each artist of the field is its own link, with the separators between them as plain text,
+and a click opens that artist's page (`open_artist(name)`; a name that is not an artist of the library opens the
+first artist it splits into).
