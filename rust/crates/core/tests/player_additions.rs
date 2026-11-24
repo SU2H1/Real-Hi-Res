@@ -36,6 +36,24 @@ fn same(a: &Value, b: &Value, at: &str) {
     }
 }
 
+/// A POSIX path of the vectors as the library holds it on this system.
+fn native(p: &str) -> String {
+    if cfg!(windows) && p.starts_with('/') {
+        realhires::paths::abspath(p)
+    } else {
+        p.to_string()
+    }
+}
+
+/// `native()` applied to every path string inside a vector value.
+fn natives(v: &Value) -> Value {
+    match v {
+        Value::Str(s) => Value::Str(native(s)),
+        Value::Array(a) => Value::Array(a.iter().map(natives).collect()),
+        other => other.clone(),
+    }
+}
+
 fn load(name: &str) -> Value {
     let path = format!("{}/tests/{name}", env!("CARGO_MANIFEST_DIR"));
     json::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
@@ -117,8 +135,19 @@ fn stats_groupings_and_folders_match_python() {
         );
         same(&got, groups.get(name).unwrap(), name);
     }
+    // the vectors hold POSIX paths; on Windows the library holds them as
+    // os.path.abspath() makes them ("D:\\lib\\A"), so compare in that form
+    let tracks: Vec<Track> = tracks
+        .iter()
+        .map(|t| {
+            let mut t = t.clone();
+            t.path = native(&t.path);
+            t
+        })
+        .collect();
     for (folder, want) in data.get("folders").unwrap().as_object().unwrap() {
-        let (subs, songs) = musiclib::folder_view(&tracks, folder);
+        let want = &natives(want);
+        let (subs, songs) = musiclib::folder_view(&tracks, &native(folder));
         let got = Value::Array(vec![
             Value::Array(
                 subs.into_iter()

@@ -8,12 +8,16 @@ use std::process::Command;
 use realhires::settings::Settings;
 use realhires::{probe, store, tagedit, verdict};
 
+fn ffmpeg() -> Command {
+    Command::new(probe::tool("ffmpeg"))
+}
+
 fn have_ffmpeg() -> bool {
-    Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success())
+    ffmpeg().arg("-version").output().is_ok_and(|o| o.status.success())
 }
 
 fn pcm(path: &str) -> Vec<u8> {
-    Command::new("ffmpeg").args(["-v", "error", "-i", path, "-map", "0:a:0", "-f", "s32le", "-"]).output().unwrap().stdout
+    ffmpeg().args(["-v", "error", "-i", path, "-map", "0:a:0", "-f", "s32le", "-"]).output().unwrap().stdout
 }
 
 #[test]
@@ -31,7 +35,7 @@ fn flac_and_m4a_keep_their_audio_and_saved_results() {
     let skey = store::settings_key(&cfg);
     for (name, codec) in [("a.flac", "flac"), ("b.m4a", "aac")] {
         let song = dir.join(name).to_string_lossy().into_owned();
-        let ok = Command::new("ffmpeg")
+        let ok = ffmpeg()
             .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ac", "2"])
             .args(["-metadata", "title=Old", "-metadata", "artist=Art", "-metadata", "album_artist=AA"])
             .args(["-c:a", codec, &song])

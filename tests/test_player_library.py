@@ -12,8 +12,13 @@ from realhires.musiclib import Track
 from realhires.playqueue import PlayQueue
 
 
+def P(path: str) -> str:
+    """A path as the library holds it on this system ("/m/A" is "D:\\m\\A" on Windows)."""
+    return os.path.abspath(path)
+
+
 def _t(path, **kw):
-    return Track(path=path, **kw)
+    return Track(path=P(path), **kw)
 
 
 LIB = [
@@ -33,10 +38,10 @@ def test_groupings():
     assert [g["name"] for g in musiclib.genres(LIB)] == ["Jazz", "Pop", "Unknown Genre"]
     assert [(g["name"], len(g["tracks"])) for g in musiclib.composers(LIB)] == [("Unknown Composer", 2), ("Zed", 2)]
     assert [g["name"] for g in musiclib.years(LIB)] == ["2001", "1999", "Unknown Year"]
-    folders, songs = musiclib.folder_view(LIB, "/m")
-    assert folders == [("/m/A", "A", 2), ("/m/B", "B", 2)] and songs == []
-    folders, songs = musiclib.folder_view(LIB, "/m/B")
-    assert folders == [("/m/B/sub", "sub", 1)] and [t.title for t in songs] == ["Four"]
+    folders, songs = musiclib.folder_view(LIB, P("/m"))
+    assert folders == [(P("/m/A"), "A", 2), (P("/m/B"), "B", 2)] and songs == []
+    folders, songs = musiclib.folder_view(LIB, P("/m/B"))
+    assert folders == [(P("/m/B/sub"), "sub", 1)] and [t.title for t in songs] == ["Four"]
 
 
 def test_play_history_and_stats(tmp_path):
@@ -48,15 +53,16 @@ def test_play_history_and_stats(tmp_path):
     lib.add_play(LIB[2], t0 + 86400, 10.0)              # half of a 20 s song: counts
     lib.add_play(LIB[1], t0 + 2 * 86400, 5.0)           # skipped: logged, not a play
     plays = lib.plays()
-    assert [p.path for p in plays] == ["/m/A/01.flac", "/m/A/01.flac", "/m/B/sub/03.flac", "/m/A/02.flac"]
-    assert lib.recently_played() == ["/m/A/02.flac", "/m/B/sub/03.flac", "/m/A/01.flac"]
+    assert [p.path for p in plays] == [P("/m/A/01.flac"), P("/m/A/01.flac"), P("/m/B/sub/03.flac"),
+                                       P("/m/A/02.flac")]
+    assert lib.recently_played() == [P("/m/A/02.flac"), P("/m/B/sub/03.flac"), P("/m/A/01.flac")]
     assert len(lib.plays(since=t0 + 1000)) == 3
 
     utc = time.gmtime
     st = stats.compute(plays, localtime=utc)
     assert (st["plays"], st["logged"], st["songs"], st["artists"]) == (3, 4, 3, 3)
     assert st["seconds"] == 255.0
-    assert st["top_songs"][0]["key"] == "/m/A/01.flac" and st["top_songs"][0]["plays"] == 2
+    assert st["top_songs"][0]["key"] == P("/m/A/01.flac") and st["top_songs"][0]["plays"] == 2
     assert st["top_artists"][0]["name"] == "Ann" and st["top_artists"][0]["songs"] == 1
     assert st["by_hour"][22] == 215.0 and st["by_hour"][23] == 40.0
     assert st["days"] == 3 and st["streak"] == 3 and st["busiest_day"] == ["2023-11-14", 240.0]

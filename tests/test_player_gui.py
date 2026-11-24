@@ -114,6 +114,14 @@ def wait(cond, then, timeout=30.0, what="", start=None):
 def texts(canvas):
     return [canvas.itemcget(i, "text") for i in canvas.find_all() if canvas.type(i) == "text"]
 
+def shows(canvas, full):
+    # the canvas shows `full`, or as much of it as fits: on a small screen (the Windows
+    # runners have 1024 x 768) the LCD is narrow and cuts its texts with "…"
+    for t in texts(canvas):
+        if t == full or (len(t) > 1 and t.endswith("…") and full.startswith(t[:-1].rstrip())):
+            return True
+    return False
+
 def start():
     global root, app
     root = tk.Tk()
@@ -141,7 +149,7 @@ def loaded():
     assert not app.bar.dislike.enabled and not app.bar.more.enabled
     assert app.bar.play.enabled and app.bar.eq.enabled and app.bar.queue.enabled and app.bar.lyrics.enabled
     assert app.bar.volume.enabled
-    assert "Universal Music Player" in texts(app.bar.lcd)
+    assert shows(app.bar.lcd, "Universal Music Player"), texts(app.bar.lcd)
     # like a song: saved at once, listed in Liked Songs
     app.toggle_like(umbrella)
     assert playerstate.load().liked == [umbrella]
@@ -161,7 +169,8 @@ def playing():
     assert app.current == glacier and app.engine.playing and app.context_name == "Northern Lights"
     assert app.engine.output_info()["device"] == "NULL Playback Device"
     lcd = texts(app.bar.lcd)
-    assert "Glacier Song" in lcd and "Aurora Fields — Northern Lights" in lcd and "Hi-Res Lossless" in lcd, lcd
+    assert shows(app.bar.lcd, "Glacier Song") and shows(app.bar.lcd, "Aurora Fields — Northern Lights"), lcd
+    assert "Hi-Res Lossless" in lcd, lcd
     assert any(t.startswith("-0:0") for t in lcd), lcd  # the remaining time
     assert app.bar.next.enabled and app.bar.play.icon == "pause"
     # Now Playing with synced lyrics: the current line in bold
@@ -234,7 +243,7 @@ def lyrics_ok():
 
 def advanced():
     assert app.engine.playing and app.page("nowplaying").kind == ""
-    assert "Midnight Sun" in texts(app.bar.lcd)
+    assert shows(app.bar.lcd, "Midnight Sun"), texts(app.bar.lcd)
     assert [t.display_title for t in app.up_next.list.rows] == ["Polar Drift"]
     app.toggle_up_next()
     app.seek(1.5)
@@ -294,7 +303,7 @@ def scanned():
 
 def errored():
     assert app.error == "The file gone.flac does not exist any more.", app.error
-    assert "The file gone.flac does not exist any more." in texts(app.bar.lcd), texts(app.bar.lcd)
+    assert shows(app.bar.lcd, "The file gone.flac does not exist any more."), texts(app.bar.lcd)
     state["t"] = time.monotonic()
     wait(lambda: app.current == LIB["songs"]["Last Train Home"] and app.engine.playing, after_error, what="skip")
 
@@ -319,7 +328,7 @@ def restored():
     assert app.context_name == "City Rain" and abs(app.position() - state["pos"]) < 0.3
     album = [LIB["songs"][t] for t in ("Umbrella Weather", "Taxi Lights", "Last Train Home")]
     assert app.queue.order == album[album.index(state["last"]):]
-    assert "Last Train Home" in texts(app.bar.lcd) and app.bar.play.icon == "play"
+    assert shows(app.bar.lcd, "Last Train Home") and app.bar.play.icon == "play", texts(app.bar.lcd)
     app.play_pause()  # Play continues there
     wait(lambda: app.engine.playing and app.engine.position() >= state["pos"], resumed, what="resume")
 
