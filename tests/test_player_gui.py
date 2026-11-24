@@ -450,14 +450,21 @@ def loaded():
     # a playlist: create (name dialog), add from a song's menu, play, rename, delete
     answer("Road Trip")
     pid = app.new_playlist()
+    root.update()  # each step is followed by an update: on macOS Tk crashed (SIGSEGV) in one of
+    # these updates, and faulthandler's line number then names the step
     assert pid and app.page_name == "playlist" and app.state.playlist(pid)["name"] == "Road Trip"
     assert ("playlist:" + pid, "Road Trip", "playlist") in app.sidebar.items()
     m = app.song_menu(app.track(S["Taxi Lights"]))
+    root.update()
     labels = [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"]
     assert "Add to playlist" in labels and "Dislike" in labels and "Like" in labels, labels
     sub = root.nametowidget(m.entrycget(labels_index(m, "Add to playlist"), "menu"))
     sub.invoke(labels_index(sub, "Road Trip"))
-    app.add_to_playlist(pid, [S["First Light"], os.path.join(TMP, "gone.flac")])
+    root.update()
+    app.add_to_playlist(pid, [S["First Light"]])
+    root.update()
+    app.add_to_playlist(pid, [os.path.join(TMP, "gone.flac")])
+    root.update()
     assert playerstate.load().playlist(pid)["songs"][:2] == [S["Taxi Lights"], S["First Light"]]
     pp = app.page("playlist")
     root.update()
