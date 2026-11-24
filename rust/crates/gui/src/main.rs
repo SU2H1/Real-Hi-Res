@@ -5,6 +5,7 @@
 
 mod app;
 mod audio;
+mod coverwin;
 mod dialogs;
 mod editinfo;
 mod eqwin;
