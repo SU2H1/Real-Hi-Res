@@ -43,5 +43,14 @@
     ],
     "detection": "Trojan:Script/Wacatac.B!ml",
     "note": "this disk image holds exactly the same 9 files as `RealHiRes-Rust-1.12.1-macos-arm64.zip` (every file has the same SHA-256), plus the usual shortcut to the Applications folder, and no engine flags that .zip. Only Microsoft's machine-learning heuristic (the `!ml` in the name) flags the disk image itself, and no other engine does, so this is a false positive on the .dmg container, not on the program; the same happened to the 1.10.0, 1.11.0 and 1.12.0 disk images. If you prefer, download the .zip, which holds the same app."
+  },
+  "e3d8aeb7d37f698b32682a656b6d17c12cc4b6009cf389a57502d0e6ed9e3115": {
+    "file": "UniversalMusicPlayer-2.0.0-macos-x86_64.dmg",
+    "date": "2026-11-24",
+    "engines": [
+      "Microsoft"
+    ],
+    "detection": "Trojan:Script/Wacatac.C!ml",
+    "note": "this disk image holds exactly the same 441 files as `UniversalMusicPlayer-2.0.0-macos-x86_64.zip` (every file has the same SHA-256) and the same 28 links, plus the usual shortcut to the Applications folder, and no engine flags that .zip. Only Microsoft's machine-learning heuristic (the `!ml` in the name) flags the disk image itself, and no other engine does, so this is a false positive on the .dmg container, not on the program; the same happened to the Real-Hi-Res 1.10.0 to 1.12.1 disk images. If you prefer, download the .zip, which holds the same app."
   }
 }
