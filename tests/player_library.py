@@ -17,6 +17,8 @@ ALBUMS = [
      [("Carrier Wave", 222), ("Low Pass", 190)]),
 ]
 
+COMPOSERS = {"Aurora Fields": "Lena Frost", "The Paper Boats": "Mika Rowe", "June Harbor": "Lena Frost"}
+
 # invented lyrics for "Glacier Song" (synced) and "Umbrella Weather" (plain)
 GLACIER_LRC = """[ar: Aurora Fields]
 [ti: Glacier Song]
@@ -37,11 +39,11 @@ We share a coat, we share a song
 And wait for the late train"""
 
 
-def make_library(root: Path, seconds=None, mp3: bool = True) -> dict:
-    """The library under root/Music; `seconds` replaces every song's length (short
+def make_library(root: Path, seconds=None, mp3: bool = True, music=None) -> dict:
+    """The library under root/Music (or `music`); `seconds` replaces every song's length (short
     test songs hold a quiet tone, the real lengths hold silence).  Returns
     {"music": folder, "songs": {title: path}, "albums": [folder, ...]}."""
-    music = root / "Music"
+    music = Path(music) if music else root / "Music"
     out = {"music": str(music), "songs": {}, "albums": []}
     for artist, album, genre, year, rate, bits, (c0, c1), songs in ALBUMS:
         folder = music / artist / album
@@ -61,7 +63,8 @@ def make_library(root: Path, seconds=None, mp3: bool = True) -> dict:
             if seconds is None:
                 cmd += ["-t", str(secs)]
             for k, v in (("title", title), ("artist", artist), ("album", album), ("album_artist", artist),
-                         ("genre", genre), ("date", year), ("track", f"{n}/{len(songs)}")):
+                         ("genre", genre), ("date", year), ("track", f"{n}/{len(songs)}"),
+                         ("composer", COMPOSERS.get(artist, ""))):
                 cmd += ["-metadata", f"{k}={v}"]
             if lossy:
                 cmd += ["-ac", "2", "-c:a", "libmp3lame", "-b:a", "256k"]
