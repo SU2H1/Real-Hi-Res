@@ -1,9 +1,12 @@
 """Album covers kept on disk (realhires/covers.py: cache_key/cache_name,
-cached_cover_png, trim_cache)."""
+cached_cover_png, trim_cache) and in the player's CoverCache, so scrolling
+the album grid does not run FFmpeg again, also not after a restart."""
 
 import hashlib
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -168,3 +171,148 @@ def test_trim_cache_deletes_the_least_recently_used(tmp_path):
     assert sorted(os.listdir(d)) == [".cover-2.tmp", "c.png", "d.png", "e.png", "notes.txt"]
     assert covers.trim_cache(0, str(d)) == 3
     assert covers.trim_cache(0, str(tmp_path / "missing")) == 0
+
+
+# ---------------------------------------------------------- the player ---
+def _gui_available():
+    if not os.environ.get("DISPLAY") and sys.platform.startswith("linux"):
+        return False
+    try:
+        import tkinter
+
+        tkinter.Tk().destroy()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+SCROLL_SCRIPT = r'''
+import faulthandler, os, sys, time
+sys.path.insert(0, REPO)
+faulthandler.enable()
+faulthandler.dump_traceback_later(150, exit=True)
+import tkinter as tk
+from realhires import covers, musiclib
+from realhires.player_theme import Theme
+from realhires.player_widgets import AlbumGrid, CoverCache
+
+runs = []
+real = covers._thumbnail
+def counting(source, size, embedded):
+    runs.append(source)
+    return real(source, size, embedded)
+covers._thumbnail = counting
+
+tracks = []
+for i in range(ALBUMS):
+    d = os.path.join(MUSIC, f"Album {i:02d}")
+    for n in (1, 2):
+        p = os.path.join(d, f"{n:02d}.wav")
+        st = os.stat(p)
+        tracks.append(musiclib.Track(path=p, title=f"Song {n}", artist="Someone", album=f"Album {i:02d}",
+                                     track=n, size=st.st_size, mtime_ns=st.st_mtime_ns))
+albums = musiclib.albums(tracks)
+assert len(albums) == ALBUMS
+
+root = tk.Tk()
+root.geometry("900x560")
+theme = Theme(root)
+theme.styles()
+
+def pump(cond, what, timeout=60):
+    t0 = time.time()
+    while not cond():
+        assert time.time() - t0 < timeout, "timed out: " + what
+        root.update()
+        time.sleep(0.01)
+
+def scroll_through(grid, cache):
+    """Scroll from the top to the end; return the albums shown."""
+    shown = set()
+    grid.set_albums(albums)
+    pump(lambda: grid.canvas.winfo_height() > 100, "the grid")
+    grid.relayout()
+    steps = 25
+    for i in range(steps + 1):
+        grid._yview("moveto", i / steps)
+        root.update()
+        top = grid.canvas.canvasy(0)
+        bottom = top + grid.canvas.winfo_height()
+        visible = [a["key"] for a in albums if top <= grid.positions[a["key"]][1] < bottom]
+        pump(lambda: all((k, grid.COVER) in cache.images for k in visible), "covers on screen")
+        shown.update(visible)
+    return shown
+
+# first session: the library is read, the grid covers are made ahead
+cache = CoverCache(root)
+cache.library_changed(albums)
+cache.prefetch(albums)
+pump(lambda: cache.prefetching() == 0 and all(covers.is_cached([t.path for t in a["tracks"]], cache.GRID)
+                                               for a in albums), "made ahead", timeout=120)
+made = len(runs)
+assert made >= ALBUMS, made
+assert cache.images == {}, "made ahead only on disk"
+grid = AlbumGrid(root, theme, cache, lambda a: None)
+grid.pack(fill="both", expand=True)
+t0 = time.perf_counter()
+shown = scroll_through(grid, cache)
+first_scroll = time.perf_counter() - t0
+assert len(shown) == ALBUMS, len(shown)
+assert len(runs) == made, f"FFmpeg ran {len(runs) - made} times while scrolling"
+assert all((a["key"], grid.COVER) in cache.images for a in albums)  # all kept for the session
+t0 = time.perf_counter()
+grid._yview("moveto", 0)
+root.update()
+assert len(runs) == made
+
+# the library is read again: unchanged albums keep their covers, a changed one is made again
+cache.library_changed(albums)
+assert all((a["key"], grid.COVER) in cache.images for a in albums)
+changed = albums[3]
+t = changed["tracks"][0]
+os.utime(t.path, ns=(1_600_000_000_000_000_000, 1_600_000_000_000_000_000))
+st = os.stat(t.path)
+t.size, t.mtime_ns = st.st_size, st.st_mtime_ns
+cache.library_changed(albums)
+assert (changed["key"], grid.COVER) not in cache.images
+assert sum((a["key"], grid.COVER) in cache.images for a in albums) == ALBUMS - 1
+cache.get(changed["key"], [x.path for x in changed["tracks"]], grid.COVER)
+pump(lambda: (changed["key"], grid.COVER) in cache.images, "the changed album")
+assert len(runs) > made
+cache.close()
+grid.destroy()
+
+# a restart: everything comes from the covers folder
+runs.clear()
+cache2 = CoverCache(root)
+cache2.library_changed(albums)
+grid2 = AlbumGrid(root, theme, cache2, lambda a: None)
+grid2.pack(fill="both", expand=True)
+t0 = time.perf_counter()
+shown = scroll_through(grid2, cache2)
+second_scroll = time.perf_counter() - t0
+assert len(shown) == ALBUMS and runs == [], runs
+print(f"scrolled {ALBUMS} albums: {first_scroll:.2f} s (made ahead), {second_scroll:.2f} s (after a restart), "
+      "no FFmpeg run")
+cache2.close()
+root.destroy()
+print("OK")
+'''
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_scrolling_the_album_grid_does_not_run_ffmpeg_again(tmp_path):
+    music = tmp_path / "Music"
+    albums = 36
+    for i in range(albums):
+        _album(music, f"Album {i:02d}")
+    script = tmp_path / "scroll.py"
+    script.write_text(f"REPO = {str(Path(__file__).resolve().parents[1])!r}\nMUSIC = {str(music)!r}\n"
+                      f"ALBUMS = {albums}\n" + SCROLL_SCRIPT, encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=200)
+    log = proc.stdout + proc.stderr
+    assert proc.returncode == 0, log
+    assert proc.stdout.splitlines()[-1] == "OK", log
+    assert len(os.listdir(tmp_path / "covers")) >= albums
+    print(proc.stdout.splitlines()[-2])  # the scroll times (pytest -s shows them)

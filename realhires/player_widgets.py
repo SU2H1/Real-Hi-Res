@@ -1,7 +1,8 @@
 """Canvas widgets of the 2.0 player: the song tables (`SongList`, drawn row by row
 for the visible part only, so a library of tens of thousands of songs scrolls
 smoothly), the album card grid (`AlbumGrid`) and the cover cache (`CoverCache`,
-covers made by FFmpeg in a background thread, with rounded corners)."""
+covers from the covers folder on disk or made by FFmpeg in a background thread,
+with rounded corners, kept for the session)."""
 
 from __future__ import annotations
 
@@ -9,11 +10,13 @@ import base64
 import collections
 import queue
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from .covers import CACHE_PATHS, trim_cache
 from .player_theme import Theme, draw_icon, fit_text, round_rect
 
 
@@ -352,56 +355,125 @@ class SongList(tk.Frame):
 
 
 class CoverCache:
-    """Album covers as PhotoImages with rounded corners, made by FFmpeg
-    (covers.cover_png) in one background thread, newest requests first."""
+    """Album covers as PhotoImages with rounded corners.  One background thread
+    gets them with covers.cached_cover_png() (from the covers folder on disk,
+    else made by FFmpeg and saved there for the next time): first the covers
+    asked for on screen, newest first, then, after prefetch(), the grid-size
+    covers of every album that the covers folder does not have yet.
 
-    MAX_IMAGES = 600
-    MAX_PNG = 4000
+    A cover once shown stays for the session: every size up to GRID (the album
+    grid, its mosaic quarters, the LCD) without limit, larger ones (the album
+    page, Now Playing) up to MAX_LARGE, the least recently shown going first.
+    library_changed() drops the covers of albums whose songs changed."""
 
-    def __init__(self, root: tk.Misc):
+    GRID = 176          # AlbumGrid.COVER, the size prefetch() makes ahead
+    MAX_LARGE = 200
+    POLL_MS = 60           # while nothing is asked for
+    FAST_POLL_MS = 16      # while covers are on their way (one from disk takes a few ms)
+    POLL_BUDGET_S = 0.012  # PhotoImages made per poll, so a burst of covers never stalls scrolling
+
+    def __init__(self, root: tk.Misc, trim: bool = True):
         self.root = root
-        self.images: "collections.OrderedDict[tuple, tk.PhotoImage]" = collections.OrderedDict()
-        self.png: "collections.OrderedDict[tuple, Optional[bytes]]" = collections.OrderedDict()
+        self.images: Dict[tuple, tk.PhotoImage] = {}
+        self._large: "collections.OrderedDict[tuple, None]" = collections.OrderedDict()
+        self.none: set = set()                   # (key, size) of albums without a cover
         self.listeners: List[Callable[[str, int], None]] = []
-        self.requests: "queue.LifoQueue" = queue.LifoQueue()
         self.pending: set = set()
+        self.signatures: Dict[str, tuple] = {}   # album key -> its first songs (path, size, mtime)
+        self._cv = threading.Condition()
+        self._front: List[tuple] = []            # asked for on screen (served newest first)
+        self._back: "collections.deque" = collections.deque()  # made ahead (in album order)
         self.done: queue.Queue = queue.Queue()
         self.alive = True
         threading.Thread(target=self._work, daemon=True, name="realhires-covers").start()
-        self.root.after(60, self._poll)
+        if trim:
+            threading.Thread(target=trim_cache, daemon=True, name="realhires-covers-trim").start()
+        self._job: Optional[str] = None
+        self._fast = False
+        self._schedule(self.POLL_MS)
+
+    def _schedule(self, ms: int) -> None:
+        try:
+            if self._job is not None:
+                self.root.after_cancel(self._job)
+            self._job = self.root.after(ms, self._poll)
+        except tk.TclError:
+            self._job = None
+        self._fast = ms < self.POLL_MS
 
     def close(self) -> None:
-        self.alive = False
-        self.requests.put(None)
+        with self._cv:
+            self.alive = False
+            self._front.clear()
+            self._back.clear()
+            self._cv.notify_all()
+        if self._job is not None:
+            try:
+                self.root.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
 
     def missing(self, key: str, size: int) -> bool:
-        return (key, size) in self.png and self.png[(key, size)] is None
+        return (key, size) in self.none
 
     def get(self, key: str, paths: Sequence[str], size: int) -> Optional[tk.PhotoImage]:
         k = (key, size)
         img = self.images.get(k)
         if img is not None:
-            self.images.move_to_end(k)
+            if k in self._large:
+                self._large.move_to_end(k)
             return img
-        if k in self.png:
-            data = self.png[k]
-            if data is None:
-                return None
-            img = self._image(data, size)
-            if img is not None:
-                self._keep(k, img)
-            return img
-        if k not in self.pending:
-            self.pending.add(k)
-            self.requests.put((k, list(paths)[:40]))
+        if k in self.none or k in self.pending:
+            return None
+        self.pending.add(k)
+        with self._cv:
+            self._front.append((k, list(paths)[:CACHE_PATHS]))
+            self._cv.notify()
+        if self.alive and not self._fast:
+            self._schedule(self.FAST_POLL_MS)
         return None
+
+    def prefetch(self, albums: Sequence[dict], size: int = GRID) -> None:
+        """Make the covers of `albums` ({"key", "tracks"}) at `size` that the
+        covers folder does not have yet, after everything asked for on screen."""
+        jobs = [((a["key"], size), [t.path for t in a["tracks"][:CACHE_PATHS]]) for a in albums
+                if (a["key"], size) not in self.images and (a["key"], size) not in self.none]
+        with self._cv:
+            self._back = collections.deque(jobs)
+            self._cv.notify()
+
+    def prefetching(self) -> int:
+        """How many albums the background pass has still to look at."""
+        with self._cv:
+            return len(self._back)
+
+    def library_changed(self, albums: Sequence[dict]) -> None:
+        """The library was read again: keep every cover whose album has the same
+        first songs (path, size and time) as before, drop the others."""
+        new = {a["key"]: tuple((t.path, t.size, t.mtime_ns) for t in a["tracks"][:CACHE_PATHS]) for a in albums}
+        gone = {key for key, sig in self.signatures.items() if new.get(key) != sig}
+        self.signatures = new
+        if not gone:
+            return
+        for k in [k for k in self.images if k[0] in gone]:
+            del self.images[k]
+            self._large.pop(k, None)
+        self.none = {k for k in self.none if k[0] not in gone}
 
     def _keep(self, k: tuple, img: tk.PhotoImage) -> None:
         self.images[k] = img
-        while len(self.images) > self.MAX_IMAGES:
-            self.images.popitem(last=False)
+        if k[1] > self.GRID:
+            self._large[k] = None
+            self._large.move_to_end(k)
+            while len(self._large) > self.MAX_LARGE:
+                old, _ = self._large.popitem(last=False)
+                self.images.pop(old, None)
 
     def _image(self, data: bytes, size: int) -> Optional[tk.PhotoImage]:
+        """A PhotoImage with rounded corners: the few corner pixels outside the
+        radius are made transparent, once per cover (about 0.06 ms at 176 px,
+        less than a tenth of decoding the PNG)."""
         try:
             img = tk.PhotoImage(master=self.root, data=base64.b64encode(data).decode("ascii"), format="png")
         except tk.TclError:
@@ -417,33 +489,53 @@ class CoverCache:
                         call(name, "transparency", "set", px, py, 1)
         return img
 
-    def _work(self) -> None:
-        from .covers import cover_png
+    def _next_job(self) -> Optional[tuple]:
+        with self._cv:
+            while self.alive and not self._front and not self._back:
+                self._cv.wait()
+            if not self.alive:
+                return None
+            if self._front:
+                return self._front.pop() + (True,)
+            return self._back.popleft() + (False,)
 
-        while self.alive:
-            item = self.requests.get()
-            if item is None:
+    def _work(self) -> None:
+        from . import covers
+
+        while True:
+            job = self._next_job()
+            if job is None:
                 break
-            k, paths = item
+            k, paths, shown = job
             try:
-                data = cover_png(paths, k[1])
+                if not shown:  # made ahead: only on disk, the screen asks for it when it is shown
+                    if not covers.is_cached(paths, k[1]):
+                        covers.cached_cover_png(paths, k[1])
+                    continue
+                data = covers.cached_cover_png(paths, k[1])
             except Exception:  # noqa: BLE001 - a broken cover must not stop the others
+                if not shown:
+                    continue
                 data = None
             self.done.put((k, data))
 
     def _poll(self) -> None:
+        self._job = None
         changed = []
+        t0 = time.perf_counter()
+        more = False
         try:
             while True:
+                if time.perf_counter() - t0 > self.POLL_BUDGET_S:
+                    more = True
+                    break
                 k, data = self.done.get_nowait()
                 self.pending.discard(k)
-                self.png[k] = data
-                while len(self.png) > self.MAX_PNG:
-                    self.png.popitem(last=False)
-                if data is not None:
-                    img = self._image(data, k[1])
-                    if img is not None:
-                        self._keep(k, img)
+                img = self._image(data, k[1]) if data is not None else None
+                if img is None:
+                    self.none.add(k)
+                else:
+                    self._keep(k, img)
                 changed.append(k)
         except queue.Empty:
             pass
@@ -454,10 +546,7 @@ class CoverCache:
                 except tk.TclError:
                     pass
         if self.alive:
-            try:
-                self.root.after(60, self._poll)
-            except tk.TclError:
-                pass
+            self._schedule(10 if more else self.FAST_POLL_MS if self.pending else self.POLL_MS)
 
 
 def draw_cover(c: tk.Canvas, theme: Theme, img: Optional[tk.PhotoImage], x: float, y: float, size: int,
@@ -495,7 +584,7 @@ class AlbumGrid(tk.Frame):
     An item can instead be a playlist ("mosaic": up to four (album key, paths)) or
     the "New Playlist…" card ("new": True)."""
 
-    COVER = 176
+    COVER = CoverCache.GRID
     GAP = 24
     MARGIN = 28
 

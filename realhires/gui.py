@@ -2510,12 +2510,12 @@ class App(ttk.Frame):
             self._cover_thread.start()
 
     def _cover_worker(self) -> None:
-        from .covers import cover_png
+        from .covers import cached_cover_png  # kept on disk, so a cover is made only once
 
         while True:
             key, paths = self.cover_requests.get()
             try:
-                png = cover_png(paths, CardGrid.COVER)
+                png = cached_cover_png(paths, CardGrid.COVER)
             except Exception:  # noqa: BLE001 - a broken cover must not stop the others
                 png = None
             self.queue.put(("cover", key, png))
