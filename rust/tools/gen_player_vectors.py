@@ -168,12 +168,34 @@ groups = {name: [[g["name"], [x.path for x in g["tracks"]]] for g in fn(tracks)]
 folders = {f: [[list(x) for x in musiclib.folder_view(tracks, f)[0]], [x.path for x in musiclib.folder_view(tracks, f)[1]]]
            for f in ("/lib", "/lib/A", "/lib/B", "/lib/A/sub", "/nope")}
 ls = stats.library_stats(tracks)
+# the calendar of Your Stats (2.1): every month with plays, a leap February and an empty month; the
+# extra plays have no title, only an album artist, and start just before and after midnight in Tokyo
+extra = [stats.Play("/lib/x/Night Walk.flac", 1_702_997_940.0, 75.0, 200.0, title="  ", artist=" ",
+                    album_artist=" Harbour Choir "),
+         stats.Play("/lib/x/Night Walk.flac", 1_702_998_000.0, 29.0, 200.0, title="Night Walk"),
+         stats.Play("/lib/y/Long.flac", 1_703_001_600.0, 3600.0 * 21.0 + 31.0, 99999.0, title="Long", artist="Ann")]
+cal_plays = sorted(plays + extra, key=lambda p: p.started)
+months = sorted({(tokyo(p.started).tm_year, tokyo(p.started).tm_mon) for p in cal_plays}) + [(2024, 2), (2026, 11)]
+cal = []
+for y, m in months:
+    mins = stats.month_minutes(cal_plays, y, m, localtime=tokyo)
+    days = []
+    for d in range(1, len(mins) + 1):
+        rows = stats.day_plays(cal_plays, y, m, d, localtime=tokyo)
+        if rows or d == 1:
+            days.append({"day": d, "title": stats.day_title(y, m, d), "plays": rows, "summary": stats.day_summary(rows)})
+    cal.append({"year": y, "month": m, "title": stats.month_title(y, m), "grid": stats.month_grid(y, m),
+                "minutes": mins, "levels": stats.month_levels(mins), "days": days})
 with open(os.path.join(OUT, "python_stats.json"), "w", encoding="utf-8") as fh:
     json.dump({"tracks": [x.to_json() for x in tracks], "plays": [p.__dict__ for p in plays], "offset": 9 * 3600,
                "stats": st, "cards": stats.cards(st), "stats_7": half, "cards_7": stats.cards(half),
                "cards_empty": stats.cards(stats.compute([], localtime=tokyo)), "groups": groups, "folders": folders,
-               "library": ls, "hours": [stats.hour_label(h) for h in range(24)]}, fh, indent=0,
-              ensure_ascii=False)
+               "library": ls, "hours": [stats.hour_label(h) for h in range(24)],
+               "calendar_plays": [p.__dict__ for p in extra], "calendar": cal,
+               "minutes_labels": [[s, stats.minutes_label(s)] for s in (0.0, 1.0, 29.9, 30.0, 89.9, 90.0, 74_043.0)],
+               "shift_month": [[y, m, d, *stats.shift_month(y, m, d)]
+                               for y, m, d in ((2026, 11, 1), (2026, 12, 1), (2026, 1, -1), (2026, 3, -27), (1999, 7, 0))]},
+              fh, indent=0, ensure_ascii=False)
 
 # ------------------------------------------------------------- EQ files ---
 param = eq.apply_preset(eq.default_state(), "Rock")

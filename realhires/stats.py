@@ -9,16 +9,22 @@ by hour, weekday and month), plus what the library holds (`library_stats()`).
 
 A play counts (for "plays" and the top lists) once at least 30 seconds of the
 song, or half of a shorter song, were heard; every logged second counts for
-the minutes.  Hours, weekdays and days are local time.  The Rust version
-computes the same numbers and texts (`rust/crates/core/src/stats.rs`), checked
-against `rust/crates/core/tests/python_stats.json`.
+the minutes.  Hours, weekdays and days are local time.  The calendar at the
+top of the Stats page (2.1) uses `month_grid()`, `month_minutes()`,
+`month_levels()` and `day_plays()`, with the plays between the local
+midnights of `month_bounds()` and `day_bounds()`.  The Rust version computes
+the same numbers and texts (`rust/crates/core/src/stats.rs`), checked against
+`rust/crates/core/tests/python_stats.json`.
 """
 
 from __future__ import annotations
 
+import calendar
+import math
+import os
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 COUNTED_SECONDS = 30.0
@@ -27,6 +33,9 @@ DEFAULT_PERIOD = "This year"
 TOP = 100
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+FULL_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+               "November", "December"]
+LEVELS = 4  # the calendar's tints: 1 (a little music) .. LEVELS (the month's busiest day)
 
 
 @dataclass
@@ -195,6 +204,97 @@ def cards(st: dict) -> List[Tuple[str, str, str]]:
         day, secs = st["busiest_day"]
         out.append(("Your biggest day", day_label(day), f"{_plural(_whole(secs / 60.0), 'minute')} of music"))
     return out
+
+
+# ----------------------------------------------------------------- calendar ---
+def shift_month(year: int, month: int, delta: int) -> Tuple[int, int]:
+    """The month `delta` months after (year, month)."""
+    n = year * 12 + (month - 1) + delta
+    return n // 12, n % 12 + 1
+
+
+def month_title(year: int, month: int) -> str:
+    """'November 2026'."""
+    return f"{FULL_MONTHS[month - 1]} {year}"
+
+
+def day_title(year: int, month: int, day: int) -> str:
+    """'Tuesday 24 November 2026'."""
+    return f"{WEEKDAYS[date(year, month, day).weekday()]} {day} {FULL_MONTHS[month - 1]} {year}"
+
+
+def month_grid(year: int, month: int) -> List[List[int]]:
+    """The weeks of a month as the calendar shows them, Monday first: the day
+    numbers, 0 for the cells before the 1st and after the last day."""
+    cells = [0] * date(year, month, 1).weekday() + list(range(1, calendar.monthrange(year, month)[1] + 1))
+    cells += [0] * (-len(cells) % 7)
+    return [cells[i:i + 7] for i in range(0, len(cells), 7)]
+
+
+def _midnight(year: int, month: int, day: int, mktime: Callable) -> float:
+    return float(mktime((year, month, day, 0, 0, 0, 0, 1, -1)))
+
+
+def month_bounds(year: int, month: int, mktime: Callable = time.mktime) -> Tuple[float, float]:
+    """[start, end) of a month in Unix time: the local midnights of its 1st and of the next month's."""
+    ny, nm = shift_month(year, month, 1)
+    return _midnight(year, month, 1, mktime), _midnight(ny, nm, 1, mktime)
+
+
+def day_bounds(year: int, month: int, day: int, mktime: Callable = time.mktime) -> Tuple[float, float]:
+    """[start, end) of a day in Unix time: its local midnight and the next one."""
+    nxt = date(year, month, day) + timedelta(days=1)
+    return _midnight(year, month, day, mktime), _midnight(nxt.year, nxt.month, nxt.day, mktime)
+
+
+def month_minutes(plays: Iterable[Play], year: int, month: int, localtime: Callable = time.localtime) -> List[float]:
+    """The minutes listened on each day of the month (index 0 is the 1st), by the
+    local day each play started on; plays of other months are left out."""
+    out = [0.0] * calendar.monthrange(year, month)[1]
+    for p in plays:
+        y, m, d, _, _ = _local(p.started, localtime)
+        if (y, m) == (year, month):
+            out[d - 1] += p.seconds / 60.0
+    return out
+
+
+def month_levels(minutes: List[float]) -> List[int]:
+    """The calendar's tint of each day: 0 without music, else 1..LEVELS by its
+    minutes against the month's busiest day."""
+    top = max(minutes, default=0.0)
+    return [0 if m <= 0.0 or top <= 0.0 else min(LEVELS, max(1, math.ceil(LEVELS * m / top))) for m in minutes]
+
+
+def minutes_label(seconds: float) -> str:
+    """How long a play was heard, for the calendar's list: '<1 min', '1 min', '1,234 min'."""
+    m = _whole(seconds / 60.0)
+    return "<1 min" if m < 1 else f"{m:,} min"
+
+
+def day_plays(plays: Iterable[Play], year: int, month: int, day: int,
+              localtime: Callable = time.localtime) -> List[dict]:
+    """The plays that started on one local day, newest first, as the calendar
+    lists them: the local time ("14:05"), title, artist and minutes heard."""
+    rows = []
+    for p in plays:
+        t = localtime(p.started)
+        if (t.tm_year, t.tm_mon, t.tm_mday) != (year, month, day):
+            continue
+        rows.append({
+            "path": p.path, "started": p.started, "time": f"{t.tm_hour:02d}:{t.tm_min:02d}",
+            "title": p.title.strip() or os.path.splitext(os.path.basename(p.path))[0],
+            "artist": p.artist.strip() or p.album_artist.strip() or "Unknown Artist",
+            "seconds": p.seconds, "minutes": minutes_label(p.seconds),
+        })
+    rows.reverse()  # the plays come oldest first
+    return rows
+
+
+def day_summary(rows: List[dict]) -> str:
+    """'3 songs played, 42 minutes' under the day's title; 'No music on this day.' without plays."""
+    if not rows:
+        return "No music on this day."
+    return f"{_plural(len(rows), 'song')} played, {_plural(_whole(sum(r['seconds'] for r in rows) / 60.0), 'minute')}"
 
 
 def library_stats(tracks) -> dict:
