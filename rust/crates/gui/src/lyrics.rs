@@ -22,7 +22,11 @@ use realhires::verdict::FileResult;
 
 use crate::app::App;
 use crate::dialogs::{Confirm, ConfirmAction};
-use crate::style::{hex, reveal_in_file_manager};
+use crate::look::{self, mix, Palette};
+use crate::style::{
+    flat_button, heading_text, hex, on_page, pal, primary_button, progress, reveal_in_file_manager, secondary,
+    window_heading,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Look {
@@ -46,16 +50,17 @@ impl Look {
         }
     }
 
-    fn color(self, normal: Color32) -> Color32 {
-        match self {
-            Look::Ready => normal,
+    fn color(self, pal: &Palette) -> Color32 {
+        let c = match self {
+            Look::Ready => return pal.text,
+            Look::Skip => return pal.secondary,
             Look::Ok => hex(0x2e7d32),
             Look::Plain => hex(0x1565c0),
-            Look::Skip => hex(0x888888),
             Look::Miss => hex(0x9a6700),
             Look::Fail => hex(0xc62828),
             Look::Busy => hex(0x0b62c4),
-        }
+        };
+        on_page(c, pal)
     }
 }
 
@@ -330,55 +335,65 @@ impl LyricsWindow {
             .pivot(Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
-                ui.label(RichText::new(&self.head).strong().size(15.0));
-                ui.label(
-                    RichText::new(
+                let pal = pal(ui);
+                ui.label(window_heading(&self.head, &pal));
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(secondary(
                         "Each song is looked up by the title, artist, album and length in its tags on LRCLIB \
                          (lrclib.net), a free, open lyrics database, and its synced lyrics are saved as an .lrc file \
                          with the same name next to it. Most music players find that file and show the lyrics line by \
                          line in time with the music. The audio files themselves are not changed.",
-                    )
-                    .color(hex(0x555555)),
+                        &pal,
+                    ))
+                    .wrap(),
                 );
-                ui.add_space(6.0);
-                let normal = ui.visuals().text_color();
-                egui::ScrollArea::vertical().max_height(260.0).id_salt("lyricsrows").show(ui, |ui| {
-                    egui::Grid::new("lyricsgrid").num_columns(4).striped(true).spacing([14.0, 3.0]).show(ui, |ui| {
-                        for h in ["File", "Artist – title", "Status", "Saved as"] {
-                            ui.label(RichText::new(h).strong());
-                        }
-                        ui.end_row();
-                        for r in &self.rows {
-                            let color = r.look.color(normal);
-                            let sel = self.selected.as_deref() == Some(r.path.as_str());
-                            let cell = |ui: &mut egui::Ui, text: &str, width: f32| {
-                                ui.allocate_ui_with_layout(
-                                    Vec2::new(width, 18.0),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        ui.set_width(width);
-                                        ui.add(
-                                            egui::Label::new(RichText::new(text).color(color))
-                                                .truncate()
-                                                .sense(egui::Sense::click()),
+                ui.add_space(8.0);
+                ui.scope(|ui| {
+                    // a chosen row is shown like a selected song: in the hover colour, its text keeps its colour
+                    ui.visuals_mut().selection.bg_fill = pal.hover;
+                    egui::ScrollArea::vertical().max_height(260.0).id_salt("lyricsrows").show(ui, |ui| {
+                        egui::Grid::new("lyricsgrid").num_columns(4).striped(true).spacing([14.0, 4.0]).show(
+                            ui,
+                            |ui| {
+                                for h in ["File", "Artist – title", "Status", "Saved as"] {
+                                    ui.label(heading_text(h, &pal));
+                                }
+                                ui.end_row();
+                                for r in &self.rows {
+                                    let color = r.look.color(&pal);
+                                    let sel = self.selected.as_deref() == Some(r.path.as_str());
+                                    let cell = |ui: &mut egui::Ui, text: &str, width: f32| {
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(width, 18.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.set_width(width);
+                                                ui.add(
+                                                    egui::Label::new(RichText::new(text).color(color))
+                                                        .truncate()
+                                                        .sense(egui::Sense::click()),
+                                                )
+                                                .on_hover_text(text)
+                                            },
                                         )
-                                        .on_hover_text(text)
-                                    },
-                                )
-                                .inner
-                            };
-                            let name = ui.add(egui::Button::selectable(sel, RichText::new(&r.name).color(color)));
-                            let a = cell(ui, &r.song, 210.0);
-                            let b = cell(ui, &r.status, 280.0);
-                            let c = cell(ui, &r.saved, 170.0);
-                            if self.scroll_to.as_deref() == Some(r.path.as_str()) {
-                                name.scroll_to_me(Some(egui::Align::Center));
-                            }
-                            if name.clicked() || a.clicked() || b.clicked() || c.clicked() {
-                                self.selected = Some(r.path.clone());
-                            }
-                            ui.end_row();
-                        }
+                                        .inner
+                                    };
+                                    let name =
+                                        ui.add(egui::Button::selectable(sel, RichText::new(&r.name).color(color)));
+                                    let a = cell(ui, &r.song, 210.0);
+                                    let b = cell(ui, &r.status, 280.0);
+                                    let c = cell(ui, &r.saved, 170.0);
+                                    if self.scroll_to.as_deref() == Some(r.path.as_str()) {
+                                        name.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    if name.clicked() || a.clicked() || b.clicked() || c.clicked() {
+                                        self.selected = Some(r.path.clone());
+                                    }
+                                    ui.end_row();
+                                }
+                            },
+                        );
                     });
                 });
                 self.scroll_to = None;
@@ -387,56 +402,60 @@ impl LyricsWindow {
                     .as_ref()
                     .and_then(|p| self.messages.get(p).cloned())
                     .unwrap_or_else(|| "Select a song to see the details.".into());
-                ui.label(RichText::new(detail).color(hex(0x444444)));
-                ui.add_space(6.0);
-                ui.add_enabled_ui(!self.running, |ui| {
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.label(RichText::new("Options").strong());
-                        ui.horizontal(|ui| {
-                            ui.label("Songs that already have lyrics:");
-                            egui::ComboBox::from_id_salt("lyrics_existing")
-                                .selected_text(self.existing.clone())
-                                .width(300.0)
-                                .show_ui(ui, |ui| {
-                                    for c in EXISTING_CHOICES {
-                                        ui.selectable_value(&mut self.existing, c.to_string(), c);
-                                    }
-                                });
-                        });
-                        ui.checkbox(&mut self.plain, "Save plain lyrics as .txt when a song has no synced lyrics");
-                        ui.checkbox(
-                            &mut self.instrumental,
-                            "Mark instrumental songs with an .lrc holding [au: instrumental]",
-                        );
-                        ui.checkbox(
-                            &mut self.search,
-                            "Search by title and artist when there is no exact match (same length ±2 s)",
-                        );
-                    });
-                });
                 ui.add_space(4.0);
-                ui.label(RichText::new(&self.note).color(hex(0x666666)));
+                ui.add(egui::Label::new(RichText::new(detail).color(pal.text)).wrap());
                 ui.add_space(8.0);
+                ui.add_enabled_ui(!self.running, |ui| {
+                    egui::Frame::new().fill(pal.lcd).corner_radius(10).inner_margin(egui::Margin::same(12)).show(
+                        ui,
+                        |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new("Options").font(look::title(13.0)).color(pal.text));
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Songs that already have lyrics:");
+                                egui::ComboBox::from_id_salt("lyrics_existing")
+                                    .selected_text(self.existing.clone())
+                                    .width(300.0)
+                                    .show_ui(ui, |ui| {
+                                        for c in EXISTING_CHOICES {
+                                            ui.selectable_value(&mut self.existing, c.to_string(), c);
+                                        }
+                                    });
+                            });
+                            ui.checkbox(&mut self.plain, "Save plain lyrics as .txt when a song has no synced lyrics");
+                            ui.checkbox(
+                                &mut self.instrumental,
+                                "Mark instrumental songs with an .lrc holding [au: instrumental]",
+                            );
+                            ui.checkbox(
+                                &mut self.search,
+                                "Search by title and artist when there is no exact match (same length ±2 s)",
+                            );
+                        },
+                    );
+                });
+                ui.add_space(6.0);
+                ui.add(egui::Label::new(secondary(self.note.clone(), &pal)).wrap());
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let n = self.todo.len().max(1);
-                    ui.add(egui::ProgressBar::new(self.outcomes.len() as f32 / n as f32).desired_width(200.0));
-                    ui.label(&self.status);
+                    progress(ui, self.outcomes.len() as f32 / n as f32, 200.0);
+                    ui.label(RichText::new(&self.status).color(pal.text));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if flat_button(ui, "Close", true).clicked() {
                             close = true;
                         }
-                        if ui.add_enabled(self.running && !self.is_stopping(), egui::Button::new("Stop")).clicked() {
+                        if flat_button(ui, "Stop", self.running && !self.is_stopping()).clicked() {
                             self.stop();
                         }
                         let can_start = !self.running && !self.todo.is_empty();
-                        if ui
-                            .add_enabled(can_start, egui::Button::new(RichText::new("Download lyrics").strong()))
-                            .clicked()
-                        {
+                        if primary_button(ui, "Download lyrics", can_start).clicked() {
                             self.start(app);
                         }
                         let can_show = !self.running && !self.saved_paths.is_empty();
-                        if ui.add_enabled(can_show, egui::Button::new("Show in folder")).clicked() {
+                        if flat_button(ui, "Show in folder", can_show).clicked() {
                             reveal_in_file_manager(&self.saved_paths[0]);
                         }
                     });
@@ -461,12 +480,13 @@ impl LyricsWindow {
 }
 
 /// What the Lyrics tab shows for a song: the .lrc (or .txt) next to it, with
-/// the timestamps in grey.
-pub fn lyrics_job(path: Option<&str>, normal: Color32) -> LayoutJob {
+/// the timestamps in grey, in the colours of the theme in use.
+pub fn lyrics_job(path: Option<&str>, pal: &Palette) -> LayoutJob {
     let mut job = LayoutJob::default();
-    let muted = TextFormat { font_id: FontId::proportional(12.5), color: hex(0x666666), ..Default::default() };
-    let time = TextFormat { font_id: FontId::monospace(11.5), color: hex(0x9aa0a6), ..Default::default() };
-    let plain = TextFormat { font_id: FontId::proportional(14.0), color: normal, ..Default::default() };
+    let muted = TextFormat { font_id: look::text(12.5), color: pal.secondary, ..Default::default() };
+    let time =
+        TextFormat { font_id: FontId::monospace(11.5), color: mix(pal.secondary, pal.bg, 0.25), ..Default::default() };
+    let plain = TextFormat { font_id: look::text(14.0), color: pal.text, ..Default::default() };
     let Some(path) = path else { return job };
     match read_lyrics_file(path) {
         None => {

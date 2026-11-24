@@ -1,11 +1,19 @@
-//! The dashboard's spectrogram and average-spectrum views.
+//! The dashboard's spectrogram and average-spectrum views, each in a rounded
+//! frame: the spectrogram keeps its dark plot area, the spectrum is drawn in
+//! the colours of the theme in use (2.1).
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, TextureHandle, TextureOptions, Ui, Vec2};
+use egui::{
+    Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, TextureHandle, TextureOptions, Ui, Vec2,
+};
 use realhires::analysis::Plot;
 use realhires::pyfmt::{f, g};
 use realhires::verdict::FileResult;
 
-use crate::style::{fmt_duration, hex, verdict_style};
+use crate::look::{self, mix, Palette};
+use crate::style::{fmt_duration, hex, verdict_text};
+
+/// The corner radius of the plot frames.
+const ROUND: u8 = 8;
 
 const L: f32 = 52.0;
 const R: f32 = 12.0;
@@ -32,7 +40,7 @@ fn khz_step(nyq: f64) -> u32 {
 }
 
 fn message(ui: &Ui, rect: Rect, text: &str, color: Color32) {
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(13.0), color);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, text, look::text(13.0), color);
 }
 
 pub enum State<'a> {
@@ -54,7 +62,7 @@ pub fn spectrogram(
     let size = ui.available_size().max(Vec2::new(80.0, 60.0));
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 0.0, hex(0x1e1e1e));
+    p.rect_filled(rect, CornerRadius::same(ROUND), hex(0x1e1e1e));
     let light = hex(0xaaaaaa);
     let (r, plot) = match (r, state) {
         (None, _) | (_, State::Nothing) => {
@@ -130,37 +138,31 @@ pub fn spectrogram(
                 6.0,
                 4.0,
             ));
-            p.text(
-                Pos2::new(area.right() - 4.0, y - 8.0),
-                Align2::RIGHT_CENTER,
-                label,
-                FontId::proportional(12.0),
-                color,
-            );
+            p.text(Pos2::new(area.right() - 4.0, y - 8.0), Align2::RIGHT_CENTER, label, look::text(12.0), color);
         }
     }
     p.text(
         rect.min + Vec2::new(L, 12.0),
         Align2::LEFT_CENTER,
         "Spectrogram (time →, frequency ↑)",
-        FontId::proportional(12.0),
+        look::title(12.0),
         hex(0xeeeeee),
     );
 }
 
-pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State) {
+/// The average spectrum, on the page colour of the theme in use.
+pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State, pal: &Palette) {
     let size = ui.available_size().max(Vec2::new(80.0, 60.0));
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 0.0, Color32::WHITE);
-    let grey = hex(0x888888);
+    p.rect_filled(rect, CornerRadius::same(ROUND), pal.bg);
     let (r, plot) = match (r, state) {
         (Some(r), State::Shown(plot)) if !plot.freqs.is_empty() => (r, plot),
         (None, _) | (_, State::Nothing) | (_, State::Pending) => {
-            return message(ui, rect, "Select a scanned file to see its spectrum", grey)
+            return message(ui, rect, "Select a scanned file to see its spectrum", pal.secondary)
         }
-        (_, State::Waiting) => return message(ui, rect, "Drawing the spectrum…", grey),
-        _ => return message(ui, rect, "No spectrum available", grey),
+        (_, State::Waiting) => return message(ui, rect, "Drawing the spectrum…", pal.secondary),
+        _ => return message(ui, rect, "No spectrum available", pal.secondary),
     };
     let (pw, ph) = (rect.width() - L - R, rect.height() - T - B);
     if pw < 20.0 || ph < 20.0 {
@@ -174,13 +176,13 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State) {
     let y_of =
         |v: f64| area.top() + ph * ((top as f64 - v.clamp(bottom as f64, top as f64)) / (top - bottom) as f64) as f32;
     let small = FontId::proportional(10.0);
-    let grid = Stroke::new(1.0, hex(0xeeeeee));
+    let grid = Stroke::new(1.0, mix(pal.bg, pal.text, 0.07));
     let step = if top - bottom <= 120 { 10 } else { 20 };
     let mut lvl = top;
     while lvl >= bottom {
         let y = y_of(lvl as f64);
         p.line_segment([Pos2::new(area.left(), y), Pos2::new(area.right(), y)], grid);
-        p.text(Pos2::new(area.left() - 6.0, y), Align2::RIGHT_CENTER, lvl.to_string(), small.clone(), hex(0x666666));
+        p.text(Pos2::new(area.left() - 6.0, y), Align2::RIGHT_CENTER, lvl.to_string(), small.clone(), pal.secondary);
         lvl -= step;
     }
     let kstep = khz_step(nyq);
@@ -193,16 +195,17 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State) {
             Align2::CENTER_CENTER,
             format!("{k}k"),
             small.clone(),
-            hex(0x666666),
+            pal.secondary,
         );
         k += kstep;
     }
+    let reference = mix(pal.bg, pal.secondary, 0.7);
     for (i, rf) in [22050.0, 24000.0, 44100.0, 48000.0].iter().enumerate() {
         if *rf < nyq * 0.9 {
             let x = x_of(*rf);
             p.extend(Shape::dashed_line(
                 &[Pos2::new(x, area.top()), Pos2::new(x, area.bottom())],
-                Stroke::new(1.0, hex(0xaaaaaa)),
+                Stroke::new(1.0, reference),
                 2.0,
                 3.0,
             ));
@@ -211,11 +214,11 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State) {
                 Align2::LEFT_CENTER,
                 format!("{}k", g(rf / 1000.0)),
                 small.clone(),
-                hex(0x999999),
+                reference,
             );
         }
     }
-    let color = verdict_style(r.verdict).1;
+    let color = verdict_text(r.verdict, pal);
     if plot.bandwidth_hz > 0.0 {
         let x = x_of(plot.bandwidth_hz);
         p.extend(Shape::dashed_line(
@@ -230,27 +233,28 @@ pub fn spectrum(ui: &mut Ui, r: Option<&FileResult>, state: State) {
             Pos2::new(x + dx, area.top() + 10.0),
             align,
             format!("bandwidth {} kHz", f(plot.bandwidth_hz / 1000.0, 1)),
-            FontId::proportional(12.0),
+            look::text(12.0),
             color,
         );
     }
     let yf = y_of(plot.floor_db);
+    let floor = if pal.dark { hex(0xb392f0) } else { hex(0x8250df) };
     p.extend(Shape::dashed_line(
         &[Pos2::new(area.left(), yf), Pos2::new(area.right(), yf)],
-        Stroke::new(1.0, hex(0x8250df)),
+        Stroke::new(1.0, floor),
         4.0,
         4.0,
     ));
     let pts: Vec<Pos2> = plot.freqs.iter().zip(&plot.db).map(|(hz, v)| Pos2::new(x_of(*hz), y_of(*v))).collect();
     if pts.len() >= 2 {
-        p.add(Shape::line(pts, Stroke::new(1.0, hex(0x1f2328))));
+        p.add(Shape::line(pts, Stroke::new(1.0, pal.text)));
     }
-    p.rect_stroke(area, 0.0, Stroke::new(1.0, hex(0x999999)), egui::StrokeKind::Inside);
+    p.rect_stroke(area, 0.0, Stroke::new(1.0, pal.separator), egui::StrokeKind::Inside);
     p.text(
         rect.min + Vec2::new(L, 12.0),
         Align2::LEFT_CENTER,
         "Average spectrum (dB per bin)",
-        FontId::proportional(12.0),
-        hex(0x333333),
+        look::title(12.0),
+        pal.text,
     );
 }

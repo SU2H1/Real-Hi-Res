@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{
-    Align, Align2, Color32, FontId, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Rect, RichText, Sense, Stroke, Ui,
-    Vec2,
+    pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers,
+    Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use realhires::analysis::imap_get;
@@ -20,9 +20,11 @@ use realhires::paths::{abspath, file_name, parent};
 use realhires::pyfmt::{f, fs, g};
 use realhires::settings::{self, Settings};
 use realhires::store::{open_store, settings_key, ResultStore};
-use realhires::verdict::{saved_note, FileResult, Verdict, VERDICT_ORDER};
+use realhires::verdict::{saved_note, FileResult, Verdict, PROBLEM_VERDICTS, VERDICT_ORDER};
 
 use crate::dialogs::{Confirm, ConfirmAction, FixDoneWindow, FixWindow, SettingsWindow, SummaryWindow};
+use crate::icons::{self, Icon};
+use crate::look::{self, mix, Palette};
 use crate::lyrics::{lyrics_job, LyricsWindow};
 use crate::plots::{self, SpectroTexture, State};
 use crate::style::*;
@@ -82,6 +84,27 @@ const COLUMNS: [(Col, &str); 8] = [
     (Col::Fix, "After fix"),
     (Col::Name, "File"),
     (Col::Folder, "Folder"),
+];
+
+/// The More button's menu (2.1, `docs/player-spec.md` "No menu bars"): its
+/// groups, which separators part, of (label, action for `App::more_action`).
+pub const MORE_MENU: [&[(&str, &str)]; 7] = [
+    &[("Export listed files as CSV…", "csv"), ("Export listed files as JSON…", "json")],
+    &[("Fix selected files to real resolution…", "fix"), ("Fix all fake files to real resolution…", "fix-all")],
+    &[
+        ("Download synced lyrics for selected songs…", "lyrics"),
+        ("Download synced lyrics for all songs…", "lyrics-all"),
+    ],
+    &[("Re-scan selected files", "rescan"), ("Re-scan files checked by older rules", "rescan-old")],
+    &[
+        ("Select all listed files", "select-all"),
+        ("Copy path", "copy"),
+        ("Open file location", "reveal"),
+        ("Open file", "open"),
+        ("Find…", "find"),
+    ],
+    &[("Scan summary…", "summary"), ("Show problem files only", "problems"), ("Show all files", "all")],
+    &[("Delete all saved results…", "forget")],
 ];
 
 pub struct GroupFilter {
@@ -145,6 +168,8 @@ pub struct App {
     anchor: Option<usize>,
     current: Option<String>,
     scroll_to: Option<usize>,
+    /// the row under the pointer in the last frame (rows are highlighted by hand)
+    hover_row: Option<usize>,
     pub view: View,
     groups: Vec<Group>,
     groups_dirty: bool,
@@ -160,6 +185,8 @@ pub struct App {
     pub tab: PlotTab,
     /// the Lyrics tab's text for a path, read again when lyrics are saved
     lyrics_shown: Option<(Option<String>, egui::text::LayoutJob)>,
+    /// the text colour the Lyrics tab was laid out in (the theme can change)
+    lyrics_look: Option<Color32>,
     spectro: SpectroTexture,
     shown_plot: Option<(String, Option<realhires::analysis::Plot>)>,
     // windows
@@ -245,6 +272,7 @@ impl App {
             anchor: None,
             current: None,
             scroll_to: None,
+            hover_row: None,
             groups: vec![],
             groups_dirty: true,
             group_filter: None,
@@ -256,6 +284,7 @@ impl App {
             find_focus: false,
             tab: PlotTab::Spectrogram,
             lyrics_shown: None,
+            lyrics_look: None,
             spectro: SpectroTexture::default(),
             shown_plot: None,
             status: "Add a folder or files, then press Scan.".into(),
@@ -1008,8 +1037,8 @@ impl App {
             return;
         }
         if self.scan_lyrics_busy() {
-            self.status = "Lyrics are being downloaded for the scanned songs; wait for them or stop the scan first."
-                .into();
+            self.status =
+                "Lyrics are being downloaded for the scanned songs; wait for them or stop the scan first.".into();
             return;
         }
         self.lyrics_win = Some(LyricsWindow::new(self, paths));
@@ -1023,7 +1052,7 @@ impl App {
             vec![]
         };
         if paths.is_empty() {
-            self.status = "Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), or use Edit → \
+            self.status = "Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), or use More → \
                            Download synced lyrics for all songs."
                 .into();
             return;
@@ -1339,9 +1368,7 @@ impl App {
         if pressed(sc(cmd, Key::O)) {
             self.add_folder_dialog();
         }
-        if pressed(sc(cmd, Key::Q)) {
-            self.quit = true;
-        }
+        // Ctrl/Cmd+Q (quit) works on every page: see `background()`
         if pressed(sc(cmd, Key::Comma)) {
             self.settings_win = Some(SettingsWindow::new(&self.cfg));
         }
@@ -1495,21 +1522,47 @@ impl App {
         }
         crate::dialogs::show_all(self, &ctx);
         if self.about {
+            let pal = look::current(&ctx);
             let mut open = true;
-            egui::Window::new(format!("About {}", realhires::APP_NAME)).open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(&ctx, |ui| {
-                ui.heading(format!("{} {}", realhires::APP_NAME, realhires::VERSION));
-                ui.label("A music player that finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.");
-                ui.label("This is the Rust version; it shares its settings, saved results, library and player state with the Python version.");
-                ui.label(realhires::lyrics::ABOUT_CREDIT);
-                ui.label("Windows and Linux use the Inter typeface by The Inter Project Authors (SIL Open Font License 1.1).");
-                ui.horizontal_wrapped(|ui| {
-                    ui.hyperlink_to("LRCLIB", "https://lrclib.net");
-                    ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
-                    ui.hyperlink_to("Inter", "https://rsms.me/inter/");
+            let mut close = false;
+            egui::Window::new(format!("About {}", realhires::APP_NAME))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(&ctx, |ui| {
+                    ui.set_max_width(460.0);
+                    ui.label(
+                        RichText::new(format!("{} {}", realhires::APP_NAME, realhires::VERSION))
+                            .font(look::title(20.0))
+                            .color(pal.text),
+                    );
+                    ui.add_space(6.0);
+                    for (text, color) in [
+                        ("A music player that finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.", pal.text),
+                        ("This is the Rust version; it shares its settings, saved results, library and player state with the Python version.", pal.text),
+                        (realhires::lyrics::ABOUT_CREDIT, pal.secondary),
+                        ("Windows and Linux use the Inter typeface by The Inter Project Authors (SIL Open Font License 1.1).", pal.secondary),
+                    ] {
+                        ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
+                        ui.add_space(4.0);
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to("LRCLIB", "https://lrclib.net");
+                        ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
+                        ui.hyperlink_to("Inter", "https://rsms.me/inter/");
+                        ui.hyperlink(realhires::PROJECT_URL);
+                    });
+                    ui.add_space(8.0);
+                    buttons_right(ui, |ui| {
+                        close = primary_button(ui, "OK", true).clicked();
+                    });
                 });
-                ui.hyperlink(realhires::PROJECT_URL);
-            });
-            self.about = open;
+            self.about = open && !close;
+        }
+        // Ctrl/Cmd+Q quits from every page of the player (it was in the File menu)
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Q))) {
+            self.quit = true;
         }
         if self.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1520,7 +1573,11 @@ impl App {
         self.about = true;
     }
 
-    /// The Quality check page: the 1.x window's panels.
+    /// The Quality check page, drawn like the player's other pages (2.1): the
+    /// title with the status line under it, the toolbar, the sources, the view
+    /// switch, the verdict chips and the search, the find bar, the list or the
+    /// cards, and the dashboard.  It has no menu bar: its menu items are in the
+    /// More button at the end of the toolbar.
     pub fn page(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.refresh();
@@ -1538,228 +1595,324 @@ impl App {
         for p in dropped {
             self.add_source(&p);
         }
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
-        egui::Panel::top("sources").show(ui, |ui| self.sources_panel(ui));
-        egui::Panel::top("filters").show(ui, |ui| self.filter_bar(ui));
-        if self.find_open {
-            egui::Panel::top("find").show(ui, |ui| self.find_bar(ui));
-        }
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::bottom("dashboard")
+        let pal = look::current(&ctx);
+        egui::Panel::top("qc-head")
+            .frame(Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 28, top: 18, bottom: 6 }))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                self.header(ui, &pal);
+                ui.add_space(6.0);
+                self.toolbar(ui, &pal);
+                ui.add_space(10.0);
+                self.sources_panel(ui, &pal);
+                ui.add_space(12.0);
+                self.filter_bar(ui, &pal);
+                if self.find_open {
+                    ui.add_space(8.0);
+                    self.find_bar(ui, &pal);
+                }
+            });
+        egui::Panel::bottom("qc-dashboard")
             .resizable(true)
-            .default_size(330.0)
-            .min_size(160.0)
-            .show(ui, |ui| self.dashboard(ui));
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.view == View::Files {
-                self.table(ui);
-            } else {
-                self.cards(ui);
-            }
-        });
+            .default_size(285.0)
+            .min_size(190.0)
+            .frame(Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 28, top: 8, bottom: 18 }))
+            .show_separator_line(false)
+            .show(ui, |ui| self.dashboard(ui, &pal));
+        egui::CentralPanel::default()
+            .frame(Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 28, top: 2, bottom: 0 }))
+            .show(ui, |ui| {
+                if self.view == View::Files {
+                    self.table(ui, &pal);
+                } else {
+                    self.cards(ui, &pal);
+                }
+            });
     }
 
-    fn menu_bar(&mut self, ui: &mut Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Add Folder…").clicked() {
-                    self.add_folder_dialog();
-                }
-                if ui.button("Add Files…").clicked() {
-                    self.add_files_dialog();
-                }
-                ui.separator();
-                if ui.button("Export listed files as CSV…").clicked() {
-                    self.export(false, false);
-                }
-                if ui.button("Export listed files as JSON…").clicked() {
-                    self.export(true, false);
-                }
-                ui.separator();
-                if ui.button("Delete all saved results…").clicked() {
-                    self.forget_saved_ask();
-                }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    self.quit = true;
-                }
-            });
-            ui.menu_button("Edit", |ui| {
-                if ui.button("Open file location").clicked() {
-                    self.reveal_current();
-                }
-                if ui.button("Open file").clicked() {
-                    self.open_current_file();
-                }
-                if ui.button("Select all listed files").clicked() {
-                    self.select_all();
-                }
-                if ui.button("Copy path").clicked() {
-                    let ctx = ui.ctx().clone();
-                    self.copy_paths(&ctx);
-                }
-                ui.separator();
-                if ui.button("Find…").clicked() {
-                    self.open_find();
-                }
-                ui.separator();
-                if ui.button("Fix selected files to real resolution…").clicked() {
-                    self.fix_selected();
-                }
-                if ui.button("Fix all fake files to real resolution…").clicked() {
-                    self.fix_all();
-                }
-                ui.separator();
-                if ui
-                    .add(
-                        egui::Button::new("Download synced lyrics for selected songs…").shortcut_text(
-                            ui.ctx().format_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::L)),
-                        ),
-                    )
-                    .clicked()
-                {
-                    self.lyrics_selected();
-                }
-                if ui.button("Download synced lyrics for all songs…").clicked() {
-                    self.lyrics_all();
-                }
-                ui.separator();
-                if ui.button("Re-scan selected files").clicked() {
-                    self.rescan_selected();
-                }
-                if ui.button("Re-scan files checked by older rules").clicked() {
-                    self.rescan_outdated();
-                }
-                ui.separator();
-                if ui.button("Settings…").clicked() {
-                    self.settings_win = Some(SettingsWindow::new(&self.cfg));
-                }
-            });
-            ui.menu_button("View", |ui| {
-                for v in [View::Files, View::Album, View::Artist] {
-                    if ui.button(v.label()).clicked() {
-                        self.switch_view(v);
-                    }
-                }
-                ui.separator();
-                if ui.button("Scan summary…").clicked() {
-                    if self.results.is_empty() {
-                        self.info = Some(("Scan summary".into(), "Nothing scanned yet.".into()));
-                    } else {
-                        self.summary = Some(SummaryWindow::new(self));
-                    }
-                }
-                if ui.button("Show problem files only").clicked() {
-                    self.set_filters(&[Verdict::FakeLossless, Verdict::Fake, Verdict::Suspect]);
-                }
-                if ui.button("Show all files").clicked() {
-                    self.set_filters(&VERDICT_ORDER);
-                }
-            });
-            ui.menu_button("Help", |ui| {
-                if ui.button(format!("About {}", realhires::APP_NAME)).clicked() {
-                    self.about = true;
-                }
-            });
-        });
-    }
-
-    fn toolbar(&mut self, ui: &mut Ui) {
+    /// The page title, with the status line under it (what the status bar of
+    /// 1.x said), the scan's progress, and the note about outdated results.
+    fn header(&mut self, ui: &mut Ui, pal: &Palette) {
+        ui.label(RichText::new("Quality Check").font(look::title(28.0)).color(pal.text));
+        ui.add_space(2.0);
+        let outdated = self.results.values().filter(|r| r.saved.as_ref().is_some_and(|s| s.outdated)).count();
+        let mut rescan = false;
         ui.horizontal(|ui| {
-            if ui.button("Add Folder…").clicked() {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if outdated > 0 && !self.scanning {
+                    rescan = small_button(ui, "Re-scan them", true, false).clicked();
+                    let what = if outdated == 1 { " was" } else { "s were" };
+                    ui.label(
+                        RichText::new(format!("{outdated} saved result{what} made by older detection rules."))
+                            .color(warn_color(pal)),
+                    );
+                    ui.add_space(8.0);
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&self.status).font(look::text(13.0)).color(pal.secondary))
+                            .wrap(),
+                    );
+                });
+            });
+        });
+        // the scan's progress, in a space kept free so nothing moves when a scan starts or ends
+        ui.add_space(4.0);
+        let width = ui.available_width().min(420.0);
+        if self.scanning && self.total > 0 {
+            progress(ui, self.done as f32 / self.total as f32, width);
+        } else {
+            ui.allocate_exact_size(vec2(width, 5.0), Sense::hover());
+        }
+        if rescan {
+            self.rescan_outdated();
+        }
+    }
+
+    /// Add Folder…, Add Files…, Clear and the Quick scan switch; on the right
+    /// Scan (Stop while a scan runs), Settings… and More.
+    fn toolbar(&mut self, ui: &mut Ui, _pal: &Palette) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if icon_text_button(ui, Icon::Folder, "Add Folder…", true).clicked() {
                 self.add_folder_dialog();
             }
-            if ui.button("Add Files…").clicked() {
+            if icon_text_button(ui, Icon::Note, "Add Files…", true).clicked() {
                 self.add_files_dialog();
             }
-            if ui.add_enabled(!self.scanning, egui::Button::new("Clear")).clicked() {
+            if flat_button(ui, "Clear", !self.scanning)
+                .on_hover_text("Remove every source and result from the list")
+                .clicked()
+            {
                 self.clear();
             }
-            ui.add_space(12.0);
-            ui.checkbox(&mut self.quick, format!("Quick scan (first {} s)", g(self.cfg.quick_scan_seconds)));
+            ui.add_space(10.0);
+            let quick = format!("Quick scan (first {} s)", g(self.cfg.quick_scan_seconds));
+            switch(ui, &mut self.quick, &quick);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("⚙ Settings…").clicked() {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let more = flat_icon_button(ui, Icon::More, "More");
+                egui::Popup::menu(&more).show(|ui| self.more_menu(ui));
+                if icon_text_button(ui, Icon::Gear, "Settings…", true).clicked() {
                     self.settings_win = Some(SettingsWindow::new(&self.cfg));
                 }
-                ui.add_space(12.0);
-                if ui.add_enabled(self.scanning, egui::Button::new("Stop")).clicked() {
-                    self.stop_scan();
-                }
-                let scan = egui::Button::new(RichText::new("Scan").strong());
-                if ui.add_enabled(!self.scanning, scan).clicked() {
+                if self.scanning {
+                    if primary_button(ui, "Stop", true).on_hover_text("Stop after the files in progress").clicked() {
+                        self.stop_scan();
+                    }
+                } else if primary_button(ui, "Scan", true).clicked() {
                     self.start_scan(None, false);
                 }
             });
         });
     }
 
-    fn sources_panel(&mut self, ui: &mut Ui) {
-        let mut remove = false;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Sources to scan").strong());
-            if !self.sources.is_empty() {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui
-                        .add_enabled(!self.source_sel.is_empty(), egui::Button::new("Remove"))
-                        .on_hover_text("Remove the selected sources (Delete key)")
-                        .clicked()
-                    {
-                        remove = true;
-                    }
-                });
+    /// The More button's menu: what the File, Edit and View menus of 1.x held
+    /// (Add Folder…, Add Files…, the view switch and Settings… are buttons).
+    fn more_menu(&mut self, ui: &mut Ui) {
+        ui.set_min_width(300.0);
+        let mut act: Option<&'static str> = None;
+        for (i, group) in MORE_MENU.iter().enumerate() {
+            if i > 0 {
+                ui.separator();
             }
-        });
-        if self.sources.is_empty() {
-            ui.label(RichText::new("Nothing added yet. Click “Add Folder…” or “Add Files…” (or drop folders here): the files found are listed below straight away, then press Scan.").color(hex(0x666666)));
-            return;
+            for (label, what) in group.iter() {
+                let mut b = egui::Button::new(*label);
+                if let Some(k) = self.more_shortcut(what) {
+                    b = b.shortcut_text(ui.ctx().format_shortcut(&k));
+                }
+                if ui.add(b).clicked() {
+                    act = Some(what);
+                }
+            }
         }
-        let text = ui.visuals().text_color();
+        if let Some(act) = act {
+            ui.close();
+            let ctx = ui.ctx().clone();
+            self.more_action(act, &ctx);
+        }
+    }
+
+    /// The keys that do the same as an entry of the More menu.
+    fn more_shortcut(&self, action: &str) -> Option<KeyboardShortcut> {
+        let cmd = Modifiers::COMMAND;
+        let (enter, cmd_enter) =
+            (KeyboardShortcut::new(Modifiers::NONE, Key::Enter), KeyboardShortcut::new(cmd, Key::Enter));
+        let open_file_first = self.cfg.double_click == "Open file";
+        Some(match action {
+            "fix" => KeyboardShortcut::new(cmd | Modifiers::SHIFT, Key::F),
+            "lyrics" => KeyboardShortcut::new(cmd, Key::L),
+            "select-all" => KeyboardShortcut::new(cmd, Key::A),
+            "copy" => KeyboardShortcut::new(cmd, Key::C),
+            "reveal" => {
+                if open_file_first {
+                    cmd_enter
+                } else {
+                    enter
+                }
+            }
+            "open" => {
+                if open_file_first {
+                    enter
+                } else {
+                    cmd_enter
+                }
+            }
+            "find" => KeyboardShortcut::new(cmd, Key::F),
+            _ => return None,
+        })
+    }
+
+    /// Does what an entry of the More menu says; false for an unknown action.
+    pub fn more_action(&mut self, action: &str, ctx: &egui::Context) -> bool {
+        match action {
+            "csv" => self.export(false, false),
+            "json" => self.export(true, false),
+            "fix" => self.fix_selected(),
+            "fix-all" => self.fix_all(),
+            "lyrics" => self.lyrics_selected(),
+            "lyrics-all" => self.lyrics_all(),
+            "rescan" => self.rescan_selected(),
+            "rescan-old" => self.rescan_outdated(),
+            "select-all" => self.select_all(),
+            "copy" => self.copy_paths(ctx),
+            "reveal" => self.reveal_current(),
+            "open" => self.open_current_file(),
+            "find" => self.open_find(),
+            "summary" => self.show_summary(),
+            "problems" => self.set_filters(&PROBLEM_VERDICTS),
+            "all" => self.set_filters(&VERDICT_ORDER),
+            "forget" => self.forget_saved_ask(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Scan summary…: the pop-up of the last scan, or a note that there is none.
+    pub fn show_summary(&mut self) {
+        if self.results.is_empty() {
+            self.info = Some(("Scan summary".into(), "Nothing scanned yet.".into()));
+        } else {
+            self.summary = Some(SummaryWindow::new(self));
+        }
+    }
+
+    /// Sources to scan: a rounded panel in the surface colour, its title on the
+    /// row of the column headings, its rows like a song table, and Remove as a
+    /// small button.
+    fn sources_panel(&mut self, ui: &mut Ui, pal: &Palette) {
+        let mut remove = false;
         let mut clicked = None;
-        egui::ScrollArea::vertical().id_salt("sources").max_height(96.0).auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("srcgrid").striped(true).num_columns(4).min_col_width(80.0).spacing([24.0, 2.0]).show(
-                ui,
-                |ui| {
-                    ui.label(RichText::new("Folder / file").color(hex(0x666666)));
-                    ui.label(RichText::new("Type").color(hex(0x666666)));
-                    ui.label(RichText::new("Audio files").color(hex(0x666666)));
-                    ui.label(RichText::new("Fake / suspicious").color(hex(0x666666)));
-                    ui.end_row();
-                    for s in &self.sources {
-                        let files = self.source_files.get(&s.path).map(Vec::as_slice).unwrap_or(&[]);
-                        let listing = self.listing.contains_key(&s.path);
-                        let empty = files.is_empty() && !listing;
-                        let (count, color) = if listing {
-                            (format!("{} so far…", files.len()), hex(0x808080))
-                        } else if empty {
-                            let why = if s.is_dir {
-                                "no audio files found"
+        Frame::new()
+            .fill(pal.lcd)
+            .corner_radius(10)
+            .inner_margin(Margin { left: 8, right: 8, top: 6, bottom: 6 })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let w = ui.available_width();
+                let xs = [0.0, w * 0.52, w * 0.62, w * 0.75];
+                let (head, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+                let p = ui.painter();
+                p.text(
+                    pos2(head.left() + 6.0, head.center().y),
+                    Align2::LEFT_CENTER,
+                    "Sources to scan",
+                    look::title(13.0),
+                    pal.text,
+                );
+                if self.sources.is_empty() {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(secondary(
+                                "Nothing added yet. Click “Add Folder…” or “Add Files…” (or drop folders here): the \
+                                 files found are listed below straight away, then press Scan.",
+                                pal,
+                            ))
+                            .wrap(),
+                        );
+                    });
+                    ui.add_space(2.0);
+                    return;
+                }
+                for (x, h) in xs.iter().zip(["", "Type", "Audio files", "Fake / suspicious"]).skip(1) {
+                    p.text(
+                        pos2(head.left() + x + 6.0, head.center().y),
+                        Align2::LEFT_CENTER,
+                        h,
+                        look::title(11.5),
+                        pal.secondary,
+                    );
+                }
+                let button = Rect::from_min_max(
+                    pos2(head.right() - 90.0, head.top() + 2.0),
+                    head.right_bottom() - vec2(0.0, 2.0),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(button).layout(Layout::right_to_left(Align::Center)),
+                    |ui| {
+                        remove = small_button(ui, "Remove", !self.source_sel.is_empty(), true)
+                            .on_hover_text("Remove the selected sources (Delete key)")
+                            .clicked();
+                    },
+                );
+                let row_h = 26.0;
+                egui::ScrollArea::vertical()
+                    .id_salt("qc-sources")
+                    .max_height(row_h * 3.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for s in &self.sources {
+                            let files = self.source_files.get(&s.path).map(Vec::as_slice).unwrap_or(&[]);
+                            let listing = self.listing.contains_key(&s.path);
+                            let empty = files.is_empty() && !listing;
+                            let (count, color) = if listing {
+                                (format!("{} so far…", files.len()), pal.secondary)
+                            } else if empty {
+                                let why = if s.is_dir {
+                                    "no audio files found"
+                                } else {
+                                    "not an audio file (check Settings → Scanning → File extensions)"
+                                };
+                                (why.to_string(), error_color(pal))
                             } else {
-                                "not an audio file (check Settings → Scanning → File extensions)"
+                                (plural(files.len(), "file"), pal.text)
                             };
-                            (why.to_string(), hex(0xc62828))
-                        } else {
-                            (plural(files.len(), "file"), text)
-                        };
-                        let sel = self.source_sel.contains(&s.path);
-                        let label = RichText::new(&s.path).color(if empty { hex(0xc62828) } else { text });
-                        if ui.add(egui::Button::selectable(sel, label)).clicked() {
-                            clicked = Some(s.path.clone());
+                            let done: Vec<&FileResult> = files.iter().filter_map(|f| self.results.get(f)).collect();
+                            let probs = done.iter().filter(|r| r.is_problem()).count();
+                            let problems = if done.is_empty() || listing {
+                                String::new()
+                            } else {
+                                format!("{probs} of {}", done.len())
+                            };
+                            let (rect, resp) =
+                                ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+                            if !ui.is_rect_visible(rect) {
+                                continue;
+                            }
+                            let sel = self.source_sel.contains(&s.path);
+                            if sel {
+                                ui.painter().rect_filled(rect, CornerRadius::same(6), mix(pal.lcd, pal.text, 0.1));
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(rect, CornerRadius::same(6), mix(pal.lcd, pal.text, 0.05));
+                            }
+                            let p = ui.painter_at(rect);
+                            let cell = |k: usize, text: &str, font: FontId, color: Color32| {
+                                let end = xs.get(k + 1).copied().unwrap_or(w);
+                                let g = crate::pages::elided(ui, text, font, color, end - xs[k] - 14.0);
+                                p.galley(pos2(rect.left() + xs[k] + 6.0, rect.center().y - g.size().y / 2.0), g, color);
+                            };
+                            cell(0, &s.path, look::text(13.0), if empty { error_color(pal) } else { pal.text });
+                            cell(1, if s.is_dir { "Folder" } else { "File" }, look::text(12.5), pal.secondary);
+                            cell(2, &count, look::text(12.5), color);
+                            cell(3, &problems, look::text(12.5), pal.secondary);
+                            if resp.on_hover_text(&s.path).clicked() {
+                                clicked = Some(s.path.clone());
+                            }
                         }
-                        ui.label(if s.is_dir { "Folder" } else { "File" });
-                        ui.label(RichText::new(count).color(color));
-                        let done: Vec<&FileResult> = files.iter().filter_map(|f| self.results.get(f)).collect();
-                        let probs = done.iter().filter(|r| r.is_problem()).count();
-                        ui.label(if done.is_empty() || listing {
-                            String::new()
-                        } else {
-                            format!("{probs} of {}", done.len())
-                        });
-                        ui.end_row();
-                    }
-                },
-            );
-        });
+                    });
+            });
         if let Some(c) = clicked {
             if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
                 if !self.source_sel.remove(&c) {
@@ -1776,24 +1929,27 @@ impl App {
         }
     }
 
-    fn filter_bar(&mut self, ui: &mut Ui) {
+    /// The view switch (with the card options and the album or artist shown),
+    /// the search field, and the verdict chips.
+    fn filter_bar(&mut self, ui: &mut Ui, pal: &Palette) {
+        let mut back = false;
         ui.horizontal(|ui| {
-            ui.label("View:");
-            for v in [View::Files, View::Album, View::Artist] {
-                if ui.add(egui::Button::selectable(self.view == v, v.label())).clicked() && self.view != v {
-                    self.switch_view(v);
-                }
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let views = [View::Files, View::Album, View::Artist];
+            let now = views.iter().position(|v| *v == self.view).unwrap_or(0);
+            if let Some(i) = segmented(ui, "qc-view", &views.map(|v| v.label()), now, false) {
+                self.switch_view(views[i]);
             }
             if self.view != View::Files {
-                ui.add_space(16.0);
-                ui.label("Rings show:");
+                ui.add_space(8.0);
+                ui.label(secondary("Rings show", pal));
                 let before = (self.cfg.card_label.clone(), self.cfg.group_sort.clone());
                 egui::ComboBox::from_id_salt("ring").selected_text(self.cfg.card_label.clone()).show_ui(ui, |ui| {
                     for c in ["Percentage", "Songs (x of n)"] {
                         ui.selectable_value(&mut self.cfg.card_label, c.to_string(), c);
                     }
                 });
-                ui.label("Sort:");
+                ui.label(secondary("Sort", pal));
                 egui::ComboBox::from_id_salt("gsort").selected_text(self.cfg.group_sort.clone()).show_ui(ui, |ui| {
                     for c in ["Most fake first", "Name"] {
                         ui.selectable_value(&mut self.cfg.group_sort, c.to_string(), c);
@@ -1805,101 +1961,100 @@ impl App {
                 }
             }
             if let Some(gf) = &self.group_filter {
-                ui.add_space(16.0);
-                ui.label(RichText::new(&gf.label).color(hex(0x0b62c4)).strong());
-                let back = if gf.mode == GroupMode::Album { "◀ Back to albums" } else { "◀ Back to artists" };
-                if ui.button(back).clicked() {
-                    self.close_group(true);
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("Show:");
-            let c = self.counts();
-            for (i, v) in VERDICT_ORDER.iter().enumerate() {
-                let (label, color, _) = verdict_style(*v);
-                let text = if self.results.is_empty() { label.to_string() } else { format!("{label} ({})", c[i]) };
-                if ui.checkbox(&mut self.show[i], RichText::new(text).color(color)).changed() {
-                    self.rows_dirty = true;
-                }
+                ui.add_space(8.0);
+                let label = if gf.mode == GroupMode::Album { "Back to albums" } else { "Back to artists" };
+                back = back_link(ui, label).clicked();
+                ui.label(RichText::new(&gf.label).font(look::title(13.0)).color(pal.text));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.search)
-                            .desired_width(180.0)
-                            .hint_text("file, folder or reason"),
-                    )
-                    .changed()
-                {
+                let search = egui::TextEdit::singleline(&mut self.search)
+                    .id(egui::Id::unique("qc-search"))
+                    .hint_text("Search")
+                    .desired_width(220.0)
+                    .margin(Margin::symmetric(8, 5));
+                if ui.add(search).on_hover_text("Searches the file and folder names and the reasons").changed() {
                     self.rows_dirty = true;
                     self.groups_dirty = true;
                 }
-                ui.label("Search:");
             });
         });
-    }
-
-    fn find_bar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label("Find:");
-            let resp = ui.add(egui::TextEdit::singleline(&mut self.find_text).desired_width(260.0));
-            if self.find_focus {
-                resp.request_focus();
-                self.find_focus = false;
-            }
-            if resp.changed() {
-                self.update_find(true);
-            }
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                let back = ui.input(|i| i.modifiers.shift);
-                self.find_step(if back { -1 } else { 1 });
-                resp.request_focus();
-            }
-            if ui.button("▲").clicked() {
-                self.find_step(-1);
-            }
-            if ui.button("▼").clicked() {
-                self.find_step(1);
-            }
-            let n = self.find_matches.len();
-            if n > 0 {
-                ui.label(format!("{} of {n}", self.find_index.unwrap_or(0) + 1));
-            } else if !self.find_text.trim().is_empty() {
-                ui.label(RichText::new("No matches").color(hex(0xc62828)));
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("✕").clicked() {
-                    self.find_open = false;
-                    self.find_matches.clear();
-                    self.find_index = None;
+        if back {
+            self.close_group(true);
+        }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            let c = self.counts();
+            for (i, v) in VERDICT_ORDER.iter().enumerate() {
+                let (label, color, desc) = verdict_style(*v);
+                let count = if self.results.is_empty() { None } else { Some(c[i]) };
+                if chip(ui, label, count, color, self.show[i]).on_hover_text(desc).clicked() {
+                    self.show[i] = !self.show[i];
+                    self.rows_dirty = true;
                 }
-                ui.label(
-                    RichText::new("Enter = next, Shift+Enter = previous, Esc = close").small().color(hex(0x888888)),
-                );
-            });
+            }
         });
     }
 
-    fn status_bar(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            let frac = if self.total > 0 { self.done as f32 / self.total as f32 } else { 0.0 };
-            ui.add(egui::ProgressBar::new(frac).desired_width(220.0));
-            ui.label(&self.status);
-            let outdated = self.results.values().filter(|r| r.saved.as_ref().is_some_and(|s| s.outdated)).count();
-            if outdated > 0 && !self.scanning {
+    /// The find bar (Ctrl/Cmd+F): a rounded panel with the search field,
+    /// previous and next, the count and close.
+    fn find_bar(&mut self, ui: &mut Ui, pal: &Palette) {
+        let mut close = false;
+        Frame::new().fill(pal.lcd).corner_radius(10).inner_margin(Margin::symmetric(12, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Search, pal.secondary);
+                ui.label(RichText::new("Find").font(look::title(13.0)).color(pal.text));
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.find_text)
+                        .id(egui::Id::unique("qc-find"))
+                        .hint_text("Verdict, reason, file name or tag")
+                        .desired_width(260.0)
+                        .margin(Margin::symmetric(8, 5)),
+                );
+                if self.find_focus {
+                    resp.request_focus();
+                    self.find_focus = false;
+                }
+                if resp.changed() {
+                    self.update_find(true);
+                }
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    let back = ui.input(|i| i.modifiers.shift);
+                    self.find_step(if back { -1 } else { 1 });
+                    resp.request_focus();
+                }
+                if icons::button(ui, Icon::ChevronUp, 26.0, false, true, "Previous (Shift+Enter)").clicked() {
+                    self.find_step(-1);
+                }
+                if icons::button(ui, Icon::ChevronDown, 26.0, false, true, "Next (Enter)").clicked() {
+                    self.find_step(1);
+                }
+                let n = self.find_matches.len();
+                if n > 0 {
+                    ui.label(RichText::new(format!("{} of {n}", self.find_index.unwrap_or(0) + 1)).color(pal.text));
+                } else if !self.find_text.trim().is_empty() {
+                    ui.label(RichText::new("No matches").color(error_color(pal)));
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Re-scan them").clicked() {
-                        self.rescan_outdated();
+                    if icons::button(ui, Icon::Close, 26.0, false, true, "Close (Esc)").clicked() {
+                        close = true;
                     }
-                    let what = if outdated == 1 { " was" } else { "s were" };
                     ui.label(
-                        RichText::new(format!("{outdated} saved result{what} made by older detection rules."))
-                            .color(hex(0x8a5a00)),
+                        RichText::new("Enter = next, Shift+Enter = previous, Esc = close")
+                            .font(look::text(11.5))
+                            .color(pal.secondary),
                     );
                 });
-            }
+            });
         });
+        if close {
+            self.find_open = false;
+            self.find_matches.clear();
+            self.find_index = None;
+        }
     }
 
     fn row_texts(&self, path: &str, running: &HashSet<String>) -> ([String; 8], Color32) {
@@ -1947,112 +2102,145 @@ impl App {
         }
     }
 
-    fn table(&mut self, ui: &mut Ui) {
+    /// The file list, drawn like the player's song tables: no grid lines,
+    /// headings in bold secondary text, rows with rounded hover and selection
+    /// in the theme's colours; the verdict and "Why" keep the verdict colours.
+    fn table(&mut self, ui: &mut Ui, pal: &Palette) {
         let running = if self.scanning { self.mark_running() } else { HashSet::new() };
         let found: HashSet<&String> = self.find_matches.iter().collect();
         let cur_found = self.find_index.and_then(|i| self.find_matches.get(i)).cloned();
         let mut clicked: Option<(usize, Modifiers, bool)> = None;
         let mut sort: Option<Col> = None;
         let mut menu_action: Option<&'static str> = None;
-        let row_h = 20.0;
-        let mut tb = TableBuilder::new(ui)
-            .id_salt("files")
-            .striped(true)
-            .resizable(true)
-            .sense(Sense::click())
-            .cell_layout(Layout::left_to_right(Align::Center))
-            .column(Column::initial(105.0).clip(true))
-            .column(Column::initial(380.0).clip(true))
-            .column(Column::initial(70.0).clip(true))
-            .column(Column::initial(85.0).clip(true))
-            .column(Column::initial(82.0).clip(true))
-            .column(Column::initial(262.0).clip(true))
-            .column(Column::initial(230.0).clip(true))
-            .column(Column::remainder().clip(true))
-            .min_scrolled_height(0.0);
-        if let Some(i) = self.scroll_to.take() {
-            tb = tb.scroll_to_row(i, Some(Align::Center));
-        }
+        let mut hovered: Option<usize> = None;
+        let last_hover = self.hover_row;
+        let row_h = 30.0;
+        let gap = 10.0;
+        let last = COLUMNS.len() - 1;
+        let stripe = if pal.dark { Color32::from_white_alpha(6) } else { Color32::from_black_alpha(6) };
+        let found_fill = pal.accent.gamma_multiply(0.16);
+        let found_cur = pal.accent.gamma_multiply(0.3);
+        let scroll_to = self.scroll_to.take();
         let rows = &self.rows;
-        tb.header(22.0, |mut h| {
-            for (c, title) in COLUMNS {
-                h.col(|ui| {
-                    let arrow = if self.sort_col == c {
-                        if self.sort_rev {
-                            " ▼"
-                        } else {
-                            " ▲"
-                        }
-                    } else {
-                        ""
-                    };
-                    if ui
-                        .add(egui::Button::new(RichText::new(format!("{title}{arrow}")).strong()).frame(false))
-                        .clicked()
-                    {
-                        sort = Some(c);
-                    }
-                });
+        ui.scope(|ui| {
+            let v = ui.visuals_mut();
+            // the column edges show only under the pointer, and rows get rounded highlights below
+            v.widgets.noninteractive.bg_stroke = Stroke::NONE;
+            v.widgets.hovered.bg_fill = Color32::TRANSPARENT;
+            ui.spacing_mut().item_spacing = vec2(gap, 0.0);
+            // the columns start as shares of the width, so all of them are seen (and can be resized)
+            let w = ui.available_width() - gap * (COLUMNS.len() - 1) as f32 - 8.0;
+            let mut tb = TableBuilder::new(ui)
+                .id_salt("files")
+                .striped(false)
+                .resizable(true)
+                .sense(Sense::click())
+                .cell_layout(Layout::left_to_right(Align::Center));
+            for share in [0.105, 0.28, 0.065, 0.075, 0.075, 0.16, 0.16] {
+                tb = tb.column(Column::initial((w * share).max(48.0)).at_least(36.0).clip(true));
             }
-        })
-        .body(|body| {
-            body.rows(row_h, rows.len(), |mut row| {
-                let i = row.index();
-                let path = &rows[i];
-                let (texts, color) = self.row_texts(path, &running);
-                row.set_selected(self.selection.contains(path));
-                let bg = if cur_found.as_ref() == Some(path) {
-                    Some(hex(FOUND_CUR))
-                } else if found.contains(path) {
-                    Some(hex(FOUND))
-                } else {
-                    None
-                };
-                for (k, t) in texts.iter().enumerate() {
-                    row.col(|ui| {
-                        if let Some(bg) = bg {
-                            ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
-                        }
-                        let text = if k == 0 {
-                            RichText::new(t).color(color).strong()
-                        } else if k == 1 {
-                            RichText::new(t).color(color)
-                        } else {
-                            RichText::new(t)
+            tb = tb.column(Column::remainder().at_least(60.0).clip(true)).min_scrolled_height(0.0);
+            if let Some(i) = scroll_to {
+                tb = tb.scroll_to_row(i, Some(Align::Center));
+            }
+            tb.header(28.0, |mut h| {
+                for (c, title) in COLUMNS {
+                    h.col(|ui| {
+                        let (r, p) = row_painter(ui, gap);
+                        p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, pal.separator));
+                        let arrow = match (self.sort_col == c, self.sort_rev) {
+                            (true, true) => "  ▼",
+                            (true, false) => "  ▲",
+                            _ => "",
                         };
-                        ui.add(egui::Label::new(text).truncate().selectable(false));
+                        let resp = ui.add(
+                            egui::Label::new(heading_text(&format!("{title}{arrow}"), pal))
+                                .sense(Sense::click())
+                                .selectable(false),
+                        );
+                        if resp.on_hover_text("Sort by this column (again: the other way round)").clicked() {
+                            sort = Some(c);
+                        }
                     });
                 }
-                let resp = row.response();
-                if resp.clicked() {
-                    clicked = Some((i, resp.ctx.input(|x| x.modifiers), false));
-                }
-                if resp.double_clicked() {
-                    clicked = Some((i, Modifiers::NONE, true));
-                }
-                if resp.secondary_clicked() && !self.selection.contains(path) {
-                    clicked = Some((i, Modifiers::NONE, false));
-                }
-                resp.context_menu(|ui| {
-                    for (label, act) in [
-                        ("Open file location", "reveal"),
-                        ("Open file", "open"),
-                        ("Copy path", "copy"),
-                        ("Fix to real resolution…", "fix"),
-                        ("Download synced lyrics…", "lyrics"),
-                        ("Re-scan", "rescan"),
-                    ] {
-                        if act == "fix" {
-                            ui.separator();
-                        }
-                        if ui.button(label).clicked() {
-                            menu_action = Some(act);
-                            ui.close();
-                        }
+            })
+            .body(|body| {
+                body.rows(row_h, rows.len(), |mut row| {
+                    let i = row.index();
+                    let path = &rows[i];
+                    let (texts, color) = self.row_texts(path, &running);
+                    let color = on_page(color, pal);
+                    let bg = if self.selection.contains(path) {
+                        Some(pal.hover)
+                    } else if last_hover == Some(i) {
+                        Some(pal.hover.gamma_multiply(0.6))
+                    } else if i % 2 == 1 {
+                        Some(stripe)
+                    } else {
+                        None
+                    };
+                    let mark = if cur_found.as_ref() == Some(path) {
+                        Some(found_cur)
+                    } else if found.contains(path) {
+                        Some(found_fill)
+                    } else {
+                        None
+                    };
+                    for (k, t) in texts.iter().enumerate() {
+                        row.col(|ui| {
+                            let (r, p) = row_painter(ui, gap);
+                            let (left, right) = (if k == 0 { 6 } else { 0 }, if k == last { 6 } else { 0 });
+                            let radius = CornerRadius { nw: left, sw: left, ne: right, se: right };
+                            for fill in [bg, mark].into_iter().flatten() {
+                                p.rect_filled(r, radius, fill);
+                            }
+                            let text = match k {
+                                0 => RichText::new(t).font(look::title(12.5)).color(color),
+                                1 => RichText::new(t).font(look::text(13.0)).color(color),
+                                6 => RichText::new(t).font(look::text(13.0)).color(pal.text),
+                                _ => RichText::new(t).font(look::text(12.5)).color(pal.secondary),
+                            };
+                            ui.add(egui::Label::new(text).truncate().selectable(false));
+                        });
                     }
+                    let resp = row.response();
+                    if resp.hovered() {
+                        hovered = Some(i);
+                    }
+                    if resp.clicked() {
+                        clicked = Some((i, resp.ctx.input(|x| x.modifiers), false));
+                    }
+                    if resp.double_clicked() {
+                        clicked = Some((i, Modifiers::NONE, true));
+                    }
+                    if resp.secondary_clicked() && !self.selection.contains(path) {
+                        clicked = Some((i, Modifiers::NONE, false));
+                    }
+                    resp.context_menu(|ui| {
+                        for (label, act) in [
+                            ("Open file location", "reveal"),
+                            ("Open file", "open"),
+                            ("Copy path", "copy"),
+                            ("Fix to real resolution…", "fix"),
+                            ("Download synced lyrics…", "lyrics"),
+                            ("Re-scan", "rescan"),
+                        ] {
+                            if act == "fix" {
+                                ui.separator();
+                            }
+                            if ui.button(label).clicked() {
+                                menu_action = Some(act);
+                                ui.close();
+                            }
+                        }
+                    });
                 });
             });
         });
+        if hovered != self.hover_row {
+            self.hover_row = hovered;
+            ui.ctx().request_repaint();
+        }
         if let Some(c) = sort {
             self.sort_rev = if c == self.sort_col { !self.sort_rev } else { false };
             self.sort_col = c;
@@ -2090,104 +2278,87 @@ impl App {
             _ => {}
         }
         if self.rows.is_empty() && !self.results.is_empty() {
-            ui.label(
-                RichText::new("No files match the current filters. Tick more verdicts above, or clear the search.")
-                    .color(hex(0x777777)),
-            );
+            ui.add_space(10.0);
+            ui.label(secondary(
+                "No files match the current filters. Turn on more verdicts above, or clear the search.",
+                pal,
+            ));
         }
     }
 
-    fn cards(&mut self, ui: &mut Ui) {
-        let (cw, ch, cover) = (196.0f32, 240.0f32, 150.0f32);
-        let found: HashSet<&String> = self.find_matches.iter().collect();
-        let mut open: Option<usize> = None;
+    /// By album / By artist: cards like the player's album cards, with the
+    /// fake/suspicious ring on the cover's corner.
+    fn cards(&mut self, ui: &mut Ui, pal: &Palette) {
         if self.groups.is_empty() {
-            ui.label(
-                RichText::new(if self.results.is_empty() {
+            ui.add_space(10.0);
+            ui.label(secondary(
+                if self.results.is_empty() {
                     "Scan some files to see their albums and artists."
                 } else {
                     "No albums match the search."
-                })
-                .color(hex(0x777777)),
-            );
+                },
+                pal,
+            ));
             return;
         }
+        let gap = 22.0;
+        let width = ui.available_width() - 12.0;
+        let cols = (((width + gap) / (168.0 + gap)).floor() as usize).max(1);
+        let size = ((width + gap) / cols as f32 - gap).clamp(110.0, 220.0);
+        let card_h = size + 64.0;
+        let found: HashSet<&String> = self.find_matches.iter().collect();
+        let songs = self.cfg.card_label.starts_with("Songs");
+        let mut open: Option<usize> = None;
         let scroll_to = self.card_current.clone();
         egui::ScrollArea::vertical().id_salt("cards").auto_shrink([false, false]).show(ui, |ui| {
-            let cols = ((ui.available_width() / cw).floor() as usize).max(1);
+            ui.add_space(6.0);
             for (row_i, chunk) in self.groups.chunks(cols).enumerate() {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
                     for (j, gr) in chunk.iter().enumerate() {
-                        let idx = row_i * cols + j;
-                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(cw, ch), Sense::click());
+                        let (rect, resp) = ui.allocate_exact_size(vec2(size, card_h), Sense::click());
                         if scroll_to.as_ref() == Some(&gr.key) {
                             ui.scroll_to_rect(rect, Some(Align::Center));
                         }
-                        let p = ui.painter_at(rect);
-                        let hl = self.card_current.as_ref() == Some(&gr.key);
-                        let is_found = found.contains(&gr.key);
-                        let card = rect.shrink(6.0);
-                        p.rect_filled(card, 4.0, if is_found { hex(0xfff3c4) } else { ui.visuals().extreme_bg_color });
-                        if hl || resp.hovered() {
-                            p.rect_stroke(
-                                card,
-                                4.0,
-                                Stroke::new(if hl { 3.0 } else { 1.0 }, hex(0xf39c12)),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                        let crect = Rect::from_min_size(card.min + Vec2::new(7.0, 7.0), Vec2::splat(cover));
-                        let key = format!("{}:{}", self.view.label(), gr.key);
-                        match self.cover_tex.get(&key).and_then(|t| t.as_ref()) {
-                            Some(tex) => {
-                                p.image(
-                                    tex.id(),
-                                    crect,
-                                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                                    Color32::WHITE,
-                                );
-                            }
-                            None => {
-                                p.rect_filled(crect, 0.0, placeholder_color(&gr.title));
-                                let initials: String = gr
-                                    .title
-                                    .split_whitespace()
-                                    .take(2)
-                                    .filter_map(|w| w.chars().next())
-                                    .collect::<String>()
-                                    .to_uppercase();
-                                p.text(
-                                    crect.center(),
-                                    Align2::CENTER_CENTER,
-                                    if initials.is_empty() { "?".into() } else { initials },
-                                    FontId::proportional(34.0),
-                                    Color32::WHITE,
-                                );
-                            }
-                        }
-                        ring(&p, crect.max - Vec2::new(8.0, 8.0), gr, self.cfg.card_label.starts_with("Songs"));
-                        let tx = crect.left();
-                        let mut y = crect.bottom() + 8.0;
-                        let tw = cw - 26.0;
-                        for (text, font, color) in [
-                            (gr.title.clone(), FontId::proportional(13.0), ui.visuals().strong_text_color()),
-                            (gr.subtitle.clone(), FontId::proportional(11.5), hex(0x777777)),
-                            card_line(gr),
-                        ] {
-                            let galley = p.layout(text, font, color, tw);
-                            let first = galley.rows.first().map(|r| r.rect().height()).unwrap_or(14.0);
-                            p.with_clip_rect(Rect::from_min_size(Pos2::new(tx, y), Vec2::new(tw, first + 1.0))).galley(
-                                Pos2::new(tx, y),
-                                galley,
-                                color,
-                            );
-                            y += first + 3.0;
-                        }
                         if resp.clicked() {
-                            open = Some(idx);
+                            open = Some(row_i * cols + j);
+                        }
+                        if !ui.is_rect_visible(rect) {
+                            continue;
+                        }
+                        let p = ui.painter();
+                        let crect = Rect::from_min_size(rect.min, Vec2::splat(size));
+                        let key = format!("{}:{}", self.view.label(), gr.key);
+                        crate::player::cover(p, crect, self.cover_tex.get(&key).and_then(|t| t.as_ref()), &gr.title, 8);
+                        if resp.hovered() {
+                            p.rect_filled(crect, CornerRadius::same(8), Color32::from_black_alpha(40));
+                        }
+                        let current = self.card_current.as_ref() == Some(&gr.key);
+                        if current || found.contains(&gr.key) {
+                            let w = if current { 3.0 } else { 2.0 };
+                            p.rect_stroke(
+                                crect,
+                                CornerRadius::same(8),
+                                Stroke::new(w, pal.accent),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                        ring(p, crect.right_bottom() - Vec2::splat(30.0), gr, songs, pal);
+                        let (line, line_color) = card_line(gr, pal);
+                        let mut y = crect.bottom() + 6.0;
+                        for (text, font, color) in [
+                            (gr.title.as_str(), look::title(13.0), pal.text),
+                            (gr.subtitle.as_str(), look::text(12.0), pal.secondary),
+                            (line.as_str(), look::text(11.5), line_color),
+                        ] {
+                            let g = crate::pages::elided(ui, text, font, color, size);
+                            let h = g.size().y;
+                            p.galley(pos2(rect.left(), y), g, color);
+                            y += h + 2.0;
                         }
                     }
                 });
+                ui.add_space(gap - ui.spacing().item_spacing.y);
             }
         });
         if let Some(i) = open {
@@ -2196,140 +2367,149 @@ impl App {
         }
     }
 
-    fn dashboard(&mut self, ui: &mut Ui) {
+    /// The dashboard: a rounded panel with the selected file's verdict badge,
+    /// name, reason, facts, actions and details, and its graphs and lyrics.
+    fn dashboard(&mut self, ui: &mut Ui, pal: &Palette) {
         let cur = self.current.clone();
         let r = cur.as_ref().and_then(|p| self.results.get(p)).cloned();
-        egui::Panel::left("info").resizable(true).default_size(480.0).min_size(260.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let (text, color) = match (&r, &cur) {
-                    (Some(r), _) => {
-                        let (l, c, _) = verdict_style(r.verdict);
-                        (l.to_uppercase(), c)
-                    }
-                    (None, Some(_)) => (PENDING_LABEL.to_uppercase(), hex(PENDING_COLOR)),
-                    _ => (String::new(), hex(0x9e9e9e)),
-                };
-                if !text.is_empty() {
-                    egui::Frame::new().fill(color).inner_margin(egui::Margin::symmetric(10, 3)).corner_radius(3).show(
-                        ui,
-                        |ui| {
-                            ui.label(RichText::new(text).color(Color32::WHITE).strong().size(14.0));
-                        },
-                    );
-                }
-                let name = cur.as_ref().map(|p| file_name(p)).unwrap_or_else(|| "Select a file in the list".into());
-                ui.label(RichText::new(name).strong());
-            });
-            ui.add_space(6.0);
-            let why = match (&r, &cur) {
-                (Some(r), _) => {
-                    if r.summary.is_empty() {
-                        r.reasons.first().cloned().unwrap_or_default()
-                    } else {
-                        r.summary.clone()
-                    }
-                }
-                (None, Some(_)) => {
-                    if self.scanning {
-                        "Waiting in the scan queue…".into()
-                    } else {
-                        "This file will be analysed when you press Scan.".into()
-                    }
-                }
-                _ => String::new(),
-            };
-            ui.label(RichText::new(why).size(14.0));
-            ui.add_space(6.0);
-            egui::Grid::new("facts").num_columns(4).spacing([6.0, 2.0]).show(ui, |ui| {
-                let facts = self.facts(r.as_ref());
-                for (i, (k, v)) in facts.iter().enumerate() {
-                    ui.label(RichText::new(format!("{k}:")).color(hex(0x666666)));
-                    ui.label(v);
-                    if i % 2 == 1 {
-                        ui.end_row();
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let has = cur.is_some();
-                if ui.add_enabled(has, egui::Button::new("Open Folder")).clicked() {
-                    self.reveal_current();
-                }
-                if ui.add_enabled(has, egui::Button::new("Open File")).clicked() {
-                    self.open_current_file();
-                }
-                if ui.add_enabled(has, egui::Button::new("Copy Path")).clicked() {
-                    let ctx = ui.ctx().clone();
-                    self.copy_paths(&ctx);
-                }
-                let fixable = self
-                    .selection
-                    .iter()
-                    .any(|p| self.results.get(p).is_some_and(|r| FIXABLE_VERDICTS.contains(&r.verdict)));
-                ui.add_space(12.0);
-                if ui.add_enabled(fixable && !self.scanning, egui::Button::new("Fix to real resolution…")).clicked() {
-                    self.fix_selected();
-                }
-                if ui.add_enabled(has, egui::Button::new("Get lyrics…")).clicked() {
-                    self.lyrics_selected();
-                }
-            });
-            ui.add_space(4.0);
-            ui.label(RichText::new("Details").color(hex(0x666666)));
-            egui::ScrollArea::vertical().id_salt("details").auto_shrink([false, false]).show(ui, |ui| {
-                let text = self.details(r.as_ref(), cur.as_deref());
-                ui.add(egui::Label::new(RichText::new(text).size(12.5)).wrap());
-            });
+        Frame::new().fill(pal.lcd).corner_radius(12).inner_margin(Margin::same(14)).show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            egui::Panel::left("qc-info")
+                .resizable(true)
+                .default_size(545.0)
+                .min_size(280.0)
+                .frame(Frame::new().inner_margin(Margin { left: 0, right: 14, top: 0, bottom: 0 }))
+                .show_separator_line(false)
+                .show(ui, |ui| self.dashboard_info(ui, pal, r.as_ref(), cur.as_deref()));
+            egui::CentralPanel::default()
+                .frame(Frame::NONE)
+                .show(ui, |ui| self.dashboard_plots(ui, pal, r.as_ref(), cur.as_deref()));
         });
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (t, label) in [
-                    (PlotTab::Spectrogram, "Spectrogram"),
-                    (PlotTab::Spectrum, "Average spectrum"),
-                    (PlotTab::Lyrics, "Lyrics"),
-                ] {
-                    if ui.add(egui::Button::selectable(self.tab == t, label)).clicked() {
-                        self.tab = t;
-                    }
+    }
+
+    fn dashboard_info(&mut self, ui: &mut Ui, pal: &Palette, r: Option<&FileResult>, cur: Option<&str>) {
+        ui.horizontal(|ui| {
+            let (text, color) = match (r, cur) {
+                (Some(r), _) => {
+                    let (l, c, _) = verdict_style(r.verdict);
+                    (l.to_string(), c)
                 }
-            });
-            if self.tab == PlotTab::Lyrics {
-                // shown for every selected song, scanned or not
-                let normal = ui.visuals().text_color();
-                if self.lyrics_shown.as_ref().is_none_or(|(p, _)| *p != cur) {
-                    self.lyrics_shown = Some((cur.clone(), lyrics_job(cur.as_deref(), normal)));
+                (None, Some(_)) => (PENDING_LABEL.to_string(), hex(PENDING_COLOR)),
+                _ => (String::new(), pal.secondary),
+            };
+            if !text.is_empty() {
+                badge(ui, &text, color);
+            }
+            let name = cur.map(file_name).unwrap_or_else(|| "Select a file in the list".into());
+            let font = if cur.is_some() { look::title(14.0) } else { look::text(14.0) };
+            let color = if cur.is_some() { pal.text } else { pal.secondary };
+            ui.add(egui::Label::new(RichText::new(name).font(font).color(color)).truncate());
+        });
+        ui.add_space(8.0);
+        let why = match (r, cur) {
+            (Some(r), _) => {
+                if r.summary.is_empty() {
+                    r.reasons.first().cloned().unwrap_or_default()
+                } else {
+                    r.summary.clone()
                 }
-                let job = self.lyrics_shown.as_ref().map(|(_, j)| j.clone()).unwrap_or_default();
+            }
+            (None, Some(_)) => {
+                if self.scanning {
+                    "Waiting in the scan queue…".into()
+                } else {
+                    "This file will be analysed when you press Scan.".into()
+                }
+            }
+            _ => String::new(),
+        };
+        if !why.is_empty() {
+            ui.add(egui::Label::new(RichText::new(why).font(look::text(14.0)).color(pal.text)).wrap());
+            ui.add_space(8.0);
+        }
+        egui::Grid::new("facts").num_columns(4).spacing([10.0, 3.0]).show(ui, |ui| {
+            let facts = self.facts(r);
+            for (i, (k, v)) in facts.iter().enumerate() {
+                ui.label(RichText::new(*k).font(look::text(12.5)).color(pal.secondary));
+                ui.label(RichText::new(v).font(look::text(12.5)).color(pal.text));
+                if i % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+        ui.add_space(10.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            let has = cur.is_some();
+            if panel_button(ui, "Open Folder", has).clicked() {
+                self.reveal_current();
+            }
+            if panel_button(ui, "Open File", has).clicked() {
+                self.open_current_file();
+            }
+            if panel_button(ui, "Copy Path", has).clicked() {
+                let ctx = ui.ctx().clone();
+                self.copy_paths(&ctx);
+            }
+            let fixable = self
+                .selection
+                .iter()
+                .any(|p| self.results.get(p).is_some_and(|r| FIXABLE_VERDICTS.contains(&r.verdict)));
+            if panel_button(ui, "Fix to real resolution…", fixable && !self.scanning).clicked() {
+                self.fix_selected();
+            }
+            if panel_button(ui, "Get lyrics…", has).clicked() {
+                self.lyrics_selected();
+            }
+        });
+        ui.add_space(10.0);
+        ui.label(heading_text("Details", pal));
+        ui.add_space(2.0);
+        egui::ScrollArea::vertical().id_salt("details").auto_shrink([false, false]).show(ui, |ui| {
+            let text = self.details(r, cur);
+            ui.add(egui::Label::new(RichText::new(text).font(look::text(13.0)).color(pal.text)).wrap());
+        });
+    }
+
+    fn dashboard_plots(&mut self, ui: &mut Ui, pal: &Palette, r: Option<&FileResult>, cur: Option<&str>) {
+        let tabs = [PlotTab::Spectrogram, PlotTab::Spectrum, PlotTab::Lyrics];
+        let now = tabs.iter().position(|t| *t == self.tab).unwrap_or(0);
+        if let Some(i) = segmented(ui, "qc-plots", &["Spectrogram", "Average spectrum", "Lyrics"], now, true) {
+            self.tab = tabs[i];
+        }
+        ui.add_space(10.0);
+        if self.tab == PlotTab::Lyrics {
+            // shown for every selected song, scanned or not
+            let cur = cur.map(str::to_string);
+            let stale = self.lyrics_shown.as_ref().is_none_or(|(p, _)| *p != cur) || self.lyrics_look != Some(pal.text);
+            if stale {
+                self.lyrics_shown = Some((cur.clone(), lyrics_job(cur.as_deref(), pal)));
+                self.lyrics_look = Some(pal.text);
+            }
+            let job = self.lyrics_shown.as_ref().map(|(_, j)| j.clone()).unwrap_or_default();
+            Frame::new().fill(pal.bg).corner_radius(8).inner_margin(Margin::symmetric(14, 10)).show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
                 egui::ScrollArea::vertical().id_salt("lyrics").auto_shrink([false, false]).show(ui, |ui| {
                     ui.add(egui::Label::new(job).wrap());
                 });
-                return;
+            });
+            return;
+        }
+        let plot = self.plot_for(r);
+        let state = match (r, &plot) {
+            (None, _) if cur.is_some() => State::Pending,
+            (None, _) => State::Nothing,
+            (Some(_), Some(p)) => State::Shown(p),
+            (Some(r), None) if r.verdict != Verdict::Error && self.graphs.busy.as_deref() == Some(&r.path) => {
+                State::Waiting
             }
-            let plot = self.plot_for(r.as_ref());
-            let state = match (&r, &plot) {
-                (None, _) if cur.is_some() => State::Pending,
-                (None, _) => State::Nothing,
-                (Some(_), Some(p)) => State::Shown(p),
-                (Some(r), None) if r.verdict != Verdict::Error && self.graphs.busy.as_deref() == Some(&r.path) => {
-                    State::Waiting
-                }
-                _ => State::Missing,
-            };
-            if self.tab == PlotTab::Spectrum {
-                plots::spectrum(ui, r.as_ref(), state);
-            } else {
-                plots::spectrogram(
-                    ui,
-                    r.as_ref(),
-                    state,
-                    &mut self.spectro,
-                    self.cfg.spectrogram_range_db,
-                    &self.cfg.colormap,
-                );
-            }
-        });
+            _ => State::Missing,
+        };
+        if self.tab == PlotTab::Spectrum {
+            plots::spectrum(ui, r, state, pal);
+        } else {
+            plots::spectrogram(ui, r, state, &mut self.spectro, self.cfg.spectrogram_range_db, &self.cfg.colormap);
+        }
     }
 
     /// The selected file's graphs: from the cache, the saved results, or drawn now.
@@ -2468,8 +2648,17 @@ impl App {
     }
 }
 
-fn card_line(gr: &Group) -> (String, FontId, Color32) {
-    let font = FontId::proportional(11.5);
+/// A table cell's rectangle widened over half the gap to its neighbours, and a
+/// painter that may draw there (a cell clips to itself), so row highlights run
+/// across the whole row.
+fn row_painter(ui: &Ui, gap: f32) -> (Rect, egui::Painter) {
+    let r = ui.max_rect().expand2(vec2(gap / 2.0, 0.0));
+    let clip = Rect::from_x_y_ranges(r.x_range(), ui.clip_rect().y_range());
+    (r, egui::Painter::new(ui.ctx().clone(), ui.layer_id(), clip))
+}
+
+/// The third line of a card: how many of its songs are fake or suspicious.
+fn card_line(gr: &Group, pal: &Palette) -> (String, Color32) {
     if gr.problems() > 0 {
         let mut parts = vec![];
         if gr.fake > 0 {
@@ -2479,16 +2668,16 @@ fn card_line(gr: &Group) -> (String, FontId, Color32) {
             parts.push(format!("{} suspicious", gr.suspicious));
         }
         let line = format!("{} of {}", parts.join(" + "), plural(gr.total, "song"));
-        (line, font, hex(if gr.fake > 0 { RING_FAKE } else { RING_SUS }))
+        (line, on_page(hex(if gr.fake > 0 { RING_FAKE } else { RING_SUS }), pal))
     } else {
-        (format!("All {} fine", plural(gr.total, "song")), font, hex(RING_OK))
+        (format!("All {} fine", plural(gr.total, "song")), on_page(hex(RING_OK), pal))
     }
 }
 
-/// The ring badge of a card: fake red, suspicious orange, fine green.
-fn ring(p: &egui::Painter, center: Pos2, gr: &Group, songs: bool) {
-    let (outer, inner) = (27.0f32, 18.0f32);
-    p.circle_filled(center, outer + 3.0, Color32::WHITE);
+/// The ring badge on a card's cover: fake red, suspicious orange, fine green.
+fn ring(p: &egui::Painter, center: Pos2, gr: &Group, songs: bool, pal: &Palette) {
+    let (outer, inner) = (24.0f32, 16.5f32);
+    p.circle_filled(center, outer + 3.0, pal.bg);
     let total = gr.total.max(1) as f32;
     let mut start = 0.0f32;
     for (count, color) in [(gr.fake, RING_FAKE), (gr.suspicious, RING_SUS), (gr.total - gr.problems(), RING_OK)] {
@@ -2507,7 +2696,7 @@ fn ring(p: &egui::Painter, center: Pos2, gr: &Group, songs: bool) {
     } else {
         RING_OK
     };
-    p.text(center, Align2::CENTER_CENTER, label, FontId::proportional(11.0), hex(color));
+    p.text(center, Align2::CENTER_CENTER, label, look::title(10.5), on_page(hex(color), pal));
 }
 
 /// A thick arc, clockwise from 12 o'clock (angles in radians).
@@ -2708,6 +2897,66 @@ mod tests {
         frame(&ctx, &mut app);
         let text = app.lyrics_shown.as_ref().map(|(_, j)| j.text.clone()).unwrap_or_default();
         assert!(text.starts_with("Synced lyrics · Song.lrc") && text.contains("[00:01.00]  la la"), "{text}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 2.1: no menu bar. The More menu holds the old menus' items in the
+    /// spec's order, each of them does something, and Ctrl/Cmd+Q still quits.
+    #[test]
+    fn more_menu_holds_the_old_menus_and_ctrl_q_quits() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-gui-more-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        let labels: Vec<Vec<&str>> = MORE_MENU.iter().map(|g| g.iter().map(|(l, _)| *l).collect()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                vec!["Export listed files as CSV…", "Export listed files as JSON…"],
+                vec!["Fix selected files to real resolution…", "Fix all fake files to real resolution…"],
+                vec!["Download synced lyrics for selected songs…", "Download synced lyrics for all songs…"],
+                vec!["Re-scan selected files", "Re-scan files checked by older rules"],
+                vec!["Select all listed files", "Copy path", "Open file location", "Open file", "Find…"],
+                vec!["Scan summary…", "Show problem files only", "Show all files"],
+                vec!["Delete all saved results…"],
+            ]
+        );
+        let ctx = egui::Context::default();
+        let mut app = App::new(&ctx, Settings::default(), vec![]);
+        frame(&ctx, &mut app);
+        // with nothing listed, no entry opens a file dialog: each one answers on the page
+        for (_, action) in MORE_MENU.iter().flat_map(|g| g.iter()) {
+            assert!(app.more_action(action, &ctx), "{action} is not handled");
+            match *action {
+                "csv" | "json" => assert_eq!(app.info.take().unwrap().1, "No scanned files are listed."),
+                "summary" => assert_eq!(app.info.take().unwrap().1, "Nothing scanned yet."),
+                "problems" => assert_eq!(app.show, VERDICT_ORDER.map(|v| PROBLEM_VERDICTS.contains(&v))),
+                "all" => assert_eq!(app.show, [true; 7]),
+                "find" => assert!(app.find_open),
+                "forget" => assert!(app.confirm.take().is_some_and(|c| c.title == "Delete all saved results")),
+                _ => {
+                    app.info = None;
+                }
+            }
+            frame(&ctx, &mut app);
+        }
+        assert!(!app.more_action("quit", &ctx));
+        // Ctrl/Cmd+Q, which was the File menu's Quit, works without the menu
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 880.0))),
+            events: vec![egui::Event::Key {
+                key: Key::Q,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            }],
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| app.ui(ui)).drop_without_applying_deltas();
+        assert!(app.quit);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
