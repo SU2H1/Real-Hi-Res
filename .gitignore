@@ -8,3 +8,4 @@ dist/
 realhires-report*/
 out/
 pkg/
+rust/target/

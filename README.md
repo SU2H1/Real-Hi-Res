@@ -302,6 +302,26 @@ A real hi-res file whose ultrasonic band contains only analogue tape or micropho
 
 MP3 files encoded at 320 kbps low-pass at about 20.5 kHz, which overlaps with ordinary CD anti-aliasing filters, so a lossy source is not always detectable in a 44.1 or 48 kHz file. Upsampled to hi-res, such a file is still caught by the cliff test. You can raise **Lossy cut-off search up to** in Settings (`lossy_max_khz`) to about 20.8 kHz to catch more of them, at the risk of flagging CD masters that have an unusually low and steep anti-aliasing filter.
 
+## Rust version (preview)
+
+The [`rust/`](rust/) folder holds a port of Real-Hi-Res to the Rust programming language. It is a preview: the release packages are still the Python version, so you build the Rust version yourself from the source. It has the command-line tool with all of the options described above, including `--fix`, and it judges every file exactly as the Python version does: the same verdicts, flags, estimated resolutions, reasons and summaries, word for word. It also uses the same settings file and the same saved results, so the two versions can be used side by side, and a file scanned by one of them is not analysed again by the other.
+
+To build it you need [Rust](https://rustup.rs) 1.82 or newer and FFmpeg on your `PATH` (or an `ffmpeg` folder with `ffmpeg` and `ffprobe` next to the program, as in the release packages). Then run this in the `rust` folder:
+
+```bash
+cargo build --release
+```
+
+The command-line tool is then `rust/target/release/realhires` (`realhires.exe` on Windows), and it takes the same arguments as the Python one:
+
+```bash
+rust/target/release/realhires ~/Music/HiRes
+```
+
+Rust compiles to a native program, so it needs neither Python nor NumPy, starts at once, and analyses files in threads instead of separate processes. Most of the work is FFmpeg decoding the audio, which is the same in both versions, so a scan is only somewhat faster (about 1.4 times on the test library with one job). The help text (`--help`) is laid out differently, because the Rust version uses another argument parser; the options themselves are the same.
+
+The test [`tests/test_rust_parity.py`](tests/test_rust_parity.py) keeps the two versions equal. It runs the Rust tool on the synthetic test library and fails if any verdict, flag, reason or summary differs from the Python version, or if a measurement differs by more than rounding. It also checks that both versions read each other's saved results and settings, and that the Rust `--fix` restores FFmpeg-made upsamples bit-exactly and keeps gapless albums gapless. It is skipped when the Rust tool has not been built.
+
 ## Development
 
 Run the test suite with pytest. The tests generate synthetic real and fake files with FFmpeg and NumPy, so no audio files are stored in the repository. They cover genuine 24/48, 24/96 and 24/192 files, upsamples from 44.1→96, 48→96 (with soxr and with FFmpeg's default resampler), 44.1→192 and 96→192, bit-padded 16-in-24 and 16-in-float files, 16-bit masters given a gain change or dither into 24-bit and float, MP3-sourced files, a dull 96 kHz analogue transfer with converter noise, a dull 48 kHz transfer upsampled to 96 kHz, and dull and silent files. The Fix tests check that FFmpeg-made 2× and 4× upsamples come back as the bit-identical 16-bit master, and that a three-track gapless album fixed track by track joins exactly like the album converted in one piece.
@@ -309,6 +329,8 @@ Run the test suite with pytest. The tests generate synthetic real and fake files
 ```bash
 python3 -m pytest -q
 ```
+
+The Rust version has its own unit tests, which run with `cargo test` in the `rust` folder. Once it is built (`cargo build --release`), `python3 -m pytest -q` also runs the comparison of the two versions in `tests/test_rust_parity.py`.
 
 ### Building the packages and publishing a release
 

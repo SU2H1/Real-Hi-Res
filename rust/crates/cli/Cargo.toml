@@ -1,0 +1,14 @@
+[package]
+name = "realhires-cli"
+description = "Real-Hi-Res command-line tool: scan audio files for fake hi-res and fake lossless."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "realhires"
+path = "src/main.rs"
+
+[dependencies]
+realhires-core = { path = "../core" }
+clap = { version = "4.5", features = ["derive", "wrap_help"] }

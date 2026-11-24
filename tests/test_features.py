@@ -19,6 +19,18 @@ from realhires.verdict import FAKE, REAL, FileResult, analyze_file, verdict_brea
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
+def test_rust_port_has_the_same_version():
+    # The Rust port in rust/ writes its version into the saved results it shares with this
+    # version, so it must be bumped together with __version__ and pyproject.toml.
+    import re
+
+    from realhires import __version__
+
+    cargo = (Path(__file__).resolve().parent.parent / "rust" / "Cargo.toml").read_text(encoding="utf-8")
+    m = re.search(r'^\[workspace\.package\][^\[]*?^version = "([^"]+)"', cargo, re.M | re.S)
+    assert m and m.group(1) == __version__, "bump version in rust/Cargo.toml together with __version__"
+
+
 # ---------------------------------------------------------------- settings ---
 def test_settings_defaults_match_detection_constants():
     s = settings.Settings()
