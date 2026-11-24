@@ -823,3 +823,97 @@ root.mainloop()
         assert [p for p, _, _ in fake.requests].count("/api/get") == 6  # the untagged song is never asked for
     finally:
         fake.server.shutdown()
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not _has_miniaudio(), reason="miniaudio not installed")
+@pytest.mark.skipif(not _gui_available(), reason="needs Tkinter and a display")
+def test_bit_perfect_playback_controls(tmp_path):
+    """Settings → Playback → Bit-perfect playback (2.1): the song restarts where it was in
+    the song's own format, the volume slider shows full volume and cannot move, the
+    Equalizer window says it is bypassed, and the Playback info has the Bit-perfect line."""
+    lib = make_library(tmp_path, seconds=4, mp3=False)
+    from realhires import settings
+
+    cfg = settings.Settings()
+    cfg.library_folders = [lib["music"]]
+    cfg.theme = "Light"
+    settings.save(cfg, str(tmp_path / "settings.json"))
+    env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
+               REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
+               REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_AUDIO_BACKEND="null")
+    body = f"""
+LIB = {json.dumps(lib)}
+glacier = LIB["songs"]["Glacier Song"]
+import tkinter as tk
+from realhires import player_gui, settings
+root = tk.Tk()
+root.geometry("1280x800")
+def fail(exc, val, tb):
+    import traceback
+    traceback.print_exception(exc, val, tb)
+    os._exit(1)
+root.report_callback_exception = fail
+app = player_gui.PlayerApp(root)
+
+def wait(cond, then, timeout=30.0, what="", start=None):
+    start = start or time.monotonic()
+    if cond():
+        return root.after(50, then)
+    assert time.monotonic() - start < timeout, "timed out: " + what
+    root.after(100, lambda: wait(cond, then, timeout, what, start))
+
+def setting(on):
+    new = settings.Settings.from_dict(app.cfg.to_dict())
+    new.bit_perfect = on
+    app.apply_settings(new)
+
+def loaded():
+    app.volume_changed(0.5, True)
+    album = next(a for a in app.albums if a["title"] == "Northern Lights")
+    app.open_album(album)
+    root.update()
+    app.page("album").table.on_activate(1)  # Glacier Song: 96 kHz, 24-bit
+    wait(lambda: app.engine.position() > 0.8, playing, what="playback")
+
+def playing():
+    assert app.current == glacier and app.engine.output_info()["format"] == "32-bit float"
+    assert app.bar.volume.enabled and abs(app.engine.gain - 0.25) < 1e-9
+    state["pos"] = app.engine.position()
+    setting(True)
+    assert app.engine.bit_perfect and app.engine.gain == 1.0
+    wait(lambda: app.engine.output_info()["sample_format"] == "i32" and app.engine.position() > 0, switched,
+         what="restart in the song's format")
+
+def switched():
+    assert app.current == glacier and app.engine.position() >= state["pos"] - 0.05, "not restarted where it was"
+    assert not app.bar.volume.enabled and app.bar.volume.value == 1.0 and app.state.volume == 0.5
+    assert settings.load().bit_perfect  # saved at once, as every setting
+    app.open_eq()
+    assert app.eq_window.bypass.cget("text") == "Bypassed while bit-perfect playback is on."
+    app.eq_window.close()
+    app.open_info()
+    info = app.info_window.text()
+    for needed in ("Output: 96 kHz, 24-bit integer in 32-bit, stereo",
+                   "Bit-perfect: Yes: 24-bit, 96 kHz, NULL Playback Device",
+                   "Volume: 0.0 dB", "Equalizer: Bypassed while bit-perfect playback is on."):
+        assert needed in info, (needed, info)
+    app.info_window.close()
+    app.volume_step(-0.05)  # the keys leave the saved volume alone too
+    assert app.state.volume == 0.5
+    setting(False)
+    wait(lambda: app.engine.output_info()["sample_format"] == "f32", off, what="back to the normal path")
+
+def off():
+    assert app.bar.volume.enabled and app.bar.volume.value == 0.5 and abs(app.engine.gain - 0.25) < 1e-9
+    app.open_info()
+    assert "Bit-perfect: Off" in app.info_window.text(), app.info_window.text()
+    app.info_window.close()
+    print("OK")
+    app.quit()
+
+state = {{}}
+wait(lambda: app.tracks and not app.library_busy(), loaded, what="library")
+root.mainloop()
+"""
+    run_script(tmp_path, body, env, timeout=150)

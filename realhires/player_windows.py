@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from . import eq, tagedit
+from . import bitperfect, eq, tagedit
 from .player import fmt_db
 from .player_theme import PillButton, Slider
 from .player_pages import frame, label
@@ -217,6 +217,9 @@ class EqualizerWindow:
             PillButton(presets, t, text, kind="plain", command=cmd).pack(side="right", padx=(8, 0))
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
+        # bit-perfect playback bypasses the equalizer (its settings are kept)
+        self.bypass = label(box, t, "", "body", fg="accent", wraplength=640, justify="left")
+        self.bypass.pack(anchor="w", pady=(4, 0))
         self.preset_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
         t.reg(self.curve, bg="lcd")
@@ -238,6 +241,11 @@ class EqualizerWindow:
         self.win.minsize(700, 600)
         self.draw_curve()
         self._show_preset()
+        self.show_bypass()
+
+    def show_bypass(self) -> None:
+        """'Bypassed while bit-perfect playback is on.' while that setting is on."""
+        self.bypass.configure(text=bitperfect.EQ_BYPASSED if self.app.cfg.bit_perfect else "")
 
     # ---- graphic --------------------------------------------------------
     def _build_graphic(self) -> None:
