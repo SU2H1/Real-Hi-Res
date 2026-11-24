@@ -284,11 +284,11 @@ def test_skip_rules(tmp_path):
     song.write_bytes(b"")
     cfg = Settings()
     assert lyrics.skip_reason(str(song), cfg) == ""
-    (tmp_path / "Song.txt").write_text("words")
+    (tmp_path / "Song.txt").write_text("words", encoding="utf-8")
     assert lyrics.skip_reason(str(song), cfg) == ""  # a .txt does not stop the search for synced lyrics
     cfg.lyrics_existing = lyrics.EXISTING_CLI["skip-any"]
     assert lyrics.skip_reason(str(song), cfg) == "Already has lyrics (Song.txt)."
-    (tmp_path / "Song.lrc").write_text(INSTRUMENTAL_LRC)
+    (tmp_path / "Song.lrc").write_text(INSTRUMENTAL_LRC, encoding="utf-8")
     cfg.lyrics_existing = lyrics.EXISTING_CLI["skip-synced"]
     assert lyrics.skip_reason(str(song), cfg) == "Already has an instrumental mark (Song.lrc)."
     cfg.lyrics_existing = lyrics.EXISTING_CLI["replace"]
@@ -369,9 +369,10 @@ def run():
     root.mainloop()
 if __name__ == "__main__":
     run()
-""")
+""", encoding="utf-8")  # the script holds non-ASCII text; Windows would write it as cp1252
     env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "gui-settings.json"))
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=150, env=env)
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=150, env=env)
     log = proc.stdout + proc.stderr
     assert proc.returncode == 0, log
     assert proc.stdout.splitlines()[-1] == "OK", log
