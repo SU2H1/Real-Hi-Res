@@ -306,3 +306,98 @@ quality checker; Clear the play history….
 - A song counts in the play history from one second of listening; the seconds are the forward steps of the position
   while playing (the Python app ignores steps over 1.5 s, the Rust app over 2 s, between screen updates), so seeking
   never counts.
+
+## 2.1 (asked for on 2026-11-24, after 2.0.0 was released)
+
+The user asked: "Finding Fakes [the Quality check page] should have the same aesthetics as the player. Also remove
+the Files, Controls, View and Help tab … from the top, it looks ugly. Implement Bit perfect playback as an option."
+
+### No menu bars
+
+- Neither app shows a menu bar in its window any more: the player's File / Controls / View / Help and the Quality
+  check page's File / Edit / View / Help are gone (Tk: the player never calls `root.configure(menu=…)`, so macOS shows
+  only Tk's default application menu; egui: no "menu" panel). The standalone 1.x window (`gui.scanner_main()`, only
+  used for development) keeps its menu.
+- Everything they held stays reachable, and every keyboard shortcut stays as it was:
+  - Player: New Playlist… (sidebar), Add music folder / Update the library now / Scan library / Download lyrics for
+    the whole library… / Clear the play history… (Settings → Library), Settings (sidebar), Quit (closing the window,
+    Ctrl/Cmd+Q), playback controls (the playback bar and the keys), the pages (sidebar and the Library page), Now
+    Playing (Lyrics button, Ctrl/Cmd+L), Up Next (its button), Equalizer and Playback info (their buttons).
+  - The sidebar always shows **Quality Check** (the check-mark icon) just above Settings at the bottom, selected while
+    that page is shown.
+  - The Settings page shows a button "About Universal Music Player" under its group list (both apps), which opens the
+    About box.
+  - The Quality check page gets a **More** button (the player's "…" icon) at the right end of its toolbar. Its menu
+    holds, in this order with separators between the groups: Export listed files as CSV… / as JSON…; Fix selected
+    files to real resolution… / Fix all fake files to real resolution…; Download synced lyrics for selected songs… /
+    for all songs…; Re-scan selected files / Re-scan files checked by older rules; Select all listed files / Copy path
+    / Open file location / Open file / Find…; Scan summary… / Show problem files only / Show all files; Delete all
+    saved results…. (Add Folder…, Add Files…, the view switch and Settings are buttons on the page.) The right-click
+    menu of the list is unchanged.
+
+### Quality check page: the player's look
+
+The page keeps every function, widget name and shortcut (the tests drive them), but is drawn like the other pages,
+in the theme's colours (light, dark and custom themes) and the app's fonts:
+
+- A page title "Quality Check" in the page-title font (as "Library"), with the status line under it in secondary
+  text (what the status bar said: files, problems, scanning progress and time left, saved results). The old status
+  bar at the bottom goes.
+- Buttons in the player's style: flat, rounded, the surface colour (the LCD panel colour) with text colour, hover
+  slightly darker; the primary action **Scan** filled with the accent colour and white text (Stop takes its place
+  while a scan runs). Toolbar: Add Folder…, Add Files…, Clear, the "Quick scan (first 90 s)" switch; on the right
+  Scan/Stop, Settings…, More.
+- Sources to scan: a rounded panel in the surface colour, rows like a song table, Remove as a small button.
+- The view switch (Files / By album / By artist) and the dashboard's Spectrogram / Average spectrum / Lyrics switch
+  are segmented controls, drawn like the Equalizer window's Graphic / Parametric tabs.
+- The verdict filters are pill-shaped toggles ("chips") with a dot in the verdict's colour and the count
+  ("Fake lossless 3"); a chip that is on is filled with the surface colour and drawn in the text colour, one that is off
+  is outlined and grey. The search field is drawn like the sidebar's Search box.
+- The file list looks like the player's song tables: no borders or grid lines, the same row height and fonts, column
+  headings in bold secondary text, hover and selection in the theme's colours; the verdict and "Why" text keep the
+  verdict colours. The By album / By artist cards look like the player's album cards (rounded cover, title bold,
+  subtitle grey) with the fake/suspicious ring on the cover's corner.
+- Dashboard: a rounded panel; the verdict badge as a rounded pill in the verdict colour; the file name bold; the facts
+  in two columns (labels secondary, values text colour); the action buttons in the player's style; Details in the
+  body font. The plots keep their dark plot area inside a rounded frame.
+- The windows opened from the page (Settings, Fix, Fix finished, Download synced lyrics, Scan summary, the find bar)
+  use the theme's colours and fonts too.
+
+### Bit-perfect playback
+
+New setting `bit_perfect` (Playback group, "Bit-perfect playback", default off; not a Detection setting): "Send each
+song's samples to the sound device exactly as they are in the file: at the song's own sample rate, without the
+equalizer, the volume control or resampling, and with the device to this app alone where the system allows it
+(exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the device is switched to the song's rate).
+Set the volume on your amplifier or DAC. While a song plays this way, other programs may not be heard." Turning it
+on or off applies from the next song (and at once to the song playing, which restarts at its position).
+
+While it is on:
+
+- **Signal path.** FFmpeg decodes with no `-ar` and no filters (`-af` only for a mono song: `pan=stereo|c0=c0|c1=c0`,
+  a pure copy). Integer samples of up to 24 bits become 32-bit floats exactly, so the samples that reach the output
+  are the file's own. The equalizer is bypassed (its settings are kept; the Equalizer window shows the note
+  "Bypassed while bit-perfect playback is on."), and the gain is exactly 1: the volume slider is disabled and shows
+  full volume, the saved volume is kept and used again when the setting is turned off. Mute still silences.
+- **Output format.** The device is opened at the song's sample rate, stereo, in the first format it supports from:
+  16-bit songs I16, I32, F32; 24-bit songs I32, F32; 32-bit integer songs I32, F32; float and lossy songs F32, I32,
+  I16. Floats become integers as round(x · 2^(bits−1)), clamped, which gives back the file's integers.
+- **Device access.** Windows: WASAPI exclusive mode (Python: miniaudio's `shareMode` exclusive; Rust: a small WASAPI
+  exclusive output beside cpal). macOS: the device's nominal sample rate is set to the song's (cpal does this; the
+  Python output does it through CoreAudio). Linux: the ALSA hardware device (`hw:` of the chosen output device's card,
+  or of card 0) is opened directly. When this fails (another program or the sound server holds the device, or it
+  cannot play that rate or format) the song plays through the normal path instead, and Playback info says why.
+- **Gapless** joins only songs of the same sample rate and output format; otherwise the device is reopened.
+- **Playback info**, section Output, gains a line "Bit-perfect": "Off" (setting off); "Yes: 24-bit, 96 kHz,
+  exclusive mode (WASAPI)" / "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:0" / "Yes: 24-bit, 96 kHz, the device
+  runs at 96 kHz (CoreAudio)"; or "No: " and every reason that applies, as full sentences:
+  "The device cannot play 192 kHz, so the song is resampled to 96 kHz.", "The device is in use by another program,
+  so the sound is mixed by the system.", "The device has no 24-bit format, so the samples are converted.",
+  "This 6-channel song is mixed down to stereo.", "The 32-bit samples are played with 24-bit precision.",
+  "The song is decoded from a lossy format, so it is played as decoded." (the last one does not make it "No": lossy
+  songs say "Yes (decoded lossy audio): …"). The Output line names the format the device really gets ("96 kHz,
+  24-bit integer in 32-bit, stereo").
+- The decisions and texts come from one core module in both versions (`realhires/bitperfect.py`,
+  `rust/crates/core/src/bitperfect.rs`), checked against Python's answers with parity vectors, so both apps say the
+  same thing. The tests check bit-exact output through the manual output: 16-bit, 24-bit and mono FLACs come out of
+  the engine as exactly the integers FFmpeg decodes, also with the volume at 50 % and the equalizer on.
