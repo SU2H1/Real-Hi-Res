@@ -893,13 +893,13 @@ class CoverWindow:
         label(box, t, heading, "h2", wraplength=560, justify="left").pack(anchor="w")
         if sub:
             label(box, t, sub, "body", fg="text2", wraplength=560, justify="left").pack(anchor="w")
-        self.canvas = tk.Canvas(box, width=460, height=460, highlightthickness=0, bd=0)
+        bottom = frame(box, t)  # packed before the picture, so a small window shrinks the picture, not this
+        bottom.pack(fill="x", side="bottom")
+        self.canvas = tk.Canvas(box, width=440, height=420, highlightthickness=0, bd=0)
         t.reg(self.canvas, bg="bg")
         self.canvas.pack(fill="both", expand=True, pady=(12, 10))
         self.canvas.bind("<Configure>", self._resized)
         t.on_change(self._draw, self.win)
-        bottom = frame(box, t)
-        bottom.pack(fill="x", side="bottom")
         self.details = label(bottom, t, "", "body")
         self.details.pack(anchor="w")
         self.where = label(bottom, t, "", "body", fg="text2")
@@ -1074,7 +1074,7 @@ class CoverWindow:
             c.create_text(w / 2, h / 2, text=text, fill=t.c("text2"), font=t.f("h2"))
             return
         size = self._box()
-        step = (size // 100) * 100 or size  # a new picture every 100 pixels of window size
+        step = size - size % 20  # a new picture every 20 pixels of window size
         png = self.previews.get(step)
         if png is None:
             near = [s for s, p in self.previews.items() if p]
