@@ -554,3 +554,18 @@ page of each of its artists. Wherever an artist is shown as a link (the album pa
 LCD, the Details view), each artist of the field is its own link, with the separators between them as plain text,
 and a click opens that artist's page (`open_artist(name)`; a name that is not an artist of the library opens the
 first artist it splits into).
+
+### Choosing the columns of song lists (asked for later on 2026-11-24)
+
+"Allow user to select what they tab for all songs, folders and album. Currently shows title, artist, album, genre,
+time, quality on the top." A right-click on a song table's column headings (and on its empty area right of the
+last heading) opens a menu of check items, one per column; ticking one shows that column, unticking hides it.
+Title cannot be hidden. "Reset columns" returns to the default. The choice is kept per kind of list, in
+`player.json` as `columns` (PlayerState, both versions, parity vectors): `"songs"` (All Songs, and every other list
+of songs: genre, year, composer and artist pages, playlists, Liked, Disliked, search), `"folders"` (Folders) and
+`"album"` (album pages); Recently Played keeps its own fixed columns. The columns, in this order: # (track number),
+Title, Artist, Album, Album Artist, Composer, Genre, Year, Disc, Time, Quality (with the resolution tooltip),
+Format (codec, e.g. "FLAC"), Bit rate ("1,411 kbps"), Date added (the file's date), File (its name), and the heart.
+Defaults: songs and folders: Title, Artist, Album, Genre, Time, Quality, heart; album: #, Title, Artist, Album,
+Genre, Time, Quality, heart. Any shown column can sort the list, as before. An unknown column name in the file is
+ignored; an empty list falls back to the default.
