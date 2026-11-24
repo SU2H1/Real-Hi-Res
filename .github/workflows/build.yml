@@ -92,6 +92,17 @@ jobs:
           ASSET: UniversalMusicPlayer-macos-${{ matrix.arch }}
           MACOS_MIN: ${{ matrix.macos_min }}
         run: bash packaging/ci_build.sh
+      - name: Crash reports
+        # A test that ends with a crash (SIGSEGV in Tk) leaves only a Python stack in the log;
+        # macOS writes the native one here, which names the failing C function.
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for f in ~/Library/Logs/DiagnosticReports/*.ips ~/Library/Logs/DiagnosticReports/*.crash; do
+            echo "===== $f"
+            head -c 200000 "$f"
+            echo
+          done
       - uses: actions/upload-artifact@v5
         with:
           name: UniversalMusicPlayer-macos-${{ matrix.arch }}
