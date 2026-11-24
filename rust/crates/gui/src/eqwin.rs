@@ -7,7 +7,7 @@ use realhires::playerstate::PlayerState;
 
 use crate::audio::OutputInfo;
 use crate::look::{self, Palette};
-use crate::player::{gain_of, ConfirmAction, NameAction, Player};
+use crate::player::{engine_gain, ConfirmAction, NameAction, Player};
 
 /// "44.1 kHz", "96 kHz".
 pub fn khz(rate: i64) -> String {
@@ -90,6 +90,7 @@ pub fn info_sections(
     out: Option<&OutputInfo>,
     state: &PlayerState,
     gapless: bool,
+    bit_perfect: bool,
     verdict: Option<&(String, String)>,
 ) -> Vec<(&'static str, Vec<(&'static str, String)>)> {
     let dash = |s: &str| if s.trim().is_empty() { "—".to_string() } else { s.to_string() };
@@ -142,11 +143,12 @@ pub fn info_sections(
             },
         ),
     ];
-    let gain = gain_of(state);
+    let gain = engine_gain(state, bit_perfect);
     let output = match out {
         Some(o) => vec![
             ("Device", o.device.clone()),
             ("Output", format!("{}, {}, {}", khz(o.rate as i64), o.format, channels(o.channels as i64).to_lowercase())),
+            ("Bit-perfect", o.bit_perfect.clone()),
             (
                 "Resampling",
                 match o.resampled_from {
@@ -160,10 +162,13 @@ pub fn info_sections(
                 },
             ),
             ("Volume", if gain <= 0.0 { "Muted".into() } else { db(20.0 * (gain as f64).log10()) }),
-            ("Equalizer", eq_summary(state)),
+            ("Equalizer", if bit_perfect { realhires::bitperfect::EQ_BYPASSED.into() } else { eq_summary(state) }),
             ("Gapless", if gapless { "On".into() } else { "Off".into() }),
         ],
-        None => vec![("Device", "Not open yet".into())],
+        None => vec![
+            ("Device", "Not open yet".into()),
+            ("Bit-perfect", realhires::bitperfect::status(None, None, realhires::bitperfect::Access::Direct, "", bit_perfect)),
+        ],
     };
     let check = vec![match verdict {
         Some((v, s)) => ("Verdict", format!("{v}: {s}")),
@@ -178,7 +183,8 @@ pub fn info_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let t = p.lib.track(&path).cloned().unwrap_or_else(|| Track { path: path.clone(), ..Default::default() });
     let n_album = p.lib.album_of(&path).map(|a| a.tracks.len()).unwrap_or(0);
     let out = p.engine.info();
-    let sections = info_sections(&t, n_album, out.as_ref(), &p.state, p.scanner.cfg.gapless, info.verdict.as_ref());
+    let cfg = &p.scanner.cfg;
+    let sections = info_sections(&t, n_album, out.as_ref(), &p.state, cfg.gapless, cfg.bit_perfect, info.verdict.as_ref());
     let mut open = true;
     egui::Window::new("Playback info")
         .open(&mut open)
@@ -264,6 +270,7 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let mine = p.state.matching_eq_preset();
     let presets: Vec<(String, eq::EqState)> = p.state.eq_presets.iter().map(|x| (x.name.clone(), x.eq.clone())).collect();
     let notes = p.eq_notes.clone();
+    let bypassed = p.scanner.cfg.bit_perfect;
     let mut action: Option<EqAction> = None;
     egui::Window::new("Equalizer")
         .open(&mut open)
@@ -321,6 +328,11 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                 ui.label(RichText::new(n).small().color(pal.secondary));
             }
             ui.add_space(4.0);
+            if bypassed {
+                // bit-perfect playback: the equalizer's settings are kept, but it is not heard
+                ui.label(RichText::new(realhires::bitperfect::EQ_BYPASSED).strong().color(pal.accent));
+                ui.add_space(4.0);
+            }
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.enabled, RichText::new("Equalizer on").strong());
                 ui.add_space(12.0);
