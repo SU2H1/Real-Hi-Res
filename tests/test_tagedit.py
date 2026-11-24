@@ -197,7 +197,13 @@ def test_ogg_headers_over_several_pages(tmp_path, ext, codec):
     if codec not in _encoders():
         pytest.skip(f"this FFmpeg has no {codec} encoder")
     big = "Long title " * 9000  # about 100 KB: the comment header spans two pages
-    song = make(tmp_path / f"big.{ext}", ["-c:a", codec], {"title": big, "artist": "Art", "comment": "keep me"})
+    # too long for a command line on Windows (32 KB), so FFmpeg reads the tags from a metadata file
+    meta = tmp_path / "meta.txt"
+    meta.write_text(f";FFMETADATA1\ntitle={big}\nartist=Art\ncomment=keep me\n", encoding="utf-8")
+    song = str(tmp_path / f"big.{ext}")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-i",
+                    str(meta), "-map", "0", "-map_metadata", "1", "-ac", "2", "-c:a", codec, song], check=True)
+    assert probe(song).tags["title"] == big.strip()
     before = pcm(song)
     out = tagedit.save_tags([song], {"title": "Short", "date": "1999"})  # the header shrinks to one page
     assert out[0].ok, out[0].message
