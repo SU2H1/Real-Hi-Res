@@ -3218,7 +3218,7 @@ class App(ttk.Frame):
         paths = list(self.tree.selection()) if self.view_var.get() == "Files" else []
         if not paths:
             self.status_var.set("Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), "
-                                "or use Edit → Download synced lyrics for all songs.")
+                                "or use More → Download synced lyrics for all songs.")
             return "break"
         self.download_lyrics(paths)
         return "break"
