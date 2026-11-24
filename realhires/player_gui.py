@@ -36,8 +36,8 @@ from .player import Player, SongInfo
 from . import player as player_mod
 from .player_collections import (FoldersPage, LibraryPage, PlaylistPage, PlaylistsPage, RecentlyPlayedPage,
                                  StatsDetailsPage, StatsPage, missing_track)
-from .player_pages import (AlbumPage, AlbumsPage, GroupPage, NowPlayingPage, Page, SearchPage, SettingsPage,
-                           SongsPage, album_order, frame, label)
+from .player_pages import (AlbumPage, AlbumsPage, GroupItemPage, GroupPage, NowPlayingPage, Page, SearchPage,
+                           SettingsPage, SongsPage, album_order, frame, label)
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
                            system_is_dark)
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
@@ -614,6 +614,7 @@ class PlayerApp:
             "genres": lambda: GroupPage(self, "genres"),
             "years": lambda: GroupPage(self, "years"),
             "composers": lambda: GroupPage(self, "composers"),
+            "group": lambda: GroupItemPage(self),
             "playlists": lambda: PlaylistsPage(self),
             "playlist": lambda: PlaylistPage(self),
             "liked": lambda: SongsPage(self, "Liked Songs", "liked"),
@@ -772,6 +773,8 @@ class PlayerApp:
             return {"pid": p.pid}
         if self.page_name == "folders" and isinstance(p, FoldersPage):
             return {"folder": p.folder}
+        if self.page_name == "group" and isinstance(p, GroupItemPage):
+            return {"kind": p.kind, "group": p.name}
         return {}
 
     def go_back(self) -> None:
@@ -785,8 +788,19 @@ class PlayerApp:
         self.show_page("album", album=album)
 
     def open_artist(self, name: str) -> None:
+        """The page of an artist (Artists, else Album Artists).  Each artist of a field such
+        as "Mariah Carey, Michael Bublé" has a page of its own; a name that is not an artist
+        of the library opens the first artist musiclib.split_artists() gives."""
+        from .player_pages import find_group, known_artists
+
+        names = [name] + musiclib.split_artists(name, known_artists(self))[:1]
+        for n in names:
+            for kind in ("artists", "album_artists"):
+                g = find_group(self, kind, n)
+                if g is not None:
+                    self.show_page("group", kind=kind, group=g["name"])
+                    return
         self.show_page("artists")
-        self.page("artists").choose(name)
 
     def toggle_now_playing(self) -> None:
         if self.page_name == "nowplaying":
