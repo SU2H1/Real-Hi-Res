@@ -1,7 +1,7 @@
 """Check the Windows executables for the traits that antivirus heuristics count
 against PyInstaller programs, and fail the build if one is back.
 
-    python packaging/check_windows.py dist/RealHiRes
+    python packaging/check_windows.py dist/UniversalMusicPlayer
 
 * Each .exe must be only the launcher: the compressed program archive has to be
   the separate <name>.pkg next to it (spec: append_pkg=False), so the .exe is small
@@ -20,7 +20,7 @@ import sys
 from collections import Counter
 
 MAX_EXE_BYTES = 3 * 1024 * 1024
-EXES = {"RealHiRes": "Real-Hi-Res", "realhires-cli": "Real-Hi-Res"}
+EXES = {"UniversalMusicPlayer": "Universal Music Player", "realhires-cli": "Universal Music Player"}
 
 
 def entropy(data: bytes) -> float:
@@ -76,4 +76,4 @@ def main(folder: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "dist/RealHiRes"))
+    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "dist/UniversalMusicPlayer"))

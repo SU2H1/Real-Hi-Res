@@ -62,7 +62,7 @@ jobs:
         if: inputs.prerelease
         uses: actions/download-artifact@v6
         with:
-          pattern: RealHiRes-*
+          pattern: UniversalMusicPlayer-*
           path: assets
           merge-multiple: true
       - name: Prepare the files
@@ -95,8 +95,8 @@ jobs:
           for z in assets/*windows-x64.zip; do
             [ -f "$z" ] || continue
             case "$(basename "$z")" in
-              RealHiRes-Rust-*) DIR=RealHiRes-Rust; EXES=(realhires-gui.exe realhires.exe) ;;
-              *) DIR=RealHiRes; EXES=(RealHiRes.exe realhires-cli.exe) ;;
+              UniversalMusicPlayer-Rust-*) DIR=UniversalMusicPlayer-Rust; EXES=(universal-music-player.exe realhires.exe) ;;
+              *) DIR=UniversalMusicPlayer; EXES=(UniversalMusicPlayer.exe realhires-cli.exe) ;;
             esac
             for e in "${EXES[@]}"; do
               unzip -j -o "$z" "$DIR/$e" -d inner

@@ -1,4 +1,4 @@
-"""Real-Hi-Res 2.0: the desktop app, a music player that looks like Apple Music
+"""Universal Music Player 2.0: the desktop app, a music player that looks like Apple Music
 (Tkinter).  docs/player-spec.md describes it; the Rust version
 (rust/crates/gui) implements the same specification.
 
@@ -28,7 +28,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import Callable, Dict, List, Optional
 
-from . import __version__, gui, musiclib, playerstate, stats, themes
+from . import APP_NAME, PROJECT_URL, __version__, gui, musiclib, playerstate, stats, themes
 from . import lyrics as lyrics_mod
 from . import settings as settings_mod
 from .musiclib import Track
@@ -308,7 +308,7 @@ class Lcd(tk.Canvas):
         self.geo = {}
         tr = self.track
         if tr is None:
-            self.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="Real-Hi-Res", fill=t.c("text2"),
+            self.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=APP_NAME, fill=t.c("text2"),
                              font=t.f("lcd_title"))
             return
         cy = (y0 + y1) / 2
@@ -669,7 +669,7 @@ class PlayerApp:
         v.add_command(label="Settings", command=lambda: self.show_page("settings"))
         m.add_cascade(label="View", menu=v)
         h = tk.Menu(m, tearoff=False)
-        h.add_command(label="About Real-Hi-Res", command=self.about)
+        h.add_command(label=f"About {APP_NAME}", command=self.about)
         m.add_cascade(label="Help", menu=h)
         self.menubar = m
         self.shuffle_popup = self._mode_menu(self.root, True)
@@ -1257,7 +1257,7 @@ class PlayerApp:
         if path is None:
             path = filedialog.asksaveasfilename(parent=self.root, title="Export the theme",
                                                 initialfile=f"{theme['name']}.json", defaultextension=".json",
-                                                filetypes=[("Real-Hi-Res theme", "*.json")])
+                                                filetypes=[(f"{APP_NAME} theme", "*.json")])
         if not path:
             return None
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -1268,7 +1268,7 @@ class PlayerApp:
         """A theme from a .json file (a taken name gets " 2"); it is selected."""
         if path is None:
             path = filedialog.askopenfilename(parent=self.root, title="Import a theme",
-                                              filetypes=[("Real-Hi-Res theme", "*.json"), ("All files", "*")])
+                                              filetypes=[(f"{APP_NAME} theme", "*.json"), ("All files", "*")])
         if not path:
             return None
         custom = themes.load_custom()
@@ -1685,11 +1685,11 @@ class PlayerApp:
     # ---- the rest -------------------------------------------------------
     def about(self) -> None:
         messagebox.showinfo(
-            "About Real-Hi-Res",
-            f"Real-Hi-Res {__version__}\n\nA music player that also finds fake hi-res audio (upsampled or 16-bit "
+            f"About {APP_NAME}",
+            f"{APP_NAME} {__version__}\n\nA music player (formerly Real-Hi-Res) that also finds fake hi-res audio (upsampled or 16-bit "
             "padded) and fake lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.\n\n"
             f"{lyrics_mod.ABOUT_CREDIT}\n\nOn Windows and Linux the app uses the Inter typeface by Rasmus "
-            "Andersson, under the SIL Open Font License.\n\nhttps://github.com/SU2H1/Real-Hi-Res", parent=self.root)
+            "Andersson, under the SIL Open Font License.\n\n" + PROJECT_URL, parent=self.root)
 
     def quit(self) -> None:
         if self.eq_window is not None:
@@ -1722,12 +1722,12 @@ def main(argv=None) -> int:
     try:
         root = tk.Tk()
     except tk.TclError as exc:  # e.g. started over SSH or on a server without a desktop
-        print(f"Real-Hi-Res cannot open its window: {exc}\n"
+        print(f"{APP_NAME} cannot open its window: {exc}\n"
               "The app needs a graphical desktop (X11, or Wayland with XWayland). "
               "On a server or over SSH use the command-line tool instead "
               "(realhires / realhires-cli).", file=sys.stderr)
         return 1
-    root.title("Real-Hi-Res")
+    root.title(APP_NAME)
     root.geometry("1280x800")
     root.minsize(980, 620)
     icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")

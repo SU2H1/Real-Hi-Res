@@ -310,10 +310,10 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                         action = Some(EqAction::Delete(mine.clone()));
                     }
                 });
-                if ui.button("Import…").on_hover_text("Real-Hi-Res presets (.json) and Equalizer APO or AutoEQ files (.txt)").clicked() {
+                if ui.button("Import…").on_hover_text("Presets of this app (.json) and Equalizer APO or AutoEQ files (.txt)").clicked() {
                     action = Some(EqAction::Import);
                 }
-                if ui.button("Export…").on_hover_text("As a Real-Hi-Res preset (.json) or as Equalizer APO / AutoEQ text (.txt)").clicked() {
+                if ui.button("Export…").on_hover_text("As a preset of this app (.json) or as Equalizer APO / AutoEQ text (.txt)").clicked() {
                     action = Some(EqAction::Export(if mine.is_empty() { state.preset.clone() } else { mine.clone() }));
                 }
             });
@@ -367,7 +367,7 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
         }
         Some(EqAction::Export(name)) => {
             let file = rfd::FileDialog::new()
-                .add_filter("Real-Hi-Res preset", &["json"])
+                .add_filter("Universal Music Player preset", &["json"])
                 .add_filter("Equalizer APO / AutoEQ", &["txt"])
                 .set_file_name(format!("{name}.json"))
                 .save_file();

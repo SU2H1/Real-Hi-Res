@@ -778,7 +778,7 @@ def test_double_clicked_cli_opens_the_app(tmp_path, monkeypatch, capsys):
 
     assert cli.open_app_instead(["D:\\\\Music"], started=lambda: True) is None  # a real command line
     assert cli.open_app_instead([], started=lambda: False) is None  # started from a terminal
-    gui = tmp_path / "RealHiRes.exe"
+    gui = tmp_path / "UniversalMusicPlayer.exe"
     gui.write_bytes(b"")
     monkeypatch.setattr(cli.sys, "frozen", True, raising=False)
     monkeypatch.setattr(cli.sys, "executable", str(tmp_path / "realhires-cli.exe"))
@@ -789,5 +789,5 @@ def test_double_clicked_cli_opens_the_app(tmp_path, monkeypatch, capsys):
     gui.unlink()  # no app next to it: explain, and wait so the window does not vanish
     waited = []
     assert cli.open_app_instead([], started=lambda: True, wait=lambda: waited.append(1)) == 2
-    assert waited and "command-line tool of Real-Hi-Res" in capsys.readouterr().out
+    assert waited and "command-line tool of Universal Music Player" in capsys.readouterr().out
     assert cli.started_from_explorer() is False or os.name == "nt"

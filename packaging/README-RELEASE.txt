@@ -1,16 +1,17 @@
-Real-Hi-Res - music player and fake hi-res audio detector
-=========================================================
+Universal Music Player - music player and fake hi-res audio detector
+====================================================================
 
-This package is self-contained: Python, NumPy and FFmpeg are bundled, so
+Universal Music Player (formerly Real-Hi-Res) is a music player with the
+Real-Hi-Res quality checker built in.  This package is self-contained: Python, NumPy and FFmpeg are bundled, so
 nothing else needs to be installed.
 
 Start the app
 -------------
-  Windows : double-click RealHiRes.exe
-  macOS   : drag RealHiRes.app into Applications, then open it
+  Windows : double-click UniversalMusicPlayer.exe
+  macOS   : drag UniversalMusicPlayer.app into Applications, then open it
             (see "First launch on macOS" below)
-  Linux   : run ./RealHiRes
-            Optional: ./install.sh adds Real-Hi-Res to your application menu
+  Linux   : run ./UniversalMusicPlayer
+            Optional: ./install.sh adds Universal Music Player to your application menu
             and links realhires-cli into ~/.local/bin (no root needed).
             ./uninstall.sh removes that again.  The app runs from this
             folder, so re-run install.sh if you move the folder.
@@ -33,7 +34,7 @@ right), Up Next, the equalizer and the volume.  Space plays and pauses.
 
 The equalizer has a 10-band graphic and a parametric part, built-in presets
 and your own (Save as preset..., Rename..., Delete...); Import... and
-Export... read and write Real-Hi-Res .json files and Equalizer APO / AutoEQ
+Export... read and write the app's own .json files and Equalizer APO / AutoEQ
 .txt files.  Your Stats sums up your listening like a yearly music review;
 Details shows the full numbers.  Settings > Appearance has the font, the
 theme (8 built-in themes, or your own: New theme... and the colour editor)
@@ -95,7 +96,7 @@ Command line
 realhires-cli is the command-line tool, for a terminal.  On Windows, double-
 clicking realhires-cli.exe opens the app instead.
   Windows : realhires-cli.exe "D:\Music"
-  macOS   : /Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music
+  macOS   : /Applications/UniversalMusicPlayer.app/Contents/MacOS/realhires-cli ~/Music
   Linux   : ./realhires-cli ~/Music     (or just realhires-cli after install.sh)
 
   Run with --help for all options (--only problems, --csv, --json,
@@ -107,16 +108,16 @@ First launch on macOS
 The app is not signed with an Apple Developer ID, so macOS blocks the first
 launch ("damaged" / "cannot be opened").
   * macOS 15 Sequoia and later: System Settings > Privacy & Security, scroll
-    down and click "Open Anyway" next to the RealHiRes message.
-  * Older macOS: right-click RealHiRes.app > Open.
+    down and click "Open Anyway" next to the UniversalMusicPlayer message.
+  * Older macOS: right-click UniversalMusicPlayer.app > Open.
   * Any version, in Terminal:
-      xattr -dr com.apple.quarantine /Applications/RealHiRes.app
+      xattr -dr com.apple.quarantine /Applications/UniversalMusicPlayer.app
 
 First launch on Windows
 -----------------------
 SmartScreen may warn about an unrecognised app.  Click "More info" > "Run
-anyway".  Keep the whole folder together: RealHiRes.exe and realhires-cli.exe
-are small launchers, and the program itself is in RealHiRes.pkg,
+anyway".  Keep the whole folder together: UniversalMusicPlayer.exe and realhires-cli.exe
+are small launchers, and the program itself is in UniversalMusicPlayer.pkg,
 realhires-cli.pkg and the _internal folder next to them.  If an antivirus
 program reports a trojan, it is a false positive caused by the PyInstaller
 packaging (see the README on GitHub); restore the file and report it to the
@@ -146,7 +147,7 @@ released under the SIL Open Font License 1.1; see LICENSE-Inter.txt.
 The player plays sound through miniaudio (Python bindings Copyright (c)
 2019 Irmen de Jong, miniaudio Copyright 2019 David Reid; MIT License).
 
-Full documentation: https://github.com/SU2H1/Real-Hi-Res
+Full documentation: https://github.com/SU2H1/Universal-Music-Player
 FFmpeg licence information: see FFMPEG-NOTICE.txt in the "ffmpeg" folder
 inside the package (Windows/Linux: _internal/ffmpeg; macOS: inside the app,
-right-click RealHiRes.app > Show Package Contents > Contents).
+right-click UniversalMusicPlayer.app > Show Package Contents > Contents).

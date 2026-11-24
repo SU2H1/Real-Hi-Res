@@ -1,41 +1,41 @@
-# Real-Hi-Res
+# Universal Music Player
 
-Real-Hi-Res is a music player that also checks your music. Since version 2.0 the desktop app plays your library in an Apple Music-like window: a Library page with your songs, folders, albums, artists, album artists, genres, years, composers, playlists, liked and disliked songs, recently played and added music and "Your Stats", synced lyrics next to the cover, a graphic and a parametric equalizer with presets you can name, import and export, gapless playback, and themes you can make yourself. Its quality checker, also available as a command-line tool, tells you which files are genuine and which ones are fakes. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
+Universal Music Player (formerly Real-Hi-Res) is a music player that also checks your music. Since version 2.0 the desktop app plays your library in an Apple Music-like window: a Library page with your songs, folders, albums, artists, album artists, genres, years, composers, playlists, liked and disliked songs, recently played and added music and "Your Stats", synced lyrics next to the cover, a graphic and a parametric equalizer with presets you can name, import and export, gapless playback, and themes you can make yourself. Its quality checker, Real-Hi-Res, also available as a command-line tool, tells you which files are genuine and which ones are fakes. The rest of this page calls the quality checker by that name. It finds two kinds of fake. The first is **fake hi-res**: files whose container advertises something like 24-bit/96 kHz or 24-bit/192 kHz while the audio inside came from a CD-quality or 48 kHz master, or from a 16-bit master padded with zeros. The second is **fake lossless**, often called a "fake FLAC": FLAC, ALAC, WAV, AIFF or similar files, at any resolution, that were made by converting an MP3 or AAC file and therefore are not really lossless. The tool does not trust tags or file headers. It decodes the audio and checks the sample data itself against what the claimed format should contain. It can also download **synced lyrics** for your songs from [LRCLIB](https://lrclib.net) and save them as `.lrc` files next to them, the way [LRCGET](https://github.com/tranxuanthang/lrcget) does.
 
-![The Real-Hi-Res music player: Now Playing with the album cover on the left and synced lyrics on the right, the current line in bold](docs/gui-player-nowplaying.png)
+![Universal Music Player: Now Playing with the album cover on the left and synced lyrics on the right, the current line in bold](docs/gui-player-nowplaying.png)
 
 ## Download and run (no installation needed)
 
-Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Real-Hi-Res/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `RealHiRes-1.10.0-windows-x64.zip`; `<version>` in the table below stands for it.
+Ready-to-run packages are attached to every release on the [Releases page](https://github.com/SU2H1/Universal-Music-Player/releases/latest). Python, NumPy and FFmpeg are bundled inside, so you only download, unpack and start it. Every file name carries the version, for example `UniversalMusicPlayer-1.10.0-windows-x64.zip`; `<version>` in the table below stands for it.
 
 | System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
-| Windows 10/11, 64-bit | `RealHiRes-<version>-windows-x64.zip` | `RealHiRes\RealHiRes.exe` | `RealHiRes\realhires-cli.exe "D:\Music"` |
-| macOS 12 Monterey or later, Apple Silicon (M1 and later) | `RealHiRes-<version>-macos-arm64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
-| macOS 10.15 Catalina or later, Intel | `RealHiRes-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes.app` | `/Applications/RealHiRes.app/Contents/MacOS/realhires-cli ~/Music` |
-| Linux, x86-64 (PC) | `RealHiRes-<version>-linux-x64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
-| Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `RealHiRes-<version>-linux-arm64.tar.gz` | `RealHiRes/RealHiRes` | `RealHiRes/realhires-cli ~/Music` |
+| Windows 10/11, 64-bit | `UniversalMusicPlayer-<version>-windows-x64.zip` | `UniversalMusicPlayer\UniversalMusicPlayer.exe` | `UniversalMusicPlayer\realhires-cli.exe "D:\Music"` |
+| macOS 12 Monterey or later, Apple Silicon (M1 and later) | `UniversalMusicPlayer-<version>-macos-arm64.dmg` (or `.zip`) | `UniversalMusicPlayer.app` | `/Applications/UniversalMusicPlayer.app/Contents/MacOS/realhires-cli ~/Music` |
+| macOS 10.15 Catalina or later, Intel | `UniversalMusicPlayer-<version>-macos-x86_64.dmg` (or `.zip`) | `UniversalMusicPlayer.app` | `/Applications/UniversalMusicPlayer.app/Contents/MacOS/realhires-cli ~/Music` |
+| Linux, x86-64 (PC) | `UniversalMusicPlayer-<version>-linux-x64.tar.gz` | `UniversalMusicPlayer/UniversalMusicPlayer` | `UniversalMusicPlayer/realhires-cli ~/Music` |
+| Linux, ARM64 (Raspberry Pi 4/5 with 64-bit OS, ARM laptops and servers) | `UniversalMusicPlayer-<version>-linux-arm64.tar.gz` | `UniversalMusicPlayer/UniversalMusicPlayer` | `UniversalMusicPlayer/realhires-cli ~/Music` |
 
 **Rust version (preview).** Since 1.12.0 every release also carries the [Rust version](#rust-version-preview) of the app and the command-line tool, with FFmpeg bundled. It finds the same fakes with the same reasons and shares its settings and saved results with the version above.
 
 | System | Download | Start the app | Command line |
 | --- | --- | --- | --- |
-| Windows 10/11, 64-bit | `RealHiRes-Rust-<version>-windows-x64.zip` | `RealHiRes-Rust\realhires-gui.exe` | `RealHiRes-Rust\realhires.exe "D:\Music"` |
-| macOS 12+, Apple Silicon | `RealHiRes-Rust-<version>-macos-arm64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
-| macOS 10.15+, Intel | `RealHiRes-Rust-<version>-macos-x86_64.dmg` (or `.zip`) | `RealHiRes-Rust.app` | `/Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music` |
-| Linux, x86-64 | `RealHiRes-Rust-<version>-linux-x64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
-| Linux, ARM64 | `RealHiRes-Rust-<version>-linux-arm64.tar.gz` | `RealHiRes-Rust/realhires-gui` | `RealHiRes-Rust/realhires ~/Music` |
+| Windows 10/11, 64-bit | `UniversalMusicPlayer-Rust-<version>-windows-x64.zip` | `UniversalMusicPlayer-Rust\universal-music-player.exe` | `UniversalMusicPlayer-Rust\realhires.exe "D:\Music"` |
+| macOS 12+, Apple Silicon | `UniversalMusicPlayer-Rust-<version>-macos-arm64.dmg` (or `.zip`) | `UniversalMusicPlayer-Rust.app` | `/Applications/UniversalMusicPlayer-Rust.app/Contents/MacOS/realhires ~/Music` |
+| macOS 10.15+, Intel | `UniversalMusicPlayer-Rust-<version>-macos-x86_64.dmg` (or `.zip`) | `UniversalMusicPlayer-Rust.app` | `/Applications/UniversalMusicPlayer-Rust.app/Contents/MacOS/realhires ~/Music` |
+| Linux, x86-64 | `UniversalMusicPlayer-Rust-<version>-linux-x64.tar.gz` | `UniversalMusicPlayer-Rust/universal-music-player` | `UniversalMusicPlayer-Rust/realhires ~/Music` |
+| Linux, ARM64 | `UniversalMusicPlayer-Rust-<version>-linux-arm64.tar.gz` | `UniversalMusicPlayer-Rust/universal-music-player` | `UniversalMusicPlayer-Rust/realhires ~/Music` |
 
-The first launch works as described below for the other packages (on macOS the app is called `RealHiRes-Rust.app`). On Linux, `RealHiRes-Rust/install.sh` adds "Real-Hi-Res (Rust)" to the application menu and links the command-line tool as `realhires-rust`, next to an installed Python version; the app also needs OpenGL, which every desktop has. On Windows, keep the `ffmpeg` folder next to the two programs.
+The first launch works as described below for the other packages (on macOS the app is called `UniversalMusicPlayer-Rust.app`). On Linux, `UniversalMusicPlayer-Rust/install.sh` adds "Real-Hi-Res (Rust)" to the application menu and links the command-line tool as `realhires-rust`, next to an installed Python version; the app also needs OpenGL, which every desktop has. On Windows, keep the `ffmpeg` folder next to the two programs.
 
 If you are not sure which Mac you have, open the Apple menu and choose **About This Mac**. "Chip: Apple M…" means Apple Silicon, and "Processor: Intel…" means Intel. On Linux, `uname -m` prints `x86_64` for the x64 package or `aarch64` for the ARM64 package.
 
 ### macOS
 
-Open the `.dmg` and drag **RealHiRes** into **Applications**. The app is not signed with an Apple Developer ID, so the first launch is blocked with a message that the app "is damaged" or "cannot be opened". On macOS 15 Sequoia and later, open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the RealHiRes message. On older versions, right-click the app and choose **Open**. Alternatively, this Terminal command works on every version:
+Open the `.dmg` and drag **UniversalMusicPlayer** into **Applications**. The app is not signed with an Apple Developer ID, so the first launch is blocked with a message that the app "is damaged" or "cannot be opened". On macOS 15 Sequoia and later, open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the UniversalMusicPlayer message. On older versions, right-click the app and choose **Open**. Alternatively, this Terminal command works on every version:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/RealHiRes.app
+xattr -dr com.apple.quarantine /Applications/UniversalMusicPlayer.app
 ```
 
 ### Linux
@@ -43,20 +43,20 @@ xattr -dr com.apple.quarantine /Applications/RealHiRes.app
 The Linux packages are built on glibc 2.28. They therefore run on practically every distribution from 2018 onwards, including Ubuntu 18.10+, Debian 10+, Linux Mint 20+, Fedora 29+, RHEL/Rocky/AlmaLinux 8+, openSUSE Leap 15.3+, Arch and Manjaro. The app needs a graphical desktop (X11, or Wayland with XWayland, which every mainstream desktop provides). The command-line tool runs anywhere, including on servers. Unpack the archive wherever you like to keep the app:
 
 ```bash
-tar -xzf RealHiRes-*-linux-x64.tar.gz
+tar -xzf UniversalMusicPlayer-*-linux-x64.tar.gz
 ```
 
 Then optionally add Real-Hi-Res to your application menu and put `realhires-cli` on your `PATH` (in `~/.local/bin`). This installs for your user only and needs no root:
 
 ```bash
-RealHiRes/install.sh
+UniversalMusicPlayer/install.sh
 ```
 
-The app keeps running from the unpacked folder, so run `install.sh` again if you move the folder, and run `RealHiRes/uninstall.sh` to remove the menu entry.
+The app keeps running from the unpacked folder, so run `install.sh` again if you move the folder, and run `UniversalMusicPlayer/uninstall.sh` to remove the menu entry.
 
 ### Windows
 
-Unzip the archive and double-click `RealHiRes.exe`. The app is not code-signed, so SmartScreen may show "Windows protected your PC" the first time. Continue with **More info → Run anyway**. Keep the whole `RealHiRes` folder together: `RealHiRes.exe` and `realhires-cli.exe` are small launchers, and the program itself is in `RealHiRes.pkg`, `realhires-cli.pkg` and the `_internal` folder next to them. `realhires-cli.exe` is the command-line tool for a terminal; if you double-click it, it opens the app (since 1.12.1), and so does the Rust version's `realhires.exe`.
+Unzip the archive and double-click `UniversalMusicPlayer.exe`. The app is not code-signed, so SmartScreen may show "Windows protected your PC" the first time. Continue with **More info → Run anyway**. Keep the whole `RealHiRes` folder together: `UniversalMusicPlayer.exe` and `realhires-cli.exe` are small launchers, and the program itself is in `UniversalMusicPlayer.pkg`, `realhires-cli.pkg` and the `_internal` folder next to them. `realhires-cli.exe` is the command-line tool for a terminal; if you double-click it, it opens the app (since 1.12.1), and so does the Rust version's `realhires.exe`.
 
 A few antivirus engines have flagged earlier Windows builds as a trojan (for example 1 of 25 engines on Hybrid Analysis, with names such as "Malware_60.0" or "Trojan.Stealer.Win64"). These are false positives. Programs packaged with PyInstaller, like this one, share a prebuilt launcher with every other PyInstaller program, malware included, and carry their compressed code inside the `.exe`, which heuristics mistake for a packed trojan. Since version 1.8.1 the Windows build compiles its own launcher, keeps the compressed code in the separate `.pkg` files, and gives both executables proper version information and uncompressed icons, which removes the traits those engines reacted to. If your antivirus still quarantines a file, restore it and report the false positive to that vendor. The full source and the build log of every release are public on GitHub, so you can check exactly what the package contains.
 
@@ -268,10 +268,10 @@ You need Python 3.9 or newer, NumPy, [miniaudio](https://github.com/irmen/pymini
 
 On macOS you can install FFmpeg with `brew install ffmpeg`. On Ubuntu or Debian use `sudo apt install ffmpeg`, and on Windows use `winget install ffmpeg`.
 
-Clone the repository and install it with pip, which gives you the `realhires` command and the `realhires-gui` desktop app:
+Clone the repository and install it with pip, which gives you the `realhires` command (the quality checker) and the `universal-music-player` desktop app (`realhires-gui` still works too):
 
 ```bash
-git clone https://github.com/SU2H1/Real-Hi-Res.git
+git clone https://github.com/SU2H1/Universal-Music-Player.git
 ```
 
 ```bash
@@ -461,7 +461,7 @@ To build it yourself you need [Rust](https://rustup.rs) 1.95 or newer (on Linux 
 cargo build --release
 ```
 
-The desktop app is then `rust/target/release/realhires-gui` (`realhires-gui.exe` on Windows), and the command-line tool is `rust/target/release/realhires`, which takes the same arguments as the Python one:
+The desktop app is then `rust/target/release/universal-music-player` (`universal-music-player.exe` on Windows), and the command-line tool is `rust/target/release/realhires`, which takes the same arguments as the Python one:
 
 ```bash
 rust/target/release/realhires ~/Music/HiRes
@@ -504,11 +504,11 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-The release files are named with their version, for example `RealHiRes-1.10.0-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
+The release files are named with their version, for example `UniversalMusicPlayer-1.10.0-windows-x64.zip`: [`packaging/ci_build.sh`](packaging/ci_build.sh) inserts `__version__` into the name it is given, and the release notes fill their `<version>` placeholders the same way.
 
 Before anything is published, the `av-scan` job of the build workflow calls [`.github/workflows/av-scan.yml`](.github/workflows/av-scan.yml) on the packages that the run has just built, and the `release` job publishes only after that scan has finished, using the release notes it wrote. The scan job fails, and so holds the release back, unless VirusTotal has a finished result for every file; re-running the failed job scans again and then publishes. The same workflow runs every day for the latest release and can be started by hand (Actions → Antivirus scan → Run workflow, optionally with a tag), and the build workflow can be started by hand with **av_scan** ticked to try the pre-release scan on a branch without publishing anything. It takes the packages (or downloads the release), unpacks the Windows launchers, and runs [`packaging/av_scan.py`](packaging/av_scan.py), which uploads unknown files to VirusTotal, asks VirusTotal to re-analyse files whose last analysis is older than a day, reads Kaspersky's own verdict from Kaspersky OpenTIP (only that: a file OpenTIP has not judged yet says so instead of borrowing Kaspersky's row on VirusTotal; the daily refresh also uploads the downloads to OpenTIP, so that it can judge them), sends the two Windows launchers to the Hybrid Analysis sandbox (whose report also carries its antivirus multiscan), and writes the "Antivirus scan results" section of the release notes (into the new notes before a release, with `gh release edit` afterwards). A release page describes only the changes of its own version: [`packaging/RELEASE_NOTES.md`](packaging/RELEASE_NOTES.md) holds a single "What's new in X" section, for the version being released, which is replaced (not added to) at every version bump, and a test fails the build when that section does not match `__version__`. Every refresh also drops the sections of other versions from a page and takes the current version's section from that file, so a correction there reaches the published page; Actions → Antivirus scan → Run workflow with **notes_only** does just that without scanning. The services need API keys, which only the repository owner can add as repository secrets (Settings → Secrets and variables → Actions): `VT_API_KEY` (free VirusTotal account), `HYBRID_ANALYSIS_API_KEY` (free Hybrid Analysis account) and, optionally, `KASPERSKY_OPENTIP_API_KEY` (free Kaspersky Threat Intelligence Portal account). Without a key that service is skipped and the table links to its public report page instead. A free Hybrid Analysis key can only read reports: uploading a file (to the sandbox or to its antivirus quick scan) needs a premium key. For the Windows programs of a new release, the Hybrid Analysis column therefore says "not in Hybrid Analysis yet" until someone uploads them on hybrid-analysis.com; the next daily refresh then shows the report. The free VirusTotal API allows 4 requests per minute and 500 per day, so the script spaces its requests 15.5 seconds apart, and a full scan of a new release takes 20 to 45 minutes, which is how much later than the builds a release now appears.
 
-The Rust packages are built by the `rust-windows`, `rust-macos` and `rust-linux` jobs of the same workflow with [`packaging/rust_build.sh`](packaging/rust_build.sh), which fetches FFmpeg, builds the Rust programs, runs their tests and the comparison with the Python version, checks the binaries with `check_compat.py` (the Linux ones are built in the same AlmaLinux 8 container), smoke-tests the packaged command-line tool and packages it as `RealHiRes-Rust-<version>-<platform>`: a `.zip` on Windows, an ad-hoc signed `RealHiRes-Rust.app` in a `.dmg` and a `.zip` on macOS, and a `.tar.gz` with `install.sh` on Linux. The antivirus scan covers these packages and the two Rust programs inside the Windows zip as well, and the release waits for it in the same way. A version bump must change `rust/Cargo.toml` too; the build checks that it matches.
+The Rust packages are built by the `rust-windows`, `rust-macos` and `rust-linux` jobs of the same workflow with [`packaging/rust_build.sh`](packaging/rust_build.sh), which fetches FFmpeg, builds the Rust programs, runs their tests and the comparison with the Python version, checks the binaries with `check_compat.py` (the Linux ones are built in the same AlmaLinux 8 container), smoke-tests the packaged command-line tool and packages it as `UniversalMusicPlayer-Rust-<version>-<platform>`: a `.zip` on Windows, an ad-hoc signed `UniversalMusicPlayer-Rust.app` in a `.dmg` and a `.zip` on macOS, and a `.tar.gz` with `install.sh` on Linux. The antivirus scan covers these packages and the two Rust programs inside the Windows zip as well, and the release waits for it in the same way. A version bump must change `rust/Cargo.toml` too; the build checks that it matches.
 
 To build a package on your own machine, install the build tools and run the same script with the name of the archive you want. The result appears in `out/`.
 
@@ -517,10 +517,10 @@ pip install numpy pyinstaller pillow pytest
 ```
 
 ```bash
-ASSET=RealHiRes-local bash packaging/ci_build.sh
+ASSET=UniversalMusicPlayer-local bash packaging/ci_build.sh
 ```
 
-For the Rust version, install Rust and run `ASSET=RealHiRes-Rust-local bash packaging/rust_build.sh` instead (it needs `numpy` and `pytest` for the comparison with the Python version). On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
+For the Rust version, install Rust and run `ASSET=UniversalMusicPlayer-Rust-local bash packaging/rust_build.sh` instead (it needs `numpy` and `pytest` for the comparison with the Python version). On Linux, run it inside AlmaLinux 8 for the widest compatibility (`bash packaging/linux/setup_almalinux8.sh` prepares such a container, after which you set `PYTHON=/opt/venv/bin/python`). A build made directly on a newer distribution only runs on that distribution's glibc or newer, and `check_compat.py` will say so.
 
 The project layout is documented in [CLAUDE.md](CLAUDE.md).
 
@@ -532,4 +532,4 @@ The project layout is documented in [CLAUDE.md](CLAUDE.md).
 
 ## License
 
-No license has been chosen yet.
+Universal Music Player is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License version 3, as published by the Free Software Foundation; see [`LICENSE`](LICENSE). It comes without any warranty. The parts it bundles keep their own licences: FFmpeg (LGPL on Windows and Linux, GPL on macOS; see `FFMPEG-NOTICE.txt` in the packages), the Inter typeface (SIL Open Font License 1.1), miniaudio (MIT), and the Rust and Python libraries the programs are built with (MIT, Apache-2.0 and BSD licences). Real-Hi-Res 1.x, in its [own repository](https://github.com/SU2H1/Real-Hi-Res), had no licence chosen.

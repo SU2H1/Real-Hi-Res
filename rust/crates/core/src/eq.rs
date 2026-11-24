@@ -554,7 +554,7 @@ pub fn export_apo(name: &str, state: &EqState) -> String {
     s.enabled = true;
     let mut lines = vec![
         format!("# {name}"),
-        "# Equalizer preset exported by Real-Hi-Res".to_string(),
+        "# Equalizer preset exported by Universal Music Player".to_string(),
         format!("Preamp: {} dB", f(preamp_db(&s, RESPONSE_RATE), 1)),
     ];
     let mut n = 0;
@@ -673,7 +673,7 @@ pub fn import_eq(text: &str, fallback_name: &str) -> Result<(String, EqState, Ve
         if data.get("graphic").is_some() || data.get("parametric").is_some() {
             return Ok((fallback_name.to_string(), EqState::from_json(&data), notes));
         }
-        return Err(EqFileError("This .json file is not an equalizer preset of Real-Hi-Res.".into()));
+        return Err(EqFileError("This .json file is not an equalizer preset of Universal Music Player.".into()));
     }
     let mut preamp = 0.0;
     let mut bands: Vec<Band> = vec![];
@@ -768,7 +768,7 @@ pub fn import_eq(text: &str, fallback_name: &str) -> Result<(String, EqState, Ve
     }
     if !found {
         return Err(EqFileError(
-            "This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json presets and \
+            "This file is not an equalizer preset Universal Music Player can read: it reads its own .json presets and \
              Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
                 .into(),
         ));

@@ -8,4 +8,4 @@ if [ -L "$HOME/.local/bin/realhires-rust" ]; then
   rm -f "$HOME/.local/bin/realhires-rust"
 fi
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DATA/applications" >/dev/null 2>&1 || true
-echo "Real-Hi-Res (Rust) menu entry and command link removed."
+echo "Universal Music Player (Rust) menu entry and command link removed."

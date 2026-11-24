@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   windows:
-    name: RealHiRes-windows-x64
+    name: UniversalMusicPlayer-windows-x64
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -50,16 +50,16 @@ jobs:
       - name: Build, test and package
         shell: bash
         env:
-          ASSET: RealHiRes-windows-x64
+          ASSET: UniversalMusicPlayer-windows-x64
         run: bash packaging/ci_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-windows-x64
+          name: UniversalMusicPlayer-windows-x64
           path: out/*
           if-no-files-found: error
 
   macos:
-    name: RealHiRes-macos-${{ matrix.arch }}
+    name: UniversalMusicPlayer-macos-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -89,17 +89,17 @@ jobs:
           python -m pip install wheels/numpy-*.whl
       - name: Build, test and package
         env:
-          ASSET: RealHiRes-macos-${{ matrix.arch }}
+          ASSET: UniversalMusicPlayer-macos-${{ matrix.arch }}
           MACOS_MIN: ${{ matrix.macos_min }}
         run: bash packaging/ci_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-macos-${{ matrix.arch }}
+          name: UniversalMusicPlayer-macos-${{ matrix.arch }}
           path: out/*
           if-no-files-found: error
 
   linux:
-    name: RealHiRes-linux-${{ matrix.arch }}
+    name: UniversalMusicPlayer-linux-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -118,22 +118,22 @@ jobs:
         run: bash packaging/linux/setup_almalinux8.sh
       - name: Build, test and package
         env:
-          ASSET: RealHiRes-linux-${{ matrix.arch }}
+          ASSET: UniversalMusicPlayer-linux-${{ matrix.arch }}
           PYTHON: /opt/venv/bin/python
           MAX_GLIBC: "2.28"
         run: bash packaging/ci_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-linux-${{ matrix.arch }}
+          name: UniversalMusicPlayer-linux-${{ matrix.arch }}
           path: out/*
           if-no-files-found: error
 
   # The Rust version (rust/): packaging/rust_build.sh builds it, runs its tests
   # and the comparison with the Python version (tests/test_rust_parity.py),
   # checks OS/CPU compatibility, smoke-tests the CLI with the bundled FFmpeg and
-  # packages it as RealHiRes-Rust-<version>-<platform>.
+  # packages it as UniversalMusicPlayer-Rust-<version>-<platform>.
   rust-windows:
-    name: RealHiRes-Rust-windows-x64
+    name: UniversalMusicPlayer-Rust-windows-x64
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -147,16 +147,16 @@ jobs:
       - name: Build, test and package
         shell: bash
         env:
-          ASSET: RealHiRes-Rust-windows-x64
+          ASSET: UniversalMusicPlayer-Rust-windows-x64
         run: bash packaging/rust_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-Rust-windows-x64
+          name: UniversalMusicPlayer-Rust-windows-x64
           path: out/*
           if-no-files-found: error
 
   rust-macos:
-    name: RealHiRes-Rust-macos-${{ matrix.arch }}
+    name: UniversalMusicPlayer-Rust-macos-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -178,17 +178,17 @@ jobs:
         run: bash packaging/install_rust.sh >> "$GITHUB_PATH"
       - name: Build, test and package
         env:
-          ASSET: RealHiRes-Rust-macos-${{ matrix.arch }}
+          ASSET: UniversalMusicPlayer-Rust-macos-${{ matrix.arch }}
           MACOS_MIN: ${{ matrix.macos_min }}
         run: bash packaging/rust_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-Rust-macos-${{ matrix.arch }}
+          name: UniversalMusicPlayer-Rust-macos-${{ matrix.arch }}
           path: out/*
           if-no-files-found: error
 
   rust-linux:
-    name: RealHiRes-Rust-linux-${{ matrix.arch }}
+    name: UniversalMusicPlayer-Rust-linux-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -209,13 +209,13 @@ jobs:
           bash packaging/install_rust.sh >> "$GITHUB_PATH"
       - name: Build, test and package
         env:
-          ASSET: RealHiRes-Rust-linux-${{ matrix.arch }}
+          ASSET: UniversalMusicPlayer-Rust-linux-${{ matrix.arch }}
           PYTHON: /opt/venv/bin/python
           MAX_GLIBC: "2.28"
         run: bash packaging/rust_build.sh
       - uses: actions/upload-artifact@v5
         with:
-          name: RealHiRes-Rust-linux-${{ matrix.arch }}
+          name: UniversalMusicPlayer-Rust-linux-${{ matrix.arch }}
           path: out/*
           if-no-files-found: error
 
@@ -280,7 +280,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          pattern: RealHiRes-*
+          pattern: UniversalMusicPlayer-*
           path: assets
           merge-multiple: true
       - uses: actions/download-artifact@v6
@@ -293,7 +293,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Real-Hi-Res ${{ needs.prepare.outputs.tag }}
+          name: Universal Music Player ${{ needs.prepare.outputs.tag }}
           body_path: notes/release-notes.md
           generate_release_notes: true
           make_latest: "true"

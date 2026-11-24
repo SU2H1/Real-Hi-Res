@@ -183,7 +183,7 @@ class AlbumsPage(Page):
         self.empty.pack(fill="both", expand=True)
         if not self.app.cfg.library_folders:
             self.empty_text.configure(text="Add your music folder in Settings to start")
-            self.empty_sub.configure(text="Real-Hi-Res lists every song in your music folders, plays them, and "
+            self.empty_sub.configure(text="Universal Music Player lists every song in your music folders, plays them, and "
                                           "checks them for fake hi-res and fake lossless files.")
             self.choose.pack()
         else:

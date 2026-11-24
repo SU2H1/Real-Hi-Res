@@ -141,7 +141,7 @@ def loaded():
     assert not app.bar.dislike.enabled and not app.bar.more.enabled
     assert app.bar.play.enabled and app.bar.eq.enabled and app.bar.queue.enabled and app.bar.lyrics.enabled
     assert app.bar.volume.enabled
-    assert "Real-Hi-Res" in texts(app.bar.lcd)
+    assert "Universal Music Player" in texts(app.bar.lcd)
     # like a song: saved at once, listed in Liked Songs
     app.toggle_like(umbrella)
     assert playerstate.load().liked == [umbrella]

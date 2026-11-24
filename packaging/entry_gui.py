@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the windowed GUI (RealHiRes / RealHiRes.exe / RealHiRes.app)."""
+"""PyInstaller entry point for the windowed GUI (UniversalMusicPlayer / UniversalMusicPlayer.exe / UniversalMusicPlayer.app)."""
 import multiprocessing
 import sys
 

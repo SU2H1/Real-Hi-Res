@@ -46,7 +46,7 @@ except ImportError as exc:  # e.g. Debian/Ubuntu Python without python3-tk
         f"(Details: {exc})"
     ) from exc
 
-from . import __version__
+from . import APP_NAME, PROJECT_URL, __version__
 from . import settings as settings_mod
 from .eta import ScanEta, file_sizes, fmt_about
 from .fix import FIXABLE_VERDICTS, fix_advice, fix_outlook
@@ -1607,7 +1607,7 @@ class App(ttk.Frame):
         m.add_cascade(label="View", menu=v)
         self.view_menu = v
         h = tk.Menu(m, tearoff=False)
-        h.add_command(label="About Real-Hi-Res", command=self.about)
+        h.add_command(label=f"About {APP_NAME}", command=self.about)
         m.add_cascade(label="Help", menu=h)
         self.menubar = m
         if not self.embedded:
@@ -3041,11 +3041,10 @@ class App(ttk.Frame):
 
     def about(self) -> None:
         messagebox.showinfo(
-            "About Real-Hi-Res",
-            f"Real-Hi-Res {__version__}\n\nFinds fake hi-res audio (upsampled or 16-bit padded) and fake "
+            f"About {APP_NAME}",
+            f"{APP_NAME} {__version__}: the Real-Hi-Res quality checker\n\nFinds fake hi-res audio (upsampled or 16-bit padded) and fake "
             "lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.\n\n"
-            f"{lyrics_mod.ABOUT_CREDIT}\n\n"
-            "https://github.com/SU2H1/Real-Hi-Res")
+            f"{lyrics_mod.ABOUT_CREDIT}\n\n" + PROJECT_URL)
 
     def quit_app(self) -> None:
         if self.embedded and self.quit_callback is not None:

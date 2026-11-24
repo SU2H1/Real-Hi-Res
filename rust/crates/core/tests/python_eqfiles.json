@@ -51,7 +51,7 @@
 }
 },
 "json": "{\n  \"eq\": {\n    \"enabled\": false,\n    \"graphic\": {\n      \"enabled\": true,\n      \"gains\": [\n        4.5,\n        3.5,\n        2.5,\n        1.0,\n        -0.5,\n        -1.0,\n        0.5,\n        2.0,\n        3.0,\n        3.5\n      ],\n      \"preamp\": 0.0,\n      \"preset\": \"Rock\"\n    },\n    \"parametric\": {\n      \"bands\": [\n        {\n          \"freq\": 8000.0,\n          \"gain\": -3.0,\n          \"on\": true,\n          \"q\": 0.71,\n          \"type\": \"high_shelf\"\n        },\n        {\n          \"freq\": 3000.0,\n          \"gain\": 0.0,\n          \"on\": false,\n          \"q\": 5.0,\n          \"type\": \"notch\"\n        },\n        {\n          \"freq\": 18000.25,\n          \"gain\": 2.0,\n          \"on\": true,\n          \"q\": 0.5,\n          \"type\": \"low_pass\"\n        }\n      ],\n      \"enabled\": true,\n      \"preamp\": -1.5\n    },\n    \"prevent_clipping\": true\n  },\n  \"format\": \"real-hi-res-eq\",\n  \"name\": \"My Rock\",\n  \"version\": 1\n}\n",
-"apo": "# My Rock\n# Equalizer preset exported by Real-Hi-Res\nPreamp: -5.3 dB\nFilter 1: ON PK Fc 32.0 Hz Gain 4.5 dB Q 1.41\nFilter 2: ON PK Fc 64.0 Hz Gain 3.5 dB Q 1.41\nFilter 3: ON PK Fc 125.0 Hz Gain 2.5 dB Q 1.41\nFilter 4: ON PK Fc 250.0 Hz Gain 1.0 dB Q 1.41\nFilter 5: ON PK Fc 500.0 Hz Gain -0.5 dB Q 1.41\nFilter 6: ON PK Fc 1000.0 Hz Gain -1.0 dB Q 1.41\nFilter 7: ON PK Fc 2000.0 Hz Gain 0.5 dB Q 1.41\nFilter 8: ON PK Fc 4000.0 Hz Gain 2.0 dB Q 1.41\nFilter 9: ON PK Fc 8000.0 Hz Gain 3.0 dB Q 1.41\nFilter 10: ON PK Fc 16000.0 Hz Gain 3.5 dB Q 1.41\nFilter 11: ON HSC Fc 8000.0 Hz Gain -3.0 dB Q 0.71\nFilter 12: OFF NO Fc 3000.0 Hz Q 5.00\nFilter 13: ON LPQ Fc 18000.2 Hz Q 0.50\n"
+"apo": "# My Rock\n# Equalizer preset exported by Universal Music Player\nPreamp: -5.3 dB\nFilter 1: ON PK Fc 32.0 Hz Gain 4.5 dB Q 1.41\nFilter 2: ON PK Fc 64.0 Hz Gain 3.5 dB Q 1.41\nFilter 3: ON PK Fc 125.0 Hz Gain 2.5 dB Q 1.41\nFilter 4: ON PK Fc 250.0 Hz Gain 1.0 dB Q 1.41\nFilter 5: ON PK Fc 500.0 Hz Gain -0.5 dB Q 1.41\nFilter 6: ON PK Fc 1000.0 Hz Gain -1.0 dB Q 1.41\nFilter 7: ON PK Fc 2000.0 Hz Gain 0.5 dB Q 1.41\nFilter 8: ON PK Fc 4000.0 Hz Gain 2.0 dB Q 1.41\nFilter 9: ON PK Fc 8000.0 Hz Gain 3.0 dB Q 1.41\nFilter 10: ON PK Fc 16000.0 Hz Gain 3.5 dB Q 1.41\nFilter 11: ON HSC Fc 8000.0 Hz Gain -3.0 dB Q 0.71\nFilter 12: OFF NO Fc 3000.0 Hz Q 5.00\nFilter 13: ON LPQ Fc 18000.2 Hz Q 0.50\n"
 },
 {
 "name": "Flat",
@@ -90,7 +90,7 @@
 }
 },
 "json": "{\n  \"eq\": {\n    \"enabled\": false,\n    \"graphic\": {\n      \"enabled\": true,\n      \"gains\": [\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0,\n        0.0\n      ],\n      \"preamp\": 0.0,\n      \"preset\": \"Flat\"\n    },\n    \"parametric\": {\n      \"bands\": [\n        {\n          \"freq\": 1000.0,\n          \"gain\": 0.0,\n          \"on\": true,\n          \"q\": 1.0,\n          \"type\": \"peak\"\n        }\n      ],\n      \"enabled\": false,\n      \"preamp\": 0.0\n    },\n    \"prevent_clipping\": true\n  },\n  \"format\": \"real-hi-res-eq\",\n  \"name\": \"Flat\",\n  \"version\": 1\n}\n",
-"apo": "# Flat\n# Equalizer preset exported by Real-Hi-Res\nPreamp: 0.0 dB\n"
+"apo": "# Flat\n# Equalizer preset exported by Universal Music Player\nPreamp: 0.0 dB\n"
 },
 {
 "name": "Für Elise ♪",
@@ -143,7 +143,7 @@
 }
 },
 "json": "{\n  \"eq\": {\n    \"enabled\": true,\n    \"graphic\": {\n      \"enabled\": true,\n      \"gains\": [\n        -2.0,\n        -2.0,\n        -1.0,\n        1.0,\n        3.0,\n        3.5,\n        3.0,\n        1.5,\n        0.0,\n        -1.0\n      ],\n      \"preamp\": -2.5,\n      \"preset\": \"Vocal\"\n    },\n    \"parametric\": {\n      \"bands\": [\n        {\n          \"freq\": 80.0,\n          \"gain\": 3.0,\n          \"on\": true,\n          \"q\": 0.707,\n          \"type\": \"low_shelf\"\n        },\n        {\n          \"freq\": 60.0,\n          \"gain\": 0.0,\n          \"on\": true,\n          \"q\": 8.0,\n          \"type\": \"notch\"\n        },\n        {\n          \"freq\": 2500.0,\n          \"gain\": -2.0,\n          \"on\": false,\n          \"q\": 2.0,\n          \"type\": \"peak\"\n        }\n      ],\n      \"enabled\": true,\n      \"preamp\": 1.5\n    },\n    \"prevent_clipping\": false\n  },\n  \"format\": \"real-hi-res-eq\",\n  \"name\": \"Für Elise ♪\",\n  \"version\": 1\n}\n",
-"apo": "# Für Elise ♪\n# Equalizer preset exported by Real-Hi-Res\nPreamp: -1.0 dB\nFilter 1: ON PK Fc 32.0 Hz Gain -2.0 dB Q 1.41\nFilter 2: ON PK Fc 64.0 Hz Gain -2.0 dB Q 1.41\nFilter 3: ON PK Fc 125.0 Hz Gain -1.0 dB Q 1.41\nFilter 4: ON PK Fc 250.0 Hz Gain 1.0 dB Q 1.41\nFilter 5: ON PK Fc 500.0 Hz Gain 3.0 dB Q 1.41\nFilter 6: ON PK Fc 1000.0 Hz Gain 3.5 dB Q 1.41\nFilter 7: ON PK Fc 2000.0 Hz Gain 3.0 dB Q 1.41\nFilter 8: ON PK Fc 4000.0 Hz Gain 1.5 dB Q 1.41\nFilter 9: ON PK Fc 16000.0 Hz Gain -1.0 dB Q 1.41\nFilter 10: ON LSC Fc 80.0 Hz Gain 3.0 dB Q 0.71\nFilter 11: ON NO Fc 60.0 Hz Q 8.00\nFilter 12: OFF PK Fc 2500.0 Hz Gain -2.0 dB Q 2.00\n"
+"apo": "# Für Elise ♪\n# Equalizer preset exported by Universal Music Player\nPreamp: -1.0 dB\nFilter 1: ON PK Fc 32.0 Hz Gain -2.0 dB Q 1.41\nFilter 2: ON PK Fc 64.0 Hz Gain -2.0 dB Q 1.41\nFilter 3: ON PK Fc 125.0 Hz Gain -1.0 dB Q 1.41\nFilter 4: ON PK Fc 250.0 Hz Gain 1.0 dB Q 1.41\nFilter 5: ON PK Fc 500.0 Hz Gain 3.0 dB Q 1.41\nFilter 6: ON PK Fc 1000.0 Hz Gain 3.5 dB Q 1.41\nFilter 7: ON PK Fc 2000.0 Hz Gain 3.0 dB Q 1.41\nFilter 8: ON PK Fc 4000.0 Hz Gain 1.5 dB Q 1.41\nFilter 9: ON PK Fc 16000.0 Hz Gain -1.0 dB Q 1.41\nFilter 10: ON LSC Fc 80.0 Hz Gain 3.0 dB Q 0.71\nFilter 11: ON NO Fc 60.0 Hz Q 8.00\nFilter 12: OFF PK Fc 2500.0 Hz Gain -2.0 dB Q 2.00\n"
 }
 ],
 "imports": [
@@ -645,15 +645,15 @@
 },
 {
 "text": "{\"hello\": 1}",
-"error": "This .json file is not an equalizer preset of Real-Hi-Res."
+"error": "This .json file is not an equalizer preset of Universal Music Player."
 },
 {
 "text": "hello",
-"error": "This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
+"error": "This file is not an equalizer preset Universal Music Player can read: it reads its own .json presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
 },
 {
 "text": "",
-"error": "This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
+"error": "This file is not an equalizer preset Universal Music Player can read: it reads its own .json presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ)."
 },
 {
 "text": "Filter 1: ON PK Fc x Hz Gain 1 dB Q 1",

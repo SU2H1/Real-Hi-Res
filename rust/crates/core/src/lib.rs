@@ -1,4 +1,5 @@
-//! Real-Hi-Res: detect fake high-resolution audio files.
+//! Universal Music Player (formerly Real-Hi-Res): a music player that also
+//! detects fake high-resolution audio files; this crate is its core.
 //!
 //! The Rust port of the Python package `realhires`.  It decodes audio with
 //! FFmpeg and runs the same forensic tests: a spectral test for the brick-wall
@@ -10,6 +11,10 @@
 // The rules compare floats the way the Python version does, NaN included:
 // `!(a <= b)` is true for NaN on purpose.
 #![allow(clippy::neg_cmp_op_on_partial_ord, clippy::type_complexity, clippy::needless_range_loop)]
+
+/// The product name (2.0; the quality checker keeps the name Real-Hi-Res).
+pub const APP_NAME: &str = "Universal Music Player";
+pub const PROJECT_URL: &str = "https://github.com/SU2H1/Universal-Music-Player";
 
 pub mod analysis;
 pub mod covers;

@@ -8,4 +8,4 @@ if [ -L "$HOME/.local/bin/realhires-cli" ]; then
   rm -f "$HOME/.local/bin/realhires-cli"
 fi
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DATA/applications" >/dev/null 2>&1 || true
-echo "Real-Hi-Res menu entry and command link removed."
+echo "Universal Music Player menu entry and command link removed."

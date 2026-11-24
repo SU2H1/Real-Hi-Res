@@ -147,7 +147,7 @@ def test_lrclib_client_is_polite(monkeypatch):
                      rng=random.Random(1))
     lyr = find_lyrics(c, Track("", "Song", "Band", "Album", 200.4))
     assert lyr is not None and lyr.synced and lyr.how == "exact"  # synced: no search needed
-    assert calls[0][2]["User-Agent"] == f"Real-Hi-Res v{__version__} (https://github.com/SU2H1/Real-Hi-Res)"
+    assert calls[0][2]["User-Agent"] == f"Universal Music Player v{__version__} (https://github.com/SU2H1/Universal-Music-Player)"
     q = {k: v[0] for k, v in parse_qs(urlsplit(calls[0][1]).query).items()}
     assert q == {"track_name": "Song", "artist_name": "Band", "album_name": "Album", "duration": "200"}
     waited = calls[1][0] - (calls[0][0] + 0.1)
@@ -234,7 +234,7 @@ def test_cli_downloads_lyrics_like_lrcget(lrclib, tmp_path, capsys):
     assert "(found by searching)" in out
     assert ("Lyrics: 2 with synced lyrics, 1 with plain lyrics, 1 instrumental, 2 not found on LRCLIB, "
             "1 without title/artist tags.") in out, out
-    assert all(ua.startswith("Real-Hi-Res v") for _, _, ua in lrclib.requests)
+    assert all(ua.startswith("Universal Music Player v") for _, _, ua in lrclib.requests)
     first = next(q for p, q, _ in lrclib.requests if p == "/api/get" and q["track_name"] == "Alpha")
     assert first == {"track_name": "Alpha", "artist_name": "The Band", "album_name": "First", "duration": "4"}
     assert not [f for f in os.listdir(folder) if f.startswith(".realhires-")]  # no temp files left

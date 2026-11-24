@@ -46,7 +46,7 @@ use crate::settings::Settings;
 use crate::verdict::FileResult;
 
 pub const DEFAULT_SERVER: &str = "https://lrclib.net";
-pub const PROJECT_URL: &str = "https://github.com/SU2H1/Real-Hi-Res";
+pub use crate::PROJECT_URL;
 /// LRCGET's mark for instrumental tracks.
 pub const INSTRUMENTAL_LRC: &str = "[au: instrumental]";
 /// LRCLIB matches a record whose length is within ±2 s.
@@ -137,7 +137,7 @@ fn failed(msg: String) -> LyricsError {
 
 /// LRCLIB asks every client to name itself, its version and its home page.
 pub fn user_agent() -> String {
-    format!("Real-Hi-Res v{} ({PROJECT_URL})", crate::VERSION)
+    format!("{} v{} ({PROJECT_URL})", crate::APP_NAME, crate::VERSION)
 }
 
 /// `urlsplit(url).netloc`.
@@ -1537,7 +1537,7 @@ mod tests {
         let lyr = find_lyrics(&mut c, &Track::new("", "Song", "Band", "Album", Some(200.4)), true).unwrap().unwrap();
         assert!(!lyr.synced.is_empty() && lyr.how == "exact");
         let calls_v = calls.lock().unwrap().clone();
-        assert_eq!(calls_v[0].2, format!("Real-Hi-Res v{} (https://github.com/SU2H1/Real-Hi-Res)", crate::VERSION));
+        assert_eq!(calls_v[0].2, format!("Universal Music Player v{} (https://github.com/SU2H1/Universal-Music-Player)", crate::VERSION));
         assert_eq!(
             calls_v[0].1,
             "https://lrclib.net/api/get?track_name=Song&artist_name=Band&album_name=Album&duration=200"

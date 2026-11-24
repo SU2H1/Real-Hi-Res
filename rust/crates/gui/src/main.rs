@@ -44,16 +44,16 @@ fn icon() -> Option<egui::IconData> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") {
-        println!("realhires-gui {}", realhires::VERSION);
+        println!("universal-music-player {}", realhires::VERSION);
         return;
     }
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("usage: realhires-gui [PATH...]\n\nThe Real-Hi-Res music player and quality checker. Folders or files given here are opened in the Quality check page and scanned at once.");
+        println!("usage: universal-music-player [PATH...]\n\nUniversal Music Player: a music player with the Real-Hi-Res quality checker. Folders or files given here are opened in the Quality check page and scanned at once.");
         return;
     }
     let cfg = realhires::settings::load(None);
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Real-Hi-Res")
+        .with_title(realhires::APP_NAME)
         .with_inner_size([1280.0, 840.0])
         .with_min_inner_size([980.0, 620.0])
         .with_drag_and_drop(true);
@@ -62,21 +62,22 @@ fn main() {
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
     let res = eframe::run_native(
-        "Real-Hi-Res",
+        realhires::APP_NAME,
         options,
         Box::new(move |cc| Ok(Box::new(GuiApp(player::Player::new(&cc.egui_ctx, cfg, args))))),
     );
     if let Err(e) = res {
         let text = format!(
-            "Real-Hi-Res cannot open its window: {e}\n\nThe desktop app needs a graphical desktop with OpenGL 2.0 or \
+            "{} cannot open its window: {e}\n\nThe desktop app needs a graphical desktop with OpenGL 2.0 or \
              newer (on Linux X11 or Wayland); updating the graphics driver usually helps. The command-line tool \
-             `realhires` works without one."
+             `realhires` works without one.",
+            realhires::APP_NAME
         );
         eprintln!("{text}");
         // a windowed program has no console on Windows, so say it where it can be seen
         let _ = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
-            .set_title("Real-Hi-Res")
+            .set_title(realhires::APP_NAME)
             .set_description(&text)
             .set_buttons(rfd::MessageButtons::Ok)
             .show();

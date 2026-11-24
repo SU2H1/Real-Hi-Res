@@ -1496,8 +1496,8 @@ impl App {
         crate::dialogs::show_all(self, &ctx);
         if self.about {
             let mut open = true;
-            egui::Window::new("About Real-Hi-Res").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(&ctx, |ui| {
-                ui.heading(format!("Real-Hi-Res {}", realhires::VERSION));
+            egui::Window::new(format!("About {}", realhires::APP_NAME)).open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(&ctx, |ui| {
+                ui.heading(format!("{} {}", realhires::APP_NAME, realhires::VERSION));
                 ui.label("A music player that finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.");
                 ui.label("This is the Rust version; it shares its settings, saved results, library and player state with the Python version.");
                 ui.label(realhires::lyrics::ABOUT_CREDIT);
@@ -1507,7 +1507,7 @@ impl App {
                     ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
                     ui.hyperlink_to("Inter", "https://rsms.me/inter/");
                 });
-                ui.hyperlink("https://github.com/SU2H1/Real-Hi-Res");
+                ui.hyperlink(realhires::PROJECT_URL);
             });
             self.about = open;
         }
@@ -1657,7 +1657,7 @@ impl App {
                 }
             });
             ui.menu_button("Help", |ui| {
-                if ui.button("About Real-Hi-Res").clicked() {
+                if ui.button(format!("About {}", realhires::APP_NAME)).clicked() {
                     self.about = true;
                 }
             });

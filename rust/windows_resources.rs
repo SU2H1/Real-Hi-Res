@@ -69,8 +69,8 @@ pub fn windows_resources(name: &str, description: &str) {
         .set("InternalName", name)
         .set("LegalCopyright", "Copyright (c) SU2H1")
         .set("OriginalFilename", &format!("{name}.exe"))
-        .set("ProductName", "Real-Hi-Res")
+        .set("ProductName", "Universal Music Player")
         .set("ProductVersion", version)
-        .set("Comments", "https://github.com/SU2H1/Real-Hi-Res");
+        .set("Comments", "https://github.com/SU2H1/Universal-Music-Player");
     res.compile().expect("Windows resources");
 }

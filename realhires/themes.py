@@ -1,7 +1,7 @@
 """Colour themes of the player (2.0).
 
 A theme is a name, whether it is dark, and eight colours (`COLOR_KEYS`).
-Real-Hi-Res comes with the themes of `BUILTIN`; "Match the system" follows the
+The player comes with the themes of `BUILTIN`; "Match the system" follows the
 system's light or dark mode with "Light" and "Dark".  The user's own themes
 are kept in `themes.json` next to the saved results (`store.data_dir()`, or
 `$REALHIRES_THEMES`) and can be exported and imported as .json files.  The
@@ -169,7 +169,7 @@ def import_theme(text: str, custom: List[dict]) -> dict:
         data = None
     t = normalize(data) if isinstance(data, dict) and isinstance(data.get("colors"), dict) else None
     if t is None:
-        raise ThemeError("This file is not a Real-Hi-Res theme.")
+        raise ThemeError("This file is not a theme of Universal Music Player.")
     taken = {n.casefold() for n in names(custom)}
     base = t["name"]
     n = 2

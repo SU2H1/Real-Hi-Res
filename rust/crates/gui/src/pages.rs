@@ -156,7 +156,7 @@ impl Player {
             let has_folders = !self.scanner.cfg.library_folders.is_empty();
             ui.label(RichText::new(if has_folders { "No songs found in your music folders" } else { "Add your music folder in Settings to start" }).font(look::title(18.0)).color(pal.text));
             ui.add_space(6.0);
-            ui.label(RichText::new("Real-Hi-Res plays your music and checks whether its hi-res and lossless files are real.").color(pal.secondary));
+            ui.label(RichText::new("Universal Music Player plays your music and checks whether its hi-res and lossless files are real.").color(pal.secondary));
             ui.add_space(14.0);
             if pill(ui, pal, Icon::Albums, "Choose a music folder…").clicked() {
                 self.add_library_folder();
@@ -764,7 +764,7 @@ impl Player {
                     }
                 }
                 ui.add_space(12.0);
-                if ui.button("About Real-Hi-Res").clicked() {
+                if ui.button(format!("About {}", realhires::APP_NAME)).clicked() {
                     self.scanner.show_about();
                 }
             });
@@ -915,7 +915,7 @@ impl Player {
                 let _ = self.apply_name(crate::player::NameAction::NewTheme(current.name.clone()), &name);
             }
             if ui.button("Import…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Real-Hi-Res theme", &["json"]).pick_file() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Universal Music Player theme", &["json"]).pick_file() {
                     match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| {
                         themes::import_theme(&String::from_utf8_lossy(&b), &self.custom_themes).map_err(|e| e.0)
                     }) {
@@ -931,7 +931,7 @@ impl Player {
             }
             if ui.button("Export…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Real-Hi-Res theme", &["json"])
+                    .add_filter("Universal Music Player theme", &["json"])
                     .set_file_name(format!("{}.json", current.name))
                     .save_file()
                 {

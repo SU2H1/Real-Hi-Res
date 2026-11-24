@@ -1,19 +1,20 @@
-Real-Hi-Res (Rust version) - music player and fake hi-res audio detector
-========================================================================
+Universal Music Player (Rust version) - music player and fake hi-res audio detector
+===================================================================================
 
-This is the Rust version of Real-Hi-Res, a preview released next to the
-Python version.  It finds the same fakes, with the same verdicts and reasons,
+This is the Rust version of Universal Music Player (formerly Real-Hi-Res),
+released next to the Python version.  It plays your music the same way and
+finds the same fakes, with the same verdicts and reasons,
 and it shares its settings and saved results with the Python version: a file
 checked by one of them is not analysed again by the other.  FFmpeg is
 bundled, so nothing else needs to be installed.
 
 Start the app
 -------------
-  Windows : double-click realhires-gui.exe
-  macOS   : drag RealHiRes-Rust.app into Applications, then open it
+  Windows : double-click universal-music-player.exe
+  macOS   : drag UniversalMusicPlayer-Rust.app into Applications, then open it
             (see "First launch on macOS" below)
-  Linux   : run ./realhires-gui
-            Optional: ./install.sh adds "Real-Hi-Res (Rust)" to your
+  Linux   : run ./universal-music-player
+            Optional: ./install.sh adds "Universal Music Player (Rust)" to your
             application menu and links the command-line tool into
             ~/.local/bin as realhires-rust (no root needed).
             ./uninstall.sh removes that again.  The app runs from this
@@ -37,7 +38,7 @@ right), Up Next, the equalizer and the volume.  Space plays and pauses.
 
 The equalizer has a 10-band graphic and a parametric part, built-in presets
 and your own (Save as preset..., Rename..., Delete...); Import... and
-Export... read and write Real-Hi-Res .json files and Equalizer APO / AutoEQ
+Export... read and write the app's own .json files and Equalizer APO / AutoEQ
 .txt files.  Your Stats sums up your listening like a yearly music review;
 Details shows the full numbers.  Settings > Appearance has the font, the
 theme (8 built-in themes, or your own: New theme... and the colour editor)
@@ -81,7 +82,7 @@ Command line
   realhires.exe (realhires on macOS/Linux) is the command-line tool, for a
   terminal.  Double-clicked in Explorer it opens the app instead.
   Windows : realhires.exe "D:\Music"
-  macOS   : /Applications/RealHiRes-Rust.app/Contents/MacOS/realhires ~/Music
+  macOS   : /Applications/UniversalMusicPlayer-Rust.app/Contents/MacOS/realhires ~/Music
   Linux   : ./realhires ~/Music     (or realhires-rust after install.sh)
 
   The options are those of the Python version's realhires-cli: run with
@@ -94,9 +95,9 @@ The app is not signed with an Apple Developer ID, so macOS blocks the first
 launch ("damaged" / "cannot be opened").
   * macOS 15 Sequoia and later: System Settings > Privacy & Security, scroll
     down and click "Open Anyway" next to the message about the app.
-  * Older macOS: right-click RealHiRes-Rust.app > Open.
+  * Older macOS: right-click UniversalMusicPlayer-Rust.app > Open.
   * Any version, in Terminal:
-      xattr -dr com.apple.quarantine /Applications/RealHiRes-Rust.app
+      xattr -dr com.apple.quarantine /Applications/UniversalMusicPlayer-Rust.app
 
 First launch on Windows
 -----------------------
@@ -127,7 +128,7 @@ released under the SIL Open Font License 1.1; see LICENSE-Inter.txt.
 The player plays sound through cpal (https://github.com/RustAudio/cpal,
 Apache License 2.0).
 
-Full documentation: https://github.com/SU2H1/Real-Hi-Res
+Full documentation: https://github.com/SU2H1/Universal-Music-Player
 FFmpeg licence information: see FFMPEG-NOTICE.txt (Windows/Linux: in the
 "ffmpeg" folder; macOS: inside the app, right-click > Show Package Contents >
 Contents > Resources).

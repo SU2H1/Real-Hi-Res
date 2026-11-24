@@ -190,7 +190,8 @@ def write_spectrogram_png(r: FileResult, out_dir: str, cfg: settings_mod.Setting
 
 
 DOUBLE_CLICK_MESSAGE = (
-    "This is the command-line tool of Real-Hi-Res. It checks the folders or files you name, for example\n"
+    "This is the command-line tool of Universal Music Player (the Real-Hi-Res quality checker). It checks the\n"
+    "folders or files you name, for example\n"
     "  {cli} \"D:\\Music\"\n"
     "in a terminal. The desktop app is {gui} in the same folder.\n\nPress Enter to close this window.")
 
@@ -209,7 +210,7 @@ def started_from_explorer() -> bool:
         return False
 
 
-def open_app_instead(argv, gui_name: str = "RealHiRes.exe", cli_name: str = "realhires-cli.exe",
+def open_app_instead(argv, gui_name: str = "UniversalMusicPlayer.exe", cli_name: str = "realhires-cli.exe",
                      started=started_from_explorer, launch=None, wait=input) -> Optional[int]:
     """A double-clicked command-line tool (no arguments, its own console) opens the desktop app
     next to it instead of printing a usage error into a window that closes at once.  Returns

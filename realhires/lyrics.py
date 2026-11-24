@@ -48,10 +48,9 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
-from . import __version__
+from . import APP_NAME, PROJECT_URL, __version__
 
 DEFAULT_SERVER = "https://lrclib.net"
-PROJECT_URL = "https://github.com/SU2H1/Real-Hi-Res"
 INSTRUMENTAL_LRC = "[au: instrumental]"   # LRCGET's mark for instrumental tracks
 DURATION_TOLERANCE_S = 2.0   # LRCLIB matches a record whose length is within ±2 s
 MAX_DURATION_S = 3600        # LRCLIB rejects longer durations; such songs are looked up without one
@@ -99,7 +98,7 @@ class LyricsStopped(Exception):
 
 def user_agent() -> str:
     """LRCLIB asks every client to name itself, its version and its home page."""
-    return f"Real-Hi-Res v{__version__} ({PROJECT_URL})"
+    return f"{APP_NAME} v{__version__} ({PROJECT_URL})"
 
 
 def is_official(server: str) -> bool:

@@ -307,7 +307,7 @@ def export_apo(name: str, state: dict) -> str:
     band of the graphic (only bands that are not 0 dB) and the parametric EQ."""
     s = normalize(state)
     s["enabled"] = True
-    lines = [f"# {name}", "# Equalizer preset exported by Real-Hi-Res", f"Preamp: {preamp_db(s):.1f} dB"]
+    lines = [f"# {name}", "# Equalizer preset exported by Universal Music Player", f"Preamp: {preamp_db(s):.1f} dB"]
     n = 0
     if s["graphic"]["enabled"]:
         for f, g in zip(GRAPHIC_FREQS, s["graphic"]["gains"]):
@@ -365,7 +365,7 @@ def import_eq(text: str, fallback_name: str = "Imported") -> Tuple[str, dict, Li
             return name.strip(), normalize(data["eq"]), notes
         if "graphic" in data or "parametric" in data:
             return fallback_name, normalize(data), notes
-        raise EqFileError("This .json file is not an equalizer preset of Real-Hi-Res.")
+        raise EqFileError("This .json file is not an equalizer preset of Universal Music Player.")
     preamp = 0.0
     bands: List[dict] = []
     graphic: Optional[List[float]] = None
@@ -419,7 +419,7 @@ def import_eq(text: str, fallback_name: str = "Imported") -> Tuple[str, dict, Li
                                      "gain": (_float(gain.group(1)) or 0.0) if gain else 0.0, "q": qv,
                                      "on": m.group(1).lower() == "on"}))
     if not found:
-        raise EqFileError("This file is not an equalizer preset Real-Hi-Res can read: it reads its own .json "
+        raise EqFileError("This file is not an equalizer preset Universal Music Player can read: it reads its own .json "
                           "presets and Equalizer APO or AutoEQ text (ParametricEQ or GraphicEQ).")
     if skipped_types:
         notes.append(f"Filters of the type {', '.join(skipped_types)} are not supported and were left out.")

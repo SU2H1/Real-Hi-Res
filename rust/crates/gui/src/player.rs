@@ -1320,7 +1320,7 @@ impl Player {
     fn sidebar(&mut self, ui: &mut Ui, pal: &Palette) {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
-            ui.label(RichText::new("Real-Hi-Res").font(look::title(17.0)).color(pal.text));
+            ui.label(RichText::new(realhires::APP_NAME).font(look::title(17.0)).color(pal.text));
         });
         ui.add_space(10.0);
         let search = egui::TextEdit::singleline(&mut self.search)
@@ -1518,7 +1518,7 @@ impl Player {
         let p = ui.painter_at(rect.expand(2.0));
         p.rect(rect, CornerRadius::same(8), pal.lcd, Stroke::new(1.0, pal.separator), egui::StrokeKind::Inside);
         let Some((now_path, now_active)) = self.now.as_ref().map(|n| (n.path.clone(), n.active)) else {
-            p.text(rect.center(), Align2::CENTER_CENTER, "Real-Hi-Res", look::title(15.0), pal.secondary);
+            p.text(rect.center(), Align2::CENTER_CENTER, realhires::APP_NAME, look::title(15.0), pal.secondary);
             return;
         };
         let path = now_path;

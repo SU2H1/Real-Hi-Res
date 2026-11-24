@@ -224,7 +224,7 @@ pub fn import_theme(text: &str, custom: &[Theme]) -> Result<Theme, ThemeError> {
         .as_ref()
         .filter(|d| matches!(d.get("colors"), Some(Value::Object(_))))
         .and_then(normalize)
-        .ok_or_else(|| ThemeError("This file is not a Real-Hi-Res theme.".into()))?;
+        .ok_or_else(|| ThemeError("This file is not a theme of Universal Music Player.".into()))?;
     let taken: Vec<String> = names(custom).iter().map(|n| casefold(n)).collect();
     let base = t.name.clone();
     let mut n = 2;
