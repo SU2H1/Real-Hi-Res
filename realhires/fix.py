@@ -108,6 +108,7 @@ class FixOutcome:
     new_result: Optional[FileResult] = None
     bytes_before: int = 0
     bytes_after: int = 0
+    how: str = ""                 # "exact", "gapless" or "" (plain conversion)
 
 
 def _family_rate(rate: int) -> int:
@@ -287,6 +288,100 @@ def skip_summary(skipped) -> str:
         counts[k] = counts.get(k, 0) + 1
     parts = [f"{n} {SKIP_GROUPS[k]}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
     return f"{len(skipped)} file(s) are not changed: " + "; ".join(parts) + "."
+
+
+def fmt_bytes(n: float) -> str:
+    """'1.2 GB', '350.4 MB', '812 bytes'."""
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if abs(n) < 1024:
+            return f"{n:.0f} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _files(n: int) -> str:
+    return f"{n} file{'s' if n != 1 else ''}"
+
+
+def done_summary(outcomes: List[FixOutcome], skipped: int = 0,
+                 label: Callable[[str], str] = str) -> Tuple[str, List[str]]:
+    """(headline, sentences) for the pop-up shown when fixing has finished.
+    `skipped` counts the fake files that were left alone on purpose, and
+    `label` turns a verdict into the name the caller shows (the GUI's
+    "CD quality" for NOT HI-RES)."""
+    ok = [o for o in outcomes if o.ok]
+    bad = [o for o in outcomes if not o.ok]
+    copies = bool(ok) and not any(o.plan.replace_original for o in ok)
+    if not ok:
+        head = "No file could be fixed" if bad else "Nothing was fixed"
+    elif copies:
+        head = (f"Saved corrected copies of {_files(len(ok))}" if not bad
+                else f"Saved corrected copies of {len(ok)} of {_files(len(outcomes))}")
+    else:
+        head = (f"Fixed {_files(len(ok))} to their real resolution" if not bad
+                else f"Fixed {len(ok)} of {_files(len(outcomes))} to their real resolution")
+    lines: List[str] = []
+    if ok:
+        before = sum(o.bytes_before for o in ok)
+        after = sum(o.bytes_after for o in ok)
+        they = "The copies take" if copies else "They now take"
+        if after < before:
+            lines.append(f"{they} {fmt_bytes(after)} instead of {fmt_bytes(before)}, "
+                         f"{fmt_bytes(before - after)} less.")
+        else:
+            lines.append(f"{they} {fmt_bytes(after)} (the originals took {fmt_bytes(before)}).")
+        exact = sum(1 for o in ok if o.how == "exact")
+        gapless = sum(1 for o in ok if o.how == "gapless")
+        if exact:
+            lines.append(f"{_files(exact)} {'were' if exact != 1 else 'was'} restored bit-exactly from "
+                         "the untouched 16-bit master, without resampling.")
+        if gapless:
+            lines.append(f"{_files(gapless)} {'were' if gapless != 1 else 'was'} converted together with "
+                         "the neighbouring tracks, so the album still plays without gaps.")
+        if copies:
+            dirs = {os.path.dirname(os.path.abspath(o.output or o.plan.output)) for o in ok}
+            srcs = {os.path.dirname(os.path.abspath(o.plan.source)) for o in ok}
+            where = f"in {dirs.pop()}" if len(dirs) == 1 and dirs != srcs else (
+                "next to the originals" if dirs == srcs else "in the folder you chose")
+            lines.append(f"The originals were left unchanged; the corrected copies are {where}.")
+        else:
+            kinds = {o.plan.backup for o in ok if o.plan.replace_original}
+            parts = []
+            if "folder" in kinds:
+                bdirs = {os.path.abspath(o.plan.backup_dir or "") for o in ok if o.plan.backup == "folder"}
+                named = {os.path.basename(d) for d in bdirs}
+                if len(bdirs) == 1:
+                    parts.append(f"moved to {bdirs.pop()}")
+                elif named == {BACKUP_DIR_NAME}:
+                    parts.append(f'moved to the "{BACKUP_DIR_NAME}" folder next to each file')
+                else:
+                    parts.append("moved to the backup folders")
+            if "bak" in kinds:
+                parts.append("kept next to each file as .bak files")
+            if "none" in kinds:
+                parts.append("deleted, as chosen")
+            if parts:
+                lines.append("The originals were " + ", or ".join(parts) + ".")
+        checked = [o.new_result for o in ok if o.new_result is not None]
+        if checked:
+            counts: Dict[str, int] = {}
+            for r in checked:
+                counts[r.verdict] = counts.get(r.verdict, 0) + 1
+            parts = [f"{n} {label(v)}" for v, n in sorted(counts.items(), key=lambda kv: -kv[1])]
+            line = "Re-check of the fixed files: " + ", ".join(parts) + "."
+            if FAKE_LOSSLESS in counts:
+                line += (" A file made from MP3/AAC stays fake lossless at any resolution, because "
+                         "fixing cannot bring back what the lossy encoder removed.")
+            lines.append(line)
+    if bad:
+        first = bad[0]
+        lines.append(f"{_files(len(bad))} could not be fixed and {'were' if len(bad) != 1 else 'was'} "
+                     f"left as {'they were' if len(bad) != 1 else 'it was'}. "
+                     f"{os.path.basename(first.plan.source)}: {first.message}")
+    if skipped:
+        lines.append(f"{_files(skipped)} {'were' if skipped != 1 else 'was'} left alone on purpose; "
+                     "the Fix window lists the reasons.")
+    return head, lines
 
 
 def plan_fixes(results, cfg):
@@ -721,7 +816,7 @@ def run_fix(plan: FixPlan, cfg=None) -> FixOutcome:
             msg += " Converted together with the neighbouring track(s), so the joins stay gapless."
         if new is not None:
             msg += f" Re-check: {new.verdict} – {new.summary}"
-        return FixOutcome(plan, True, msg, output, new, before, after)
+        return FixOutcome(plan, True, msg, output, new, before, after, how)
     except OSError as exc:
         return FixOutcome(plan, False, f"Could not save the fixed file: {exc}")
     finally:

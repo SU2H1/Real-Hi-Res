@@ -1,10 +1,6 @@
-## What's new in 1.11.0
+## What's new in 1.12.0
 
-While a scan runs, the status line now estimates how long it will take to finish ("Scanning: 120/500 files, ... about 6 min left"). The estimate appears after the first few files and is based on how much audio has been analysed so far, so libraries that mix short and long tracks, or CD-quality and 24/192 files, are estimated fairly, and files whose saved result is reused are left out of it. The command-line tool shows the same estimate on its progress line.
-
-Genuine 24-bit files at 44.1 or 48 kHz now say why they count as hi-res: their **Why** reads "Genuine 24-bit at standard 44.1 kHz: hi-res by bit depth only", and the details explain that their sample rate is a standard one, so only the bit depth goes beyond CD quality. Results saved by earlier versions show the new text too, without a re-scan.
-
-The **Antivirus scan results** below show in the Kaspersky column only Kaspersky's own verdict, from its Threat Intelligence Portal, and each result links to Kaspersky's page. A file Kaspersky has not judged yet says so; the column no longer shows Kaspersky's result as reported by VirusTotal. The daily refresh also sends the downloads to Kaspersky, so it can judge them. Release pages now describe only the changes of their own version.
+When **Fix to real resolution** has finished, a pop-up now says so. It tells you how many files were fixed (and how many could not be, with the reason), how much smaller they are, where the originals went (for example the "Real-Hi-Res backups" folder, with its full path), what the re-check found, and how many fake files were left alone on purpose. **Show in folder** opens the fixed files. The pop-up does not block the app, and it also appears when you closed the Fix window while it was still working: the files are finished in the background and the list is updated as before.
 
 ## Download
 

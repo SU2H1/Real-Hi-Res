@@ -646,6 +646,10 @@ class FixDialog(tk.Toplevel):
         self.results = results
         self.plans: list = []
         self.done_paths: Dict[str, str] = {}
+        self.outcomes: list = []   # FixOutcome of every file of the last run
+        self.skipped = 0           # fake files left alone on purpose
+        self.hidden = False        # closed while fixing: finishes in the background
+        self.done_popup: Optional["FixDoneDialog"] = None
         self.running = False
         self.q: queue.Queue = queue.Queue()
         cfg = app.cfg
@@ -792,6 +796,7 @@ class FixDialog(tk.Toplevel):
             self.tv.insert("", "end", iid=r.path, text=os.path.basename(r.path), values=(r.claimed, why, ""),
                            tags=("skip",))
         n = len(self.plans)
+        self.skipped = len(skipped)
         verb = "Fix" if replace else "Save corrected copies of"
         self.head.configure(text=f"{verb} {n} file{'s' if n != 1 else ''}: real resolution"
                             if n else "Nothing to fix")
@@ -823,6 +828,7 @@ class FixDialog(tk.Toplevel):
             setattr(self.app.cfg, k, getattr(cfg, k))
         self.app.save_settings()
         self.running = True
+        self.outcomes = []
         self.start_btn.configure(state="disabled")
         self.status.configure(text="Fixing…")
         for p in self.plans:
@@ -856,6 +862,7 @@ class FixDialog(tk.Toplevel):
                     self.tv.set(payload, "status", "Fixing…")
                 elif kind == "done":
                     o = payload
+                    self.outcomes.append(o)
                     self.pb["value"] = self.pb["value"] + 1
                     src = o.plan.source
                     if o.ok:
@@ -878,6 +885,13 @@ class FixDialog(tk.Toplevel):
                     bad = sum(1 for i in self.tv.get_children() if "fail" in self.tv.item(i, "tags"))
                     self.status.configure(text=f"{ok} fixed" + (f", {bad} failed" if bad else "") + ".")
                     self.open_btn.configure(state="normal" if ok else "disabled")
+                    # A pop-up says it is done. It is not modal (a deferred modal box blocks the
+                    # whole window on macOS), and it stays when the Fix window is closed.
+                    self.done_popup = FixDoneDialog(self.app, self.outcomes, self.skipped,
+                                                    None if self.hidden else self)
+                    if self.hidden:
+                        self.destroy()
+                        return
         except queue.Empty:
             pass
         if self.winfo_exists():
@@ -892,11 +906,68 @@ class FixDialog(tk.Toplevel):
                     return
 
     def _close(self) -> None:
-        if self.running and not messagebox.askyesno(
-                "Conversion running", "Conversions are still running. Close anyway? "
-                "Files being converted are finished in the background.", parent=self):
+        if self.running:
+            if not messagebox.askyesno(
+                    "Conversion running", "Conversions are still running. Close anyway? "
+                    "The files are finished in the background, and a pop-up tells you when "
+                    "they are done.", parent=self):
+                return
+            # keep polling while hidden, so the list is updated and the pop-up appears
+            self.hidden = True
+            self.withdraw()
             return
         self.destroy()
+
+
+class FixDoneDialog(tk.Toplevel):
+    """Pop-up shown when "Fix to real resolution" has finished: how many files
+    were fixed, how much smaller they are, where the originals went, what the
+    re-check found, and what failed."""
+
+    def __init__(self, app: "App", outcomes: list, skipped: int = 0, over: Optional[tk.Misc] = None):
+        from .fix import done_summary
+
+        super().__init__(app.root)
+        self.app = app
+        self.title("Fixing finished")
+        self.transient(over or app.root)
+        self.resizable(False, False)
+
+        def label(v: str) -> str:
+            name = VERDICT_STYLE.get(v, (v,))[0]
+            return name[0].lower() + name[1:] if name[1:2].islower() else name
+
+        head, lines = done_summary(outcomes, skipped, label)
+        self.headline, self.lines = head, lines
+        failed = any(not o.ok for o in outcomes)
+        self.outputs = [o.output for o in outcomes if o.ok and o.output]
+        frm = ttk.Frame(self, padding=16)
+        frm.grid(sticky="nsew")
+        ttk.Label(frm, text=head, font=("TkDefaultFont", 12, "bold"),
+                  foreground="#a3122a" if failed or not self.outputs else "#2e7d32").grid(
+            row=0, column=0, sticky="w")
+        for i, line in enumerate(lines):
+            ttk.Label(frm, text=line, wraplength=460, justify="left").grid(
+                row=i + 1, column=0, sticky="w", pady=(8 if i == 0 else 4, 0))
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(lines) + 1, column=0, sticky="e", pady=(14, 0))
+        ttk.Button(btns, text="Show in folder", command=self._show,
+                   state="normal" if self.outputs else "disabled").pack(side="left")
+        close = ttk.Button(btns, text="Close", command=self.destroy)
+        close.pack(side="left", padx=(4, 0))
+        close.focus_set()
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self.destroy())
+        self.update_idletasks()
+        ref = over if over is not None and over.winfo_viewable() else app.root
+        x = ref.winfo_rootx() + (ref.winfo_width() - self.winfo_width()) // 2
+        y = ref.winfo_rooty() + (ref.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.lift()
+
+    def _show(self) -> None:
+        if self.outputs:
+            reveal_in_file_manager(self.outputs[0])
 
 
 class CardGrid(ttk.Frame):

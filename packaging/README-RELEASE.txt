@@ -38,7 +38,9 @@ Ctrl/Cmd+A selects every listed file: tick only "Fake lossless" and "Fake
 hi-res", press Ctrl/Cmd+A, then "Fix to real resolution..." to fix them all.
 Settings > Fixing > "After a scan" can ask, or fix the fake files on its own,
 when a scan finishes.  Fake FLACs made from an MP3 that are already 16/44.1
-cannot be improved; the Fix window lists them last and says why.
+cannot be improved; the Fix window lists them last and says why.  When
+fixing has finished, a pop-up says how many files were fixed, how much smaller
+they are and where the originals went.
 "Settings..." lets you change detection thresholds, scanning options, display
 and fixing preferences; they are saved and also used by the command-line tool.
 

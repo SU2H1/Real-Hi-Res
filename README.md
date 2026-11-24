@@ -124,6 +124,10 @@ Files made from an MP3/AAC can be fixed too, but this only removes their fake hi
 
 The command-line tool prints the same summary with `--fix`.
 
+**When fixing has finished,** a pop-up says so: how many files were fixed (and how many could not be, with the first reason), how much smaller they are now, how many were restored bit-exactly or converted with their album neighbours so they stay gapless, where the originals went (the backup folder with its full path, `.bak` files, or deleted, as chosen; for copies, the folder they were saved in), what the re-check found, and how many fake files were left alone on purpose. **Show in folder** opens the fixed files. The pop-up does not block the app. If you close the Fix window while it is still working, the files are finished in the background, the list is still updated, and the pop-up appears when they are done.
+
+![Pop-up after fixing: four fake 24/96 files fixed to 16/44.1, 15.2 MB smaller, converted gaplessly with their neighbours, originals in the Real-Hi-Res backups folder, re-checked as CD quality, one MP3-sourced file left alone](docs/gui-fix-done.png)
+
 **Fix automatically after a scan.** **Settings → Fixing → After a scan** can **Ask whether to fix them** once each scan has finished, or **Fix them automatically**: the Fix window then opens with the fake files of that scan and starts at once, with your Fixing options (originals still go to the backup folder, and if you chose to delete originals you are still asked first). The default is **Do nothing**. Only the desktop app does this; on the command line, `--fix` does the same.
 
 Before fixing a large library, keep in mind what cannot be avoided. A resampled file is not bit-identical to its original master (only padded, only-dithered and whole-number-ratio FFmpeg upsamples are), although the difference is far below hearing. Rewritten files no longer match their checksums, so torrent seeding, rip verification and a store's re-download or library sync treat them as different files. Fake lossless files stay lossy-sourced, because nothing can bring back what MP3/AAC removed. Keep the backups until you have listened to a few results.
