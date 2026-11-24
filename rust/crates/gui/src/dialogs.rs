@@ -327,55 +327,9 @@ impl SettingsWindow {
                 egui::ScrollArea::vertical().max_height(430.0).show(ui, |ui| {
                     egui::Grid::new("settings").num_columns(2).spacing([12.0, 6.0]).striped(true).show(ui, |ui| {
                         for info in Settings::field_info().into_iter().filter(|i| i.group == group) {
-                            ui.label(info.label).on_hover_text(&info.help);
-                            let cur = self.draft.get(info.name).unwrap();
-                            let mut new = cur.clone();
-                            let resp = match &mut new {
-                                SValue::Float(x) => {
-                                    let (lo, hi) = (info.min.unwrap_or(f64::MIN), info.max.unwrap_or(f64::MAX));
-                                    let speed = ((hi - lo) / 500.0).clamp(0.001, 10.0);
-                                    ui.add(egui::DragValue::new(x).range(lo..=hi).speed(speed).max_decimals(3))
-                                }
-                                SValue::Int(x) => {
-                                    let (lo, hi) = (info.min.unwrap_or(0.0) as i64, info.max.unwrap_or(1e9) as i64);
-                                    ui.add(egui::DragValue::new(x).range(lo..=hi))
-                                }
-                                SValue::Bool(b) => ui.checkbox(b, ""),
-                                SValue::Str(s) if info.kind == Kind::Choice => {
-                                    egui::ComboBox::from_id_salt(info.name)
-                                        .selected_text(s.clone())
-                                        .width(320.0)
-                                        .show_ui(ui, |ui| {
-                                            for c in info.choices {
-                                                ui.selectable_value(s, c.to_string(), *c);
-                                            }
-                                        })
-                                        .response
-                                }
-                                SValue::Str(s) => ui.add(egui::TextEdit::singleline(s).desired_width(360.0)),
-                                SValue::List(l) => {
-                                    ui.vertical(|ui| {
-                                        for c in info.choices {
-                                            let mut on = l.iter().any(|x| x == c);
-                                            if ui.checkbox(&mut on, *c).changed() {
-                                                if on {
-                                                    l.push(c.to_string());
-                                                } else {
-                                                    l.retain(|x| x != c);
-                                                }
-                                            }
-                                        }
-                                    })
-                                    .response
-                                }
-                            };
-                            resp.on_hover_text(&info.help);
-                            if new != cur {
-                                if let Err(e) = self.draft.set(info.name, new) {
-                                    self.error = Some(e);
-                                }
+                            if let Some(e) = setting_row(ui, &info, &mut self.draft, &app.choices) {
+                                self.error = Some(e);
                             }
-                            ui.end_row();
                         }
                     });
                     if group == "Saved results" {
@@ -428,6 +382,137 @@ impl SettingsWindow {
             _ => true,
         }
     }
+}
+
+/// The label and widget of one setting in a two-column grid, shared by the
+/// Settings window and the player's Settings page (2.0).  `choices` holds the
+/// menus that depend on the computer (installed fonts, output devices), each
+/// with "" (the default) first.  Returns an error message for a bad value.
+pub fn setting_row(
+    ui: &mut egui::Ui,
+    info: &realhires::settings::FieldInfo,
+    draft: &mut Settings,
+    choices: &std::collections::HashMap<&'static str, Vec<String>>,
+) -> Option<String> {
+    ui.label(info.label).on_hover_text(&info.help);
+    let cur = draft.get(info.name).unwrap();
+    let mut new = cur.clone();
+    let resp = match &mut new {
+        SValue::Float(x) => {
+            let (lo, hi) = (info.min.unwrap_or(f64::MIN), info.max.unwrap_or(f64::MAX));
+            let speed = ((hi - lo) / 500.0).clamp(0.001, 10.0);
+            ui.add(egui::DragValue::new(x).range(lo..=hi).speed(speed).max_decimals(3))
+        }
+        SValue::Int(x) => {
+            let (lo, hi) = (info.min.unwrap_or(0.0) as i64, info.max.unwrap_or(1e9) as i64);
+            ui.add(egui::DragValue::new(x).range(lo..=hi))
+        }
+        SValue::Bool(b) => ui.checkbox(b, ""),
+        SValue::Str(s) if info.kind == Kind::Choice => {
+            let width = choice_width(ui, info.choices.iter().copied());
+            egui::ComboBox::from_id_salt(info.name)
+                .selected_text(s.clone())
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for c in info.choices {
+                        ui.selectable_value(s, c.to_string(), *c);
+                    }
+                })
+                .response
+        }
+        SValue::Str(s) if choices.contains_key(info.name) => {
+            let list = &choices[info.name];
+            let label = |v: &str| -> String {
+                if !v.is_empty() {
+                    v.to_string()
+                } else if info.name == "font_family" {
+                    "SF Pro (macOS) / Inter".to_string()
+                } else {
+                    "System default".to_string()
+                }
+            };
+            let width = choice_width(ui, list.iter().map(|v| v.as_str()).chain(["SF Pro (macOS) / Inter"])).min(360.0);
+            egui::ComboBox::from_id_salt(info.name)
+                .selected_text(label(s))
+                .width(width)
+                .height(360.0)
+                .show_ui(ui, |ui| {
+                    let mut listed = list.clone();
+                    if !s.is_empty() && !listed.iter().any(|v| v == s) {
+                        listed.push(s.clone()); // a saved choice that is not there now
+                    }
+                    for v in &listed {
+                        ui.selectable_value(s, v.clone(), label(v));
+                    }
+                })
+                .response
+        }
+        SValue::Str(s) => ui.add(egui::TextEdit::singleline(s).desired_width(360.0)),
+        SValue::List(l) if info.kind == Kind::Paths => {
+            ui.vertical(|ui| {
+                let mut remove = None;
+                for (i, folder) in l.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                        ui.scope(|ui| {
+                            ui.set_max_width(460.0);
+                            ui.add(egui::Label::new(folder.as_str()).truncate()).on_hover_text(folder.as_str());
+                        });
+                    });
+                }
+                if l.is_empty() {
+                    ui.weak("No folder yet.");
+                }
+                if let Some(i) = remove {
+                    l.remove(i);
+                }
+                if ui.button("Add folder…").clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        let d = dir.to_string_lossy().into_owned();
+                        if !l.contains(&d) {
+                            l.push(d);
+                        }
+                    }
+                }
+            })
+            .response
+        }
+        SValue::List(l) => {
+            ui.vertical(|ui| {
+                for c in info.choices {
+                    let mut on = l.iter().any(|x| x == c);
+                    if ui.checkbox(&mut on, *c).changed() {
+                        if on {
+                            l.push(c.to_string());
+                        } else {
+                            l.retain(|x| x != c);
+                        }
+                    }
+                }
+            })
+            .response
+        }
+    };
+    resp.on_hover_text(&info.help);
+    let mut error = None;
+    if new != cur {
+        if let Err(e) = draft.set(info.name, new) {
+            error = Some(e);
+        }
+    }
+    ui.end_row();
+    error
+}
+
+/// A drop-down as wide as its longest choice.
+fn choice_width<'a>(ui: &egui::Ui, items: impl Iterator<Item = &'a str>) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let widest = items
+        .map(|c| ui.ctx().fonts_mut(|f| f.layout_no_wrap(c.to_string(), font.clone(), egui::Color32::WHITE).size().x))
+        .fold(120.0f32, f32::max);
+    widest + 40.0
 }
 
 // --------------------------------------------------------------------- fix ---

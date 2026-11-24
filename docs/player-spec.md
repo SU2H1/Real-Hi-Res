@@ -105,9 +105,11 @@ Every change is saved at once (as in 1.x); fonts and theme apply at once.
 
 ## Library index
 
-`library_folders` lists the music folders. On start, the app shows the index saved in `library.sqlite` at once, and
-when `scan_library_on_start` is on it refreshes it in a background thread (only new or changed files are probed;
-files that are gone are dropped), updating the pages when it finishes. Before any folder is set, the Albums page
+`library_folders` lists the music folders. On start, the app shows the index saved in `library.sqlite` at once and
+always refreshes it in a background thread (only new or changed files are probed; files that are gone are dropped),
+updating the pages when it finishes; the same happens when the folders change. When `scan_library_on_start` ("Check
+new songs when the app starts") is on, the refresh is followed by a quality scan of the library folders in the
+Quality check page's scanner (saved results answer unchanged songs at once), without switching to that page. Before any folder is set, the Albums page
 shows "Add your music folder in Settings to start" with a button "Choose a music folder…", which adds it and starts
 the update. Covers come from `covers.cover_png()` (cached per album, loaded in a thread).
 
@@ -119,11 +121,12 @@ the update. Covers come from `covers.cover_png()` (cached per album, loaded in a
 - The output opens at the song's sample rate when the device supports it ("Resampling: None"); otherwise at the
   device's default rate, and FFmpeg resamples with soxr (`aresample=resampler=soxr:precision=28`, or the default
   resampler when the FFmpeg build lacks soxr).
-- Gapless (`gapless` on): about 10 s before the end of a song the engine starts decoding the next song of the queue
-  (`PlayQueue.up_next(1)` when repeat is not song/stop; the same song again for repeat song) into the same buffer,
-  so there is no silence between them, when its output rate is the same; otherwise the device is reopened at the next
-  song's rate. The UI learns that the next song started when its first sample is played, and then advances the
-  queue with `next(auto=True)`.
+- Gapless (`gapless` on): the engine keeps about 2 s decoded ahead; when the current song has been decoded to its
+  end it goes straight on decoding the next song of the queue (`PlayQueue.up_next(1)` when repeat is not song/stop;
+  the same song again for repeat song) into the same buffer, so there is no silence between them, when that song gets
+  the same output rate; otherwise the device is reopened at the next song's rate. The engine reports `Started` when a
+  song's first sample is heard, `Ended(chained)` when its last one is (chained: the next song follows gaplessly) and
+  `Failed`; on `Started` of a chained song the UI advances the queue with `next(auto=True)`.
 - Volume: gain = volume² (volume 0…1 from the slider), 0 when muted; applied in the output callback, after the EQ.
   The Playback info shows it as dB (20·log10(gain)).
 - EQ: when `enabled` and the active stages are not all identity, the stages of `eq.stages(state, out_rate)` run on
@@ -141,7 +144,9 @@ the update. Covers come from `covers.cover_png()` (cached per album, loaded in a
 When `lyrics_while_scanning` is on, the Quality check scan (and "Check the library for fake files") passes every
 analysed file to one lyrics worker (one `LrclibClient`, sequential requests, as LRCLIB asks), which follows the
 Lyrics settings (`skip_reason()`, `lyrics_save_as`) and reports in the status line ("Lyrics: 12 saved, 3 not
-found"). Stopping the scan stops the worker after the current song.
+found": " · Lyrics: N saved, M not found" at the end of the scanner's status line; saved = the outcome saved
+anything, not found = NOT_FOUND). The scanner owns the worker (started on first use); Stop or a new scan stops it
+after the current song. Lyrics written into a file keep its saved scan result (`ResultStore.retag()`).
 
 ## Fonts and theme
 

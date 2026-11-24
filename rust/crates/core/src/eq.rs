@@ -31,7 +31,7 @@ pub fn band_type_label(kind: &str) -> &'static str {
     }
 }
 
-fn has_gain(kind: &str) -> bool {
+pub fn has_gain(kind: &str) -> bool {
     matches!(kind, "peak" | "low_shelf" | "high_shelf")
 }
 

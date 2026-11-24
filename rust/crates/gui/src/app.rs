@@ -174,6 +174,16 @@ pub struct App {
     pub info: Option<(String, String)>,
     about: bool,
     pub quit: bool,
+    // lyrics while scanning (2.0)
+    scan_lyrics: Option<work::ScanLyrics>,
+    scan_lyrics_seq: u64,
+    /// songs the worker saved lyrics for, found none for, and still has to do
+    pub scan_lyrics_counts: (usize, usize, usize),
+    last_stopped: bool,
+    /// menus of the Settings window that depend on the computer (fonts, devices)
+    pub choices: HashMap<&'static str, Vec<String>>,
+    /// counts lyrics saved by any worker, so the player reads them again
+    pub lyrics_gen: u64,
 }
 
 fn index_of(v: Verdict) -> usize {
@@ -256,6 +266,12 @@ impl App {
             info: None,
             about: false,
             quit: false,
+            scan_lyrics: None,
+            scan_lyrics_seq: 0,
+            scan_lyrics_counts: (0, 0, 0),
+            last_stopped: false,
+            choices: HashMap::new(),
+            lyrics_gen: 0,
         };
         let start = !initial.is_empty();
         for p in initial {
@@ -477,6 +493,8 @@ impl App {
             self.cache.clear();
         }
         self.lookup_gen += 1;
+        self.stop_scan_lyrics();
+        self.scan_lyrics_counts = (0, 0, 0);
         self.total = files.len();
         self.done = 0;
         self.scan_order.clear();
@@ -502,9 +520,59 @@ impl App {
             s.stop.store(true, Ordering::Relaxed);
             self.status = "Stopping after the files already in progress…".into();
         }
+        self.stop_scan_lyrics();
+    }
+
+    /// The scan's lyrics worker stops after the song it is doing.
+    fn stop_scan_lyrics(&mut self) {
+        if let Some(w) = self.scan_lyrics.take() {
+            w.stop.store(true, Ordering::SeqCst);
+        }
+        self.scan_lyrics_counts.2 = 0;
+    }
+
+    /// Lyrics while scanning: hand a scanned song to the lyrics worker.
+    fn feed_scan_lyrics(&mut self, r: &FileResult) {
+        if !self.cfg.lyrics_while_scanning || r.verdict == Verdict::Error {
+            return;
+        }
+        // LRCLIB wants one request at a time: never next to the lyrics window
+        if self.lyrics_win.as_ref().is_some_and(|w| w.running) {
+            return;
+        }
+        if self.scan_lyrics.is_none() {
+            self.scan_lyrics_seq += 1;
+            self.scan_lyrics = Some(work::start_scan_lyrics(self.cfg.clone(), self.scan_lyrics_seq, self.post.clone()));
+        }
+        let mut light = r.clone();
+        light.plot = None;
+        light.spectrum = None;
+        if let Some(w) = &self.scan_lyrics {
+            if w.tx.send((r.path.clone(), Some(light))).is_ok() {
+                self.scan_lyrics_counts.2 += 1;
+            }
+        }
+    }
+
+    /// Whether the scan's lyrics worker still has songs to do.
+    pub fn scan_lyrics_busy(&self) -> bool {
+        self.scan_lyrics.is_some() && self.scan_lyrics_counts.2 > 0
+    }
+
+    fn lyrics_status(&self) -> String {
+        let (saved, missing, left) = self.scan_lyrics_counts;
+        if saved + missing + left == 0 {
+            return String::new();
+        }
+        let mut s = format!("  ·  Lyrics: {saved} saved, {missing} not found");
+        if left > 0 && self.scan_lyrics.is_some() {
+            s += &format!(", {left} to go");
+        }
+        s
     }
 
     fn finish(&mut self, stopped: bool) {
+        self.last_stopped = stopped;
         self.scanning = false;
         self.scan = None;
         self.last_elapsed = Some(self.scan_started.elapsed().as_secs_f64());
@@ -611,7 +679,7 @@ impl App {
             } else {
                 String::new()
             };
-            self.status = format!("{head}: {} files{extra}  ·  {tail}", self.results.len());
+            self.status = format!("{head}: {} files{extra}  ·  {tail}{}", self.results.len(), self.lyrics_status());
         } else {
             let mut busy = if !self.scan_order.is_empty() {
                 format!("analysing {} ({} at a time)", self.scan_order.len(), self.scan_workers)
@@ -621,8 +689,12 @@ impl App {
             if let Some(e) = &self.eta {
                 busy += &format!(", {}", e.text());
             }
-            self.status =
-                format!("Scanning: {}/{} files, {reused} from saved results, {busy}  ·  {tail}", self.done, self.total);
+            self.status = format!(
+                "Scanning: {}/{} files, {reused} from saved results, {busy}  ·  {tail}{}",
+                self.done,
+                self.total,
+                self.lyrics_status()
+            );
         }
     }
 
@@ -681,6 +753,7 @@ impl App {
                     if self.shown_plot.as_ref().is_some_and(|(p, _)| *p == r.path) {
                         self.shown_plot = None;
                     }
+                    self.feed_scan_lyrics(&r);
                     self.results.insert(r.path.clone(), r);
                     dirty = true;
                 }
@@ -757,6 +830,21 @@ impl App {
                 Msg::LyricsFinished { run, stopped } => {
                     if let Some(w) = self.lyrics_win.as_mut().filter(|w| w.run == run) {
                         w.finished(stopped);
+                    }
+                }
+                Msg::ScanLyrics { worker, outcome } => {
+                    if self.scan_lyrics.as_ref().is_some_and(|w| w.id == worker) {
+                        self.scan_lyrics_counts.2 = self.scan_lyrics_counts.2.saturating_sub(1);
+                        if outcome.saved() {
+                            self.scan_lyrics_counts.0 += 1;
+                        } else if outcome.status == realhires::lyrics::Status::NotFound {
+                            self.scan_lyrics_counts.1 += 1;
+                        }
+                        if outcome.saved() {
+                            self.lyrics_saved(&outcome.path);
+                        }
+                        let stopped = self.last_stopped;
+                        self.update_status(!self.scanning, stopped);
                     }
                 }
                 _ => {}
@@ -903,6 +991,7 @@ impl App {
 
     /// The lyrics next to `path` were saved: show them if that song is selected.
     pub fn lyrics_saved(&mut self, path: &str) {
+        self.lyrics_gen += 1;
         if self.lyrics_shown.as_ref().is_some_and(|(p, _)| p.as_deref() == Some(path)) {
             self.lyrics_shown = None;
         }
@@ -911,6 +1000,11 @@ impl App {
     pub fn download_lyrics(&mut self, paths: Vec<String>) {
         if self.lyrics_win.as_ref().is_some_and(|w| w.running) {
             self.status = "Lyrics are being downloaded already; wait for them or press Stop first.".into();
+            return;
+        }
+        if self.scan_lyrics_busy() {
+            self.status = "Lyrics are being downloaded for the scanned songs; wait for them or stop the scan first."
+                .into();
             return;
         }
         self.lyrics_win = Some(LyricsWindow::new(self, paths));
@@ -1363,23 +1457,18 @@ impl App {
     }
 
     // ------------------------------------------------------------- drawing ---
+    /// The whole 1.x window: the work in the background plus the page.
     pub fn ui(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        self.background(&ctx);
+        self.page(ui);
+    }
+
+    /// What has to happen every frame, also while another page of the player
+    /// is shown (2.0): messages from the workers, the pop-ups and dialogs.
+    pub fn background(&mut self, ctx: &egui::Context) {
+        let ctx = ctx.clone();
         self.poll();
-        self.refresh();
-        self.regroup();
-        self.shortcuts(&ctx);
-        let dropped: Vec<String> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .map(|f| f.path().to_string_lossy().into_owned())
-                .filter(|p| !p.is_empty())
-                .collect()
-        });
-        for p in dropped {
-            self.add_source(&p);
-        }
         if self.summary_due.is_some_and(|t| t.elapsed().as_millis() >= 150) {
             self.summary_due = None;
             if !self.scanning && !self.results.is_empty() {
@@ -1399,7 +1488,50 @@ impl App {
         if self.summary_due.is_some() || self.fix_due.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
+        crate::dialogs::show_all(self, &ctx);
+        if self.about {
+            let mut open = true;
+            egui::Window::new("About Real-Hi-Res").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(&ctx, |ui| {
+                ui.heading(format!("Real-Hi-Res {}", realhires::VERSION));
+                ui.label("A music player that finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.");
+                ui.label("This is the Rust version; it shares its settings, saved results, library and player state with the Python version.");
+                ui.label(realhires::lyrics::ABOUT_CREDIT);
+                ui.label("Windows and Linux use the Inter typeface by The Inter Project Authors (SIL Open Font License 1.1).");
+                ui.horizontal_wrapped(|ui| {
+                    ui.hyperlink_to("LRCLIB", "https://lrclib.net");
+                    ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
+                    ui.hyperlink_to("Inter", "https://rsms.me/inter/");
+                });
+                ui.hyperlink("https://github.com/SU2H1/Real-Hi-Res");
+            });
+            self.about = open;
+        }
+        if self.quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
 
+    pub fn show_about(&mut self) {
+        self.about = true;
+    }
+
+    /// The Quality check page: the 1.x window's panels.
+    pub fn page(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.refresh();
+        self.regroup();
+        self.shortcuts(&ctx);
+        let dropped: Vec<String> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_string_lossy().into_owned())
+                .filter(|p| !p.is_empty())
+                .collect()
+        });
+        for p in dropped {
+            self.add_source(&p);
+        }
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::top("sources").show(ui, |ui| self.sources_panel(ui));
@@ -1420,26 +1552,6 @@ impl App {
                 self.cards(ui);
             }
         });
-
-        crate::dialogs::show_all(self, &ctx);
-        if self.about {
-            let mut open = true;
-            egui::Window::new("About Real-Hi-Res").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, Vec2::ZERO).show(&ctx, |ui| {
-                ui.heading(format!("Real-Hi-Res {}", realhires::VERSION));
-                ui.label("Finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files made from MP3/AAC, by analysing the decoded audio itself.");
-                ui.label("This is the Rust version; it shares its settings and saved results with the Python version.");
-                ui.label(realhires::lyrics::ABOUT_CREDIT);
-                ui.horizontal_wrapped(|ui| {
-                    ui.hyperlink_to("LRCLIB", "https://lrclib.net");
-                    ui.hyperlink_to("LRCGET", "https://github.com/tranxuanthang/lrcget");
-                });
-                ui.hyperlink("https://github.com/SU2H1/Real-Hi-Res");
-            });
-            self.about = open;
-        }
-        if self.quit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
     }
 
     fn menu_bar(&mut self, ui: &mut Ui) {
@@ -2445,6 +2557,7 @@ mod tests {
 
     #[test]
     fn scan_summary_saved_results_albums_and_fix() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("rhr-gui-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let music = tmp.join("Artist").join("Album");

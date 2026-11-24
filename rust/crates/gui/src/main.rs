@@ -4,19 +4,34 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod audio;
 mod dialogs;
+mod eqwin;
+mod icons;
+mod look;
 mod lyrics;
+mod pages;
+mod player;
 mod plots;
 mod style;
 mod work;
 
+/// The headless app tests set process-wide variables (where results, settings,
+/// the library and the player state live), so they run one at a time.
+#[cfg(test)]
+pub static TEST_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const ICON: &[u8] = include_bytes!("../../../../realhires/assets/icon.png");
 
-struct GuiApp(app::App);
+struct GuiApp(player::Player);
 
 impl eframe::App for GuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.0.on_exit();
     }
 }
 
@@ -32,14 +47,14 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("usage: realhires-gui [PATH...]\n\nThe Real-Hi-Res desktop app. Folders or files given here are added and scanned at once.");
+        println!("usage: realhires-gui [PATH...]\n\nThe Real-Hi-Res music player and quality checker. Folders or files given here are opened in the Quality check page and scanned at once.");
         return;
     }
     let cfg = realhires::settings::load(None);
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Real-Hi-Res")
-        .with_inner_size([1280.0, 880.0])
-        .with_min_inner_size([900.0, 600.0])
+        .with_inner_size([1280.0, 840.0])
+        .with_min_inner_size([980.0, 620.0])
         .with_drag_and_drop(true);
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
@@ -48,10 +63,7 @@ fn main() {
     let res = eframe::run_native(
         "Real-Hi-Res",
         options,
-        Box::new(move |cc| {
-            cc.egui_ctx.set_theme(egui::Theme::Light);
-            Ok(Box::new(GuiApp(app::App::new(&cc.egui_ctx, cfg, args))))
-        }),
+        Box::new(move |cc| Ok(Box::new(GuiApp(player::Player::new(&cc.egui_ctx, cfg, args))))),
     );
     if let Err(e) = res {
         let text = format!(

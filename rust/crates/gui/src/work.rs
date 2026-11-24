@@ -37,6 +37,8 @@ pub enum Msg {
     LyricsStart { run: u64, path: String },
     LyricsDone { run: u64, outcome: Box<LyricsOutcome> },
     LyricsFinished { run: u64, stopped: bool },
+    /// "Lyrics while scanning" (2.0): one song done by the scan's lyrics worker.
+    ScanLyrics { worker: u64, outcome: Box<LyricsOutcome> },
 }
 
 /// Sends messages to the UI thread and wakes it up.
@@ -309,6 +311,33 @@ pub fn start_lyrics(
         }
         post.send(Msg::LyricsFinished { run, stopped: stop.load(Ordering::SeqCst) });
     });
+}
+
+/// The scan's lyrics worker (2.0, `lyrics_while_scanning`): one thread with one
+/// LRCLIB client that takes the scanned songs in turn, as LRCLIB asks.
+pub struct ScanLyrics {
+    pub tx: Sender<(String, Option<FileResult>)>,
+    pub stop: Arc<AtomicBool>,
+    pub id: u64,
+}
+
+pub fn start_scan_lyrics(cfg: Settings, id: u64, post: Post) -> ScanLyrics {
+    let (tx, rx) = mpsc::channel::<(String, Option<FileResult>)>();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    std::thread::spawn(move || {
+        let mut client = LrclibClient::new(&cfg.lyrics_server).with_stop(flag.clone());
+        while let Ok((path, result)) = rx.recv() {
+            if flag.load(Ordering::SeqCst) {
+                break;
+            }
+            match fetch_for_file(&path, &mut client, &cfg, result.as_ref(), false) {
+                Ok(o) => post.send(Msg::ScanLyrics { worker: id, outcome: Box::new(o) }),
+                Err(_) => break, // stopped
+            }
+        }
+    });
+    ScanLyrics { tx, stop, id }
 }
 
 // --------------------------------------------------------------- plot cache ---

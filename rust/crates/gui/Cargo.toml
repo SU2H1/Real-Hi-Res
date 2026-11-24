@@ -17,6 +17,10 @@ winit = "0.30.13"
 egui = "0.37"
 egui_extras = "0.37"
 rfd = "0.18"
+# audio output for the player (2.0): WASAPI, CoreAudio, ALSA
+cpal = "0.18.2"
+# the installed font families, for Settings → Appearance (already used by eframe's system fonts)
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]
