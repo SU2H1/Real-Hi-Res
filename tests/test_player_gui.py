@@ -458,7 +458,7 @@ def lyrics_ok():
     def entries(m):
         return [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
     ALBUM_MENU = ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…", "Acquire Metadata…",
-                  "Change Cover…", "-", "Colour Label"]  # 2.3: Colour Label
+                  "Change Cover…", "Search Cover Online", "-", "Colour Label"]  # 2.3: Colour Label
     assert entries(am) == ALBUM_MENU, entries(am)
     assert app.last_menu is am
     am.invoke(ALBUM_MENU.index("Add to Queue")); root.update()
@@ -1258,7 +1258,7 @@ def loaded():
     # an album card's menu (2.2) and the album page's buttons
     am = player_pages.album_menu(app, album)
     assert menu_labels(am) == [tr("Play"), tr("Shuffle"), "次に再生", "キューに追加", "アルバムのプロパティ…",
-                               "メタデータを取得…", "アートワークを変更…", "カラーラベル"], menu_labels(am)
+                               "メタデータを取得…", "アートワークを変更…", "オンラインでアートワークを検索", "カラーラベル"], menu_labels(am)
     assert app.page("album").mb_b.text == "メタデータを取得…" and app.page("album").edit_b.text == "アルバムのプロパティ…"
     # a name dialog: a new playlist
     def answer(tries=0):

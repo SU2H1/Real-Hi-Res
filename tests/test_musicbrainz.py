@@ -365,7 +365,7 @@ def loaded():
     assert grid.on_context is not None
     m = player_pages.album_menu(app, alb)
     assert entries(m) == ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…",
-                          "Acquire Metadata…", "Change Cover…", "-", "Colour Label"], entries(m)
+                          "Acquire Metadata…", "Change Cover…", "Search Cover Online", "-", "Colour Label"], entries(m)
     assert app.last_menu is m
     m.invoke(entries(m).index("Acquire Metadata…"))
     w = app.mb_window
