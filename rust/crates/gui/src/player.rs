@@ -3568,8 +3568,9 @@ mod tests {
     #[test]
     fn bit_perfect_playback_controls() {
         // Settings, Playback, Bit-perfect playback (2.1): the song restarts where it was in its own
-        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is bypassed, and
-        // the Playback info has the Bit-perfect line and the device's real format
+        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is heard (2.3; it
+        // was bypassed before), and the Playback info has the Bit-perfect line and the device's real
+        // format
         let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("rhr-player-bitperfect-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -3610,14 +3611,20 @@ mod tests {
         let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
         for want in [
             "Output=96 kHz, 16-bit integer, stereo",
-            "Bit-perfect=Yes: 16-bit, 96 kHz, Null output (no sound)",
+            "Bit-perfect=No: The equalizer is on, so the samples are changed. The device still runs at 96 kHz.",
             "Volume=0.0 dB",
-            "Equalizer=Bypassed while bit-perfect playback is on.",
         ] {
             assert!(flat.contains(&want.to_string()), "{want}: {flat:?}");
         }
+        assert!(flat.iter().any(|x| x.starts_with("Equalizer=Graphic: Rock")), "{flat:?}");
         p.eq_open = true;
-        frame(&ctx, &mut p);
+        let shown = texts(&ctx, &mut p);
+        assert!(shown.contains("Bit-perfect playback is on: with the equalizer on"), "{shown}");
+        // the equalizer off: bit-perfect again
+        p.state.eq.enabled = false;
+        p.set_eq();
+        let info = p.engine.info().unwrap();
+        assert_eq!(info.bit_perfect, "Yes: 16-bit, 96 kHz, Null output (no sound)");
         p.set_volume(0.1); // the slider is disabled, and nothing else changes the volume either
         assert_eq!(p.state.volume, 0.5);
         p.settings_draft().bit_perfect = false;
