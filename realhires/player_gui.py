@@ -441,8 +441,9 @@ class PlaybackBar(tk.Frame):
                                   app.is_disliked(app.current) else "Dislike this song")
         self.more = IconButton(right, t, "dots", command=app.more_menu, size=32, icon_size=17,
                                tooltip=lambda: "More for this song")
-        self.lyrics = IconButton(right, t, "lyrics", command=app.toggle_now_playing, size=32, icon_size=17,
-                                 tooltip=lambda: "Lyrics and cover")
+        self.lyrics = IconButton(right, t, "lyrics", command=app.lyrics_button, size=32, icon_size=17,
+                                 tooltip=lambda: "Hide the lyrics" if app.page_name == "nowplaying"
+                                 and not app.lyrics_hidden else "Lyrics and cover")
         self.queue = IconButton(right, t, "queue", command=app.toggle_up_next, size=32, icon_size=17,
                                 tooltip=lambda: "Up Next")
         self.eq = IconButton(right, t, "eq", command=app.open_eq, size=32, icon_size=17,
@@ -472,7 +473,7 @@ class PlaybackBar(tk.Frame):
         self.heart.set(enabled=has, filled=bool(has and app.is_liked(app.current)))
         self.dislike.set(enabled=has, filled=bool(has and app.is_disliked(app.current)))
         self.more.set(enabled=has)
-        self.lyrics.set(on=app.page_name == "nowplaying")
+        self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden)
         self.queue.set(on=app.up_next_shown)
         self.eq.set(on=bool(st.eq.get("enabled")))
         self.speaker.set(level=0.0 if st.muted else st.volume)
@@ -480,6 +481,9 @@ class PlaybackBar(tk.Frame):
 
 
 class UpNextPanel(tk.Frame):
+    """The queue: double-click a song to play it now, drag it to another place,
+    or right-click it to take it out ("Remove from Up Next")."""
+
     WIDTH = 300
 
     def __init__(self, master, app: "PlayerApp"):
@@ -494,16 +498,27 @@ class UpNextPanel(tk.Frame):
         self.list = SongList(self, t, [Column("title", "", 200, True, kind="two", key2="artist")],
                              lambda r, k: r.display_title if k == "title" else r.display_artist, header=False,
                              zebra=False, row_height=48, bg_role="sidebar", on_activate=app.jump_to,
-                             empty_text="Nothing is queued.")
+                             empty_text="Nothing is queued.", on_move=app.move_in_up_next,
+                             on_context=lambda i, e: self.menu(i).tk_popup(e.x_root, e.y_root))
         self.list.pack(fill="both", expand=True, padx=(4, 0))
 
-    def refresh(self) -> None:
+    def menu(self, index: int) -> tk.Menu:
+        """The right-click menu of Up Next's song number `index`."""
+        m = tk.Menu(self.app.root, tearoff=False)
+        m.add_command(label="Remove from Up Next", command=lambda: self.app.remove_from_up_next(index))
+        self.app._theme_menu(m)
+        self.app.last_menu = m
+        return m
+
+    def refresh(self, keep: bool = False) -> None:
+        """Show the queue again; `keep` keeps the scroll position and the selected
+        song (after the user moved or removed one)."""
         app = self.app
         q = app.queue
         self.source.configure(text=f"Playing from {app.context_name}" if q is not None and app.context_name
                               else "")
         rows = [app.by_path[p] for p in (q.up_next(50) if q is not None else []) if p in app.by_path]
-        self.list.set_rows(rows)
+        self.list.set_rows(rows, keep=keep)
 
 
 # ------------------------------------------------------------ the app ---
@@ -544,6 +559,7 @@ class PlayerApp:
         self.dirty: set = set()
         self.history: List[tuple] = []
         self.up_next_shown = False
+        self.lyrics_hidden = False      # Now Playing without its lyrics: the cover in the centre
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
         self._info_time = 0.0
@@ -787,9 +803,22 @@ class PlayerApp:
         self.page("artists").choose(name)
 
     def toggle_now_playing(self) -> None:
+        """A click on the LCD's cover (and View → Now Playing and Lyrics): open Now
+        Playing, or leave it again."""
         if self.page_name == "nowplaying":
             self.go_back()
         elif self.current is not None:
+            self.show_page("nowplaying")
+
+    def lyrics_button(self) -> None:
+        """The Lyrics button: elsewhere it opens Now Playing with the lyrics; on Now
+        Playing it hides the lyrics (the cover moves to the centre) or shows them again."""
+        if self.page_name == "nowplaying":
+            self.lyrics_hidden = not self.lyrics_hidden
+            self.page("nowplaying").layout_changed()
+            self.bar.update_controls()
+        elif self.current is not None:
+            self.lyrics_hidden = False
             self.show_page("nowplaying")
 
     def toggle_up_next(self) -> None:
@@ -1426,6 +1455,36 @@ class PlayerApp:
         if 0 <= index < len(upcoming):
             q.pos += 1 + index
             self._play_path(q.current)  # type: ignore[arg-type]
+
+    def _shown_up_next(self) -> List[str]:
+        """The paths Up Next shows (songs no longer in the index are left out there)."""
+        q = self.queue
+        return [p for p in (q.up_next(50) if q is not None else []) if p in self.by_path]
+
+    def _queue_index(self, index: int) -> Optional[int]:
+        """Up Next's row `index` as a place in the queue's own Up Next."""
+        shown, q = self._shown_up_next(), self.queue
+        if q is None or not 0 <= index < len(shown):
+            return None
+        upcoming = q.up_next(50)
+        return [i for i, p in enumerate(upcoming) if p in self.by_path][index]
+
+    def move_in_up_next(self, src: int, dst: int) -> None:
+        """Up Next: the song in row `src` was dragged to row `dst`."""
+        a, b = self._queue_index(src), self._queue_index(dst)
+        if a is None or b is None or not self.queue.move_upcoming(a, b):  # type: ignore[union-attr]
+            return
+        self._update_next()
+        self.up_next.refresh(keep=True)  # the selection follows the dragged song
+
+    def remove_from_up_next(self, index: int) -> None:
+        """Up Next: take the song in row `index` out of the queue."""
+        i = self._queue_index(index)
+        if i is None or self.queue.remove_upcoming(i) is None:  # type: ignore[union-attr]
+            return
+        self.up_next.list.selected = None
+        self._update_next()
+        self.up_next.refresh(keep=True)
 
     def _stopped(self) -> None:
         """The queue has ended: the last song stays in the LCD, at its start."""

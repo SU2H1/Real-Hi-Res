@@ -134,6 +134,32 @@ def test_queue_repeat_modes():
     assert q.previous() == everything[1]
 
 
+def test_up_next_can_be_reordered_and_songs_removed():
+    lib = _library()
+    album0 = [s.path for s in album_order(s for s in lib if s.album == "Band A Album 0")]
+    a, b, c, d = album0
+    q = PlayQueue(lib, album0)
+    q.start(a)
+    assert q.move_upcoming(2, 0) and q.up_next() == [d, b, c]      # d dragged to the top
+    assert q.move_upcoming(0, 2) and q.up_next() == [b, c, d]      # and back to the end
+    assert not q.move_upcoming(0, 3) and not q.move_upcoming(1, 1) and q.up_next() == [b, c, d]
+    assert q.remove_upcoming(1) == c and q.up_next() == [b, d] and q.removed == {c}
+    assert q.remove_upcoming(5) is None and q.current == a
+    assert q.next() == b and q.next() == d and q.next() is None    # c is skipped
+    # a removed song stays out when the order is built again, until a new list starts
+    q.start(a)
+    assert q.removed == set() and q.up_next() == [b, c, d]
+    q.remove_upcoming(0)
+    q.set_shuffle("songs")
+    assert sorted(q.up_next()) == sorted([c, d])
+    q.set_shuffle("off")
+    assert q.up_next() == [c, d]
+    q = PlayQueue(lib, album0, repeat="album")
+    q.start(c)
+    q.remove_upcoming(0)                                            # d
+    assert q.next(auto=True) == a and q.up_next() == [b, c]         # the album again, without d
+
+
 def test_splitmix_matches_the_reference_values():
     rng = SplitMix64(1234567)
     # reference values of SplitMix64 (Steele, Lea, Flood) for this seed

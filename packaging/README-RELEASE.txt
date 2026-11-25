@@ -29,7 +29,9 @@ album, stop after this song); in the middle the cover, title, seek bar and a
 quality badge (click it for the Playback info: track, decoder, output); on
 the right Like, Dislike (disliked songs are left out of shuffles), "..." (add
 to a playlist and more), Lyrics (Now Playing: cover left, synced lyrics
-right), Up Next, the equalizer and the volume.  Space plays and pauses.
+right; click Lyrics again to hide them and centre the cover), Up Next (drag a song to change the order, or right-click it and
+choose Remove from Up Next), the equalizer and the volume.  Space plays and
+pauses.
 
 The equalizer has a 10-band graphic and a parametric part, built-in presets
 and your own (Save as preset..., Rename..., Delete...); Import... and

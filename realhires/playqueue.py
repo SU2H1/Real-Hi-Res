@@ -9,6 +9,11 @@ it ends) and "stop" (stop when the current song ends; it then switches back to
 "off").  Disliked songs (`disliked`) are left out whenever the order is
 shuffled, unless one of them is the song that was chosen.
 
+Up Next can be edited: `move_upcoming()` moves one of its songs to another
+place and `remove_upcoming()` takes one out.  A removed song (`removed`) stays
+out when the order is built again (a new shuffle mode, repeat album) until a
+new list is started with `start()`.
+
 The shuffled order comes from SplitMix64 and a Fisher-Yates shuffle with a
 seed, so the Rust version (`rust/crates/core/src/playqueue.rs`) plays exactly
 the same order for the same seed; `rust/crates/core/tests/python_queue.json`
@@ -101,6 +106,7 @@ class PlayQueue:
     order: List[str] = field(default_factory=list)
     pos: int = 0
     disliked: Set[str] = field(default_factory=set)
+    removed: Set[str] = field(default_factory=set)  # taken out of Up Next, until the next start()
 
     def __post_init__(self):
         self.by_path: Dict[str, Song] = {s.path: s for s in self.library}
@@ -113,6 +119,7 @@ class PlayQueue:
     # ---------------------------------------------------------------- start ---
     def start(self, path: str) -> str:
         """Play `path` now and build the order of the songs after it."""
+        self.removed = set()
         self.order = [path] + self._upcoming(path)
         self.pos = 0
         return path
@@ -142,10 +149,10 @@ class PlayQueue:
         pool = self._pool(path)
         if self.shuffle == "off":
             if path in pool:
-                i = pool.index(path)
-                return pool[i + 1:]
-            return pool
-        return shuffled([p for p in pool if p != path and p not in self.disliked], self.rng)
+                pool = pool[pool.index(path) + 1:]
+            return [p for p in pool if p not in self.removed]
+        return shuffled([p for p in pool if p != path and p not in self.disliked and p not in self.removed],
+                        self.rng)
 
     def set_shuffle(self, mode: str) -> None:
         self.shuffle = mode if mode in SHUFFLE_MODES else "off"
@@ -190,7 +197,8 @@ class PlayQueue:
         song = self.by_path.get(cur)
         if song is None:
             return None
-        tracks = [s.path for s in album_order(x for x in self.library if x.album_key == song.album_key)]
+        tracks = [s.path for s in album_order(x for x in self.library if x.album_key == song.album_key)
+                  if s.path == cur or s.path not in self.removed]
         if self.shuffle != "off":
             tracks = shuffled(tracks, self.rng)
         self.order = self.order[:self.pos + 1] + tracks
@@ -206,3 +214,24 @@ class PlayQueue:
 
     def up_next(self, count: int = 50) -> List[str]:
         return self.order[self.pos + 1:self.pos + 1 + count]
+
+    # ------------------------------------------------------- editing Up Next ---
+    def move_upcoming(self, src: int, dst: int) -> bool:
+        """Move Up Next's song number `src` (0 = the next song) to place `dst`
+        (counted in the list after the move).  False when either is outside it."""
+        base, n = self.pos + 1, len(self.order) - self.pos - 1
+        if not (0 <= src < n and 0 <= dst < n) or src == dst:
+            return False
+        self.order.insert(base + dst, self.order.pop(base + src))
+        return True
+
+    def remove_upcoming(self, index: int) -> Optional[str]:
+        """Take Up Next's song number `index` out of the queue; it stays out when
+        the order is built again (unless it is the song playing).  Returns its path."""
+        base = self.pos + 1
+        if not 0 <= index < len(self.order) - base:
+            return None
+        path = self.order.pop(base + index)
+        if path != self.current:
+            self.removed.add(path)
+        return path

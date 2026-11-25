@@ -28,7 +28,7 @@ inside the audio file, both, or as plain lyrics inside the file (`lyrics_save_as
   the "LCD": a rounded panel with a 44 px cover, the title (bold), "Artist — Album" (grey), a thin seek bar
   (click or drag to seek) with the elapsed time on the left and the remaining time ("-1:23") on the right, and a
   quality badge ("Hi-Res Lossless", "Lossless", or the codec and bit rate, `musiclib.quality()`); right: the heart
-  (like the current song), Lyrics (toggles the Now Playing view), Up Next (toggles the queue panel), EQ (opens the
+  (like the current song), Lyrics (opens Now Playing with the lyrics; on Now Playing it hides the lyrics or shows them again), Up Next (toggles the queue panel), EQ (opens the
   equalizer window), and the volume: a speaker icon (click mutes) and a slider. When nothing plays, the LCD shows
   the app name in grey and Previous, Next and the heart are disabled (volume, EQ, Lyrics and Up Next stay usable);
   Play then plays the songs of the page shown.
@@ -62,9 +62,20 @@ inside the audio file, both, or as plain lyrics inside the file (`lyrics_save_as
     on a line seeks there. Plain lyrics: the text, scrollable. No lyrics: the cover centred with the title and artist
     under it, and a button "Get lyrics" that downloads them for this song (the lyrics window, one song). The lyrics
     are found with `lyrics.read_lyrics_file()` (an .lrc/.txt next to the song, else the lyrics inside the file).
+    The Lyrics button on Now Playing hides the lyrics (`lyrics_hidden`, kept for the session): the cover is centred
+    (horizontally and vertically) with the title and artist under it, without "Get lyrics"; the button is no longer
+    drawn as on, and its tooltip is "Hide the lyrics" while they show. A second click shows them again (scrolled to
+    the current line). Opening Now Playing with the Lyrics button from another page always shows the lyrics; a click
+    on the LCD's cover opens Now Playing as it was left, and on Now Playing leaves it again (both apps).
   - Settings (see below) and Quality check (the 1.x scanner UI, unchanged, with all its functions).
 - **Up Next panel** (right, about 300 px, toggled): "Playing from <list name>", then `PlayQueue.up_next(50)` with
-  title and artist; double-click jumps to that song.
+  title and artist; double-click jumps to that song. A song can be dragged to another place (once the pointer has
+  moved a few pixels; a line in the accent colour with a small circle at its left end shows the gap it will drop
+  into, and the list scrolls when the pointer is near its top or bottom edge): `PlayQueue.move_upcoming(src, dst)`,
+  where `dst` is its place after the move. A right click opens a menu with one entry, "Remove from Up Next":
+  `PlayQueue.remove_upcoming(index)`. After either, the song that follows gaplessly is set again. A removed song is
+  kept in `PlayQueue.removed` and stays out when the order is built again (another shuffle mode, repeat album) until
+  a new list is played (`start()` empties it); moves are only kept until the order is built again.
 - **Playback info window** (a click on the quality badge): three sections, each a two-column list, and Copy.
   "Track": Title, Artist, Album, Album artist, Genre, Year, Track ("3 of 12" when known), Disc, Duration, File (full
   path), Size. "Decoder": Format (codec upper-case, e.g. FLAC, with "lossless"/"lossy"), Sample rate ("96 kHz"),
@@ -266,6 +277,10 @@ quality checker; Clear the play history….
 - Choosing one of your own EQ presets keeps the equalizer on if it was on.
 - When nothing plays, Previous, Next, the heart, the dislike button and "…" are disabled; Shuffle, Repeat, the
   volume, EQ, Lyrics and Up Next stay usable.
+- The Lyrics button on Now Playing hides the lyrics and centres the cover, and shows them again (asked for on
+  2026-11-25); before, it left Now Playing, which the cover in the LCD still does.
+- Up Next can be edited (asked for on 2026-11-25): drag a song to reorder it, right-click → "Remove from Up Next"
+  to take it out (see the Up Next panel above).
 - A song counts in the play history from one second of listening; the seconds are the forward steps of the position
   while playing (the Python app ignores steps over 1.5 s, the Rust app over 2 s, between screen updates), so seeking
   never counts.
