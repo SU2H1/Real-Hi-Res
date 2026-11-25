@@ -179,6 +179,8 @@ def lyrics_ok():
     assert str(np.lyrics.itemcget(item, "font")) == str(app.theme.f("lyrics_b"))
     assert str(np.lyrics.itemcget(np.lyrics.items[1], "font")) == str(app.theme.f("lyrics"))
     # the Lyrics button on Now Playing hides the lyrics: the cover moves to the centre; again shows them
+    # (paused meanwhile: the 3-second song must not end while slow runners check this)
+    app.engine.pause()
     assert app.bar.lyrics.on
     app.lyrics_button(); root.update()
     assert app.page_name == "nowplaying" and app.lyrics_hidden and not app.bar.lyrics.on
@@ -189,6 +191,7 @@ def lyrics_ok():
     app.lyrics_button(); root.update()
     assert not app.lyrics_hidden and app.bar.lyrics.on and np.lyrics.winfo_ismapped()
     assert np.art.winfo_width() < root.winfo_width() / 2
+    app.engine.resume()
     # Playback info
     app.open_info()
     info = app.info_window.text()
@@ -237,7 +240,13 @@ def lyrics_ok():
     # Up Next lists the rest of the album
     app.toggle_up_next(); root.update()
     assert [t.display_title for t in app.up_next.list.rows] == ["Midnight Sun", "Polar Drift"]
-    # Up Next can be edited: drag a song to another place, right-click to remove one
+    # Up Next can be edited: drag a song to another place, right-click to remove one (paused meanwhile, so
+    # the song cannot end; the song to follow gaplessly is checked by what the app tells the engine, since
+    # the engine forgets it once it has started decoding that song)
+    app.engine.pause()
+    nexts = []
+    set_next = app.engine.set_next
+    app.engine.set_next = lambda path, after=None: (nexts.append(path), set_next(path, after))
     midnight, polar = LIB["songs"]["Midnight Sun"], LIB["songs"]["Polar Drift"]
     ul = app.up_next.list
     if root.grab_current() is not None:  # the pop-up menus unposted above may still hold X11's grab
@@ -251,17 +260,20 @@ def lyrics_ok():
         root.update()
     drag(ul.rh + ul.rh // 2, 4)  # Polar Drift above Midnight Sun
     assert [t.display_title for t in ul.rows] == ["Polar Drift", "Midnight Sun"] and ul.selected == 0
-    assert app.queue.up_next(5) == [polar, midnight] and app.engine._next_path == os.path.abspath(polar)
+    assert app.queue.up_next(5) == [polar, midnight] and nexts[-1] == polar, (app.queue.up_next(5), nexts)
     drag(ul.rh // 2, 2 * ul.rh - 2)  # and back below it
-    assert app.queue.up_next(5) == [midnight, polar] and app.engine._next_path == os.path.abspath(midnight)
+    assert app.queue.up_next(5) == [midnight, polar] and nexts[-1] == midnight, (app.queue.up_next(5), nexts)
     m = app.up_next.menu(1)
     assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["Remove from Up Next"]
     m.invoke(0); root.update()
     assert [t.display_title for t in ul.rows] == ["Midnight Sun"] and app.queue.up_next(5) == [midnight]
+    assert nexts[-1] == midnight
     app.set_shuffle("off")  # the order is built again: the removed song stays out
     assert app.queue.up_next(5) == [midnight] and app.queue.removed == {{polar}}
     app.queue.order.append(polar); app.queue.removed.clear()  # put it back for the rest of the test
     app._update_next(); app.up_next.refresh()
+    app.engine.set_next = set_next
+    app.engine.resume()
     # the like button of the bar
     app.toggle_like_current()
     assert app.bar.heart.filled and glacier in playerstate.load().liked
