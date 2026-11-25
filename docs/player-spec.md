@@ -1,0 +1,1420 @@
+# Real-Hi-Res 2.0 music player: shared specification
+
+Both desktop apps (Python/Tkinter `realhires/gui.py` + new modules, and Rust/egui `rust/crates/gui`) implement this
+specification, so they behave the same. The maths and data live in the shared core modules, which both versions
+already have and which are checked against each other: `eq` (equalizer), `playqueue` (shuffle/repeat queue),
+`playerstate` (`player.json`: likes, volume, modes, EQ, last song), `musiclib` (`library.sqlite`: the tag index of
+the library folders), `embed` (lyrics inside MP3/FLAC files) and `lyrics` (LRCLIB, with `lyrics_save_as`).
+
+## What the user asked for (2026-11-24)
+
+The app becomes a music player that looks similar to Apple Music, with SF Pro Display Bold for headings (SF Pro on
+macOS from the system; Windows and Linux use a similar font, Inter, bundled under the SIL Open Font License; the user
+can choose another font in Settings). Every function the app has today (scan for fake files, Fix, lyrics download,
+saved results, all settings) is reached from Settings. The Now Playing view shows the album picture on the left and
+the lyrics on the right; without lyrics the cover is centred. Songs can be liked. The playback info is easy to see,
+and clicking it shows the track info and the decoder. Shuffle offers: Off, Songs in this list, All songs in the
+library, Same genre, Same artist, Same album. Repeat offers: Off, Repeat song, Repeat album, Stop after this song.
+There is a graphic and a parametric equalizer. Lyrics can be downloaded as the scan goes, and saved as an .lrc file,
+inside the audio file, both, or as plain lyrics inside the file (`lyrics_save_as`, already in the core).
+
+## Window
+
+- **Sidebar** (left, about 220 px, slightly darker than the content): a Search box at the top; the heading
+  "Library" with Recently Added, Artists, Albums, Songs, Genres; the heading "Playlists" with Liked Songs; at the
+  bottom Settings, and a one-line status while the library index is being updated ("Updating the library: 120 of
+  500 songs").
+- **Playback bar** (top, about 64 px): left the buttons Shuffle, Previous, Play/Pause, Next, Repeat; in the middle
+  the "LCD": a rounded panel with a 44 px cover, the title (bold), "Artist — Album" (grey), a thin seek bar
+  (click or drag to seek) with the elapsed time on the left and the remaining time ("-1:23") on the right, and a
+  quality badge ("Hi-Res Lossless", "Lossless", or the codec and bit rate, `musiclib.quality()`); right: the heart
+  (like the current song), Lyrics (toggles the Now Playing view), Up Next (toggles the queue panel), EQ (opens the
+  equalizer window), and the volume: a speaker icon (click mutes) and a slider. When nothing plays, the LCD shows
+  the app name in grey and Previous, Next and the heart are disabled (volume, EQ, Lyrics and Up Next stay usable);
+  Play then plays the songs of the page shown.
+- **Icons** are drawn as vector shapes (Tk Canvas, egui painter), never emoji or rare Unicode symbols, which several
+  Linux fonts cannot show. A mode that is on (shuffle not off, repeat not off) is drawn in the accent colour; repeat
+  song adds a small "1", stop after this song draws a small square.
+- **Shuffle button**: a click opens a menu with the six modes as radio items (labels from
+  `playqueue.SHUFFLE_LABELS` / `shuffle_label()`); choosing one calls `PlayQueue.set_shuffle()` and saves it in the
+  player state. **Repeat button**: the same with the four repeat modes (`REPEAT_LABELS` / `repeat_label()`). The
+  tooltip names the current mode. "Stop after this song" is never saved (the core already drops it on load).
+- **Pages** in the content area:
+  - Recently Added: album cards, newest first (the newest `mtime_ns` of an album's tracks).
+  - Albums: album cards in `musiclib.albums()` order. A card is the square cover (rounded corners), the album title
+    (bold) and the artist (grey) below it. Clicking a card opens the album page.
+  - Album page: the cover (about 220 px) on the left; on the right the title (large, bold), the artist (accent
+    colour), "Genre · Year" (grey), the buttons Play and Shuffle (accent filled), then the track list: number, title,
+    a heart for liked songs, the duration, and at the end "N songs, M minutes". Double-click (or Enter) plays from
+    that song with the album as the list.
+  - Artists: the artists (`musiclib.artists()`) as a list; choosing one shows its albums as cards, with Play and
+    Shuffle for all its songs.
+  - Songs: a table (Title, Artist, Album, Genre, Time, Quality, and a heart column); a click on a column heading
+    sorts by it; double-click plays from that song with the shown rows as the list.
+  - Genres: the genres (`musiclib.genres()`); choosing one shows its songs as the table above.
+  - Liked Songs: the liked songs as the table above (`PlayerState.liked`, library order).
+  - Search: typing in the sidebar's Search box (after a 200 ms pause) shows the albums and songs whose title, artist,
+    album or genre contains the text (case-folded); clearing it returns to the page before.
+  - Now Playing (the Lyrics button, or a click on the LCD's cover): the cover on the left half (as large as fits, at
+    most 480 px) and the lyrics on the right. Synced lyrics (`embed.lrc_entries()`): every line, the current one
+    (the last line whose time is not after the position) bold in the text colour, the others grey; the view scrolls
+    smoothly to keep the current line about a third from the top unless the user scrolled in the last 3 s; a click
+    on a line seeks there. Plain lyrics: the text, scrollable. No lyrics: the cover centred with the title and artist
+    under it, and a button "Get lyrics" that downloads them for this song (the lyrics window, one song). The lyrics
+    are found with `lyrics.read_lyrics_file()` (an .lrc/.txt next to the song, else the lyrics inside the file).
+  - Settings (see below) and Quality check (the 1.x scanner UI, unchanged, with all its functions).
+- **Up Next panel** (right, about 300 px, toggled): "Playing from <list name>", then `PlayQueue.up_next(50)` with
+  title and artist; double-click jumps to that song.
+- **Playback info window** (a click on the quality badge): three sections, each a two-column list, and Copy.
+  "Track": Title, Artist, Album, Album artist, Genre, Year, Track ("3 of 12" when known), Disc, Duration, File (full
+  path), Size. "Decoder": Format (codec upper-case, e.g. FLAC, with "lossless"/"lossy"), Sample rate ("96 kHz"),
+  Bit depth ("24-bit", "32-bit float", or "—" for lossy), Channels ("Stereo", "Mono", "6 channels"), Bit rate
+  ("2,304 kbps"), Decoder ("FFmpeg", plus its version line when known). "Output": Device (name), Output ("96 kHz,
+  32-bit float, stereo"), Resampling ("None: the device runs at the song's rate" or "From 96 kHz to 48 kHz (soxr)"),
+  Volume ("−6.0 dB" or "Muted"), Equalizer ("Off", "Graphic: Rock", "Parametric: 3 bands", plus " (pre-amp −4.5
+  dB)" when not zero), Gapless ("On"/"Off"). A fourth section "Quality check" shows the saved Real-Hi-Res verdict and
+  summary of the file when the results store has one ("Not checked yet" otherwise).
+- **Equalizer window**: "Equalizer on" checkbox (`enabled`), "Prevent clipping" (`prevent_clipping`, automatic
+  headroom from `eq.preamp_db()`), two tabs Graphic and Parametric (each with its own `enabled`). Above the tabs the
+  combined response curve (`eq.response()`, 20 Hz–20 kHz log axis, ±12 dB). Graphic: a preset menu (`PRESETS` plus
+  "Custom", which is shown when the gains match no preset, `preset_name()`), a pre-amp slider and ten vertical
+  sliders (−12…+12 dB, labels `GRAPHIC_LABELS`), double-click on a slider resets it to 0. Parametric: a pre-amp slider
+  and one row per band: on, type (`BAND_TYPE_LABELS`), frequency (20–20000 Hz), gain (ignored and disabled for the
+  types without gain), Q (0.1–10), and Remove; "Add band" until `MAX_PARAMETRIC_BANDS`. Changes are heard at once
+  (Rust: the biquads are recomputed in the audio thread; Python: the decoder restarts at the current position with the
+  new `eq.ffmpeg_filter()`) and saved in the player state when the window closes or the app quits.
+- **Likes**: the heart in the playback bar and the heart column of every song table toggle `PlayerState.set_liked()`;
+  the state is saved at once.
+
+## Settings page
+
+The Settings page replaces the Settings window of 1.x (the window stays reachable from the Quality check page). It
+has one tab (or section list on the left) per `settings.GROUPS` entry, built from `Settings.field_info()` as before,
+and adds actions:
+
+- Library: the folder list (`library_folders`) with Add folder… and Remove; "Update the library now" (re-reads the
+  tags with `Library.refresh(library_files(cfg))`); "Check the library for fake files" (opens the Quality check page
+  with the library folders as its sources and starts a scan); "Download lyrics for the whole library…" (the lyrics
+  window with every library song); "Open the quality checker" (the Quality check page as it was).
+- Playback: `output_device` (a menu of the system's output devices, "" = the system default), `gapless`, and
+  "Equalizer…".
+- Appearance: `font_family` (a menu of the installed font families, "" = "SF Pro (macOS) / Inter"), `theme`.
+- Lyrics: as before, plus `lyrics_save_as` and `lyrics_while_scanning`.
+- Saved results: as before, with "Delete all saved results…".
+
+Every change is saved at once (as in 1.x); fonts and theme apply at once.
+
+## Library index
+
+`library_folders` lists the music folders. On start, the app shows the index saved in `library.sqlite` at once and
+always refreshes it in a background thread (only new or changed files are probed; files that are gone are dropped),
+updating the pages when it finishes; the same happens when the folders change. When `scan_library_on_start` ("Check
+new songs when the app starts") is on, the refresh is followed by a quality scan of the library folders in the
+Quality check page's scanner (saved results answer unchanged songs at once), without switching to that page. Before any folder is set, the Albums page
+shows "Add your music folder in Settings to start" with a button "Choose a music folder…", which adds it and starts
+the update. Covers come from `covers.cover_png()` (cached per album, loaded in a thread).
+
+## Playback engine
+
+- Decoding goes through FFmpeg (`probe.tool("ffmpeg")`, `external_env()`, no window on Windows), always to 32-bit
+  float, stereo (mono files are duplicated, more channels are downmixed by FFmpeg `-ac 2`): `ffmpeg -nostdin -v
+  error -ss <start> -i <file> -map 0:a:0 -vn [-af <filters>] -f f32le -ac 2 -ar <out rate> pipe:1`.
+- The output opens at the song's sample rate when the device supports it ("Resampling: None"); otherwise at the
+  device's default rate, and FFmpeg resamples with soxr (`aresample=resampler=soxr:precision=28`, or the default
+  resampler when the FFmpeg build lacks soxr).
+- Gapless (`gapless` on): the engine keeps about 2 s decoded ahead; when the current song has been decoded to its
+  end it goes straight on decoding the next song of the queue (`PlayQueue.up_next(1)` when repeat is not song/stop;
+  the same song again for repeat song) into the same buffer, so there is no silence between them, when that song gets
+  the same output rate; otherwise the device is reopened at the next song's rate. The engine reports `Started` when a
+  song's first sample is heard, `Ended(chained)` when its last one is (chained: the next song follows gaplessly) and
+  `Failed`; on `Started` of a chained song the UI advances the queue with `next(auto=True)`.
+- Volume: gain = volume² (volume 0…1 from the slider), 0 when muted; applied in the output callback, after the EQ.
+  The Playback info shows it as dB (20·log10(gain)).
+- EQ: when `enabled` and the active stages are not all identity, the stages of `eq.stages(state, out_rate)` run on
+  the float samples before the volume, with the pre-amp `eq.preamp_db()` (0 when prevent clipping is off). Rust runs
+  them in the audio callback (`EqProcessor`); Python lets FFmpeg run them (`eq.ffmpeg_filter()`).
+- Position: the frames played since the song started (not decoded), so the seek bar and the lyrics follow what is
+  heard. Seeking restarts FFmpeg at the new position and drops the buffer.
+- Errors (no output device, unreadable file) show in the LCD's second line for that song, and playback moves to the
+  next song after 2 s, except when every song failed.
+- On quit the player state saves the song and position (`last_path`, `last_position`); on start the LCD shows that
+  song paused at that position (it does not start playing by itself), with its album as the list it plays from.
+
+## Lyrics while scanning
+
+When `lyrics_while_scanning` is on, the Quality check scan (and "Check the library for fake files") passes every
+analysed file to one lyrics worker (one `LrclibClient`, sequential requests, as LRCLIB asks), which follows the
+Lyrics settings (`skip_reason()`, `lyrics_save_as`) and reports in the status line ("Lyrics: 12 saved, 3 not
+found": " · Lyrics: N saved, M not found" at the end of the scanner's status line; saved = the outcome saved
+anything, not found = NOT_FOUND). The scanner owns the worker (started on first use); Stop or a new scan stops it
+after the current song. Lyrics written into a file keep its saved scan result (`ResultStore.retag()`).
+
+## Fonts and theme
+
+- macOS: the system font (`/System/Library/Fonts/SFNS.ttf`, the variable SF Pro) at weight 700 for headings ("SF Pro
+  Display Bold") and 400 for text; Windows and Linux: the bundled Inter (`realhires/assets/fonts/InterVariable.ttf`,
+  with `LICENSE-Inter.txt`), 700 and 400. Tk uses the family names ("SF Pro Display"/".AppleSystemUIFont" on macOS,
+  "Inter" after loading the bundled file where Tk can, else the platform's UI font) with the bold weight.
+- `font_family` set: that family for everything, bold for headings.
+- Colours (light / dark): background #FFFFFF / #1E1E1E, sidebar #F5F5F7 / #262628, text #1D1D1F / #F5F5F7, secondary
+  text #6E6E73 / #A1A1A6, separators #D2D2D7 / #3A3A3C, accent #FA2D48 (both), the LCD panel #F2F2F4 / #2C2C2E.
+  `theme` "Match the system" follows the system's dark mode where it can be read (egui does; Tk reads the macOS and
+  Windows setting and otherwise uses light).
+
+## Quality check page
+
+The 1.x app unchanged (sources, list, dashboard, summary, Fix, lyrics, find bar, card views, export), shown in the
+content area with the sidebar beside it, so every existing test keeps working. Its scan also feeds the lyrics worker
+when `lyrics_while_scanning` is on.
+
+## Additions (asked for on 2026-11-24, after the first version of this spec)
+
+The user asked for a Library landing page with fourteen entries, playlists, dislikes, a play history with "Your
+Stats", named equalizer presets that can be imported and exported, and custom themes; and that Settings → "Scan
+library" opens the quality checker as it is. The core of all of it exists in both versions, checked against each
+other (`tests/test_player_library.py`, `rust/crates/core/tests/player_additions.rs`): `musiclib` (composer tag,
+`album_artists()`, `years()`, `composers()`, `folder_view()`, `album_sorted()`, the play history `add_play()`,
+`plays()`, `recently_played()`, `clear_history()`), `stats` (`compute()`, `cards()`, `period_range()`,
+`library_stats()`, `PERIODS`), `playerstate` (`disliked`, `set_disliked()`, playlists, `eq_presets`), `playqueue`
+(`disliked`: left out of shuffled orders), `eq` (`export_json()`, `export_apo()`, `import_eq()`), `themes`
+(`BUILTIN`, `load_custom()`, `save_custom()`, `resolve()`, `check_name()`, `copy_name()`, `export_theme()`,
+`import_theme()`), and the `theme` setting, which is now free text holding a theme name.
+
+### The Library page (the start page)
+
+The app opens on **Library**: the title "Library", then the fourteen entries as a grid of tiles (icon, name, and a
+count in grey: songs, folders, albums...), in this order: **All Songs**, **Folders**, **Albums**, **Artists**,
+**Album Artists**, **Genres**, **Years**, **Composers**, **Playlists**, **Liked Songs**, **Disliked Songs**,
+**Recently Played**, **Recently Added**, **Your Stats**. Under the tiles: a row of the most recently added albums
+(cards) and, when there are plays this year, a small "Your Stats" banner with the minutes listened this year.
+
+The sidebar lists the same: **Library** (the landing page) at the top, then the section "Library" with All Songs,
+Folders, Albums, Artists, Album Artists, Genres, Years and Composers; the section "Playlists" with Liked Songs,
+Disliked Songs and every playlist by name (and "New Playlist…"); the section "History" with Recently Played,
+Recently Added and Your Stats; Settings at the bottom. The pages of the first version keep their behaviour ("Songs"
+is now called All Songs).
+
+- **Folders**: the library folders as the roots; a folder page shows its subfolders (folder icon, name, song count;
+  a click opens it) above its songs (a song table in album order), with a breadcrumb ("Music › Jazz › 1999") whose
+  parts are clickable; Play and Shuffle play the songs in the folder and below it.
+- **Artists** (the track's artist), **Album Artists**, **Genres**, **Years** (newest first, "Unknown Year" last)
+  and **Composers**: the names on the left with their counts, the songs or albums of the chosen one on the right
+  (Artists and Album Artists show album cards; Genres, Years and Composers show song tables), each with Play and
+  Shuffle.
+- **Playlists**: a page with the playlists as cards (a 2×2 mosaic of the first four songs' covers, the name and the
+  number of songs) and "New Playlist…". A playlist page: the mosaic, the name (Rename…, Delete… with a
+  confirmation), "N songs, M minutes", Play, Shuffle, and the song table in the playlist's order, where the context
+  menu adds "Remove from this playlist", "Move up" and "Move down". Every song's context menu (and the playback
+  bar's "…" menu for the song playing) has "Add to playlist ▸" with the playlists and "New Playlist…". Playlist
+  songs whose files are gone are shown in grey as "Not in the library" and skipped when played.
+- **Disliked Songs**: the songs marked with the dislike button (a thumbs-down drawn as a vector icon, next to the
+  heart in the playback bar and in the song's context menu: "Dislike" / "Remove dislike"). Liking a song removes
+  its dislike and the other way round. Disliked songs are left out when shuffling (`PlayQueue.disliked`), unless
+  you choose one yourself.
+- **Recently Played**: the last 200 different songs played (`Library.recently_played()`), newest first, as a song
+  table with a "Played" column ("Today 14:05", "Yesterday", or the date), and "Clear history…" (confirmation).
+- **Recently Added**: as before.
+- **Your Stats**: a period menu (`stats.PERIODS`, "This year" by default) and the summary as large coloured cards
+  (`stats.cards()`: label small, big text bold, detail grey; each card in its own accent colour, like a yearly music
+  review), then **Details**. The details show: the totals (minutes, plays, songs, artists, albums, genres, days with
+  music, longest streak), bar charts of listening by hour of the day (24 bars), by weekday and by month, the top 50
+  songs, artists, albums and genres as numbered lists with plays and minutes, and what the library holds
+  (`stats.library_stats()`: songs, albums, artists, total length and size, formats, Hi-Res Lossless / Lossless /
+  Lossy, sample rates and bit depths). Without plays in the period: "No listening yet in this period. Play some
+  music and come back."
+
+### Play history
+
+A song is logged (`Library.add_play(track, started, seconds)`) when it stops being the current song (it ended, the
+user skipped or stopped, chose another, or quit), with the seconds actually heard: the sum of the position's forward
+steps between UI updates while playing, so seeking does not count; songs heard for less than a second are not
+logged. `started` is the wall-clock time when it began. Settings → Library has "Clear the play history…".
+
+### Equalizer presets
+
+The preset menu of the equalizer lists the built-in presets, then "My presets" (`PlayerState.eq_presets`), and
+"Custom" when the gains match none. A user preset holds the whole equalizer (graphic and parametric). Buttons:
+**Save as preset…** (asks for a name; `check_preset_name()` errors are shown under the field), **Rename…**,
+**Delete…**, **Import…** (a file dialog for .json and .txt: `eq.import_eq()`; the imported preset is applied and
+saved under its name, a taken name getting " 2"; the notes are shown) and **Export…** (save as .json, Real-Hi-Res's
+own format, or .txt, Equalizer APO / AutoEQ text: `export_json()` / `export_apo()`, by the extension chosen). The
+name of the matching user preset (`matching_eq_preset()`) is shown in the menu.
+
+### Themes
+
+Settings → Appearance → Theme is a menu of `themes.names()`: "Match the system", the built-in themes (Light, Dark,
+Midnight, Graphite, Forest, Ocean, Sepia, Rose) and the user's own. Under it the theme editor: **New theme…**
+(a copy of the chosen theme, named by `copy_name()`), and for the user's own themes **Rename…**, **Delete…**, a
+"Dark theme" switch and a colour button for each of the eight colours (`COLOR_KEYS`, labels from
+`COLOR_LABELS`/`color_label()`), which change the app at once; **Import…** and **Export…** (.json). Built-in themes
+cannot be edited; editing one offers to make a copy. The user's themes are saved in `themes.json`.
+
+### Theme files (asked for later on 2026-11-24: "import custom theme … via files")
+
+A theme is a file: **Export…** writes one (`export_theme()`, format `real-hi-res-theme`) and **Import…** reads one
+into the user's own themes. Besides that, the **themes folder** (`themes.folder()`: "themes" next to
+`themes.json`) holds theme files that are used as they are: every `.json` file in it that is a theme appears in the
+theme menu after the user's own themes (`themes.load_folder()`, in file-name order; a taken name gets " 2", " 3"…;
+other files are ignored). Under the theme menu a line says "Theme files (.json) put into the themes folder appear
+in this menu." with **Open themes folder** (creates the folder when needed and opens it in the file manager) and
+**Import theme…**. The folder is read again whenever the menu can change: Python each time the menu opens (the
+combobox's `postcommand`) and the Settings page is built, Rust when the Settings page is shown and then every two
+seconds while it is. A theme from the folder is not edited in the app: the editor says "“Neon” comes from the file
+neon.json in the themes folder. Change that file, or make a copy you can change here with New theme…", and offers
+New theme… and Export…. The editor's row no longer has Import…: importing is the Import theme… button of that
+line. If its file goes away, the theme falls back to "Match the system" (`resolve()`).
+The Rust app also imports a theme `.json` dropped onto its window (into the user's own themes, selected at once,
+as Import… does); Tk has no drag and drop, so the Python app has only the folder and Import….
+
+### Song information (asked for later on 2026-11-24: "edit meta data ie album author, author release date")
+
+**Edit info…** in every song's menu (right-click in a song table, and the playback bar's **…** for the song
+playing) and **Edit album info…** on an album page (all of its songs) open the **Edit Info** window, one at a time
+(titled "Edit Info"; at its top the song's title with "artist · album" under it, or the album's title with "artist ·
+12 songs"; the cursor starts in Title for one song and in Album for an album, and Enter saves).
+Its fields are `tagedit.FIELDS` with `tagedit.LABELS`: Title, Artist, Album, Album artist, Genre, Release date,
+Track, Disc, Composer; Release date, Track and Disc have the grey hints of `tagedit.HINTS`. The window first reads
+the songs' tags with ffprobe in a background thread ("Reading the information of 12 songs…", fields disabled),
+then fills each field with `common_values()`: the songs' value, or, where they differ, an empty field with the
+grey note "Several values: kept unless you type here". A field counts as changed when its `clean_value()` differs
+from that of what it started with (for a "several values" field: when anything was typed, so emptying such a field
+leaves it as it is). **Save** checks the changes
+(`check_changes()`, its message in red under the fields, the window stays open), closes the window when nothing
+changed, and otherwise saves in a background thread with `save_tags()` ("Saving 3 of 12…"): FLAC, MP3, Ogg Vorbis and
+Opus natively, other formats through FFmpeg's stream copy (used only when the copy decodes to the same samples), saved results moved with the new tags, the library index updated.
+Then the app refreshes the library (its pages and the LCD show the new values). When every song was saved without a
+note the window closes; otherwise it shows `save_summary()` (headline and sentences) with a Close button.
+**Cancel** (or Esc) closes it without saving; while saving it cannot be closed.
+
+### Settings → Library
+
+The buttons are: Update the library now; **Scan library** (opens the Quality check page, as in the first version,
+with the library folders as its sources, and starts the scan); Download lyrics for the whole library…; Open the
+quality checker; Clear the play history….
+
+### Details settled while building both apps
+
+- With one library folder, Folders opens it at once (the breadcrumb starts at that folder's name); the list of
+  library folders appears only with several.
+- The playlist mosaic shows the covers of up to four different albums of the playlist's songs; with fewer than four
+  albums it shows the first album's cover full size.
+- Your Stats → Details is a page of its own with a back link.
+- New theme… makes the copy at once, named by `copy_name()`, and selects it; Rename… asks for a name.
+- Choosing one of your own EQ presets keeps the equalizer on if it was on.
+- When nothing plays, Previous, Next, the heart, the dislike button and "…" are disabled; Shuffle, Repeat, the
+  volume, EQ, Lyrics and Up Next stay usable.
+- A song counts in the play history from one second of listening; the seconds are the forward steps of the position
+  while playing (the Python app ignores steps over 1.5 s, the Rust app over 2 s, between screen updates), so seeking
+  never counts.
+
+### Language (2.1, asked for on 2026-11-24: "add language settings … for now Japanese and English")
+
+Settings → Appearance → **Language** (`language`, first in the group; "English" or "日本語", each shown in its own
+language; default English). Every text the apps show is written in English in the code and passed through the
+translation core (`realhires/i18n.py`, `rust/crates/core/src/i18n.rs`): `tr()` / `tr!()` for the apps' own texts
+(with `{name}` placeholders filled after translating), `tr_name()` for library names (only the core's placeholders
+such as "Unknown Album" are translated, never a real name), and `tr_text()` for the finished texts of the shared core
+(verdict summaries, reasons and notes, Fix, lyrics, Edit Info and MusicBrainz messages, Your Stats cards, the time
+left, the Playback info labels), which are matched against the catalog's patterns (`{name}` any text, `{name:num}` a
+number; a text of "; "-joined parts or of several sentences is translated part by part, and the values a pattern
+takes are translated in turn). Settings show `tr(group)`, `tr(label)`, `tr_text(help)` and `tr(choice)` but store
+the English values, so `settings.json`, the saved results and `player.json` never depend on the language. The
+catalog is `realhires/assets/lang/ja.json`, joined from `i18n/ja/*.json` by `tests/i18n_keys.py --merge`; the Rust
+app includes the same file at build time. A text missing from the catalog is shown in English.
+
+- The Rust app changes language at once (egui draws every frame; the scanner's `apply_settings()` calls
+  `set_language()`). The Tk app sets the language once per start; when the chosen language differs from the one in
+  use, the Appearance section shows "The new language is used when the app starts again." and **Restart now**
+  (`PlayerApp.restart()`: saves everything as Quit does, then starts the app again with the same arguments); the
+  Quality check page's own Settings window shows the note only. This is an intended difference.
+- The command-line tools always write English.
+- Japanese glyphs: Tk uses the system's font fallback; the Rust app adds a system CJK font as a fallback to its
+  fonts (`look.rs`), so Japanese titles show in either language.
+
+### Song information from MusicBrainz (2.1, asked for on 2026-11-24: "auto add metadata to library (default is off) … add metadata via musicbrainz")
+
+The core is `realhires/musicbrainz.py` and `rust/crates/core/src/musicbrainz.rs` (checked against each other with
+`rust/crates/core/tests/python_musicbrainz.json`): `MusicBrainzClient` (one request at a time, at least one second
+apart across every client of the app that uses the real clock, the User-Agent "UniversalMusicPlayer/<version> (
+<project URL> )", 503/429 waited for with Retry-After or a back-off and retried up to 4 times), `search_releases()`,
+`search_recordings()`, `release()` (one lookup with the track list, artist credits, release group with its first
+release date and genres, and the works' composers), `match_tracks()`, `changes_for()`, `search_candidates()`,
+`find_album()`/`find_song()` (the automatic mode's certain matches) and `run_auto()` with the lookup log (table
+`musicbrainz` in `library.sqlite`).
+
+- **Get info from MusicBrainz…** in every song's menu (and so in the playback bar's "…") and **Get album info from
+  MusicBrainz…** on an album page (next to Edit album info…) open the **MusicBrainz** window, one at a time: the
+  heading as Edit Info's; a search row (Album or Title, Artist, Search; Enter searches) filled from the songs' tags
+  (`album_of()` for an album, the title and artist for one song; the folder name or file name when the tag is
+  empty), which searches at once; the status line ("Reading the information of 12 songs…", "Searching
+  MusicBrainz…", "Reading the release…", "4 of 4 songs found on this release.", "Nothing found on MusicBrainz…");
+  **Releases found**: one line per release ("Title — Artist  ·  date · country · formats · N tracks", plus the
+  status when it is not Official), the first chosen and read at once; **Changes**: per song "file → number. title"
+  (or "file: no matching track on this release, left as it is") and in grey "Field: old → new" ("(empty)" for an
+  empty tag) or "Nothing to change"; one checkbox per field (`tagedit.FIELDS`, all on) and **Only fill in empty
+  fields** (off), which redraw the changes; the error line (red); **Save** (only when something would change) and
+  **Cancel**/Esc; the credit `musicbrainz.CREDIT` in small grey text. Save writes each song's own changes with
+  `save_changes()` ("Saving 2 of 4…"), marks them `saved` in the lookup log and refreshes the library; it closes
+  when everything was saved without a note, else it shows `tagedit.save_summary()` with Close.
+- The date written is the release group's first release date (else the release's), the track "n/total", the disc
+  "n/total" only for releases of several discs, the genre the release group's (else the release's) genre with the
+  most votes in title case, the composer the works' composers (else their writers), joined with ", ".
+- **Add song information from MusicBrainz automatically** (`musicbrainz_auto`, Settings → Library, off by default)
+  and **MusicBrainz server** (`musicbrainz_server`). When it is on, every finished library update starts the
+  automatic lookup in a thread (one at a time): songs not in the lookup log (or changed since) whose index entry
+  misses one of artist, album, album artist, release date, track number or genre are read again with ffprobe,
+  grouped by folder and album tag, and looked up (`find_album()`: the same album and artist, room for every song,
+  every song found by number or title with the length within 3 s; at most 3 releases read per album;
+  `find_song()` for a song without album tag: same title and artist, length within 3 s, the most suitable release:
+  official, not a compilation or live album, album before EP before single, earliest). Only empty tags are filled.
+  The sidebar's status line shows "Getting song information from MusicBrainz: 3 of 20 albums" and then
+  `auto_summary()`; the library is refreshed when something was filled. **Look up the library on MusicBrainz now**
+  (Settings → Library) runs it at once, also when the switch is off, and always reports. Quitting stops it.
+- Help → About adds `musicbrainz.ABOUT_CREDIT`.
+
+## 2.2 (asked for on 2026-11-24, after 2.0.0 was released; built as PR #4 and released as 2.2.0 after
+2.1.0, which brought the language setting and MusicBrainz above. Every text 2.2 adds is translated as the
+Language section says.)
+
+The user asked: "Finding Fakes [the Quality check page] should have the same aesthetics as the player. Also remove
+the Files, Controls, View and Help tab … from the top, it looks ugly. Implement Bit perfect playback as an option."
+
+### No menu bars
+
+- Neither app shows a menu bar in its window any more: the player's File / Controls / View / Help and the Quality
+  check page's File / Edit / View / Help are gone (Tk: the player never calls `root.configure(menu=…)`, so macOS shows
+  only Tk's default application menu; egui: no "menu" panel). The standalone 1.x window (`gui.scanner_main()`, only
+  used for development) keeps its menu.
+- Everything they held stays reachable, and every keyboard shortcut stays as it was:
+  - Player: New Playlist… (sidebar), Add music folder / Update the library now / Scan library / Download lyrics for
+    the whole library… / Clear the play history… (Settings → Library), Settings (sidebar), Quit (closing the window,
+    Ctrl/Cmd+Q), playback controls (the playback bar and the keys), the pages (sidebar and the Library page), Now
+    Playing (Lyrics button, Ctrl/Cmd+L), Up Next (its button), Equalizer and Playback info (their buttons).
+  - The sidebar always shows **Quality Check** (the check-mark icon) just above Settings at the bottom, selected while
+    that page is shown.
+  - The Settings page shows a button "About Universal Music Player" under its group list (both apps), which opens the
+    About box.
+  - The Quality check page gets a **More** button (the player's "…" icon) at the right end of its toolbar. Its menu
+    holds, in this order with separators between the groups: Export listed files as CSV… / as JSON…; Fix selected
+    files to real resolution… / Fix all fake files to real resolution…; Download synced lyrics for selected songs… /
+    for all songs…; Re-scan selected files / Re-scan files checked by older rules; Select all listed files / Copy path
+    / Open file location / Open file / Find…; Scan summary… / Show problem files only / Show all files; Delete all
+    saved results…. (Add Folder…, Add Files…, the view switch and Settings are buttons on the page.) The right-click
+    menu of the list is unchanged.
+
+### Quality check page: the player's look
+
+The page keeps every function, widget name and shortcut (the tests drive them), but is drawn like the other pages,
+in the theme's colours (light, dark and custom themes) and the app's fonts:
+
+- A page title "Quality Check" in the page-title font (as "Library"), with the status line under it in secondary
+  text (what the status bar said: files, problems, scanning progress and time left, saved results). The old status
+  bar at the bottom goes.
+- Buttons in the player's style: flat, rounded, the surface colour (the LCD panel colour) with text colour, hover
+  slightly darker; the primary action **Scan** filled with the accent colour and white text (Stop takes its place
+  while a scan runs). Toolbar: Add Folder…, Add Files…, Clear, the "Quick scan (first 90 s)" switch; on the right
+  Scan/Stop, Settings…, More.
+- Sources to scan: a rounded panel in the surface colour, rows like a song table, Remove as a small button.
+- The view switch (Files / By album / By artist) and the dashboard's Spectrogram / Average spectrum / Lyrics switch
+  are segmented controls, drawn like the Equalizer window's Graphic / Parametric tabs.
+- The verdict filters are pill-shaped toggles ("chips") with a dot in the verdict's colour and the count
+  ("Fake lossless 3"); a chip that is on is filled with the surface colour and drawn in the text colour, one that is off
+  is outlined and grey. The search field is drawn like the sidebar's Search box.
+- The file list looks like the player's song tables: no borders or grid lines, the same row height and fonts, column
+  headings in bold secondary text, hover and selection in the theme's colours; the verdict and "Why" text keep the
+  verdict colours. The By album / By artist cards look like the player's album cards (rounded cover, title bold,
+  subtitle grey) with the fake/suspicious ring on the cover's corner.
+- Dashboard: a rounded panel; the verdict badge as a rounded pill in the verdict colour; the file name bold; the facts
+  in two columns (labels secondary, values text colour); the action buttons in the player's style; Details in the
+  body font. The plots keep their dark plot area inside a rounded frame.
+- The windows opened from the page (Settings, Fix, Fix finished, Download synced lyrics, Scan summary, the find bar)
+  use the theme's colours and fonts too.
+
+### Bit-perfect playback
+
+New setting `bit_perfect` (Playback group, "Bit-perfect playback", default off; not a Detection setting): "Send each
+song's samples to the sound device exactly as they are in the file: at the song's own sample rate, without the
+equalizer, the volume control or resampling, and with the device to this app alone where the system allows it
+(exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the device is switched to the song's rate).
+Set the volume on your amplifier or DAC. While a song plays this way, other programs may not be heard." Turning it
+on or off applies from the next song (and at once to the song playing, which restarts at its position).
+
+While it is on:
+
+- **Signal path.** FFmpeg decodes with no `-ar` and no filters (`-af` only for a mono song: `pan=stereo|c0=c0|c1=c0`,
+  a pure copy). Integer samples of up to 24 bits become 32-bit floats exactly, so the samples that reach the output
+  are the file's own. The equalizer is bypassed (its settings are kept; the Equalizer window shows the note
+  "Bypassed while bit-perfect playback is on."), and the gain is exactly 1: the volume slider is disabled and shows
+  full volume, the saved volume is kept and used again when the setting is turned off. Mute still silences.
+- **Output format.** The device is opened at the song's sample rate, stereo, in the first format it supports from:
+  16-bit songs I16, I32, F32; 24-bit songs I32, F32; 32-bit integer songs I32, F32; float and lossy songs F32, I32,
+  I16. Floats become integers as round(x · 2^(bits−1)), clamped, which gives back the file's integers.
+- **Device access.** Windows: WASAPI exclusive mode (Python: miniaudio's `shareMode` exclusive; Rust: a small WASAPI
+  exclusive output beside cpal). macOS: the device's nominal sample rate is set to the song's (cpal does this; the
+  Python output does it through CoreAudio). Linux: the ALSA hardware device (`hw:` of the chosen output device's card,
+  or of card 0) is opened directly. When this fails (another program or the sound server holds the device, or it
+  cannot play that rate or format) the song plays through the normal path instead, and Playback info says why.
+- **Gapless** joins only songs of the same sample rate and output format; otherwise the device is reopened.
+- **Playback info**, section Output, gains a line "Bit-perfect": "Off" (setting off); "Yes: 24-bit, 96 kHz,
+  exclusive mode (WASAPI)" / "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:0" / "Yes: 24-bit, 96 kHz, the device
+  runs at 96 kHz (CoreAudio)"; or "No: " and every reason that applies, as full sentences:
+  "The device cannot play 192 kHz, so the song is resampled to 96 kHz.", "The device is in use by another program,
+  so the sound is mixed by the system.", "The device has no 24-bit format, so the samples are converted.",
+  "This 6-channel song is mixed down to stereo.", "The 32-bit samples are played with 24-bit precision.",
+  "The song is decoded from a lossy format, so it is played as decoded." (the last one does not make it "No": lossy
+  songs say "Yes (decoded lossy audio): …"). The Output line names the format the device really gets ("96 kHz,
+  24-bit integer in 32-bit, stereo").
+- The decisions and texts come from one core module in both versions (`realhires/bitperfect.py`,
+  `rust/crates/core/src/bitperfect.rs`), checked against Python's answers with parity vectors, so both apps say the
+  same thing. The tests check bit-exact output through the manual output: 16-bit, 24-bit and mono FLACs come out of
+  the engine as exactly the integers FFmpeg decodes, also with the volume at 50 % and the equalizer on.
+
+### Now Playing and lyrics (asked for later on 2026-11-24)
+
+- "When user is in full screen and unclicks lyric button, the album cover should be in the centered and the user
+  shouldn't be put back in All songs": on Now Playing the **Lyrics button** (and Ctrl/Cmd+L) hides the lyrics
+  column and the page stays, showing the cover in the middle with the title and the artist under it (no "Get
+  lyrics" button, since the song has lyrics); pressed again it shows the lyrics. On any other page it opens Now
+  Playing with the lyrics shown. The button is drawn "on" only while the lyrics are shown. The hidden state lasts
+  for the session (`lyrics_hidden`). A click on the **LCD's cover** opens Now Playing, or goes back to the page
+  before when Now Playing is shown. (The Rust app gained Ctrl/Cmd+L, which it lacked.)
+- "LRCGET lyrics aren't synced": the Rust app showed the user's lyrics as plain text. The order in which a song's
+  lyrics are found (`lyrics.read_lyrics_file()`, both versions) is now: the .lrc next to the song; the lyrics
+  inside the file when they are synced; the .txt next to the song; the plain lyrics inside the file. Before, a
+  plain .txt beat synced lyrics inside the file, which is what LRCGET's "plain text" and "embed" exports together
+  leave behind. LRC kept in a .txt or in the plain-lyrics tag (USLT, UNSYNCEDLYRICS), recognised by
+  `embed.looks_synced()` (at least half of the non-empty lines start with a timestamp), counts as synced.
+
+### Album covers are kept (asked for later on 2026-11-24)
+
+"When user scrolls down album or artist, it loads as it goes. Should be cached so it doesn't load in every time
+user goes down their library." Covers were made by FFmpeg from the songs whenever a card first came into view,
+after every start (and the Python app forgot all but 600 images). Now, in both versions:
+
+- **On disk**, shared by both versions: `covers/` in the data folder (`store.data_dir()`; `$REALHIRES_COVERS`
+  overrides it, and the tests point it at a temporary folder), one PNG per album and size. The name is the SHA-1
+  of a key made from the size, the album's track paths as given to `covers.cover_png()` (the first four), each
+  one's file size and `mtime_ns`, and the `mtime_ns` of their folders, so a changed song or a new folder image
+  gives a new entry; an album without a cover is remembered as an empty file. Both versions compute the same name
+  (`covers.cache_name()` / `covers::cache_name()`, checked by a parity vector). Files are written through a temp
+  file and `os.replace`; a damaged or unreadable file is made again. The folder is kept under 500 MB: when it grows
+  past that, the least recently used files (their modification time is touched when read) are deleted.
+- **In memory**, a cover once shown stays for the session (Python: no eviction of the grid size, a generous limit
+  for the large sizes; Rust: textures are kept, and the library refresh no longer drops them unless the songs
+  changed).
+- **Made ahead**: once the library index is ready, one background worker makes the grid-size covers of every album
+  that has none on disk yet, after the covers asked for on screen (those always go first), so the next scroll finds
+  them ready; it stops when the app quits.
+- The sizes are the same in both apps where they can be, so the disk entries are shared.
+
+### Ten more requests (later on 2026-11-24)
+
+The user's words, then what both apps do:
+
+1. "Equaliser's my preset delete button doesn't work": find out why in both apps and fix it. Deleting one of the
+   user's own presets (after the confirmation) removes it from `player.json` (`PlayerState.delete_eq_preset()`), from
+   the preset menu, and leaves the current EQ settings as they are (the menu then shows "Custom" when they match no
+   preset). A test presses the button's handler and checks all three.
+2. "Quality tab should display bit/kHz instead of the current display": the **Quality column** of every song table
+   shows `musiclib.resolution()` ("24-bit/96 kHz", "16-bit/44.1 kHz", "32-bit float/192 kHz"); lossy songs show
+   the codec, bit rate and rate ("MP3 · 320 kbps · 44.1 kHz"). Sorting by it sorts by bits, then rate. (The LCD badge
+   keeps "Hi-Res Lossless" / "Lossless".)
+3. "When user scrolls down library, it lags a little": scrolling the song tables, album grids and the new grids of
+   item 10 must stay smooth on a library of 5,000 songs and 500 albums: nothing expensive per frame or per scroll
+   step (no FFmpeg, no file access, no re-sorting, no per-pixel image work on the UI thread; draw only the visible
+   rows/cards). Measure before and after (Tk: time a scroll step's redraw; egui: frame time) and say what changed.
+   (Cover loading itself is handled by "Album covers are kept".)
+4. "Allow user to merge genre folders, rename them etc": on the Genres page a genre's menu (right-click, and "…" on
+   its page) has **Rename genre…** (a name dialog; every song of that genre gets the new name through
+   `tagedit.save_tags()`, so the audio is untouched and the saved results and the library follow) and **Merge
+   into…** (choose another genre from a list, or type a name; the songs of this genre get that genre). The Genres
+   page also lets several genres be selected (Ctrl/Cmd-click) and merged at once ("Merge N genres…", asking for the
+   resulting name, defaulting to the genre with the most songs). A confirmation says how many files will be
+   changed; the outcome is reported as with Edit Info (`save_summary()`); files that cannot be changed are listed.
+   Composers and Years get Rename… the same way (Years: the date's year is replaced, the rest of the date kept).
+5. "The lyrics should display whether lyrics are synced or just a text": Now Playing shows a small label above the
+   lyrics: "Synced lyrics" or "Lyrics (not synced)", plus where they come from in secondary text (".lrc file",
+   "inside the file", ".txt file").
+6. "When user scrolls while lyrics are synced, a button should appear so they can go back to where the lyrics are
+   synced": while the user has scrolled synced lyrics away from the current line (the 3-second pause of the
+   automatic scrolling), a pill button "Back to the current line" floats at the bottom of the lyrics column; a click
+   scrolls back at once and resumes following. The button stays until clicked or the user scrolls the current line
+   back into view; the automatic scrolling stays paused while it is shown (no 3-second timeout any more).
+7. "Allow user to increase or decrease lyric font size and the jacket, album artist name on the left should be in
+   the middle as a set": two small buttons "A−" / "A+" by the lyrics label change the lyrics' size in steps (16 to
+   48 px, default 26 (Rust 24 → 26 as well)), saved in `player.json` as `lyrics_size` (PlayerState in both versions,
+   with the parity vectors); and the cover with the title and "Artist — Album" under it form one block centred
+   vertically (and horizontally) in the left half, as the centred layout without lyrics already is.
+8. "When user clicks the jacket/album name or the artist name, it should bring them to the album or artist": on Now
+   Playing the cover and the album name open the album page, the artist name opens the artist page (pointer cursor
+   and underline on hover). The same in the playback bar's LCD: the title/album line opens the album, the artist
+   opens the artist (the LCD's cover keeps opening/leaving Now Playing).
+9. "Get lyrics button doesn't work": find out why in both apps and fix it (the Now Playing "Get lyrics" button and
+   the song menus' Get lyrics): it must open the lyrics window for that song and start the download at once, and
+   when lyrics are saved, Now Playing shows them without leaving the page. A test presses it against `FakeLrclib`.
+10. "The artist, composer, year, genre etc tab should display like album, not series of artist names": Artists,
+    Album Artists, Composers, Years and Genres are card grids like Albums: each card a square picture (an artist,
+    album artist or composer: a mosaic of up to four of their album covers, or the one cover when there is one; a
+    genre or year: the same mosaic of its albums) with the name in bold and "N albums · M songs" in grey under it,
+    sorted as the list was. A click opens the same page as before. Unknown names keep their "Unknown …" label.
+
+### Play Next and Add to Queue (asked for later on 2026-11-24)
+
+"When user right clicks on song, user should have the option to add to queue or play next." Every song menu
+(right-click, and "…") starts with **Play Next** and **Add to Queue**. The play queue (`playqueue.PlayQueue`, both
+versions, parity vectors `user_runs` in `python_queue.json`) keeps the songs the user queued in `queued`: Play Next
+puts the song before the songs queued earlier, Add to Queue after them. When the current song ends (or Next is
+pressed), the first queued song plays before the list goes on, whatever the shuffle and repeat modes; repeat album
+treats a queued song as an interruption (`inserted`: after it the album being repeated goes on). After Previous,
+Next first walks back up through the songs already played (`top`). Up Next lists those songs, then the queued ones,
+then the rest of the list; a double-click there (`jump()`) plays that song, dropping the queued songs listed before
+it (or all of them when the chosen song comes from the list). With nothing playing, both items start playing the
+song. The queue lasts for the session. The gapless look-ahead asks a copy of the queue in both apps, so the queued
+song follows without a gap.
+
+### Eight more requests (later on 2026-11-24)
+
+1. "Near the lyrics, user should be able to choose lyrics or queue for the songs that'll be playing or
+   description": on Now Playing, the right half has a segmented switch at its top: **Lyrics** | **Up Next** |
+   **Details**. Lyrics is what was there (with the label, size buttons and Back button of the earlier requests);
+   Up Next is the queue as in the Up Next panel (`up_next()`, Play Next / Add to Queue songs first, double-click
+   jumps); Details is the song's description: title, artist, album, album artist, composer, genre, year, track and
+   disc, duration, the format line ("FLAC · 24-bit/96 kHz · 2,304 kbps"), the file's path, the comment tag when
+   there is one, and the Quality check verdict with its summary when the results store has one. The choice is kept
+   for the session; the Lyrics button and Ctrl/Cmd+L select Lyrics (and hide/show it as before when it is selected).
+2. "Add calendar on top of the current stats page, user can click on date to see what songs they played at what
+   time": Your Stats starts with a month calendar (‹ month ›, Monday first, days with plays tinted by minutes
+   played, today outlined); a click on a day lists that day's plays under the calendar: time (local, "14:05"),
+   title, artist, minutes listened, newest first; a click on a song plays it. Uses `Library.plays(since, until)`
+   with the day's local midnight bounds (`stats` gets a pure helper for the month's per-day minutes, with parity
+   vectors).
+3. "When user clicks on album, there's a list of songs but unlike the list on All Songs, it doesn't display artist,
+   album, genre and quality but only time": the album page's track list uses the same columns as All Songs (number
+   first, then Title, Artist, Album, Genre, Time, Quality, the heart), sortable the same way, in track order by
+   default.
+4. "Make it so default display for Quality is Lossless etc. but when user hovers over it, it displays the bit/Hz":
+   this replaces item 2 of "Ten more requests": the Quality column shows `musiclib.quality()` ("Hi-Res Lossless",
+   "Lossless", "MP3 320 kbps") and hovering a cell shows `musiclib.resolution()` as a tooltip ("24-bit/96 kHz",
+   lossy songs "MP3 · 320 kbps · 44.1 kHz"). Sorting by the column sorts by bits, then rate.
+5. "Mouse 4 and 5 should be usable": the mouse's back and forward buttons go back and forward between pages, like a
+   browser. Both apps keep a forward list (cleared when a new page is opened); Alt+Left / Alt+Right (Cmd+[ / Cmd+]
+   on macOS) do the same. Tk: X11 buttons 8/9, Windows and macOS buttons 4/5 (not the wheel); egui:
+   `PointerButton::Extra1`/`Extra2`.
+6. "User should be able to make edit window big or small": the song information window can be resized; the fields
+   grow with its width, and its size is kept for the session.
+7. "Instead of edit info, should be labeled as properties": the menu items read **Properties…** (a song) and
+   **Album Properties…** (an album page), and the window's title is "Properties". (Names in the code may stay.)
+8. A new app icon from the user's picture of a maki roll: the roll cut out of its (painted) checkerboard background
+   onto transparency, centred with a small margin, as `realhires/assets/icon.png` (which every package, window and
+   menu entry uses); `packaging/make_icon.py` makes it from `packaging/icon-source.png`.
+
+### Several artists in one field (asked for later on 2026-11-24)
+
+"When there are several artists, as an example 'Mariah Carey, Michael Bublé', and they click 'Michael Bublé', it
+should send the user to their library's Michael Bublé page." `musiclib.split_artists(name, known)` (both versions,
+vectors `python_artists.json`) gives the artists of an artist field: it always splits at ';' (how FFmpeg joins
+several ARTIST tags) and at "feat." / "ft." / "featuring" (also in brackets), and splits at ", ", " & ", " x " and
+" / " only when one of the names it gives stands on its own somewhere in the library (`known_artists()`: the
+artist and album artist fields of every song, split at the first kind only), so "Earth, Wind & Fire" and "Simon &
+Garfunkel" stay whole. Artists and Album Artists list every artist of the field on its own, and a song is on the
+page of each of its artists. Wherever an artist is shown as a link (the album page's artist line, Now Playing, the
+LCD, the Details view), each artist of the field is its own link, with the separators between them as plain text,
+and a click opens that artist's page (`open_artist(name)`; a name that is not an artist of the library opens the
+first artist it splits into).
+
+### Choosing the columns of song lists (asked for later on 2026-11-24)
+
+"Allow user to select what they tab for all songs, folders and album. Currently shows title, artist, album, genre,
+time, quality on the top." A right-click on a song table's column headings (and on its empty area right of the
+last heading) opens a menu of check items, one per column; ticking one shows that column, unticking hides it.
+Title cannot be hidden. "Reset columns" returns to the default. The choice is kept per kind of list, in
+`player.json` as `columns` (PlayerState, both versions, parity vectors): `"songs"` (All Songs, and every other list
+of songs: genre, year, composer and artist pages, playlists, Liked, Disliked, search), `"folders"` (Folders) and
+`"album"` (album pages); Recently Played keeps its own fixed columns. The columns, in this order: # (track number),
+Title, Artist, Album, Album Artist, Composer, Genre, Year, Disc, Time, Quality (with the resolution tooltip),
+Format (codec, e.g. "FLAC"), Bit rate ("1,411 kbps"), Date added (the file's date), File (its name), and the heart.
+Defaults: songs and folders: Title, Artist, Album, Genre, Time, Quality, heart; album: #, Title, Artist, Album,
+Genre, Time, Quality, heart. Any shown column can sort the list, as before. An unknown column name in the file is
+ignored; an empty list falls back to the default.
+
+### Inspecting and changing a cover (asked for later on 2026-11-24)
+
+"When user is playing a song and entered fullscreen then clicks on jacket, allow user to inspect, change jacket
+photo etc." On Now Playing, a click on the cover opens the **Cover** window (this replaces "the cover opens the
+album" of the earlier request; the album name still opens the album, and the LCD's cover still opens/leaves Now
+Playing). The window shows the cover as large as fits (resizable window), with under it: its size in pixels, its
+format and where it comes from ("Inside 01 Song.flac", "cover.jpg in the album's folder"); and the buttons:
+
+- **Change cover…**: choose a JPEG or PNG image; a choice "All N songs of this album" (default) or "This song only",
+  and a check "Also save it as cover.jpg in the album's folder" (off by default; a PNG is saved as cover.png).
+  The picture is embedded as the front cover: FLAC natively (a PICTURE metadata block, type 3, replacing earlier
+  front covers), MP3 natively (an APIC frame, type 3, replacing earlier ones), Ogg Vorbis/Opus natively
+  (METADATA_BLOCK_PICTURE), and other formats FFmpeg can write through a stream copy with the picture as an
+  attached_pic stream, kept only when the audio decodes to the same samples (`pcm_digest()`), as Edit Info does;
+  formats that cannot hold a picture (WAV, AIFF without ID3, APE, DSF…) are listed as not changed (and only the
+  folder file helps them). Only the tag changes; the saved scan results follow (`ResultStore.retag()`), the
+  library re-reads the songs and the cover caches show the new picture at once. A summary says what was changed.
+- **Save image as…**: writes the picture as it is stored (JPEG or PNG) to a chosen file.
+- **Remove cover**: after a confirmation, removes the embedded front cover from the album's songs (the same choice
+  as above); a folder image is not deleted.
+- **Show album**, and **Close** (Esc).
+
+The core lives with the tag editor: `tagedit.set_cover(paths, image_bytes, mime, cfg)` / `remove_cover(...)`, and
+`covers.cover_source(paths)` (where the shown cover comes from), in both versions, with the native FLAC/MP3/Ogg
+results byte-identical between them (parity vectors) and tests on real files.
+
+### Acquire Metadata (asked for later on 2026-11-24, after 2.1.0 was released)
+
+The user asked: "User should be able to right click songs/album and press aquire meta deta to add metadata for
+song/album via musisbrainz".
+
+- The MusicBrainz items of 2.1 are named **Acquire Metadata…** (Japanese: メタデータを取得…) in both apps: in every
+  song's right-click menu (and the playback bar's "…"), where "Get info from MusicBrainz…" was, and on the album page,
+  where "Get album info from MusicBrainz…" was. They open the same MusicBrainz window as before, one at a time.
+- A song's Acquire Metadata… looks up that song (song lists select one song at a time in both apps).
+- Every album cover card (Albums, Recently Added, an artist's albums, search results) has a right-click menu:
+  **Play**, **Shuffle**, **Play Next**, **Add to Queue**, then **Acquire Metadata…** (the MusicBrainz window for the
+  whole album, as from the album page) and **Album Properties…** (the Properties window for all its songs).
+
+## 2.3 (asked for on 2026-11-25, after 2.2.0 was released)
+
+Fifteen requests, all in both apps, with every new text translated into Japanese as the Language section says, and
+the shared maths and data checked against Python's answers with parity vectors, as before. Where a request names a
+place ("full screen") it means Now Playing, the page with the cover on the left.
+
+### Up Next can be edited
+
+"Allow user to drag to change order or right click and select to remove from queue." Up Next is three parts (see
+"Play Next and Add to Queue"): the songs stepped back over with Previous (`order[pos+1..=top]`), the queued songs
+(`queued`), then the rest of the order (`order[top+1..]`). `PlayQueue` (both versions) gains:
+
+- `remove_upcoming(index)` (an index into `up_next()`; returns the path, or None when out of range): a stepped-back
+  song is removed from `order` (and `top` moves down by one), a queued song from `queued`, a song of the rest from
+  `order`. A removed song that came from the list (stepped-back or rest) goes into `removed`, unless it is the song
+  playing: `_upcoming()` and `_restart_album()` leave `removed` songs out, so a removed song stays out when the order
+  is built again (another shuffle mode, repeat album) until a new list is played (`start()` empties `removed`).
+- `move_upcoming(src, dst)` (indices into `up_next()`, `dst` counted after the move; False when either is out of
+  range or they are equal): the song is taken out of its part (without going into `removed`) and put at `dst`, into
+  the part of the song it is now placed before (at the very end: the rest of the order). So a song dragged to the top,
+  before queued songs, becomes queued; a queued song dragged among the list's songs becomes part of the order.
+  `inserted` positions are kept pointing at the same songs whenever `order` changes.
+- Parity vectors `edit_runs` in `python_queue.json` (moves and removals within and across the three parts, then
+  next/previous/shuffle/repeat album).
+
+In the Up Next panel and in Now Playing's Up Next view: a row can be dragged to another place (a press becomes a drag
+after 5 px; a line in the accent colour with a small circle at its left end shows the gap it will drop into; the
+list scrolls when the pointer is near its top or bottom edge; only the primary button drags), and a right-click
+opens a menu with one item, **Remove from Up Next**. After either, the song that follows gaplessly is set again.
+
+### 1. Change Cover… in the menus, and Search Cover Online
+
+"Change cover tab should be displayed when user right clicks then selects to change jacket. Next to change cover,
+there should be option to search cover; it should redirect user to browser that searches image of [artist name]
+[album name]." Every song menu (right-click, and "…"), every album card's menu and the album page's menu get
+**Change Cover…**, which opens the Cover window for that song's album (the window of "Inspecting and changing a
+cover", with Change cover… as before). In the Cover window, right after **Change cover…**, a button **Search Cover
+Online** opens the system's browser at Google Images, `https://www.google.com/search?tbm=isch&q=` + the URL-encoded
+query `<album artist (else artist)> <album>` (a song without an album: `<artist> <title>`; parts that are unknown are
+left out). The query is built by one core function in both versions (`covers.cover_search_url()`), with vectors.
+
+### 2. The Library page as a list
+
+"User should have the option to have All Songs, Folders etc. to be in a list." New setting `library_layout`
+(Appearance group, label "Library page", choices "Tiles" (default) and "List"; not a Detection setting). List shows
+the Library page's entries (the fourteen, then the custom tabs of item 6) as rows 44 px high, the width of the page:
+the entry's icon in the accent colour, its name in bold and its count in secondary text on the right, a line between
+rows, hover in the theme's hover colour; a click opens the entry as a tile click does. The Library page's title row
+gets two small icon buttons on its right (tiles, list) that switch the same setting (the one in use is drawn on).
+
+### 3. Choosing genres to merge
+
+"User should be able to merge the genre folders/lists then rename them." The Genres page's title row gets a pill
+button **Select**. In select mode a click on a card toggles it (a filled check mark in the accent colour in the
+cover's top-right corner, a ring in the accent colour around the cover) instead of opening it, and the title row
+shows "N selected", **Merge…** (enabled from two genres), **Rename…** (exactly one) and **Done** (leaves select mode
+and clears the selection). Merge… asks for the merged genre's name in one dialog (a combobox listing the selected
+genres, prefilled with the one with the most songs, and free to type a new name), then confirms how many files will
+change, as Merge N genres… did. Ctrl-click (Cmd-click on macOS, where Ctrl-click is a right-click) still selects
+without select mode, and the page's hint names the right key for the system.
+
+### 4. Instrumental songs: the cover in the centre
+
+"If song is instrumental, jacket should be automatically centered." When the song's lyrics are marked instrumental
+(`[au: instrumental]` from LRCGET/LRCLIB) and Now Playing shows the Lyrics view, the page uses the centred layout: the
+cover with the title and the artist under it and "Instrumental" under them in secondary text (no lyrics column, no
+Get lyrics). Up Next and Details keep the two halves.
+
+### 5. Back from Now Playing
+
+"After clicking on a song then full screening, there should be an option to return in the full screen top left.
+Return to whatever was the last screen, i.e. search bar result, all songs etc." Now Playing gets a back button at
+its top left: a chevron and the name of the page it returns to ("All Songs", "Search", the album's name, "Genres",
+a playlist's name…), drawn in the accent colour, pointer cursor. A click goes back to that page as the mouse's back
+button does (a search page comes back with its text and results). It is shown only when there is a page to go back
+to.
+
+### 6. Custom tabs
+
+"Allow user to add custom tabs like High Res or anything via files. Make it benefit the fact this is open source."
+A **tab** is a saved set of rules that picks songs from the library, shown in the sidebar like a playlist. No code
+runs, so a shared tab file is safe to open.
+
+- Core module `realhires/smarttabs.py` / `rust/crates/core/src/smarttabs.rs`. A tab is JSON:
+  `{"format": "universal-music-player-tab", "version": 1, "name": "Hi-Res", "match": "all" | "any", "rules": [{"field":
+  …, "op": …, "value": …}, …], "sort": <field>, "descending": false, "limit": 0}`. Fields: text `title`, `artist`,
+  `album`, `album_artist`, `genre`, `composer`, `format` (the codec as the Quality column's tooltip names it, e.g.
+  "FLAC", "MP3"), `folder` (the song's folder path), `quality` ("Hi-Res Lossless", "Lossless" or "Lossy"); numbers
+  `year`, `bits` (0 for lossy), `sample_rate` (Hz), `bit_rate` (kbps), `duration` (seconds), `added_days` (days since
+  the file's modification time); yes/no `lossless`, `liked`, `disliked`. Operators: text `is`, `is_not`, `contains`,
+  `not_contains`, `starts_with` (case-folded); numbers `=`, `!=`, `>`, `>=`, `<`, `<=`; yes/no `is`. `matches(tab,
+  track, ctx)` (ctx: liked and disliked sets, the time now) and `tab_songs(tab, tracks, ctx)` (the matching paths,
+  sorted by `sort` then title, at most `limit` when it is above 0). `check_tab()` raises `TabError` with a full
+  sentence for a missing name, an unknown field or operator, a value of the wrong kind, or a format/version it does
+  not know. `TEMPLATES`: "Hi-Res" (quality is "Hi-Res Lossless": the rules are a flat all/any list, so the badge's
+  own definition stands in for "lossless and (bits >= 24 or sample_rate > 48000)"), "Lossy" (lossless is no),
+  "Added in the last 30 days" (added_days <= 30, sorted by added_days), "Long songs" (duration >= 600). A tab
+  without rules has every song; a new rule starts with an operator every song passes (text contains "", number
+  >= 0, yes/no is Yes), so the count does not drop to 0 before a value is typed; Quality's value is chosen from a
+  menu (shown translated, stored in English). Names are unique case-insensitively; at most 100 rules, a limit of
+  0..100000, files over 1 MB are skipped.
+- Files: one `.json` per tab in the tabs folder (`tabs` in `store.data_dir()`, `$REALHIRES_TABS` overrides it),
+  read in file-name order (`load_tabs()`, which skips files that are not tabs and says which); `save_tab()` (written
+  through a temp file), `delete_tab()`, `export_tab(tab, path)`, `import_tab(path)` (copied into the folder; a taken
+  name gets " 2", " 3"…), `tab_file_name()`. Both versions write the same bytes (vectors `python_tabs.json`: rule
+  evaluation on invented tracks, every check message, file round trips).
+- Sidebar: a heading **Tabs** after Playlists, with each tab (a filter icon) and **New Tab…**. The Library page lists
+  the tabs after its fourteen entries, with their song counts. A tab's page: its name as the title, "N songs, M
+  minutes", Play and Shuffle, and the song table (column kind "songs"). A right-click on a tab in the sidebar (and
+  "…" on its page): **Edit Tab…**, **Export Tab…**, **Delete Tab…** (confirmed; the file is deleted) and
+  **Colour Label** (the label follows a rename and goes with a delete). Saving a new tab, importing one or dropping a
+  tab file opens its page; renaming a tab renames its file.
+- The tab window (New Tab… / Edit Tab…): Name; "Start from" (the templates, New Tab… only); "Match all / any of these
+  rules"; one row per rule (field menu, operator menu fitting the field, value: an entry, or Yes/No); Add rule and a
+  remove button per row; Sort by (field menu and Descending); Limit (0 = no limit); a live line "N songs match"; Save
+  and Cancel. Errors from `check_tab()` are shown under the rules and keep the window open.
+- Settings → Library gets **Import tab…** and **Open tabs folder**. The Rust app also imports a tab file dropped onto
+  its window (as themes). The folder is read at start, after every change made in the app, and whenever the Library
+  page or a tab's page is shown, so files copied into it appear without a restart.
+
+### 7. The equalizer with bit-perfect playback
+
+"Is it possible for bit perfect and EQ to work together? Currently Bypassed while bit-perfect playback is on." While
+bit-perfect playback is on and the equalizer is on, the equalizer is applied (it is no longer bypassed); everything
+else of bit-perfect playback stays: the device runs at the song's own rate, in exclusive mode / on the hardware
+device, and the volume control is not used (gain 1, the slider disabled as before). The equalizer runs in 64-bit
+float on the decoded samples; when the device takes integers, the result is converted with TPDF dither (±1 LSB of the
+output format) and clamped. With the equalizer off the output is bit-perfect exactly as before (the tests' bit-exact
+checks keep passing). Playback info's "Bit-perfect" line then reads "No: The equalizer is on, so the samples are
+changed. The device still runs at 96 kHz in exclusive mode." (the rate and the access from the plan), and the
+Equalizer window's note reads "Bit-perfect playback is on: with the equalizer on, the sound is not bit-perfect. The
+device still gets the song's own sample rate." The texts come from `bitperfect` in both versions (vectors).
+
+### 8. The Equalizer window's close button
+
+"Equalizer X button is not on the actual right." In Japanese (and with the bit-perfect note) the Rust window's
+content was wider than its fixed width, so the content overflowed and the title bar with its X kept the smaller
+width. Both apps: the Equalizer window is as wide as its content in every language, and its title bar (with the
+close button) spans the whole window. The preset row wraps to a second line rather than overflowing when it is too
+wide. A test opens the window in Japanese with bit-perfect on and checks that no widget lies outside the window.
+
+### 9. Colours
+
+"Currently quality color is all gray, allow user to customize the color code each quality type. In fact, allow user to
+color code anything."
+
+- **Every colour the app draws is a theme colour.** Besides the eight `COLOR_KEYS`, a theme may set the colours that
+  are now derived from them (`EXTRA_COLOR_KEYS`, each with a label and its derivation from the eight, in
+  `themes.py`/`themes.rs`): `row_hover`, `zebra`, `selection`, `field`, `placeholder`, `placeholder_icon`,
+  `disabled`, `on_accent`; the quality colours `quality_hires`, `quality_lossless`, `quality_lossy`; the verdict
+  colours of the Quality Check page (`verdict_fake_lossless`, `verdict_fake_hires`, `verdict_suspicious`,
+  `verdict_real_hires`, `verdict_cd`, `verdict_lossy`, `verdict_error`); and `calendar` (the tint of days with plays).
+  `themes.colors(theme)` returns all of them (a theme's own value, else the derivation), with vectors. Built-in
+  themes keep their look, except that the quality colours are no longer grey: Hi-Res Lossless in gold (`#c9a227`
+  in light themes, `#e0b84a` in dark ones), Lossless in the accent colour, Lossy in the secondary text colour.
+- The theme editor shows the eight colours as before, then a section **More colours** with every extra colour (its
+  swatch shows the derived colour while it is not set, and a small Reset button returns it to derived). Exported and
+  imported theme files carry the extra colours that are set; older files without them keep working.
+- **Quality colours** are used by the playback bar's quality badge (outline and text) and the Quality column of the
+  song tables (the text).
+- **Colour labels.** Every song menu, album card menu, artist/album artist/genre/year/composer card menu, playlist
+  menu and tab menu gets **Colour Label ▸** with Red, Orange, Yellow, Green, Blue, Purple, Grey (fixed colours that
+  read on light and dark themes), **Custom…** (the system's colour chooser) and **None**. Labels are kept in
+  `player.json` as `labels`: `{"song": {path: "#rrggbb"}, "album": {album key: …}, "artist": {…}, "album_artist":
+  {…}, "genre": {…}, "year": {…}, "composer": {…}, "playlist": {id: …}, "tab": {name: …}}` (PlayerState
+  `label_of(kind, key)`, `set_label(kind, key, color or None)`, vectors). A label is drawn as a dot 8 px wide: before
+  the title in song tables (and Up Next), at the bottom-left corner of a card's cover, and after a playlist's or tab's
+  name in the sidebar.
+- As built: both apps use the same derivations (the Python app's former ones), so the Rust app's text fields are the
+  "Text fields" colour (grey in Light) and its missing covers the grey placeholder. "Selected item" colours the
+  sidebar selection (and the selected song row in Rust; Python's tables keep their accent-filled row). Not theme
+  colours: the Quality Check card rings, the plots, the error/warning/ok texts, the Your Stats hero cards and egui's
+  text-selection highlight. Label keys of artists, album artists, genres and composers are case-folded, since the
+  groupings join names in any case; albums use the album key, years are kept as written, playlists by id, tabs by
+  name. A playlist's menu (right-click in the sidebar or on a Playlists card) has Play, Shuffle, Rename…, Delete… and
+  Colour Label. The Rust editor's More colours grid drops to one column below 660 px.
+
+### 10. Lyrics filling Now Playing
+
+"Allow synced lyrics to be full screen." The lyrics header (next to A− / A+) gets a button **Lyrics only** (an
+expand icon; on while active). While it is on, the cover column is hidden and the lyrics use the whole page width,
+centred, one step (4 px) larger than the chosen size; the header with the Lyrics / Up Next / Details switch stays.
+Pressed again, or Esc, brings the cover back. It lasts for the session (`lyrics_wide`) and applies to synced and plain
+lyrics (an instrumental song or a song without lyrics keeps the centred cover).
+
+### 11. Swiping the cover to the album's songs
+
+"Allow user to drag/swipe jacket while in full screen to see album's playlist and make the current song's title
+bold." On Now Playing, dragging the cover sideways by more than 60 px (or a horizontal scroll / trackpad swipe over
+it) turns the left half to the album's songs: a list of the album's tracks in track order (number, title, time), the
+song playing in bold with the speaker icon, hover in the theme's colour, a double-click plays that song with the album
+as the list. Two small dots under it (cover, songs) show which one is shown and switch on a click; swiping the other
+way returns to the cover. A click on the cover without a drag still opens the Cover window. The choice lasts for the
+session and follows the song (a song from another album shows that album's songs).
+
+### 12. Properties: Acquire Metadata and searching the web
+
+"Acquire data should be under properties. Additionally acquire data should have option for google as well: if they
+select a song then want to acquire the data for composer, allow user to press a button that redirects them to their
+browser with an already googled result, then if copied, autofill."
+
+- In every menu, **Acquire Metadata…** comes right after **Properties…** (and Album Properties…).
+- The Properties window gets **Acquire Metadata…** at the bottom left (it opens the MusicBrainz window for the same
+  songs, as the menu item does).
+- Every field of the Properties window gets a small **Search** button (a magnifier icon, tooltip "Search the web for
+  the composer") at its right end. A click opens the browser at `https://www.google.com/search?q=` + the URL-encoded
+  query: for a song, `"<title>" <artist> <field>`; for several songs (Album Properties), `"<album>" <album artist>
+  <field>`; the field's English name in lower case ("composer", "release date" for the date, "genre", "album artist",
+  "track number", "disc number"…), or its Japanese name when the language is Japanese. The query comes from one core
+  function (`tagedit.web_search_url(field, values, language)`, vectors).
+- After the click the window watches the clipboard for up to two minutes (Tk: `clipboard_get()` every 500 ms; Rust:
+  the system clipboard through `arboard`): the first new text that differs from what the clipboard held at the click,
+  trimmed, one line, at most `MAX_VALUE` characters, is put into that field (the field flashes in the accent colour
+  and the note "Filled in from the clipboard." appears under the fields). It is not saved until Save. Clicking
+  another field's Search, closing the window or Save stops the watch. A note under the fields says, while watching:
+  "Copy the answer in your browser and it will be filled in here."
+
+### 13. Your Stats: the day's songs beside the calendar
+
+"If user press your stats then clicks on a date, use the space next to calendar, it's wasted space." The calendar
+keeps its size on the left, and the day's plays (and the hint "Click a day to see the songs you played on it.") fill
+the space to its right, as tall as the calendar and scrolling inside it when longer. When the page is narrower than
+the calendar plus 360 px, the list goes under the calendar as before.
+
+### 14. Details in the centre
+
+"When user clicks details, details should be centered like the jacket." Now Playing's Details view is one block
+centred vertically in the right half (and horizontally, the labels and values kept in their two columns), as the cover
+block is in the left half; a long file path wraps within the block. When the block is taller than the page it starts
+at the top and scrolls.
+
+## 2.4 (asked for on 2026-11-25, after 2.3.0 was released)
+
+"Folder cannot be scrolled, for stats allow to click the artist and songs, stats of the most played songs (like a
+leaderboard), location of where the song was played with the calendar, analyze whether are song are sad up-tempo etc.
+and create playlist." Asked about the location's source, the user chose the approximate location from the internet
+(off until turned on in Settings, kept only on the computer). Everything below is built in both apps, with Japanese
+texts (`i18n/ja/67-stats-2.4.json`, `68-places-2.4.json`, `69-moods-2.4.json`), parity vectors for the core, and
+tests that also run at 1024 × 768.
+
+### 1. Folders scroll
+
+The Folders page must scroll with the mouse wheel, the trackpad and the scroll bar however many subfolders and songs a
+folder holds, in both apps: the subfolders and the songs of a folder form one scrolling page (the subfolders above the
+songs), not two boxes of fixed height.
+
+The causes found (2026-11-25): in the Rust app the subfolders were drawn straight into the page, which has no scroll
+area of its own, so a folder with more subfolders than the window holds could not be scrolled at all (wheel, trackpad
+or scroll bar), and the songs' table below them got only the height that was left, none when the subfolders filled
+the window. In the Tk app the subfolders were a list of their own above the songs, whose `configure(height=…)` had no
+effect (a frame takes the requested size of the widgets packed into it, 120 px), so it stayed about three rows tall
+and scrolled on its own while the songs scrolled in a second box. Both apps now show one list: the subfolders are its
+first rows (a folder icon, the name and the number of songs; one click opens one, they stay first when the songs are
+sorted), the songs follow, with the song columns' headings above the list only when the folder has songs of its own.
+
+### 2. Your Stats: names are links, and a leaderboard
+
+- Every song, artist, album and genre named on Your Stats (the cards, the top lists of Details, the day beside the
+  calendar) is a link: a song plays it (with the songs of that list as the queue), an artist opens the artist's page,
+  an album its page, a genre its page. The pointer becomes a hand over them, and the song menu opens on a right-click
+  of a song.
+- **Leaderboard**: a section of Your Stats (and a page of its own opened from it, "Most Played") ranking the most
+  played songs of the chosen period (the periods Your Stats already has): rank, cover, title, artist, plays and
+  minutes listened, the top three marked; a switch between Songs, Artists and Albums; up to 100 rows; ties share a
+  rank. Play / Shuffle play the ranked songs in rank order. The ranking is computed in the core (`stats.leaderboard()`)
+  with vectors.
+- Settled while building (2026-11-25): only rows with at least one counted play (30 s, or half of a shorter song) are
+  ranked; they are ordered by plays, then by the whole minutes listened (rounded as shown), then by name, and rows
+  with the same plays and minutes share a rank (1, 2, 2, 4); the keys are those of the top lists (an artist is the
+  song's artist field, as in Details). An artist's or album's songs are played most played first. The section on Your
+  Stats shows the first 10 rows, a "See All" link opens Most Played (with Back, the period menu, Play, Shuffle and the
+  switch); the switch is kept for the session and shared by both. The top three ranks sit on gold, silver and bronze
+  badges. The song links of a card play the period's ranked songs, those of Details' top songs that list, those of
+  the day beside the calendar the day's songs; a name the library does not hold (a song whose file is gone, an
+  artist, album or genre no longer in it) is not a link.
+
+### 3. Where a song was played
+
+- Setting `play_location` (Library or Playback group, off by default) and `location_server`. When on, the app asks a
+  free IP geolocation service for the computer's approximate place (city, region, country, and the rounded latitude and
+  longitude the service gives) once when it starts and again after at most every 2 hours while music plays, and
+  stores the place with each play in the play history (`library.sqlite`, new columns; old plays have none). Only the
+  request itself goes out (the service sees the IP address); no song, path or tag is ever sent. The client follows the
+  service's published limits, names the app in its User-Agent, honours Retry-After, never retries in a loop, and a
+  failure only leaves the place empty. Tests never contact the real service (a fake server, as for LRCLIB).
+- The calendar of Your Stats shows where music was played: the day beside the calendar names the place of each play,
+  and a "Places" part of Your Stats lists the places of the period with their plays and minutes (a click shows that
+  place's songs). Settings has **Forget play locations** (confirmed), which clears the stored places but keeps the
+  plays.
+- The service is chosen by the implementer after reading its terms (free use without a key over HTTPS, no
+  registration); the choice, its limits and its terms are recorded here and in the README, which also says plainly what
+  the setting sends.
+
+**Built (2.4).** The service is **FreeIPAPI**'s free API, `https://free.freeipapi.com/api/v1/json/`
+(`places.DEFAULT_SERVER`, the default of `location_server`), chosen on 2026-11-25 after reading the terms of FreeIPAPI,
+ipwho.is, ipapi.co and ipinfo.io. FreeIPAPI says it is "free for both commercial and non-commercial use with no account or
+API key required", its free plan includes TLS/SSL and "Commercial use allowed", and it allows 60 requests a minute (10 in
+10 seconds) per address (https://freeipapi.com/rate-limit); its terms (https://freeipapi.com/terms) ask for reasonable
+use (no scraping, no querying of large IP ranges) and say nothing against keeping the answer. ipapi.co's terms forbid
+keeping its data longer than 24 hours (a play history keeps it for good), ipinfo.io needs a token and gives only the
+country for free, and ipwho.is (1,000 requests a day, no key) grants use "for personal or internal business purposes"
+only; its answers are still understood, so `location_server` can point at it. What goes out: one GET of that address
+with the User-Agent `UniversalMusicPlayer/<version> ( <home page> )` and `Accept: application/json`, nothing else (no
+query, no song, path or tag); the service sees the IP address, which is how it finds the place. The answer's city,
+region, country, country code and latitude/longitude rounded to 2 decimals are kept (`places.Place`); everything else
+it says is dropped.
+
+- Core: `realhires/places.py` / `rust/crates/core/src/places.rs` (vectors `python_places.json`). `GeoClient` sends one
+  request at a time at least `MIN_INTERVAL_S` (2 s) apart; a 429/503 answer's Retry-After (else 10 minutes, at most 6
+  hours) is kept in `not_before` and the lookup gives up at once (no request before that time); server errors and
+  network errors are tried `MAX_ATTEMPTS` (3) times in all with a 2 s, then 4 s back-off; other 4xx answers and
+  answers without a place fail at once. `parse_place()` reads FreeIPAPI's field names (`cityName`, `regionName`,
+  `countryName`, `countryCode`, `latitude`, `longitude`) and ipwho.is's (`city`, `region`, `country`, `country_code`,
+  `success`/`message`), cleans the names (`MAX_NAME` 100 characters) and drops coordinates out of range. `place_text()`
+  ("Shinjuku, Tokyo, Japan", a region or country named like the part before it left out) and `place_key()` (the
+  names case-folded). `PlaceCache.due()`: a lookup at once the first time (the app starts with the setting on, or it is
+  turned on, or the service is changed), then only while music plays and `REFRESH_S` (2 hours) after the last one
+  began, never before `not_before`; a failure leaves the place empty and is not retried before the next 2 hours (no
+  loop). `period_places()` (the places of a period's plays: plays counted as in `stats.counted()`, minutes, songs,
+  most played first) and `place_songs()`.
+- `library.sqlite`: the `plays` table gained `place_city`, `place_region`, `place_country`, `place_country_code`,
+  `place_latitude`, `place_longitude` (added with `ALTER TABLE` to older databases; their plays have none).
+  `add_play(…, place=)` (Rust `add_play_at()`; `add_play()` keeps its three arguments), `plays()` gives each play's
+  `place` (`stats.Play.place`), `forget_places()`, `places_count()`. `stats.day_plays()` rows carry `place`.
+- Both apps: the lookup runs in a thread of its own; the Tk player's `PlacesMixin` (`realhires/player_places.py`)
+  takes its answer in every second (`_places_tick()`), the egui player's `places_tick()` every frame
+  (`rust/crates/gui/src/places.rs`); a play is stored with the place found last (`play_place()`, None while the
+  setting is off). Settings → Playback: the switch and the service (ordinary rows), then the note naming exactly what
+  is sent and to which host (HTTPS or, for an `http://` address, "unencrypted HTTP"), the lookup's state ("Approximate
+  place now: … (looked up at 14:05)", "Turned off…", or why none was found), how many plays have a place, and
+  **Forget play locations…** (confirmed). The day list of the calendar puts a line with a pin and the place's name
+  above each run of plays made at the same place ("Place unknown" for plays without one, shown only when the day has
+  places). Your Stats ends with **Places**: a row per place of the period with "N plays · M min" (a hint pointing at
+  the setting when it is off); a click opens the place's page (`show_page("place", place=key)` / `Page::Place(key)`):
+  its name, the period's minutes and plays there, Play, Shuffle and its songs, most played first, with the Played
+  column telling when each was last played there. Back and Now Playing's back link name the place.
+
+### 4. Moods, tempo and playlists
+
+- Core `realhires/moods.py` / `rust/crates/core/src/moods.rs` analyses each song on this computer, from its audio, with
+  NumPy only in Python (no new dependency): the tempo (BPM, from an onset envelope's autocorrelation), the energy
+  (loudness), the brightness and whether it is in a major or a minor key (chroma against key profiles). From these it
+  gives labels: **Up-tempo** / **Mid-tempo** / **Slow**, **Energetic** / **Calm**, and a mood among **Happy**,
+  **Sad**, **Chill**, **Intense** (thresholds as module constants, documented). The labels are estimates and the app
+  says so. Both versions give the same labels and BPM (within rounding) on the test songs (vectors).
+- Results are kept in `library.sqlite` (a `moods` table keyed by path, size and modification time), so a song is
+  analysed once until it changes. The analysis runs in the background after library updates, one song at a time at a
+  low priority (setting `analyse_moods`, on by default; its progress shows in the sidebar's status like the library
+  update).
+- A **Moods** entry on the Library page (and in the sidebar's Library list) opens a page with a card per mood and per
+  tempo (with song counts); a card opens its songs with Play, Shuffle and **Create Playlist**, which makes an ordinary
+  playlist of those songs (named e.g. "Sad songs", a taken name gets " 2"). Song lists can show **BPM** and **Mood**
+  columns (choosable, as the other columns), Details on Now Playing shows the mood, tempo and key, and custom tabs get
+  the fields `bpm` (number), `mood` and `tempo` (text, chosen from a menu like Quality).
+- **How a song is analysed** (`moods.py`'s docstring has the details; the Rust module repeats every step): FFmpeg
+  decodes at most 90 s (from 30 s in, as late as a whole 90 s stretch still fits, or all of a shorter song) as two
+  channels at 22,050 Hz, below normal priority (`nice` on macOS and Linux, the below-normal class on Windows), and
+  the two are averaged. *Tempo*: a spectral-flux onset envelope (1,024-point Hann frames every 256 samples, about
+  86 per second; log(1 + 1000·|X|), the rise summed over the bins, the 0.5 s local mean taken off), its
+  autocorrelation over 50–210 BPM weighted by a log-normal prior around 120 BPM one octave wide; the best peak must
+  lie 0.05 above the median of those lags (noise has no beat, BPM 0); a peak at half the lag at least 0.8 as strong
+  makes the tempo twice as fast; the lag is refined by parabolas through its peaks at 1–4 times the lag. *Energy*:
+  the RMS level in dBFS. *Brightness*: the spectral centroid of the average power spectrum. *Key*: a chroma vector
+  (8,192-point frames, 65–2,100 Hz, each bin to its nearest pitch class) against the 24 Krumhansl–Kessler profiles.
+- **Labels and thresholds**: Up-tempo from 120 BPM, Slow below 90, else Mid-tempo; Energetic from −16 dBFS, else
+  Calm. The mood: the valence is the mode (major positive), or the brightness (from 1,500 Hz positive) when the best
+  major and minor correlations lie less than 0.05 apart; the arousal is high when Energetic (+1), Up-tempo (+1) and
+  Slow (−1) add up to at least 1. Positive and high: Happy; positive and low: Chill; negative and high: Intense;
+  negative and low: Sad. A stretch quieter than −60 dBFS or shorter than 1 s gets no labels. On the invented test
+  songs (clicks over major and minor chord progressions, 56–200 BPM) the BPM is within ±2 and the mode right; a
+  90 s stretch takes about 0.35 s, decoding included.
+- **The table** `moods` of `library.sqlite`: path (key), size, mtime_ns, bpm, energy, brightness, key, mode, labels
+  (JSON: tempo, energy, mood) and the analyser's version (`ANALYSER_VERSION`, 1); a song is analysed again when its
+  size or modification time changes or the version is another, and its old labels are shown until then. A song that
+  cannot be decoded is not written, so it is tried again after the next library update.
+- **Details settled while building both apps**: the job's progress ("Analysing moods: 3 of 120 songs") is the least
+  important text of the sidebar's status (it never replaces another one) and is cleared when the job ends; new
+  results reach the pages at most every 2 s while it runs; the Moods page says how many songs are analysed and that
+  the labels are estimates, the column menu says "BPM (estimated)" and "Mood (estimated)", the cells' tooltip lists
+  everything found, and Details' rows are "Mood (estimated)", "Tempo (estimated)" and "Key (estimated)". The cards
+  are Happy, Sad, Chill, Intense, then Up-tempo, Mid-tempo, Slow, each in its own colour; a card's songs are sorted
+  as All Songs is in each app. Create Playlist stays on the card's page and says what it made ("Made the playlist
+  “Sad songs” with 12 songs."); the playlist's name is in the language in use. Turning `analyse_moods` off stops a
+  running job (the results are kept).
+
+## 2.5 (asked for on 2026-11-25, after 2.3.0 was released and while 2.4.0 was being finished)
+
+The user's list, each point quoted under its heading. Everything is built in both apps, with Japanese texts in the
+part's own file (`i18n/ja/7x-<part>-2.5.json`), parity vectors for every new piece of shared maths or data, and
+tests that also hold at 1024 × 768. New settings are not Detection settings (they never change `settings_key()`).
+
+### 1. For You: playlists made from likes, retention and listening time
+
+"Make playlist algorithm based on user like and retention for the songs and time played back."
+
+- Core `realhires/recommend.py` / `rust/crates/core/src/recommend.rs` (vectors `python_recommend.json`). Inputs: the
+  library's tracks, the whole play history (`Library.plays()`), the liked and disliked sets and the time now. No
+  randomness that differs between the versions (a day's order comes from SHA-1 of the date and the path).
+- Per song, from its plays: `r` of a play is the part of the song heard, `min(1, seconds / duration)` (a play without
+  a known duration: `min(1, seconds / 30)`); `w` of a play is its recency weight `0.5 ** (age in days /
+  HALF_LIFE_DAYS)` (60). **Retention** is the smoothed, recency-weighted mean of `r`: `(Σ w·r + PRIOR_R·PRIOR_N) /
+  (Σ w + PRIOR_N)` with `PRIOR_R` 0.5 and `PRIOR_N` 2, so one play never decides it. **Time** is `Σ w·seconds`.
+  **Score** = `LIKE_POINTS` (2.0) when liked + `RETENTION_POINTS` (4.0) × (retention − 0.5) + log2(1 + time / 180)
+  (three minutes of recent listening are worth one point). A song never played and not liked scores 0. Disliked
+  songs and songs no longer in the library are never in a mix. `song_stats()` returns per song: plays (counted as in
+  `stats.counted()`), skips (plays that are not counted), seconds, retention, last played, score.
+- The mixes (`recommend.mixes()` → `[{"id", "name", "description", "paths"}]`, in this order, a mix with fewer than
+  `MIN_SONGS` (5) songs is left out):
+  - **Favourites Mix** (`favourites`): the songs with the highest scores above 0, at most 50.
+  - **On Repeat** (`on_repeat`): the songs heard most in the last 30 days (by counted plays, then seconds), at most 30.
+  - **Rediscover** (`rediscover`): songs you liked or heard to the end often (at least 3 counted plays and a
+    retention of 0.6 or more) that were not played in the last 60 days, by the score without the recency weight, at
+    most 30.
+  - **New For You** (`discover`): songs never played (no counted play), ranked by how much you like their artist,
+    album and genre (the mean score of the played songs that share it; artist counts twice), only those above 0, at
+    most 30.
+  - **Daily Mix** (`daily`): 40 songs for today: 24 from the favourites' candidates, 8 from Rediscover's and 8 from
+    New For You's (missing ones filled from the favourites), put in the order of SHA-1(`YYYY-MM-DD` + path), so it
+    changes every day and both apps show the same one.
+  - In every mix no artist has more than `MAX_PER_ARTIST` (4) songs (Daily Mix: 3), and two songs of one artist do
+    not follow each other where the mix can avoid it (`spread_artists()`).
+- Both apps: a new Library entry **For You** (after Playlists, on the Library page, and in the sidebar's Playlists
+  section above Liked Songs; a sparkle icon drawn as a vector). Its page shows a card per mix (the playlist mosaic
+  of its first songs, the name, "N songs" and the description in secondary text) and one line on how they are made:
+  "Made on this computer from your likes, how much of each song you listen to and the time you spend with it."
+  Without mixes: "Play and like some songs, and your mixes will appear here." A mix's page: the mosaic, the name, the
+  description, "N songs, M minutes", Play, Shuffle and **Save as Playlist** (an ordinary playlist with the mix's
+  name, a taken name gets " 2"; the page says what it made), then the song table in the mix's order, with the usual
+  song menu. The mixes are computed when the page opens and again after a song is logged, liked or disliked.
+- **Settled while building** (the constants and rules are in `recommend.py`'s docstring, which the Rust module
+  follows step by step). *Time* is `Σ w·seconds·r`, not `Σ w·seconds`: with every second counting, a song skipped
+  after ten seconds a hundred times collected enough "listening" to score +0.8 and enter the favourites; counted by
+  the part heard it scores −1.5, and a song heard to the end counts in full. A dislike takes `LIKE_POINTS` off (it
+  only matters for New For You, where one disliked song speaks against its artist). On Repeat and Rediscover take
+  only songs with a score above 0 (Rediscover: the score without the recency weight, at least one play, and the
+  *plain* retention ≥ 0.6, because the weighted one fades to 0.5 for exactly the songs it is about). New For You
+  leaves out liked songs (they are favourites) and songs skipped more than once (`DISCOVER_SKIPS`), ranks by
+  `(2·artist + album + genre) / 4` over the songs the user knows (a counted play, a like or a dislike) plus the
+  song's own score, a missing tag counting 0. The Daily Mix draws each part from the best three times as many
+  candidates (24, 24, 72) in the day's order, so its songs change with the day, not only their order. The artist of
+  a song is the first name of its artist field (else of the album artist), any case; songs without one are not
+  limited; when the limit leaves a mix under `MIN_FILL` (12) songs it rises one song at a time, or a library of one
+  or two artists would get no mix at all. Scores are ordered as whole millionths with the path as the tie-break, so
+  a last-bit difference of `pow` or `log2` between platforms cannot change an order. Pages: the Library entry says
+  "N mixes" or "No mixes yet"; Save as Playlist stays on the mix and names the playlist in the language in use; a
+  mix that has gone (too few songs after a dislike or a cleared history) shows its page without songs; the Tk mix
+  page numbers its songs as its playlist page does, the egui one does not (as its playlist page). The Japanese
+  names are おすすめ, お気に入りミックス, ヘビーローテーション, 再発見, 新しい発見 and デイリーミックス.
+
+### 2. The cover turns over like a record sleeve
+
+"Swiping the cover to see the album's songs: the length and width should be within the album jacket, it should be
+the similar aesthetic as flipping over a cd or vinyl jacket. Maybe make the background mirrored and blurred. Also
+when flipping it, there should be some kind of animation."
+
+- The album's songs (2.3, item 11) are the **back of the jacket**: drawn inside the cover's own square (same place,
+  same size, same rounded corners), never wider or taller than it. Its background is the cover itself, mirrored left
+  to right and blurred (`covers.back_picture()`: the picture is flipped, scaled down to 64 px, box-blurred three times
+  with radius 3 and scaled up again), under a black scrim of 50 %, so the text reads on any cover: the album's title
+  (bold) and artist at the top, then the tracks (number, title, time) in white, secondary texts in white at 70 %,
+  the song playing bold with the speaker icon, hover as a white tint of 12 %. More tracks than fit scroll inside the
+  square (wheel, trackpad, a thin bar). A double-click plays that song with the album as the list, as before.
+- **The turn.** Swiping (a sideways drag of the cover, a sideways scroll or trackpad swipe over it), a click on one
+  of the two dots under it, or the keys ← / → while the pointer is over it turn the jacket about its vertical axis in
+  `FLIP_MS` (360 ms, ease in-out): the face shown gets narrower until it is edge-on at the half-way point, then the
+  other face grows from the edge, darkened by up to 35 % while it is turned away, with the far edge drawn slightly
+  shorter (a perspective of about 6 % of the height) where the toolkit can draw it. While the pointer drags, the turn
+  follows it (a drag of the cover's width is a half turn) and on release it finishes when the drag passed 60 px or a
+  quarter of the width, and springs back otherwise. During the turn the faces are pictures only (the cover, and the
+  blurred back); the back's text fades in over 120 ms when the turn ends. With "reduce motion" there is none to read,
+  so the turn is always shown; tests can set the duration to 0 (`REALHIRES_NO_ANIMATION=1`).
+- The dots, the session-long choice and following the song stay as in 2.3.
+
+Settled while building: the title and "Artist — Album" stay under the square while it turns (only the square is the
+jacket). The measures of the back come from one function (`jacket.back_layout(size)`: four steps of text size and row
+height by the square's size, 4 rows at 160 px, 12 at 480 px). A sideways drag may start anywhere in the left half, as
+in 2.3, and the side changes when the pointer lets go (in 2.3: when the drag passed 60 px); "60 px or a quarter of the
+width" is whichever is less. A sideways scroll keeps 2.3's meaning (one way the songs, the other way the cover); the
+arrow keys always turn to the other face, in the key's direction, and a turn asked for during a turn goes back from
+where it is. The easing is cubic. The far edge is drawn shorter and the near edge keeps the whole height, so the
+jacket never leaves its square. An album without a cover turns as a plain sleeve in the placeholder's colour. In Tk
+the back's text cannot be translucent: its colours are white mixed with the back's average colour (the fade too), and
+the hover tint is a brightened copy of the row's pixels; the Tk app scrolls the back by whole rows (three a wheel
+step), egui by pixels. A click on the back does nothing (a double-click on a song plays it), so the album is opened
+from the front, the album's name or Go to Album.
+
+### 3. Close buttons
+
+"Acquire Metadata… and per-field Search buttons in Properties: there should be an X button."
+
+- Rust app: the Properties window and the MusicBrainz (Acquire Metadata) window had no close button in their title
+  bars (every other window has one). Every window of the app now has the **X** at the right end of its title bar;
+  in Properties it does what Cancel does, in the MusicBrainz window what Close does (a lookup that runs is stopped).
+  A test opens every window and checks for the close button. Tk app: the same windows close with the system's own
+  close button and with Esc.
+- While Properties watches the clipboard after a Search click (2.3, item 12), the note "Copy the answer in your
+  browser and it will be filled in here." gets a small **X** (tooltip "Stop waiting for a copied answer") that stops
+  the watch at once; the note then disappears.
+
+### 4. Your Stats: the cards lead on, and a leaderboard you can filter
+
+"The stats on the bottom like top song and top artist should redirect user after clicking. After clicking top
+song, it should be more detailed like a leaderboard. Also there should be an option for top song by times played or
+length played. Leaderboard should have a button to filter by year, month, week, day etc."
+
+- Every card of Your Stats is one click target (hand pointer, the card lifts slightly on hover): **Top song** opens
+  Most Played with Songs, **Top artist** with Artists, **Top album** with Albums, **Top genre** with the new kind
+  Genres; the listening-time and plays cards open Details; the busiest-day card selects that day in the calendar and
+  scrolls to it. (The names inside those cards are no longer links of their own: the whole card is.)
+- `stats.leaderboard(plays, kind, top, by)` gains `by`: `"plays"` (as in 2.4) or `"time"`, which orders by the
+  seconds listened (the whole minutes as shown, then plays, then the name) and ranks rows with the same minutes and
+  plays together; and the kind `"genres"` (the genre's name; its songs most played first). Most Played gets a
+  **Sort by** switch: **Times played** / **Time listened**; the number sorted by is drawn in the text colour and the
+  other in secondary text. The switch is kept for the session and shared by the section on Your Stats.
+- **Filtering by time.** Most Played has its own period control: the units **Day**, **Week**, **Month**, **Year**
+  and **All time** as a segmented switch, and for the first four a row with ‹ and › and the period's name between
+  them ("25 November 2026", "23 – 29 November 2026", "November 2026", "2026"); › is disabled at the present. Weeks
+  run Monday to Sunday. Core: `stats.span_range(unit, offset, now, localtime, mktime)` → `(since, until)` and
+  `stats.span_title(unit, offset, now, localtime)` (offset 0 is the day/week/month/year of `now`, −1 the one
+  before), with vectors. Opened from Your Stats it starts from that page's period: Last 30 days → Month, This year →
+  Year, Last year → Year one back, All time → All time. Without counted plays in the period: "Nothing was played in
+  this period."
+- Settled while building (2026-11-25): the cards that are not named above (songs played, listening hour, listening
+  day, longest streak) open Details too, the listening hour and day scrolled to their charts; a right click on the
+  top song's card still opens that song's menu. With "time" the same rows are ranked as with "plays" (those with at
+  least one counted play), a row's songs come the longest listened first, and Play / Shuffle follow that order.
+  Genres rows are one line (the name, a link to the genre's page). The three switches are segmented controls (a
+  panel, the chosen segment raised) and each is one unit when the row wraps. ‹ is disabled when the history holds no
+  play before the period shown (`Library.first_play()`), so one cannot page into years without music; a unit's
+  button returns to the present. Core: `span_days(unit, offset, today)` and `span_name()` are the pure parts with
+  vectors, `span_range()`/`span_title()` take the local time; a week across months or years reads "30 November – 6
+  December 2026" / "28 December 2026 – 3 January 2027". The section of Your Stats keeps that page's period and the
+  text "No plays yet in this period."; See All opens Most Played from that period.
+
+### 5. Quality: hover for the bit rate and sample rate
+
+"In all songs, album discography, artist discography and folder content, when user hovers upon quality, it should
+display bitrate/kHz."
+
+- `musiclib.quality_detail()` (the Quality cell's tooltip) now names the bit rate for every song that has one: a
+  lossless song reads "24-bit/96 kHz · 2,304 kbps", a lossy one "MP3 · 320 kbps · 44.1 kHz" as before (vectors).
+- The tooltip shows wherever a song's quality is shown: every song table (All Songs, album pages, the songs of an
+  artist, album artist, genre, year or composer, folders, playlists, tabs, moods, search, Recently Played, Liked and
+  Disliked Songs, Most Played), the playback bar's quality badge and Now Playing's Details. A test hovers the Quality
+  cell on All Songs, an album page, an artist's songs and a folder in both apps.
+- Settled while building (2026-11-25): the tooltip already appeared on every song table of both apps (they share one
+  table each); what it lacked was the bit rate of lossless songs. A bit rate that rounds to 0 kbps is left out, and a
+  lossless song without a known sample rate reads "Hi-Res Lossless · 4,608 kbps". An artist's page shows the artist's
+  albums as cards (as since 2.0), so an artist's songs are the tables of those albums: the tests open an artist,
+  click an album there and hover, and also hover a genre's songs. On the playback bar's badge the tooltip has a
+  second line, "Playback info" (what a click opens, as the Rust app said before). In Details the Format row has the
+  tooltip. The Rust app's badge could not be hovered in a 1024-pixel window, because the bar's LCD was at least
+  280 px wide and ran under the Like button; the LCD now gets as narrow as 200 px.
+
+### 6. Previous, Play/Pause and Next on the taskbar (Windows)
+
+"When user hovers on app on task bar, allow user to skip, pause or play."
+
+- On Windows both apps add a thumbnail toolbar to their taskbar button (the preview that appears when the pointer
+  rests on it): **Previous**, **Play** / **Pause** (the icon and tooltip follow the state) and **Next**. Previous and
+  Next are disabled when nothing plays, as in the playback bar. The icons are drawn by the app (white, or black when
+  Windows' light taskbar is in use). Python: `realhires/taskbar.py` (ctypes: `ITaskbarList3`, the window procedure of
+  the Tk toplevel wrapped to receive `THBN_CLICKED`); Rust: `rust/crates/gui/src/taskbar.rs` (the `windows` crate,
+  `SetWindowSubclass`). Any failure leaves the app without the toolbar and is never shown to the user. Other systems:
+  nothing changes (the modules do nothing there).
+- The pure parts (button states from the player's state, the icon bitmaps) are tested everywhere; a Windows-only test
+  adds the toolbar to a real window and sends it the button messages.
+
+### 7. Playback info: choose the equalizer, gapless and the output device
+
+"When accessing playback info, user should be able to choose equalizer, gapless and output device."
+
+- In the Playback info window the Output section's rows **Device**, **Equalizer** and **Gapless** are controls: a
+  menu of the output devices ("System default" first), a menu with Off, the built-in presets, My presets and
+  "Open Equalizer…", and a switch. They act at once and are saved as the Settings page's and the Equalizer window's
+  own controls are (`output_device`, `gapless`, the player state's equalizer). The rows of item 8 (ReplayGain,
+  Resampling quality, Output format, Dither) and the DSP row of item 11 ("3 active" and **DSP Manager…**) are controls
+  there too. A control that cannot apply (the volume with bit-perfect playback…) is disabled and says why.
+
+### 8. ReplayGain, dithering and resampling
+
+"Add replay gain, high quality dithering and resampling."
+
+- **ReplayGain.** Settings → Playback: `replaygain` ("Off" by default, "Track", "Album"), `replaygain_preamp_db`
+  (−12…+12 dB, 0) and `replaygain_prevent_clipping` (on). Core `realhires/replaygain.py` / `replaygain.rs` (vectors):
+  the gain is read from the song's tags (`REPLAYGAIN_TRACK_GAIN`, `REPLAYGAIN_ALBUM_GAIN`, `REPLAYGAIN_TRACK_PEAK`,
+  `REPLAYGAIN_ALBUM_PEAK` in any case, from the file's and the stream's tags, and Opus' `R128_TRACK_GAIN` /
+  `R128_ALBUM_GAIN`, which are 1/256 dB relative to −23 LUFS: + 5 dB), Album falling back to the track's gain. A song
+  without tags uses the loudness the player measured itself: a background job like the moods job (FFmpeg's `ebur128`
+  with the true peak, the whole song, below normal priority, one song at a time, only while `replaygain` is not Off)
+  keeps each song's integrated loudness and peak in `library.sqlite` (table `loudness`, keyed by path, size and
+  modification time; the song's file is never changed); the gain is −18 LUFS minus the loudness, and an album's is
+  computed from its measured songs (the duration-weighted mean power). A song with neither plays unchanged. With
+  Prevent clipping the gain is lowered so that peak × gain ≤ 1. The gain is applied as the first FFmpeg filter of the
+  song (`volume=<x>dB`) in both apps, so gapless albums keep their levels in Album mode. Playback info's **ReplayGain**
+  row says what was applied and where it came from ("Track gain −6.48 dB (from the song's tags)", "Album gain −5.10 dB
+  (measured by the player)", "No gain known for this song yet", "Off").
+- **Resampling.** `resampler_quality`: "Standard", "High" (default, as before) and "Very high" (soxr precision 20, 28
+  and 33; FFmpeg builds without soxr use swr with a 32-, 64- and 128-tap filter), and `resample_to`: "Only when the
+  device needs it" (default) or a fixed rate (44.1, 48, 88.2, 96, 176.4, 192 kHz) that every song is converted to when
+  the device takes it (otherwise the device's rate, as before; Playback info says which and why).
+- **Output format and dither.** `output_format`: "32-bit float" (default), "16-bit", "24-bit", "32-bit" integers
+  (the device is opened in that format where it offers it; otherwise the nearest it offers, and Playback info says
+  so), and `dither`: "Off", "TPDF" (default) and "Noise shaping" (TPDF with a second-order error feedback), used
+  whenever the app itself converts to integers (an integer output format, and bit-perfect playback with processing
+  on). Core `realhires/dither.py` / `dither.rs` with a seeded generator, so both versions give the same samples
+  (vectors); without processing and at full volume a 16- or 24-bit song still reaches a same-depth device unchanged.
+- With bit-perfect playback on, ReplayGain, a fixed resampling rate and the DSP chain follow the equalizer's rule of
+  2.3: what is switched on is applied, the device keeps its exclusive access, and the Bit-perfect line names what
+  changes the samples.
+
+### 9. Covers: MusicBrainz or Google, and what a click on the jacket does
+
+"Change Cover… in song and album menus, and Search Cover Online: this should have the option to be MusicBrainz or
+Google. Additionally, right clicking the jacket and then clicking another button should lead the user to it. Clicking
+the jacket itself should direct the user to the album."
+
+- **Search Cover Online** becomes a menu button with **MusicBrainz…** and **Google Images**. Google Images opens the
+  browser as before. MusicBrainz… opens a part of the Cover window (or a window of its own) that looks the album up
+  on MusicBrainz (the existing client, its one request a second and User-Agent) and shows the front covers of up to
+  12 matching releases from the Cover Art Archive (`https://coverartarchive.org/release/<mbid>/front-250` for the
+  grid, `/front` for the chosen one; one download at a time, redirects followed, at most 20 MB): a grid of
+  thumbnails with the release's title, artist, year, country and format; a click shows it large with its size in
+  pixels, and **Use this cover** sets it exactly as Change cover… does (for the album or the song). Only the
+  album's artist and title are sent, never a path. Tests use a fake MusicBrainz and a fake Cover Art Archive.
+  MusicBrainz and the Cover Art Archive are credited where MusicBrainz already is.
+- **Clicking a jacket goes to the album; the Cover window is on the right-click menu.** On Now Playing a click on the
+  cover (without a drag) opens the album's page. A right-click on that cover opens a menu: **Cover…** (the Cover
+  window), **Change Cover…**, **Search Cover Online ▸** (MusicBrainz…, Google Images) and **Go to Album**. The album
+  page's own cover gets the same menu (without Go to Album) and keeps opening the Cover window on a click, since the
+  page is the album already. Album cards and song menus keep Change Cover… and gain Search Cover Online ▸.
+
+Settled while building: the cover search belongs to the Cover window (MusicBrainz… opens the Cover window first when
+it is not open; Tk: a window on top of it, egui: a window beside it), so Use this cover goes through the Cover window's
+own Change cover… path, with its choice of songs and its "also save as cover.jpg" (both are shown again with the
+chosen cover) and its summary. The search fields (Album, Artist) are filled from the tags and can be changed; a song
+without an album is looked up by its title. Releases without a front cover are not shown (the status line counts
+them). A cover chosen a second time is not downloaded again. The archive is never asked twice for the same thing:
+HTTP 404 is "no cover", 429/503 end the batch with a message, anything else is that picture's error. Its address is
+`coverart.DEFAULT_SERVER`, or `$REALHIRES_COVERART` for tests. In a cover's own menu Cover… opens the Cover window
+and Change Cover… opens it with its file chooser at once (in the other menus Change Cover… opens the window, as in
+2.3). The cover's menu is also on the back of the jacket. The credit is in the search window and in About
+(`coverart.CREDIT`, `ABOUT_CREDIT`).
+
+### 10. Genres: drag one onto another to merge
+
+"Selecting several genres to merge or rename: user should be able to drag genre via mouse, like how iPhone folders
+can be made by merging apps."
+
+- On the Genres page a card can be dragged (a press becomes a drag after 5 px; a slightly transparent copy of the
+  card follows the pointer). The card under the pointer shows that it will take the dragged one: a ring in the accent
+  colour and the cover drawn 6 % larger. Dropping opens the Merge dialog of 2.3 with both genres chosen and the
+  target's name filled in; the confirmation says how many files change, as before. Dropping elsewhere, or Esc, does
+  nothing. With several genres selected (Select mode or Ctrl/Cmd-click), dragging one of them drags them all (a
+  badge shows how many) and merges them into the target. The page's hint says "Drag a genre onto another to merge
+  them."
+
+### 11. Components, a DSP chain, a VST adapter, tag tools and a layout of your own
+
+"Make it more customizable like foobar2000 by adding DSP components, 3rd party components support via open
+component architecture, VST Adapter, advanced tagging capabilities and customizable layout."
+
+**11a. The DSP chain and its components.** Core `realhires/dspchain.py` / `rust/crates/core/src/dspchain.rs`
+(vectors `python_dspchain.json`).
+
+- A **component** is a description, not code: an id, a name, an author, a description, parameters (key, label, kind
+  `number` with min/max/step/default/unit or `choice` with choices and default) and an FFmpeg audio-filter template
+  with `{key}` placeholders. Both apps run the chain inside the song's FFmpeg decode (`-af`), so they sound the same.
+  The order of processing is: ReplayGain, the equalizer, the DSP chain, the VST plugins (11c), the volume, dither.
+  (The Rust app runs its equalizer through FFmpeg, as the Python app always has, while the chain or a plugin is
+  active, and natively as before otherwise.)
+- Built-in components (`dspchain.BUILTIN`): Crossfeed for headphones (`crossfeed`), Stereo width (`extrastereo`),
+  Bass boost (`bass`), Treble (`treble`), Compressor (`acompressor`), Limiter (`alimiter`), Volume leveller
+  (`dynaudnorm`), Mono (`pan`), Swap left and right (`pan`), Balance (`pan`), Subsonic filter (`highpass`), Echo
+  (`aecho`). Each with sensible ranges and defaults that are safe for the ears (no gain above +12 dB).
+- The chain is kept in `player.json` as `dsp`: `{"on": true, "chain": [{"id", "on", "params"}]}`; `clean_chain()`
+  drops unknown components and clamps values; `ffmpeg_filter(chain, components)` builds the filter text; at most
+  `MAX_CHAIN` (16) entries. A change is heard at once (the decoder restarts at the position, as for the equalizer).
+- **DSP Manager** (a window, from Settings → Playback, the Playback info window and the equalizer button's
+  right-click): "DSP on" switch; left **Active** (the chain in order: a switch per entry, drag to reorder or Up/Down,
+  Remove, and the selected entry's parameters as sliders/menus with Reset); right **Available** (built-in, then
+  installed components and VST plugins, with author and description; double-click or Add). Named **chain presets**
+  can be saved, loaded, exported and imported (`.json`, format `universal-music-player-dsp-chain`).
+
+**11b. Third-party components: an open, file-based format.** A component file is JSON (`{"format":
+"universal-music-player-component", "version": 1, "type": "dsp", "id": "author.name", "name", "author",
+"description", "homepage", "params": […], "filter": "…"}`) in the components folder (`components` in
+`store.data_dir()`, `$REALHIRES_COMPONENTS`), read like tabs and themes (at start, after changes in the app and when
+the DSP Manager opens). No code runs: the template may only use FFmpeg filters from `dspchain.ALLOWED_FILTERS`
+(sample-processing audio filters that read no file, load no library and open no device or network), its characters
+are restricted, a parameter value is always a checked number or one of the listed choices, and
+`check_component()` says in a full sentence what is wrong with a file. DSP Manager: **Import component…**, **Open
+components folder**, **Remove** (the file is deleted). The format is documented for authors in
+`docs/components.md` with example files in `docs/components/` (tested: every example loads and builds a filter that
+this FFmpeg accepts). Themes, custom tabs, DSP components and chain presets, layouts (11e) and VST plugins are the
+app's open extension points, and the document names them all.
+
+**11c. VST adapter.** Core `realhires/vsthost.py` / `rust/crates/core/src/vsthost.rs` (or the gui crate where it
+needs the engine): a host for **VST 2.4 effect plugins** (64-bit `.dll` on Windows, `.so` on Linux, `.vst` bundles
+and `.dylib` on macOS, the same processor architecture as the app), written against the plugin ABI only (the
+`AEffect` structure, `VSTPluginMain`/`main`, the dispatcher opcodes, `processReplacing`), without Steinberg's SDK.
+The DSP Manager's **Add VST plugin…** registers a plugin file (kept in `player.json` under `dsp.vst`: path, on, the
+parameter values and the plugin's own chunk when it has one); its parameters show as sliders with the plugin's own
+names and value texts (the plugin's own editor window is not opened). Plugins process 32-bit float stereo blocks of
+the decoded stream in the engine's decode thread, after the FFmpeg chain. A plugin that fails to load, is not an
+effect, has no stereo in/out or crashes its load check is refused with the reason and never added. Because a plugin
+is native code, adding one asks: "A VST plugin is a program. Only add plugins you trust." VST3 is not supported.
+Tests build a small gain plugin from C (`tests/vst/`) where a C compiler is present and check both hosts sample for
+sample. "VST is a trademark of Steinberg Media Technologies GmbH" is stated in the README and About.
+
+**11d. Tag tools.** Core `realhires/tagformat.py` / `tagformat.rs` (vectors): a small pattern language,
+`%title%`, `%artist%`, `%album%`, `%album artist%`, `%track%`, `%disc%`, `%year%`, `%genre%`, `%composer%`,
+`%filename%`, `%folder%`, and the functions `$upper(x)`, `$lower(x)`, `$caps(x)` (the first letter of each word),
+`$trim(x)`, `$num(x,n)` (zero-padded), `$left(x,n)`, `$right(x,n)`, `$replace(x,a,b)`, `$if2(a,b)` (a, or b when a
+is empty); `format_value()`, `parse_name()` (the reverse: a pattern against a file name gives the fields),
+`safe_file_name()`. A **Tag Tools…** window (every song menu for the selected songs, album and group menus, and a
+button in Properties), with a preview table (file, before, after; changed cells marked) and the number of files that
+will change before anything is written, through `tagedit.save_tags()`:
+  - **Fill tags from file names** (pattern, e.g. `%track%. %artist% - %title%`; `%folder%` parts with `/`).
+  - **Set a field from a pattern** (target field and pattern, e.g. Album artist ← `%artist%`).
+  - **Find and replace** (field or all text fields, match case, whole text only).
+  - **Change case** (Title Case, Sentence case, UPPER, lower; fields chosen).
+  - **Number the tracks** (in the order shown, from a start number, with or without the total, the disc number).
+  - **Rename files from tags** (pattern for the file name, within its folder; characters a file system refuses are
+    replaced, a taken name gets " (2)"; the song's `.lrc`/`.txt` follow; likes, dislikes, playlists, colour labels,
+    the play history, moods and loudness follow the new path through `PlayerState.rename_path()` and
+    `Library.rename_path()`; never while that song plays).
+  - Properties gets an **All tags** view: every tag the file holds, as name and value, where the format lets the app
+    write free fields (FLAC, Ogg, Opus: any name; MP3: `TXXX`), with Add, Edit and Remove.
+
+**11e. A layout of your own.** Core `realhires/layout.py` / `layout.rs` (vectors): the layout is kept in
+`player.json` as `layout` and can be exported and imported as a file (format `universal-music-player-layout`).
+Settings → Appearance → **Layout** (and **Customize Layout…** on a right-click of the sidebar):
+  - Sidebar: which entries are shown and in which order (drag, or Up/Down; Library and Settings always stay), on the
+    left or the right, and its width (drag its edge; kept).
+  - Playback bar: at the top (default) or at the bottom.
+  - Library page: which entries are shown and in which order.
+  - Now Playing: the cover on the left (default) or on the right.
+  - Song lists: Comfortable (default) or Compact rows.
+  - Start page: Library (default), the page that was open last, or one chosen entry.
+  - **Reset layout**, **Export layout…**, **Import layout…**. Entries the layout does not know (a new version's, a
+    new tab) are shown after the known ones, so nothing can disappear by an update.

@@ -2,6 +2,8 @@
 name = "realhires-cli"
 description = "Real-Hi-Res command-line tool: scan audio files for fake hi-res and fake lossless."
 version.workspace = true
+license.workspace = true
+repository.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 

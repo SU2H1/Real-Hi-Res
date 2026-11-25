@@ -1,6 +1,8 @@
-"""Real-Hi-Res: detect fake high-resolution audio files.
+"""Universal Music Player (formerly Real-Hi-Res): a music player that also detects
+fake high-resolution and fake lossless audio files.
 
-The package decodes audio with ffmpeg and runs two independent forensic tests:
+The quality checker (the "Real-Hi-Res" part) decodes audio with ffmpeg and runs
+two independent forensic tests:
 
 * a spectral test that looks for the brick-wall low-pass left behind when a
   44.1/48 kHz (or lossy) master is upsampled to 88.2/96/176.4/192 kHz, and
@@ -8,4 +10,6 @@ The package decodes audio with ffmpeg and runs two independent forensic tests:
   which exposes 16-bit audio padded with zeros into a 24-bit container.
 """
 
-__version__ = "1.12.1"
+__version__ = "2.4.0"
+APP_NAME = "Universal Music Player"
+PROJECT_URL = "https://github.com/SU2H1/Universal-Music-Player"

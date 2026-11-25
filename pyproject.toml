@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "realhires"
-version = "1.12.1"
-description = "Scan audio files and detect fake high-resolution audio (upsampled or bit-padded)."
+version = "2.4.0"
+description = "Universal Music Player (formerly Real-Hi-Res): a music player that finds fake hi-res and fake lossless audio files"
 readme = "README.md"
+license = {text = "GPL-3.0-only"}
 requires-python = ">=3.9"
-dependencies = ["numpy>=1.21"]
+# miniaudio: the 2.0 player's sound output (1.73 has wheels for Python 3.11+ on Windows x64,
+# macOS x86_64/arm64 and manylinux 2.28 x86_64/aarch64)
+dependencies = ["numpy>=1.21", "miniaudio>=1.59"]
 
 [project.optional-dependencies]
 test = ["pytest"]
@@ -18,12 +21,13 @@ realhires = "realhires.cli:main"
 
 [project.gui-scripts]
 realhires-gui = "realhires.gui:main"
+universal-music-player = "realhires.gui:main"
 
 [tool.setuptools]
 packages = ["realhires"]
 
 [tool.setuptools.package-data]
-realhires = ["assets/*.png"]
+realhires = ["assets/*.png", "assets/fonts/*", "assets/lang/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

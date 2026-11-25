@@ -293,6 +293,32 @@ class ResultStore:
                 self.trim_graphs()
         return True
 
+    def retag(self, path: str, old_size: int, old_mtime_ns: int, tags: Optional[dict] = None) -> int:
+        """The file's tags changed but its audio did not (lyrics were written
+        into it, or its information was edited, 2.0): move its saved results to
+        the file's new size and time, so it is not analysed again, and give them
+        the file's new `tags` when they are known.  Returns the number of rows
+        moved."""
+        path = os.path.abspath(path)
+        try:
+            st = os.stat(path)
+            fp = fingerprint(path, st.st_size)
+            if tags is not None:
+                rows = self.db.execute("SELECT skey, result FROM results WHERE path=? AND size=? AND mtime_ns=?",
+                                       (path, old_size, old_mtime_ns)).fetchall()
+                for skey, text in rows:
+                    d = json.loads(text)
+                    d["tags"] = dict(tags)
+                    self.db.execute("UPDATE results SET result=? WHERE path=? AND skey=?",
+                                    (json.dumps(d, separators=(",", ":")), path, skey))
+            cur = self.db.execute("UPDATE results SET size=?, mtime_ns=?, fp=? WHERE path=? AND size=? AND mtime_ns=?",
+                                  (st.st_size, st.st_mtime_ns, fp, path, old_size, old_mtime_ns))
+            self.db.commit()
+            return cur.rowcount
+        except (OSError, ValueError, sqlite3.Error):
+            self._rollback()
+            return 0
+
     def put_plot(self, path: str, skey: str, plot: dict) -> None:
         """Add graphs to a saved result (they were drawn later, on demand)."""
         if not plot or self.graphs_limit <= 0:

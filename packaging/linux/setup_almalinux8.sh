@@ -8,6 +8,6 @@ dnf -y -q install python3.12 python3.12-tkinter python3.12-pip python3.12-devel 
   binutils git tar xz gzip findutils which
 python3.12 -m venv /opt/venv
 /opt/venv/bin/python -m pip install -q --upgrade pip
-/opt/venv/bin/python -m pip install -q numpy pyinstaller pillow pytest
-/opt/venv/bin/python -c "import tkinter, numpy, PyInstaller; print('tk', tkinter.TkVersion, 'numpy', numpy.__version__, 'pyinstaller', PyInstaller.__version__)"
+/opt/venv/bin/python -m pip install -q numpy pyinstaller pillow pytest miniaudio
+/opt/venv/bin/python -c "import tkinter, numpy, PyInstaller, miniaudio; print('tk', tkinter.TkVersion, 'numpy', numpy.__version__, 'pyinstaller', PyInstaller.__version__, 'miniaudio', miniaudio.__version__)"
 ldd --version | sed -n 1p

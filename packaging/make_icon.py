@@ -1,91 +1,107 @@
-"""Draw the app icon (a spectrum that falls off a cliff) with NumPy only.
+"""Make the app icon from the user's picture of a maki roll (2.1).
 
-Writes realhires/assets/icon.png (512x512 RGBA).  PyInstaller turns it into
-.ico/.icns at build time (with Pillow installed); the GUI uses it as the
-window icon and the Linux installer as the menu icon.
+Reads packaging/icon-source.png (the user's picture: the roll on a checkerboard and
+white background that is painted into the picture, not transparent), cuts the roll
+out along its dark seaweed edge, centres it with a small margin and writes
+realhires/assets/icon.png (512x512 RGBA, transparent around the roll).  PyInstaller
+turns that into .ico/.icns at build time (with Pillow installed), the Rust build
+embeds it (rust/windows_resources.rs, the window icon in crates/gui/src/main.rs, an
+.icns on macOS), the apps use it as the window icon and the Linux installers as the
+menu icon.
+
+The cut: every pixel darker than DARK is seaweed, and the roll is the convex hull of
+those pixels (its outline is convex), sampled 4x4 per pixel for a smooth edge without
+a fringe of the background.  FFmpeg decodes the picture and scales the result
+(Lanczos).
 
 Usage: python packaging/make_icon.py
 """
 
 import os
-import struct
-import zlib
+import subprocess
+import sys
 
 import numpy as np
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
+from realhires.probe import tool  # noqa: E402
+
+SOURCE = os.path.join(HERE, "icon-source.png")
+DEST = os.path.join(HERE, "..", "realhires", "assets", "icon.png")
 SIZE = 512
-SS = 4  # supersampling factor for anti-aliasing
+DARK = 120     # luminance below this is the seaweed rim (the background is 220-255)
+MARGIN = 0.05  # free space on each side, as a share of the icon
 
 
-def write_png(path: str, rgba: np.ndarray) -> None:
-    h, w, _ = rgba.shape
-    raw = b"".join(b"\x00" + rgba[y].tobytes() for y in range(h))
+def read_rgba(path: str) -> np.ndarray:
+    probe = subprocess.run([tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=width,height", "-of", "csv=p=0:s=x", path],
+                           capture_output=True, text=True, check=True).stdout.strip()
+    w, h = (int(v) for v in probe.split("x"))
+    raw = subprocess.run([tool("ffmpeg"), "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(h, w, 4).copy()
 
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
-    png = (b"\x89PNG\r\n\x1a\n"
-           + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-           + chunk(b"IDAT", zlib.compress(raw, 9))
-           + chunk(b"IEND", b""))
-    with open(path, "wb") as f:
-        f.write(png)
+def convex_hull(points: np.ndarray) -> np.ndarray:
+    """The convex hull of (x, y) points, counter-clockwise (Andrew's monotone chain)."""
+    pts = sorted(set(map(tuple, points.tolist())))
+
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+
+    lower, upper = half(pts), half(reversed(pts))
+    return np.array(lower[:-1] + upper[:-1], dtype=np.float64)
+
+
+def roll_mask(rgba: np.ndarray) -> np.ndarray:
+    """The share of each pixel inside the roll's outline (0..1, anti-aliased): the convex
+    hull of the seaweed's dark pixels, sampled 4x4 per pixel."""
+    lum = rgba[..., :3].astype(np.float64) @ np.array([0.299, 0.587, 0.114])
+    ys, xs = np.nonzero(lum < DARK)
+    hull = convex_hull(np.stack([xs, ys], axis=1))
+    h, w = lum.shape
+    y0, y1, x0, x1 = max(ys.min() - 2, 0), min(ys.max() + 3, h), max(xs.min() - 2, 0), min(xs.max() + 3, w)
+    gy, gx = np.mgrid[y0:y1, x0:x1].astype(np.float64)
+    cover = np.zeros(gy.shape)
+    nxt = np.roll(hull, -1, axis=0)
+    for oy in (-0.375, -0.125, 0.125, 0.375):
+        for ox in (-0.375, -0.125, 0.125, 0.375):
+            px, py = gx + ox, gy + oy
+            inside = np.ones(gy.shape, bool)
+            for (ax, ay), (bx, by) in zip(hull, nxt):  # left of every counter-clockwise edge
+                inside &= (bx - ax) * (py - ay) - (by - ay) * (px - ax) >= 0
+            cover += inside
+    mask = np.zeros((h, w))
+    mask[y0:y1, x0:x1] = cover / 16.0
+    return mask
 
 
 def main() -> None:
-    n = SIZE * SS
-    y, x = np.mgrid[0:n, 0:n].astype(np.float64) / n  # 0..1
-    img = np.zeros((n, n, 4))
-
-    # Rounded-square background with a vertical gradient.
-    r, m = 0.19, 0.04
-    cx = np.clip(x, m + r, 1 - m - r)
-    cy = np.clip(y, m + r, 1 - m - r)
-    inside = (x - cx) ** 2 + (y - cy) ** 2 <= r * r
-    top, bottom = np.array([0.13, 0.20, 0.33]), np.array([0.05, 0.08, 0.15])
-    bg = top[None, None, :] * (1 - y[..., None]) + bottom[None, None, :] * y[..., None]
-    img[inside, :3] = bg[inside]
-    img[inside, 3] = 1.0
-
-    # Spectrum bars: gently falling level, then a brick-wall cliff.
-    left, right, base = 0.16, 0.84, 0.80
-    bars = 13
-    cliff = 9  # bars after this index are "nothing above the cliff"
-    width = (right - left) / bars
-    for i in range(bars):
-        x0 = left + i * width + width * 0.16
-        x1 = left + (i + 1) * width - width * 0.16
-        h = 0.52 - 0.022 * i if i < cliff else 0.035
-        sel = inside & (x >= x0) & (x <= x1) & (y <= base) & (y >= base - h)
-        t = (base - y[sel]) / 0.55
-        if i < cliff:
-            col = np.stack([0.20 + 0.25 * t, 0.85 - 0.1 * t, 0.80 + 0.15 * t], axis=-1)
-        else:
-            col = np.tile([0.45, 0.50, 0.60], (sel.sum(), 1))
-        img[sel, :3] = col
-
-    # Red dashed "cutoff" line at the cliff.
-    xc = left + cliff * width
-    dash = (np.floor(y * 22) % 2 == 0)
-    sel = inside & (np.abs(x - xc) <= 0.0075) & (y >= 0.20) & (y <= base + 0.04) & dash
-    img[sel, :3] = [0.93, 0.27, 0.27]
-
-    # Baseline.
-    sel = inside & (x >= left) & (x <= right) & (np.abs(y - (base + 0.02)) <= 0.008)
-    img[sel, :3] = [0.75, 0.80, 0.88]
-
-    # Downsample (box filter) for anti-aliasing, premultiplied alpha.
-    pre = img.copy()
-    pre[..., :3] *= pre[..., 3:4]
-    small = pre.reshape(SIZE, SS, SIZE, SS, 4).mean(axis=(1, 3))
-    alpha = small[..., 3:4]
-    rgb = np.where(alpha > 0, small[..., :3] / np.maximum(alpha, 1e-9), 0)
-    out = (np.concatenate([rgb, alpha], axis=-1) * 255).round().clip(0, 255).astype(np.uint8)
-
-    dest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "realhires", "assets", "icon.png")
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    write_png(dest, out)
-    print("wrote", os.path.abspath(dest))
+    rgba = read_rgba(SOURCE)
+    mask = roll_mask(rgba)
+    ys, xs = np.nonzero(mask > 0)
+    side = int(round(max(ys.max() - ys.min(), xs.max() - xs.min()) / (1 - 2 * MARGIN)))
+    cy, cx = (ys.min() + ys.max()) / 2, (xs.min() + xs.max()) / 2
+    top, left = int(round(cy - side / 2)), int(round(cx - side / 2))
+    out = np.zeros((side, side, 4), np.uint8)
+    h, w = mask.shape
+    y0, x0 = max(top, 0), max(left, 0)
+    y1, x1 = min(top + side, h), min(left + side, w)
+    out[y0 - top:y1 - top, x0 - left:x1 - left, :3] = rgba[y0:y1, x0:x1, :3]
+    out[y0 - top:y1 - top, x0 - left:x1 - left, 3] = np.round(mask[y0:y1, x0:x1] * 255).astype(np.uint8)
+    subprocess.run([tool("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba",
+                    "-s", f"{side}x{side}", "-i", "-", "-vf", f"scale={SIZE}:{SIZE}:flags=lanczos",
+                    "-frames:v", "1", "-pix_fmt", "rgba", os.path.abspath(DEST)],
+                   input=out.tobytes(), check=True)
+    print(f"wrote {os.path.abspath(DEST)} ({SIZE}x{SIZE}) from a {side}x{side} cut of {os.path.basename(SOURCE)}")
 
 
 if __name__ == "__main__":

@@ -339,3 +339,64 @@ def test_lyrics_after_a_scan_use_the_scan_tags(tmp_path):
         assert (tmp_path / "Eta.lrc").read_text(encoding="utf-8") == "[00:00.20] Eta sings\n"
     finally:
         fake.server.shutdown()
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2, 3])
+def test_lyrics_save_modes_write_the_same_files(tmp_path, mode):
+    """2.0: lyrics saved as .lrc, inside the audio file (FLAC/MP3, as LRCGET), both, or plain inside:
+    both versions write byte-identical audio and lyrics files and print the same messages."""
+    from realhires.settings import LYRICS_SAVE_CHOICES
+    from test_lyrics import FakeLrclib, rec, tagged
+
+    have_mp3 = " libmp3lame " in subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True,
+                                                 text=True).stdout
+    fake = FakeLrclib()
+    try:
+        env = dict(os.environ, REALHIRES_LYRICS_INTERVAL="0", NO_PROXY="127.0.0.1,localhost",
+                   no_proxy="127.0.0.1,localhost")
+        base = tmp_path / "base"
+        base.mkdir()
+        band = dict(artist="The Band", album="First")
+        tagged(base / "01 Alpha.flac", title="Alpha", **band)
+        tagged(base / "03 Gamma.flac", title="Gamma", **band)
+        tagged(base / "04 Delta.flac", title="Delta", **band)
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=4", "-metadata", "title=Epsilon",
+                        "-metadata", "artist=The Band", "-metadata", "album=First", str(base / "05 Epsilon.wav")],
+                       check=True)
+        if have_mp3:
+            for major in (3, 4):
+                subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=4", "-metadata",
+                                f"title=Beta{major}", "-metadata", "artist=The Band", "-metadata", "album=First",
+                                "-c:a", "libmp3lame", "-id3v2_version", str(major),
+                                str(base / f"02 Beta{major}.mp3")], check=True)
+        fake.songs += [rec("Alpha", synced="[00:00.50] First line ♪\n[00:02.00] 二行目", rid=1),
+                       rec("Beta3", synced="[00:01.00] Beta three", rid=2),
+                       rec("Beta4", synced="[00:01.00] Beta four", rid=3),
+                       rec("Gamma", plain="Gamma has no timing", rid=4),
+                       rec("Delta", instrumental=True, rid=5),
+                       rec("Epsilon", synced="[00:00.10] Wave file", rid=6)]
+        server = f"lyrics_server={fake.url}"
+        choice = f"lyrics_save_as={LYRICS_SAVE_CHOICES[mode]}"
+        out = {}
+        for who in ("python", "rust"):
+            folder = tmp_path / who
+            shutil.copytree(base, folder)
+            args = (str(folder), "--no-settings", "--no-color", "--lyrics-only", "--set", server, "--set", choice, "-v")
+            for run in (1, 2):  # the second run must skip every song that got lyrics
+                proc = run_python(*args, env=env) if who == "python" else subprocess.run(
+                    [rust_cli(), *args], capture_output=True, text=True, encoding="utf-8", env=env)
+                assert proc.returncode == 0, proc.stdout + proc.stderr
+                out[(who, run)] = proc.stdout.replace(str(folder), "ALBUM")
+        assert out[("python", 1)] == out[("rust", 1)]
+        assert out[("python", 2)] == out[("rust", 2)]
+        assert "skipped (already had lyrics)" in out[("python", 2)]
+        names = sorted(os.listdir(tmp_path / "python"))
+        assert names == sorted(os.listdir(tmp_path / "rust"))
+        for n in names:
+            a, b = (tmp_path / "python" / n).read_bytes(), (tmp_path / "rust" / n).read_bytes()
+            assert a == b, f"{n} differs ({LYRICS_SAVE_CHOICES[mode]})"
+        if mode in (1, 3):  # embedded only: no .lrc next to the FLAC and MP3 songs, but the WAV gets one
+            assert not [n for n in names if n.endswith(".lrc") and not n.startswith("05")]
+            assert "05 Epsilon.lrc" in names
+    finally:
+        fake.server.shutdown()

@@ -229,8 +229,8 @@ fn main() {
     std::process::exit(run());
 }
 
-const DOUBLE_CLICK_MESSAGE: &str = "This is the command-line tool of Real-Hi-Res. It checks the folders or files you \
-     name, for example\n  realhires.exe \"D:\\Music\"\nin a terminal. The desktop app is realhires-gui.exe in the same \
+const DOUBLE_CLICK_MESSAGE: &str = "This is the command-line tool of Universal Music Player (the Real-Hi-Res quality \
+     checker). It checks the folders or files you name, for example\n  realhires.exe \"D:\\Music\"\nin a terminal. The desktop app is universal-music-player.exe in the same \
      folder.\n\nPress Enter to close this window.";
 
 /// Windows: true when this program has a console window of its own, which is
@@ -262,7 +262,7 @@ fn open_app_instead(has_args: bool, started: bool) -> Option<i32> {
     }
     let gui = std::env::current_exe()
         .ok()
-        .map(|p| p.with_file_name(if cfg!(windows) { "realhires-gui.exe" } else { "realhires-gui" }));
+        .map(|p| p.with_file_name(if cfg!(windows) { "universal-music-player.exe" } else { "universal-music-player" }));
     if let Some(gui) = gui.filter(|g| g.is_file()) {
         if std::process::Command::new(gui).spawn().is_ok() {
             return Some(0);

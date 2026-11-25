@@ -42,11 +42,47 @@ FFmpeg is a trademark of Fabrice Bellard.
 """
 
 
+ATTEMPTS = 6          # a download is tried this many times
+MAX_WAIT_S = 300      # the longest wait between two tries (also for Retry-After)
+
+
+def _wait_before_retry(error: Exception, attempt: int) -> float:
+    """Seconds to wait after a failed try: the server's Retry-After for 429/503
+    (evermeet.cx answers 429 when several CI jobs download at once), else
+    15, 30, 60... seconds."""
+    wait = 15.0 * 2 ** attempt
+    headers = getattr(error, "headers", None)
+    retry_after = headers.get("Retry-After") if headers is not None else None
+    if retry_after:
+        try:
+            wait = max(float(retry_after), 1.0)
+        except ValueError:
+            pass
+    return min(wait, MAX_WAIT_S)
+
+
 def download(url: str) -> bytes:
-    print(f"Downloading {url}", flush=True)
-    req = urllib.request.Request(url, headers={"User-Agent": "realhires-build"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return r.read()
+    import time
+    import urllib.error
+
+    for attempt in range(ATTEMPTS):
+        print(f"Downloading {url}", flush=True)
+        req = urllib.request.Request(url, headers={"User-Agent": "realhires-build"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code != 429 and e.code < 500 or attempt == ATTEMPTS - 1:
+                raise
+            error: Exception = e
+        except (urllib.error.URLError, OSError) as e:  # network trouble, a cut-off transfer
+            if attempt == ATTEMPTS - 1:
+                raise
+            error = e
+        wait = _wait_before_retry(error, attempt)
+        print(f"  failed ({error}); trying again in {wait:.0f} s", flush=True)
+        time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def make_executable(path: str) -> None:

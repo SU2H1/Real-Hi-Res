@@ -1,0 +1,16 @@
+{
+ "strings": {
+  "Times played": "再生回数",
+  "Time listened": "再生時間",
+  "Day": "日",
+  "Week": "週",
+  "Month": "月",
+  "{year}": "{year}年",
+  "Nothing was played in this period.": "この期間には何も再生されていません。",
+  "Previous period": "前の期間",
+  "Next period": "次の期間"
+ },
+ "patterns": {
+  "{detail} · {k:num} kbps": "{detail} · {k} kbps"
+ }
+}

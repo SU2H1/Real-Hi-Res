@@ -15,8 +15,19 @@ use std::path::{Path, PathBuf};
 
 use crate::json::{self, Value};
 
-pub const GROUPS: [&str; 6] = ["Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics"];
+pub const GROUPS: [&str; 9] =
+    ["Library", "Playback", "Appearance", "Lyrics", "Detection", "Scanning", "Saved results", "Display", "Fixing"];
+pub const LYRICS_SAVE_CHOICES: [&str; 4] = [
+    "An .lrc file next to the song",
+    "Inside the audio file (MP3, FLAC)",
+    "Both: .lrc file and inside the audio file",
+    "Plain lyrics inside the audio file (no timing)",
+];
+/// The built-in theme names (2.0); with the user's own themes: `themes::names()`.
+pub const THEMES: [&str; 9] = ["Match the system", "Light", "Dark", "Midnight", "Graphite", "Forest", "Ocean", "Sepia", "Rose"];
 pub const SETTINGS_VERSION: i64 = 160;
+/// How the player's Library page shows its entries (2.3).
+pub const LIBRARY_LAYOUTS: [&str; 2] = ["Tiles", "List"];
 
 pub const ALL_VERDICTS: [&str; 7] =
     ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES", "LOSSY FORMAT", "ERROR"];
@@ -33,6 +44,8 @@ pub enum Kind {
     Str,
     Choice,
     Multi,
+    /// a list of folders (2.0: the library folders)
+    Paths,
 }
 
 /// A setting's value, independent of its Rust type.
@@ -202,6 +215,75 @@ const VERDICTS: &[&str] = &ALL_VERDICTS;
 const MAPS: &[&str] = &COLORMAPS;
 
 settings! {
+    // ---- Library (2.0, the player) -----------------------------------------
+    library_folders: Vec<String> = vec![], "Library", "Library folders",
+        s("The folders whose songs make up your music library. Every audio file in them and in their sub-folders \
+           is listed in the player, with the title, artist, album and genre from its tags. On the command line, \
+           separate several folders with ';' on Windows and ':' elsewhere."), Paths, None, None, NUMS;
+    scan_library_on_start: bool = false, "Library", "Check new songs when the app starts",
+        s("When the app starts, analyse the library songs that have not been checked for fake hi-res and fake \
+           lossless yet. Songs checked before are answered from the saved results at once."), Bool, None, None, NUMS;
+    lyrics_while_scanning: bool = false, "Library", "Download lyrics while scanning",
+        s("While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its lyrics as \
+           set on the Lyrics tab (one request at a time, as LRCLIB asks)."), Bool, None, None, NUMS;
+    analyse_moods: bool = true, "Library", "Analyse moods and tempo",
+        s("Listen to each song of the library on this computer, one at a time in the background, for its tempo \
+           (BPM), energy, brightness and key, and give it the estimated labels of the Moods page: Happy, Sad, Chill \
+           or Intense, and Up-tempo, Mid-tempo or Slow. Nothing is sent anywhere, and a song is analysed again only \
+           when its file changes. The labels are a guess from the sound, not a fact about the song."), Bool, None,
+        None, NUMS;
+
+    musicbrainz_auto: bool = false, "Library", "Add song information from MusicBrainz automatically",
+        s("When new songs come into the library, look those that miss some information (artist, album, album \
+           artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a \
+           certain match is used, and information already in a tag is never replaced. Each song is looked up once, \
+           one request per second, as MusicBrainz asks. Off: use Acquire Metadata… in a song's or an album's \
+           right-click menu."), Bool, None, None, NUMS;
+    musicbrainz_server: String = s("https://musicbrainz.org"), "Library", "MusicBrainz server",
+        s("Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your \
+           own."), Str, None, None, NUMS;
+
+    // ---- Playback (2.0) ---------------------------------------------------
+    output_device: String = s(""), "Playback", "Output device",
+        s("The sound device the player plays through. Empty = the system's default device."), Str, None, None, NUMS;
+    gapless: bool = true, "Playback", "Gapless playback",
+        s("Start the next song without a pause, so albums that flow from track to track play as one."), Bool, None,
+        None, NUMS;
+    bit_perfect: bool = false, "Playback", "Bit-perfect playback",
+        s("Send each song's samples to the sound device exactly as they are in the file: at the song's own sample \
+           rate, without the equalizer, the volume control or resampling, and with the device to this app alone \
+           where the system allows it (exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the \
+           device is switched to the song's rate). Set the volume on your amplifier or DAC. While a song plays \
+           this way, other programs may not be heard."), Bool, None, None, NUMS;
+    // 2.4: where songs were played (`places`); off until the user turns it on
+    play_location: bool = false, "Playback", "Remember where songs were played",
+        s("Store the approximate place (city, region and country) with each song in the play history, for Your \
+           Stats. The place is asked from the location service below when the app starts and again at most every 2 \
+           hours while music plays: only that request goes out, and the service sees this computer's IP address and \
+           the app's name, never a song, path or tag. The places are kept only on this computer. Off: nothing is \
+           asked and no place is stored."), Bool, None, None, NUMS;
+    location_server: String = s(crate::places::DEFAULT_SERVER), "Playback", "Location service",
+        s("Address the approximate place is asked from: FreeIPAPI's free service, which needs no account or key \
+           (terms: freeipapi.com/terms). Another service that answers with the same kind of JSON can be used."), Str,
+        None, None, NUMS;
+
+    // ---- Appearance (2.0)---------------------------------------------------
+    language: String = s(crate::i18n::DEFAULT_LANGUAGE), "Appearance", "Language",
+        s("The language of the app's menus, pages and windows: English or 日本語 (Japanese). The information of your \
+           songs is shown as it is in their tags, and the command-line tool always writes English."), Choice, None,
+        None, &crate::i18n::LANGUAGES;
+    font_family: String = s(""), "Appearance", "Font",
+        s("The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux (SF Pro may \
+           only be used on Apple systems). Any font installed on your computer can be chosen."), Str, None, None, NUMS;
+    library_layout: String = s("Tiles"), "Appearance", "Library page",
+        s("How the Library page shows All Songs, Folders, Albums and its other entries: as tiles, several side by \
+           side, or as a list with one entry per row. The two buttons at the right of the Library page's title \
+           switch it too."), Choice, None, None, &LIBRARY_LAYOUTS;
+    theme: String = s("Match the system"), "Appearance", "Theme",
+        s("The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme (Light, \
+           Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), one of your own themes, or a theme file put into \
+           the themes folder."), Str, None, None, NUMS;
+
     // ---- Detection ------------------------------------------------------
     cliff_db: f64 = 25.0, "Detection", "Upsampling cliff (dB)",
         s("Minimum level drop at the Nyquist frequency of a lower sample rate (22.05 kHz for 44.1 kHz, 24 kHz for \
@@ -354,6 +436,12 @@ settings! {
            artist and take a result with the same title, the same artist and a length within 2 seconds. This finds \
            songs whose album is named differently on LRCLIB. Off: exact matches only (one request per song instead \
            of up to two)."), Bool, None, None, NUMS;
+    lyrics_save_as: String = s(LYRICS_SAVE_CHOICES[0]), "Lyrics", "Save lyrics as",
+        s("Where downloaded lyrics go. An .lrc file next to the song works with every player and never changes the \
+           audio file. 'Inside the audio file' writes synced lyrics into the file's tag, as LRCGET does (MP3: SYLT and \
+           USLT; FLAC: LYRICS and UNSYNCEDLYRICS); only the tag is rewritten, the audio itself is not changed, and \
+           other formats get an .lrc file instead. 'Plain lyrics inside the audio file' stores the text without \
+           timing, which more players show."), Choice, None, None, &LYRICS_SAVE_CHOICES;
     lyrics_server: String = s("https://lrclib.net"), "Lyrics", "LRCLIB server",
         s("Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB."),
         Str, None, None, NUMS;
@@ -382,6 +470,17 @@ fn coerce(f: &FieldInfo, v: &Value) -> Option<SValue> {
             return Some(SValue::List(
                 items.iter().filter_map(Value::as_str).filter(|s| f.choices.contains(s)).map(str::to_string).collect(),
             ));
+        }
+        Kind::Paths => {
+            let mut out: Vec<String> = vec![];
+            for item in v.as_array()? {
+                if let Some(p) = item.as_str().map(crate::pyunicode::strip).filter(|p| !p.is_empty()) {
+                    if !out.iter().any(|o| o == p) {
+                        out.push(p.to_string());
+                    }
+                }
+            }
+            return Some(SValue::List(out));
         }
         Kind::Int => match v {
             Value::Int(i) => *i as f64,
@@ -484,6 +583,13 @@ impl Settings {
                 raw.split(',').map(str::trim).filter(|v| !v.is_empty()).map(|v| Value::Str(v.to_uppercase())).collect(),
             ),
             Kind::Bool => Value::Bool(["1", "true", "yes", "on"].contains(&raw.trim().to_lowercase().as_str())),
+            Kind::Paths => Value::Array(
+                raw.split(if cfg!(windows) { ';' } else { ':' })
+                    .map(crate::pyunicode::strip)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| Value::Str(v.to_string()))
+                    .collect(),
+            ),
             _ => Value::Str(raw.to_string()),
         };
         match coerce(&f, &v) {
@@ -585,6 +691,22 @@ mod tests {
         assert_eq!(Settings::from_json(&v).fix_output, "Replace the file");
         let v = json::parse(r#"{"fix_output": "Saving a copy next to it", "_version": 160}"#).unwrap();
         assert_eq!(Settings::from_json(&v).fix_output, "Saving a copy next to it");
+    }
+
+    #[test]
+    fn library_layout_is_an_appearance_choice() {
+        // 2.3: "Tiles" (the default) or "List"; not a Detection setting, so saved results stay valid
+        let s = Settings::default();
+        assert_eq!(s.library_layout, "Tiles");
+        let info = Settings::field_info().into_iter().find(|f| f.name == "library_layout").unwrap();
+        assert_eq!((info.group, info.label, info.kind, info.choices), ("Appearance", "Library page", Kind::Choice, &LIBRARY_LAYOUTS[..]));
+        let mut list = s.clone();
+        list.set_value("library_layout", "List").unwrap();
+        assert_eq!(Settings::from_json(&list.to_json()).library_layout, "List");
+        assert!(list.set_value("library_layout", "Grid").is_err());
+        let bad = json::parse(r#"{"library_layout": "Grid"}"#).unwrap();
+        assert_eq!(Settings::from_json(&bad).library_layout, "Tiles");
+        assert_eq!(crate::store::settings_key(&list), crate::store::settings_key(&s));
     }
 
     #[test]

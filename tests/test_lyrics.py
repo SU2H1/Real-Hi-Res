@@ -147,7 +147,7 @@ def test_lrclib_client_is_polite(monkeypatch):
                      rng=random.Random(1))
     lyr = find_lyrics(c, Track("", "Song", "Band", "Album", 200.4))
     assert lyr is not None and lyr.synced and lyr.how == "exact"  # synced: no search needed
-    assert calls[0][2]["User-Agent"] == f"Real-Hi-Res v{__version__} (https://github.com/SU2H1/Real-Hi-Res)"
+    assert calls[0][2]["User-Agent"] == f"Universal Music Player v{__version__} (https://github.com/SU2H1/Universal-Music-Player)"
     q = {k: v[0] for k, v in parse_qs(urlsplit(calls[0][1]).query).items()}
     assert q == {"track_name": "Song", "artist_name": "Band", "album_name": "Album", "duration": "200"}
     waited = calls[1][0] - (calls[0][0] + 0.1)
@@ -232,9 +232,9 @@ def test_cli_downloads_lyrics_like_lrcget(lrclib, tmp_path, capsys):
     for name in ("05 Epsilon", "06 untagged", "07 Zeta"):  # Zeta's only record is 5 s longer
         assert not (folder / f"{name}.lrc").exists() and not (folder / f"{name}.txt").exists()
     assert "(found by searching)" in out
-    assert ("Lyrics: 2 with synced lyrics, 1 with plain lyrics (.txt), 1 instrumental, 2 not found on LRCLIB, "
+    assert ("Lyrics: 2 with synced lyrics, 1 with plain lyrics, 1 instrumental, 2 not found on LRCLIB, "
             "1 without title/artist tags.") in out, out
-    assert all(ua.startswith("Real-Hi-Res v") for _, _, ua in lrclib.requests)
+    assert all(ua.startswith("Universal Music Player v") for _, _, ua in lrclib.requests)
     first = next(q for p, q, _ in lrclib.requests if p == "/api/get" and q["track_name"] == "Alpha")
     assert first == {"track_name": "Alpha", "artist_name": "The Band", "album_name": "First", "duration": "4"}
     assert not [f for f in os.listdir(folder) if f.startswith(".realhires-")]  # no temp files left
@@ -295,6 +295,50 @@ def test_skip_rules(tmp_path):
     cfg.lyrics_existing = lyrics.EXISTING_CLI["replace"]
     assert lyrics.skip_reason(str(song), cfg) == ""
     assert lyrics.read_lyrics_file(str(song))[0] == lyrics.INSTRUMENTAL
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_synced_lyrics_win_wherever_they_are(tmp_path):
+    """The user's LRCGET lyrics showed without timing (2026-11-24): LRCGET's "plain text"
+    and "embed" exports leave a .txt next to a file whose tag holds the synced lyrics, and
+    the .txt used to win.  Synced lyrics now come first wherever they are, and LRC kept in
+    a .txt or in the plain-lyrics tag counts as synced."""
+    from realhires import embed
+
+    lrc = "[ar: Someone]\n[00:00.50] First line\n[00:01.20] Second line\n[00:02.00] Third\n"
+    song = tmp_path / "Song.flac"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=d=1", str(song)], check=True)
+
+    def label():  # what Now Playing writes above them
+        kind, _, file = lyrics.read_lyrics_file(str(song))
+        return lyrics.shown_label(kind, str(song), file)
+
+    def write(name, text):  # exact bytes: text mode would write "\r\n" on Windows
+        (tmp_path / name).write_bytes(text.encode("utf-8"))
+
+    assert lyrics.read_lyrics_file(str(song)) is None
+    write("Song.txt", "First line\nSecond line\nThird\n")
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.PLAIN
+    assert label() == ("Lyrics (not synced)", ".txt file")
+    embed.embed_lyrics(str(song), lrc, "First line\nSecond line\nThird")
+    kind, text, where = lyrics.read_lyrics_file(str(song))
+    assert (kind, where) == (lyrics.SYNCED, str(song)) and len(embed.lrc_entries(text)) == 3
+    assert label() == ("Synced lyrics", "inside the file")
+    write("Song.lrc", "[00:00.10] From the file\n")
+    assert lyrics.read_lyrics_file(str(song))[1] == "[00:00.10] From the file\n"  # the .lrc still comes first
+    assert label() == ("Synced lyrics", ".lrc file")
+    os.remove(tmp_path / "Song.lrc")
+    embed.embed_lyrics(str(song), "", "First line\nSecond line\nThird")  # plain inside, plain .txt
+    assert lyrics.read_lyrics_file(str(song))[:2] == (lyrics.PLAIN, "First line\nSecond line\nThird\n")
+    write("Song.txt", lrc)  # LRC saved as .txt
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
+    assert label() == ("Synced lyrics", ".txt file")
+    os.remove(tmp_path / "Song.txt")
+    embed.embed_lyrics(str(song), "", lrc)  # LRC in the plain tag (UNSYNCEDLYRICS)
+    assert lyrics.read_lyrics_file(str(song))[0] == lyrics.SYNCED
+    assert embed.looks_synced(lrc) and not embed.looks_synced("Words\n[00:01] one\nmore\nwords")
+    assert not embed.looks_synced("") and not embed.looks_synced("[ar: x]\n[ti: y]")
+    assert lyrics.shown_label(lyrics.INSTRUMENTAL, str(song), str(tmp_path / "Song.LRC")) == ("Instrumental", ".lrc file")
 
 
 def test_lrclib_and_lrcget_are_credited():

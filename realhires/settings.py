@@ -20,12 +20,21 @@ import sys
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-GROUPS = ("Detection", "Scanning", "Saved results", "Display", "Fixing", "Lyrics")
+from .i18n import LANGUAGES
+
+GROUPS = ("Library", "Playback", "Appearance", "Lyrics", "Detection", "Scanning", "Saved results", "Display",
+          "Fixing")
 SETTINGS_VERSION = 160  # bumped when old saved values need migrating (see from_dict)
 
 ALL_VERDICTS = ["FAKE LOSSLESS", "FAKE HI-RES", "SUSPICIOUS", "REAL HI-RES", "NOT HI-RES",
                 "LOSSY FORMAT", "ERROR"]
 COLORMAPS = ["inferno", "viridis", "magma", "gray"]
+LYRICS_SAVE_CHOICES = ["An .lrc file next to the song", "Inside the audio file (MP3, FLAC)",
+                       "Both: .lrc file and inside the audio file", "Plain lyrics inside the audio file (no timing)"]
+# the built-in theme names (2.0); the full list, with the user's own themes, is themes.names()
+THEMES = ["Match the system", "Light", "Dark", "Midnight", "Graphite", "Forest", "Ocean", "Sepia", "Rose"]
+# how the player's Library page shows its entries (2.3)
+LIBRARY_LAYOUTS = ["Tiles", "List"]
 DEFAULT_EXTENSIONS = (".flac .wav .wave .w64 .rf64 .aif .aiff .aifc .caf .m4a .mp4 .alac .ape .wv "
                       ".tta .tak .dsf .dff .mka .ogg .oga .opus .mp3 .aac .wma .mpc .ac3 .dts")
 
@@ -40,6 +49,91 @@ def _f(default, group, label, help_text, lo=None, hi=None, choices=None, kind=No
 
 @dataclass
 class Settings:
+    # ---- Library (2.0, the player) -----------------------------------------
+    library_folders: list = _f(
+        [], "Library", "Library folders",
+        "The folders whose songs make up your music library. Every audio file in them and in their "
+        "sub-folders is listed in the player, with the title, artist, album and genre from its tags. "
+        "On the command line, separate several folders with ';' on Windows and ':' elsewhere.",
+        kind="paths")
+    scan_library_on_start: bool = _f(
+        False, "Library", "Check new songs when the app starts",
+        "When the app starts, analyse the library songs that have not been checked for fake hi-res and "
+        "fake lossless yet. Songs checked before are answered from the saved results at once.", kind="bool")
+    lyrics_while_scanning: bool = _f(
+        False, "Library", "Download lyrics while scanning",
+        "While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its "
+        "lyrics as set on the Lyrics tab (one request at a time, as LRCLIB asks).", kind="bool")
+    analyse_moods: bool = _f(
+        True, "Library", "Analyse moods and tempo",
+        "Listen to each song of the library on this computer, one at a time in the background, for its tempo "
+        "(BPM), energy, brightness and key, and give it the estimated labels of the Moods page: Happy, Sad, Chill "
+        "or Intense, and Up-tempo, Mid-tempo or Slow. Nothing is sent anywhere, and a song is analysed again only "
+        "when its file changes. The labels are a guess from the sound, not a fact about the song.", kind="bool")
+
+    musicbrainz_auto: bool = _f(
+        False, "Library", "Add song information from MusicBrainz automatically",
+        "When new songs come into the library, look those that miss some information (artist, album, album "
+        "artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a "
+        "certain match is used, and information already in a tag is never replaced. Each song is looked up once, "
+        "one request per second, as MusicBrainz asks. Off: use Acquire Metadata… in a song's or an album's "
+        "right-click menu.", kind="bool")
+    musicbrainz_server: str = _f(
+        "https://musicbrainz.org", "Library", "MusicBrainz server",
+        "Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your "
+        "own.", kind="str")
+
+    # ---- Playback (2.0) ---------------------------------------------------
+    output_device: str = _f(
+        "", "Playback", "Output device",
+        "The sound device the player plays through. Empty = the system's default device.", kind="str")
+    gapless: bool = _f(
+        True, "Playback", "Gapless playback",
+        "Start the next song without a pause, so albums that flow from track to track play as one.",
+        kind="bool")
+    bit_perfect: bool = _f(
+        False, "Playback", "Bit-perfect playback",
+        "Send each song's samples to the sound device exactly as they are in the file: at the song's own sample "
+        "rate, without the equalizer, the volume control or resampling, and with the device to this app alone "
+        "where the system allows it (exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the "
+        "device is switched to the song's rate). Set the volume on your amplifier or DAC. While a song plays "
+        "this way, other programs may not be heard.", kind="bool")
+    # 2.4: where songs were played (places.py); off until the user turns it on
+    play_location: bool = _f(
+        False, "Playback", "Remember where songs were played",
+        "Store the approximate place (city, region and country) with each song in the play history, for Your "
+        "Stats. The place is asked from the location service below when the app starts and again at most every 2 "
+        "hours while music plays: only that request goes out, and the service sees this computer's IP address and "
+        "the app's name, never a song, path or tag. The places are kept only on this computer. Off: nothing is "
+        "asked and no place is stored.", kind="bool")
+    location_server: str = _f(
+        "https://free.freeipapi.com/api/v1/json/", "Playback", "Location service",
+        "Address the approximate place is asked from: FreeIPAPI's free service, which needs no account or key "
+        "(terms: freeipapi.com/terms). Another service that answers with the same kind of JSON can be used.",
+        kind="str")
+
+    # ---- Appearance (2.0)---------------------------------------------------
+    language: str = _f(
+        "English", "Appearance", "Language",
+        "The language of the app's menus, pages and windows: English or 日本語 (Japanese). The information of "
+        "your songs is shown as it is in their tags, and the command-line tool always writes English.",
+        choices=list(LANGUAGES), kind="choice")
+    font_family: str = _f(
+        "", "Appearance", "Font",
+        "The font of the app. Empty = SF Pro, the system font, on macOS and Inter on Windows and Linux "
+        "(SF Pro may only be used on Apple systems). Any font installed on your computer can be chosen.",
+        kind="str")
+    library_layout: str = _f(
+        "Tiles", "Appearance", "Library page",
+        "How the Library page shows All Songs, Folders, Albums and its other entries: as tiles, several side by "
+        "side, or as a list with one entry per row. The two buttons at the right of the Library page's title "
+        "switch it too.", choices=LIBRARY_LAYOUTS, kind="choice")
+    theme: str = _f(
+        "Match the system", "Appearance", "Theme",
+        "The colours of the app: \"Match the system\" (light or dark as the system is), a built-in theme "
+        "(Light, Dark, Midnight, Graphite, Forest, Ocean, Sepia, Rose), one of your own themes, or a theme file "
+        "put into the themes folder.", kind="str")
+
     # ---- Detection ------------------------------------------------------
     cliff_db: float = _f(
         25.0, "Detection", "Upsampling cliff (dB)",
@@ -238,6 +332,14 @@ class Settings:
         "title and artist and take a result with the same title, the same artist and a length within "
         "2 seconds. This finds songs whose album is named differently on LRCLIB. Off: exact matches only "
         "(one request per song instead of up to two).", kind="bool")
+    lyrics_save_as: str = _f(
+        LYRICS_SAVE_CHOICES[0], "Lyrics", "Save lyrics as",
+        "Where downloaded lyrics go. An .lrc file next to the song works with every player and never "
+        "changes the audio file. 'Inside the audio file' writes synced lyrics into the file's tag, as "
+        "LRCGET does (MP3: SYLT and USLT; FLAC: LYRICS and UNSYNCEDLYRICS); only the tag is rewritten, the "
+        "audio itself is not changed, and other formats get an .lrc file instead. 'Plain lyrics inside "
+        "the audio file' stores the text without timing, which more players show.",
+        choices=LYRICS_SAVE_CHOICES, kind="choice")
     lyrics_server: str = _f(
         "https://lrclib.net", "Lyrics", "LRCLIB server",
         "Address of the LRCLIB server the lyrics come from. Change it only for a self-hosted LRCLIB.",
@@ -294,6 +396,8 @@ class Settings:
         value: Any = raw
         if kind == "multi":
             value = [v.strip().upper() for v in raw.split(",") if v.strip()]
+        elif kind == "paths":
+            value = [v.strip() for v in raw.split(os.pathsep) if v.strip()]
         elif kind == "bool":
             value = raw.strip().lower() in ("1", "true", "yes", "on")
         v = _coerce(f, value)
@@ -316,6 +420,14 @@ def _coerce(f, value):
         if kind == "multi":
             vals = [v for v in value if v in md["choices"]]
             return vals if isinstance(value, (list, tuple)) else None
+        if kind == "paths":
+            if not isinstance(value, (list, tuple)):
+                return None
+            out: List[str] = []
+            for v in value:
+                if isinstance(v, str) and v.strip() and v.strip() not in out:
+                    out.append(v.strip())
+            return out
         num = int(value) if kind == "int" else float(value)
     except (TypeError, ValueError, KeyError):
         return None

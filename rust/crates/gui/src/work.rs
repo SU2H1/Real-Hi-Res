@@ -37,6 +37,8 @@ pub enum Msg {
     LyricsStart { run: u64, path: String },
     LyricsDone { run: u64, outcome: Box<LyricsOutcome> },
     LyricsFinished { run: u64, stopped: bool },
+    /// "Lyrics while scanning" (2.0): one song done by the scan's lyrics worker.
+    ScanLyrics { worker: u64, outcome: Box<LyricsOutcome> },
 }
 
 /// Sends messages to the UI thread and wakes it up.
@@ -249,7 +251,7 @@ pub fn start_covers(post: Post) -> Sender<(String, Vec<String>)> {
     let (tx, rx) = mpsc::channel::<(String, Vec<String>)>();
     std::thread::spawn(move || {
         while let Ok((key, tracks)) = rx.recv() {
-            let png = realhires::covers::cover_png(&tracks, 150);
+            let png = realhires::covers::cached_cover_png(&tracks, 150); // kept on disk: made only once
             post.send(Msg::Cover { key, png });
         }
     });
@@ -265,7 +267,7 @@ pub fn start_fix(mut plans: Vec<FixPlan>, everything: Vec<FileResult>, cfg: Sett
         let p2 = post.clone();
         let joins = prepare_gapless(&mut plans, &everything, &mut |m| p2.send(Msg::FixStatus(m.to_string())));
         if joins > 0 {
-            post.send(Msg::FixStatus(format!("Fixing… ({joins} gapless join(s) kept seamless)")));
+            post.send(Msg::FixStatus(realhires::tr!("Fixing… ({n} gapless join(s) kept seamless)", n = joins)));
         }
         let next = AtomicUsize::new(0);
         std::thread::scope(|s| {
@@ -309,6 +311,33 @@ pub fn start_lyrics(
         }
         post.send(Msg::LyricsFinished { run, stopped: stop.load(Ordering::SeqCst) });
     });
+}
+
+/// The scan's lyrics worker (2.0, `lyrics_while_scanning`): one thread with one
+/// LRCLIB client that takes the scanned songs in turn, as LRCLIB asks.
+pub struct ScanLyrics {
+    pub tx: Sender<(String, Option<FileResult>)>,
+    pub stop: Arc<AtomicBool>,
+    pub id: u64,
+}
+
+pub fn start_scan_lyrics(cfg: Settings, id: u64, post: Post) -> ScanLyrics {
+    let (tx, rx) = mpsc::channel::<(String, Option<FileResult>)>();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    std::thread::spawn(move || {
+        let mut client = LrclibClient::new(&cfg.lyrics_server).with_stop(flag.clone());
+        while let Ok((path, result)) = rx.recv() {
+            if flag.load(Ordering::SeqCst) {
+                break;
+            }
+            match fetch_for_file(&path, &mut client, &cfg, result.as_ref(), false) {
+                Ok(o) => post.send(Msg::ScanLyrics { worker: id, outcome: Box::new(o) }),
+                Err(_) => break, // stopped
+            }
+        }
+    });
+    ScanLyrics { tx, stop, id }
 }
 
 // --------------------------------------------------------------- plot cache ---

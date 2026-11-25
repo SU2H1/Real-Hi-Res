@@ -3,9 +3,11 @@ resolver = "2"
 members = ["crates/core", "crates/cli", "crates/gui"]
 
 [workspace.package]
-version = "1.12.1"
+version = "2.4.0"
+license = "GPL-3.0-only"
+repository = "https://github.com/SU2H1/Universal-Music-Player"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.95"
 
 [profile.release]
 opt-level = 3

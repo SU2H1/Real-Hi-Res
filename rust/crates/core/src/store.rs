@@ -21,6 +21,7 @@ use sha1::{Digest, Sha1};
 use crate::analysis::{Plot, Spectrogram};
 use crate::json::{self, Obj, Style, Value};
 use crate::paths::abspath;
+use crate::probe::Tags;
 use crate::settings::Settings;
 use crate::verdict::{FileResult, SavedInfo, Verdict, DETECTOR_VERSION};
 
@@ -511,6 +512,49 @@ impl ResultStore {
         ) {
             eprintln!("Real-Hi-Res: cannot save graphs for {path}: {e}");
         }
+    }
+
+    /// The file's tags changed but its audio did not (lyrics were written into
+    /// it, 2.0): move its saved results to its new size and time, so it is not
+    /// analysed again (Python `ResultStore.retag`).  Returns the rows moved.
+    pub fn retag(&self, path: &str, old_size: i64, old_mtime_ns: i64) -> usize {
+        self.retag_with(path, old_size, old_mtime_ns, None)
+    }
+
+    /// `retag()` that also gives the saved results the file's new `tags`
+    /// (its information was edited; Python `retag(..., tags=)`).
+    pub fn retag_with(&self, path: &str, old_size: i64, old_mtime_ns: i64, tags: Option<&Tags>) -> usize {
+        let path = abspath(path);
+        let Ok((size, mtime)) = stat(&path) else { return 0 };
+        let Ok(fp) = fingerprint(&path, size) else { return 0 };
+        if let Some(tags) = tags {
+            let rows: Vec<(String, String)> = self
+                .db
+                .prepare("SELECT skey, result FROM results WHERE path=?1 AND size=?2 AND mtime_ns=?3")
+                .and_then(|mut st| {
+                    st.query_map(params![path, old_size, old_mtime_ns], |r| Ok((r.get(0)?, r.get(1)?)))?
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (skey, text) in rows {
+                let Ok(Value::Object(mut d)) = json::parse(&text) else { continue };
+                let t = Value::Object(tags.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))).collect());
+                match d.iter_mut().find(|(k, _)| k == "tags") {
+                    Some(slot) => slot.1 = t,
+                    None => d.push(("tags".into(), t)),
+                }
+                let _ = self.db.execute(
+                    "UPDATE results SET result=?1 WHERE path=?2 AND skey=?3",
+                    params![json::dumps(&Value::Object(d), Style::COMPACT), path, skey],
+                );
+            }
+        }
+        self.db
+            .execute(
+                "UPDATE results SET size=?1, mtime_ns=?2, fp=?3 WHERE path=?4 AND size=?5 AND mtime_ns=?6",
+                params![size, mtime, fp, path, old_size, old_mtime_ns],
+            )
+            .unwrap_or(0)
     }
 
     /// Drop the least recently viewed graphs above the size limit.

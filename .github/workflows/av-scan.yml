@@ -1,10 +1,14 @@
 # Scan the files of a release with VirusTotal, Kaspersky and Hybrid Analysis and
 # keep the results, with an explanation of any detection, in the release notes.
 #
-# * Before every release (called by build.yml with prerelease: true): scans the
-#   packages that run built, writes the release notes with the results and
-#   hands them to the release job as the "release-notes" artifact.  It fails,
-#   which holds the release back, unless VirusTotal finished every file.
+# * After every release (called by build.yml's av-scan job, and by
+#   publish-run.yml): scans the published files and writes the section into
+#   the release notes.  Release first, scan after: the user's rule since
+#   2026-11-25.
+# * With prerelease: true (build.yml's av-scan-try, a hand-started run with
+#   "av_scan" that publishes nothing): scans the packages that run built and
+#   uploads the notes as the "release-notes" artifact; it fails unless
+#   VirusTotal finished every file.
 # * Every day for the latest release, and on demand (Actions -> "Antivirus
 #   scan" -> Run workflow): scans the published files again and replaces the
 #   section in the release notes.
@@ -62,7 +66,7 @@ jobs:
         if: inputs.prerelease
         uses: actions/download-artifact@v6
         with:
-          pattern: RealHiRes-*
+          pattern: UniversalMusicPlayer-*
           path: assets
           merge-multiple: true
       - name: Prepare the files
@@ -95,8 +99,8 @@ jobs:
           for z in assets/*windows-x64.zip; do
             [ -f "$z" ] || continue
             case "$(basename "$z")" in
-              RealHiRes-Rust-*) DIR=RealHiRes-Rust; EXES=(realhires-gui.exe realhires.exe) ;;
-              *) DIR=RealHiRes; EXES=(RealHiRes.exe realhires-cli.exe) ;;
+              UniversalMusicPlayer-Rust-*) DIR=UniversalMusicPlayer-Rust; EXES=(universal-music-player.exe realhires.exe) ;;
+              *) DIR=UniversalMusicPlayer; EXES=(UniversalMusicPlayer.exe realhires-cli.exe) ;;
             esac
             for e in "${EXES[@]}"; do
               unzip -j -o "$z" "$DIR/$e" -d inner

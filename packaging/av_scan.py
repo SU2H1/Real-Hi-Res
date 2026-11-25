@@ -4,10 +4,10 @@ the results (with an explanation of any detection) into the release notes.
     python packaging/av_scan.py --tag v1.8.1 --notes-in body.md --notes-out new.md \\
         --json results.json [--build-url URL] FILE...
 
-Run by .github/workflows/av-scan.yml before every release (on the packages
-the release will publish; with --require-results it fails unless VirusTotal
-has finished every file, which holds the release back) and once a day for the
-latest release, so the results on the release page stay current as vendors
+Run by .github/workflows/av-scan.yml right after every release (release first,
+scan after, since 2026-11-25), on a hand-started build with "av_scan" (on the
+packages it built; with --require-results it fails unless VirusTotal has
+finished every file) and once a day for the latest release, so the results on the release page stay current as vendors
 change their signatures.  Only the Python standard library is used.
 
 Keys come from the environment (GitHub repository secrets); a service without
@@ -59,7 +59,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 START = "<!-- av-scan:start -->"
 END = "<!-- av-scan:end -->"
-USER_AGENT = "Real-Hi-Res release scanner (+https://github.com/SU2H1/Real-Hi-Res)"
+USER_AGENT = "Universal Music Player release scanner (+https://github.com/SU2H1/Universal-Music-Player)"
 VT_DIRECT_LIMIT = 32 * 1024 * 1024
 VT_MAX = 650 * 1024 * 1024
 # Engines whose detections are taken as a strong signal in the explanation.
@@ -478,7 +478,7 @@ def explain(t: Target, rows: Dict[str, Result], build_url: str,
             "Only a few engines flag it, none of them a major vendor, and the names are heuristic or "
             "machine-learning verdicts rather than a known malware family. This is the typical false "
             "positive for programs packaged with PyInstaller, which ship a small launcher and compressed "
-            "Python code that such heuristics mistake for a packed program. Real-Hi-Res contains no "
+            "Python code that such heuristics mistake for a packed program. Universal Music Player contains no "
             f"malware: this file was built by {built} from the public source code of this tag, and its "
             f"SHA-256 is `{t.sha256}`, so you can check that your download is the same file. Such "
             "detections are reported to the vendor as false positives and usually disappear within "

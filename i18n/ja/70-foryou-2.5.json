@@ -1,0 +1,23 @@
+{
+ "strings": {
+  "For You": "おすすめ",
+  "Favourites Mix": "お気に入りミックス",
+  "On Repeat": "ヘビーローテーション",
+  "Rediscover": "再発見",
+  "New For You": "新しい発見",
+  "Daily Mix": "デイリーミックス",
+  "The songs you like and listen to the most.": "お気に入りで、いちばんよく聴いている曲です。",
+  "What you played most in the last 30 days.": "この30日間にいちばん多く再生した曲です。",
+  "Songs you loved and have not played for a while.": "よく聴いていたのに、しばらく再生していない曲です。",
+  "Songs you have not played yet, close to what you like.": "まだ再生していない曲のうち、好みに近いものです。",
+  "A different mix every day: favourites, old loves and new songs.": "毎日変わるミックス：お気に入り、懐かしい曲、新しい曲。",
+  "Made on this computer from your likes, how much of each song you listen to and the time you spend with it.": "「お気に入り」、各曲をどこまで聴いたか、聴いた時間をもとに、このコンピュータ上で作成されます。",
+  "Play and like some songs, and your mixes will appear here.": "曲を再生したり「お気に入り」にしたりすると、ここにミックスが表示されます。",
+  "No mixes yet": "ミックスはまだありません",
+  "1 mix": "ミックス1個",
+  "{n} mixes": "ミックス{n}個",
+  "Save as Playlist": "プレイリストとして保存",
+  "This mix has no songs at the moment. It comes back as you play and like songs.": "このミックスには今は曲がありません。曲を再生したり「お気に入り」にしたりすると、また表示されます。"
+ },
+ "patterns": {}
+}

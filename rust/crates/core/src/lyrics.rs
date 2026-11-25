@@ -46,7 +46,7 @@ use crate::settings::Settings;
 use crate::verdict::FileResult;
 
 pub const DEFAULT_SERVER: &str = "https://lrclib.net";
-pub const PROJECT_URL: &str = "https://github.com/SU2H1/Real-Hi-Res";
+pub use crate::PROJECT_URL;
 /// LRCGET's mark for instrumental tracks.
 pub const INSTRUMENTAL_LRC: &str = "[au: instrumental]";
 /// LRCLIB matches a record whose length is within ±2 s.
@@ -137,11 +137,11 @@ fn failed(msg: String) -> LyricsError {
 
 /// LRCLIB asks every client to name itself, its version and its home page.
 pub fn user_agent() -> String {
-    format!("Real-Hi-Res v{} ({PROJECT_URL})", crate::VERSION)
+    format!("{} v{} ({PROJECT_URL})", crate::APP_NAME, crate::VERSION)
 }
 
 /// `urlsplit(url).netloc`.
-fn netloc(url: &str) -> &str {
+pub(crate) fn netloc(url: &str) -> &str {
     let rest = match url.find("://") {
         Some(i) => &url[i + 3..],
         None => match url.strip_prefix("//") {
@@ -154,7 +154,7 @@ fn netloc(url: &str) -> &str {
 }
 
 /// `urlsplit(url).hostname` (lower case, without user and port).
-fn hostname(url: &str) -> String {
+pub(crate) fn hostname(url: &str) -> String {
     let n = netloc(url);
     let n = n.rsplit_once('@').map(|(_, h)| h).unwrap_or(n);
     let host = if let Some(rest) = n.strip_prefix('[') {
@@ -262,6 +262,12 @@ fn proxy_for(url: &str) -> Option<String> {
 
 /// The real transport: one ureq agent per proxy, so connections are reused.
 pub fn http_transport() -> Transport {
+    http_transport_limited(64 << 20)
+}
+
+/// The real transport, reading at most `limit` bytes of an answer's body (2.5:
+/// the Cover Art Archive's pictures have a size limit); redirects are followed.
+pub fn http_transport_limited(limit: u64) -> Transport {
     let mut agents: HashMap<Option<String>, ureq::Agent> = HashMap::new();
     Box::new(move |url: &str, headers: &[(&str, &str)], timeout: f64| {
         let scheme = url.split("://").next().unwrap_or("").to_lowercase();
@@ -309,7 +315,7 @@ pub fn http_transport() -> Transport {
             })
             .collect();
         let mut body = vec![];
-        if let Err(e) = resp.into_reader().take(64 << 20).read_to_end(&mut body) {
+        if let Err(e) = resp.into_reader().take(limit).read_to_end(&mut body) {
             return Err(TransportError::Network(io_reason(&e)));
         }
         Ok((status, hdrs, body))
@@ -372,7 +378,7 @@ pub fn urlencode(params: &[(String, String)]) -> String {
 }
 
 /// Python's repr() of a string, for messages.
-fn repr(s: &str) -> String {
+pub(crate) fn repr(s: &str) -> String {
     let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
     let mut out = String::from(q);
     for c in s.chars() {
@@ -392,7 +398,7 @@ fn repr(s: &str) -> String {
     out
 }
 
-fn monotonic() -> f64 {
+pub(crate) fn monotonic() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
@@ -983,7 +989,7 @@ pub fn normalize_name(name: &str) -> String {
     strip(&base).to_string()
 }
 
-fn same_artist(a: &str, b: &str) -> bool {
+pub(crate) fn same_artist(a: &str, b: &str) -> bool {
     let (na, nb) = (normalize_name(a), normalize_name(b));
     if na.is_empty() || nb.is_empty() {
         return false;
@@ -1087,12 +1093,41 @@ pub fn skip_reason(path: &str, cfg: &Settings) -> String {
             if is_instrumental_lrc(&read_head(&lrc, 4096)) { "an instrumental mark" } else { "synced lyrics" };
         return format!("Already has {with_what} ({}).", file_name(&lrc));
     }
+    let mode = save_mode(cfg);
+    if mode != "lrc" {
+        let (synced, plain) = crate::embed::embedded_lyrics(path);
+        let text = if synced.is_empty() { &plain } else { &synced };
+        if !text.is_empty() && is_instrumental_lrc(text) {
+            return "Already has an instrumental mark inside the file.".into();
+        }
+        if !synced.is_empty() {
+            return "Already has synced lyrics inside the file.".into();
+        }
+        if !plain.is_empty() && (mode == "plain" || cfg.lyrics_existing == EXISTING_CHOICES[1]) {
+            return "Already has lyrics inside the file.".into();
+        }
+    }
     if let Some(txt) = txt {
         if cfg.lyrics_existing == EXISTING_CHOICES[1] {
             return format!("Already has lyrics ({}).", file_name(&txt));
         }
     }
     String::new()
+}
+
+/// "lrc", "embed", "both" or "plain" from Settings -> Lyrics -> Save lyrics as (2.0).
+pub fn save_mode(cfg: &Settings) -> &'static str {
+    use crate::settings::LYRICS_SAVE_CHOICES as C;
+    let v = cfg.lyrics_save_as.as_str();
+    if v == C[1] {
+        "embed"
+    } else if v == C[2] {
+        "both"
+    } else if v == C[3] {
+        "plain"
+    } else {
+        "lrc"
+    }
 }
 
 fn read_head(path: &str, size: u64) -> String {
@@ -1140,30 +1175,68 @@ pub fn write_text(path: &str, text: &str) -> std::io::Result<()> {
     res
 }
 
-/// (kind, text, file) of the lyrics next to a song, for display; kind is
-/// Synced, Instrumental or Plain.  None when there is none.
+/// (kind, text, file) of a song's lyrics, for display (Python `read_lyrics_file`).  Synced
+/// lyrics win wherever they are: the .lrc next to the song, then the lyrics inside the file
+/// when they are synced, then the .txt, then plain lyrics inside the file.  (LRCGET's
+/// "plain text" and "embed" exports together leave a .txt beside a file whose tag holds
+/// synced lyrics.)  A .txt or plain tag that holds LRC (`embed::looks_synced`) counts as synced.
 pub fn read_lyrics_file(path: &str) -> Option<(Status, String, String)> {
     let (lrc, txt) = existing_lyrics(path);
-    for (file, is_lrc) in [(lrc, true), (txt, false)] {
-        let Some(file) = file else { continue };
+    let read = |file: &str| -> Option<String> {
         let mut raw = vec![];
-        match std::fs::File::open(&file) {
-            Ok(f) => {
-                if f.take(MAX_LYRICS_BYTES).read_to_end(&mut raw).is_err() {
-                    continue;
-                }
-            }
-            Err(_) => continue,
-        }
+        let f = std::fs::File::open(file).ok()?;
+        f.take(MAX_LYRICS_BYTES).read_to_end(&mut raw).ok()?;
         let body = raw.strip_prefix(b"\xef\xbb\xbf".as_slice()).unwrap_or(&raw);
-        let text = String::from_utf8_lossy(body).into_owned();
-        if is_lrc {
+        Some(String::from_utf8_lossy(body).into_owned())
+    };
+    if let Some(file) = lrc {
+        if let Some(text) = read(&file) {
             let kind = if is_instrumental_lrc(&text) { Status::Instrumental } else { Status::Synced };
             return Some((kind, text, file));
         }
-        return Some((Status::Plain, text, file));
     }
-    None
+    // 2.0: lyrics inside the file (MP3, FLAC)
+    let inside = crate::embed::lyrics_of(path);
+    if let Some((kind, text)) = &inside {
+        if *kind != Status::Plain {
+            return Some((*kind, text.clone(), path.to_string()));
+        }
+    }
+    if let Some(file) = txt {
+        if let Some(text) = read(&file) {
+            let kind = if is_instrumental_lrc(&text) {
+                Status::Instrumental
+            } else if crate::embed::looks_synced(&text) {
+                Status::Synced
+            } else {
+                Status::Plain
+            };
+            return Some((kind, text, file));
+        }
+    }
+    inside.map(|(kind, text)| (kind, text, path.to_string()))
+}
+
+/// The label above the lyrics on Now Playing (Python `shown_label`), for lyrics of `kind`
+/// (as shown: synced lyrics without a single timed line are shown as plain) that
+/// `read_lyrics_file(path)` found in `file`: ("Synced lyrics" / "Lyrics (not synced)" /
+/// "Instrumental", where they come from: ".lrc file", "inside the file" or ".txt file").
+pub fn shown_label(kind: Status, path: &str, file: &str) -> (&'static str, String) {
+    let label = match kind {
+        Status::Synced => "Synced lyrics",
+        Status::Instrumental => "Instrumental",
+        _ => "Lyrics (not synced)",
+    };
+    let source = if file == path {
+        "inside the file".to_string()
+    } else {
+        let ext = std::path::Path::new(file)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+            .unwrap_or_else(|| "lyrics".into());
+        format!("{ext} file")
+    };
+    (label, source)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1224,31 +1297,72 @@ pub fn short_skip(reason: &str) -> String {
 pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track>, dry_run: bool) -> LyricsOutcome {
     let replace = replace_mode(cfg);
     let (lrc, txt) = (sidecar(path, ".lrc"), sidecar(path, ".txt"));
+    let (lrc_name, txt_name, name) = (file_name(&lrc), file_name(&txt), file_name(path));
     let via = if lyr.how == "search" { " (found by searching)" } else { "" };
     let how = lyr.how.as_str();
-    let (status, target, text, msg);
+    let mut mode = save_mode(cfg);
+    let mut note = "";
+    if mode != "lrc" && !crate::embed::supported(path) {
+        mode = "lrc";
+        note = " Lyrics can only be embedded in MP3 and FLAC files.";
+    }
+    let mut files: Vec<(String, String)> = vec![];
+    let mut inside: Option<(String, String)> = None;
+    let status;
+    let msg;
     if !lyr.synced.is_empty() {
-        (status, target, text) = (Status::Synced, lrc.clone(), lyr.synced.as_str());
-        msg = format!("Saved synced lyrics as {}{via}.", file_name(&lrc));
+        let plain = if lyr.plain.is_empty() { strip_timestamps(&lyr.synced) } else { lyr.plain.clone() };
+        if mode == "plain" {
+            status = Status::Plain;
+            inside = Some((String::new(), plain));
+            msg = format!("Embedded the lyrics in {name}, without timing{via}.");
+        } else {
+            status = Status::Synced;
+            if mode == "lrc" || mode == "both" {
+                files.push((lrc.clone(), lyr.synced.clone()));
+            }
+            if mode == "embed" || mode == "both" {
+                inside = Some((lyr.synced.clone(), plain));
+            }
+            msg = match mode {
+                "lrc" => format!("Saved synced lyrics as {lrc_name}{via}."),
+                "embed" => format!("Embedded synced lyrics in {name}{via}."),
+                _ => format!("Saved synced lyrics as {lrc_name} and embedded them in {name}{via}."),
+            };
+        }
     } else if !lyr.plain.is_empty() {
         if !cfg.lyrics_plain {
+            let what = if mode == "lrc" { "saving them as .txt" } else { "saving plain lyrics" };
             return LyricsOutcome::new(
                 path,
                 Status::PlainOnly,
-                "LRCLIB has only plain (unsynced) lyrics for this song, and saving them as .txt is turned off.".into(),
+                format!("LRCLIB has only plain (unsynced) lyrics for this song, and {what} is turned off."),
             )
             .with(track, how);
         }
-        if Path::new(&txt).is_file() && !replace {
+        let keep_txt = Path::new(&txt).is_file() && !replace;
+        if mode == "lrc" && keep_txt {
             return LyricsOutcome::new(
                 path,
                 Status::Skipped,
-                format!("LRCLIB has only plain lyrics for this song, so the existing {} was kept.", file_name(&txt)),
+                format!("LRCLIB has only plain lyrics for this song, so the existing {txt_name} was kept."),
             )
             .with(track, how);
         }
-        (status, target, text) = (Status::Plain, txt.clone(), lyr.plain.as_str());
-        msg = format!("LRCLIB has only plain lyrics for this song; saved them as {}{via}.", file_name(&txt));
+        status = Status::Plain;
+        if mode == "lrc" {
+            files.push((txt.clone(), lyr.plain.clone()));
+            msg = format!("LRCLIB has only plain lyrics for this song; saved them as {txt_name}{via}.");
+        } else if mode == "both" && !keep_txt {
+            files.push((txt.clone(), lyr.plain.clone()));
+            inside = Some((String::new(), lyr.plain.clone()));
+            msg = format!(
+                "LRCLIB has only plain lyrics for this song; saved them as {txt_name} and embedded them in {name}{via}."
+            );
+        } else {
+            inside = Some((String::new(), lyr.plain.clone()));
+            msg = format!("LRCLIB has only plain lyrics for this song; embedded them in {name}{via}.");
+        }
     } else {
         if !cfg.lyrics_instrumental {
             return LyricsOutcome::new(
@@ -1260,31 +1374,61 @@ pub fn save_lyrics(path: &str, lyr: &Lyrics, cfg: &Settings, track: Option<Track
             )
             .with(track, how);
         }
-        if Path::new(&txt).is_file() && !replace {
+        if (mode == "lrc" || mode == "both") && Path::new(&txt).is_file() && !replace {
             return LyricsOutcome::new(
                 path,
                 Status::Skipped,
-                format!(
-                    "LRCLIB lists this song as instrumental, but it has lyrics in {}, which were kept.",
-                    file_name(&txt)
-                ),
+                format!("LRCLIB lists this song as instrumental, but it has lyrics in {txt_name}, which were kept."),
             )
             .with(track, how);
         }
-        (status, target, text) = (Status::Instrumental, lrc.clone(), INSTRUMENTAL_LRC);
-        msg = format!("LRCLIB lists this song as instrumental; marked it in {}{via}.", file_name(&lrc));
+        status = Status::Instrumental;
+        if mode == "lrc" || mode == "both" {
+            files.push((lrc.clone(), INSTRUMENTAL_LRC.to_string()));
+        }
+        if mode == "embed" || mode == "both" {
+            inside = Some((INSTRUMENTAL_LRC.to_string(), INSTRUMENTAL_LRC.to_string()));
+        } else if mode == "plain" {
+            inside = Some((String::new(), INSTRUMENTAL_LRC.to_string()));
+        }
+        msg = match mode {
+            "lrc" => format!("LRCLIB lists this song as instrumental; marked it in {lrc_name}{via}."),
+            "both" => format!("LRCLIB lists this song as instrumental; marked it in {lrc_name} and in {name}{via}."),
+            _ => format!("LRCLIB lists this song as instrumental; marked it in {name}{via}."),
+        };
     }
+    let msg = format!("{msg}{note}");
     if dry_run {
         let mut c = msg.chars();
         let first = c.next().map(|f| f.to_lowercase().collect::<String>()).unwrap_or_default();
         return LyricsOutcome::new(path, status, format!("Would save: {first}{}", c.as_str())).with(track, how);
     }
-    if let Err(e) = write_text(&target, text) {
-        return LyricsOutcome::new(path, Status::Failed, format!("Could not save {}: {e}", file_name(&target)))
-            .with(track, how);
+    let mut written = vec![];
+    for (target, text) in &files {
+        if let Err(e) = write_text(target, text) {
+            let mut o = LyricsOutcome::new(path, Status::Failed, format!("Could not save {}: {e}", file_name(target)))
+                .with(track, how);
+            o.written = written;
+            return o;
+        }
+        written.push(target.clone());
+    }
+    if let Some((synced, plain)) = &inside {
+        let before = crate::store::stat(path).ok();
+        if let Err(e) = crate::embed::embed_lyrics(path, synced, plain) {
+            let mut o = LyricsOutcome::new(path, Status::Failed, format!("Could not embed the lyrics in {name}: {e}"))
+                .with(track, how);
+            o.written = written;
+            return o;
+        }
+        written.push(path.to_string());
+        // the audio is unchanged, so its saved scan results stay valid
+        if let (Some((size, mtime)), Some(st)) = (before, crate::store::open_store(cfg)) {
+            st.retag(path, size, mtime);
+        }
     }
     let mut o = LyricsOutcome::new(path, status, msg).with(track, how);
-    o.written = vec![target];
+    o.written = written;
     o
 }
 
@@ -1340,11 +1484,11 @@ pub fn run_lyrics(
     }
 }
 
-/// "12 with synced lyrics, 3 with plain lyrics (.txt), 5 not found, 20 skipped."
+/// "12 with synced lyrics, 3 with plain lyrics, 5 not found, 20 skipped."
 pub fn lyrics_summary(outcomes: &[LyricsOutcome]) -> String {
     let words = [
         (Status::Synced, "with synced lyrics"),
-        (Status::Plain, "with plain lyrics (.txt)"),
+        (Status::Plain, "with plain lyrics"),
         (Status::Instrumental, "instrumental"),
         (Status::PlainOnly, "with only plain lyrics (not saved)"),
         (Status::NotFound, "not found on LRCLIB"),
@@ -1436,7 +1580,7 @@ mod tests {
         let lyr = find_lyrics(&mut c, &Track::new("", "Song", "Band", "Album", Some(200.4)), true).unwrap().unwrap();
         assert!(!lyr.synced.is_empty() && lyr.how == "exact");
         let calls_v = calls.lock().unwrap().clone();
-        assert_eq!(calls_v[0].2, format!("Real-Hi-Res v{} (https://github.com/SU2H1/Real-Hi-Res)", crate::VERSION));
+        assert_eq!(calls_v[0].2, format!("Universal Music Player v{} (https://github.com/SU2H1/Universal-Music-Player)", crate::VERSION));
         assert_eq!(
             calls_v[0].1,
             "https://lrclib.net/api/get?track_name=Song&artist_name=Band&album_name=Album&duration=200"
