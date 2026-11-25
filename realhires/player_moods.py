@@ -142,16 +142,38 @@ class MoodsMixin:
 
         def work():
             store = None
+            # 2.4: the analysis itself runs in a worker process, not in this thread: its
+            # Python-level work held the interpreter lock long enough to starve the window
+            # (the macOS Intel CI runner timed out a GUI test while it ran); the process has
+            # its own, so the window stays responsive however slow the computer is
+            pool = None
+            try:
+                import multiprocessing
+
+                from .pool import MultiProcessPool
+
+                pool = MultiProcessPool(1, mp_context=multiprocessing.get_context("spawn"))
+            except Exception:  # noqa: BLE001 - no worker process: analyse in this thread
+                pool = None
+
+            def analyse(path: str, duration: float) -> moods.Mood:
+                if pool is None:
+                    return moods.analyse_file(path, duration)
+                return pool.submit(moods.analyse_file, path, duration).result()
+
             try:
                 store = moods.MoodStore()
                 res = moods.run_analysis(tracks, store, stop,
-                                         progress=lambda i, n, p, m: out.put(("progress", i, n, p, m)))
+                                         progress=lambda i, n, p, m: out.put(("progress", i, n, p, m)),
+                                         analyse=analyse)
                 out.put(("done", res))
             except Exception:  # noqa: BLE001 - the analysis must never stop the app
                 out.put(("done", None))
             finally:
                 if store is not None:
                     store.close()
+                if pool is not None:
+                    pool.shutdown(wait=False, cancel_futures=True)
 
         self._moods_again = False
         self.mood_progress = (0, 0)
