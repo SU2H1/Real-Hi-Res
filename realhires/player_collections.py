@@ -85,7 +85,9 @@ TILES = [  # page, name (English: shown as tr(name)), icon
     ("artists", N_("Artists"), "artist"), ("album_artists", N_("Album Artists"), "mic"),
     ("genres", N_("Genres"), "genre"), ("years", N_("Years"), "calendar"), ("composers", N_("Composers"), "piano"),
     ("moods", N_("Moods"), "mood"),  # 2.4
-    ("playlists", N_("Playlists"), "playlist"), ("liked", N_("Liked Songs"), "heart"),
+    ("playlists", N_("Playlists"), "playlist"),
+    ("foryou", N_("For You"), "sparkle"),  # 2.5
+    ("liked", N_("Liked Songs"), "heart"),
     ("disliked", N_("Disliked Songs"), "thumbs_down"), ("played", N_("Recently Played"), "history"),
     ("recent", N_("Recently Added"), "clock"), ("stats", N_("Your Stats"), "stats"),
 ]
@@ -150,6 +152,7 @@ class LibraryPage(Page):
             "composers": count(n(library_groups(app, "composers")), "composer"),
             "moods": app.moods_entry_count(),  # 2.4
             "playlists": count(n(app.state.playlists), "playlist"),
+            "foryou": app.foryou_entry_count(),  # 2.5
             "liked": count(n(app.state.liked), "song"),
             "disliked": count(n(app.state.disliked), "song"),
             "played": count(n(played), "song"),

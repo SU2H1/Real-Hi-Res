@@ -153,9 +153,9 @@ def loaded():
     assert app.page_name == "library" and page.layout() == "Tiles"
     keys = [e[0] for e in page.entries()]
     assert keys == ["songs", "folders", "albums", "artists", "album_artists", "genres", "years", "composers",
-                    "moods", "playlists", "liked", "disliked", "played", "recent", "stats"], keys
+                    "moods", "playlists", "foryou", "liked", "disliked", "played", "recent", "stats"], keys
     tiles = dict((key, box) for box, key in page.entry_hits)
-    assert len(tiles) == 15 and tiles["songs"][3] - tiles["songs"][1] == page.TILE_H
+    assert len(tiles) == 16 and tiles["songs"][3] - tiles["songs"][1] == page.TILE_H
     assert set(page.layout_hits) == {"Tiles", "List"}
     # the list button: one row per entry, the width of the page, saved at once
     click(page.c, page.layout_hits["List"])
@@ -163,7 +163,7 @@ def loaded():
     assert page.layout() == "List"
     rows = [box for box, key in page.entry_hits]
     W = page.c.winfo_width()
-    assert len(rows) == 15 and all(b[3] - b[1] == page.ROW_H == 44 for b in rows), rows
+    assert len(rows) == 16 and all(b[3] - b[1] == page.ROW_H == 44 for b in rows), rows
     assert all((b[0], b[2]) == (page.MARGIN, W - page.MARGIN) for b in rows)
     assert all(rows[i + 1][1] == rows[i][3] for i in range(14))  # one under the other
     shown = texts(page.c)
@@ -188,7 +188,7 @@ def loaded():
     assert app.cfg.library_layout == "Tiles" and settings.load().library_layout == "Tiles"
     app.show_page("library")
     root.update()
-    assert page.layout() == "Tiles" and len([1 for _, k in page.entry_hits]) == 15
+    assert page.layout() == "Tiles" and len([1 for _, k in page.entry_hits]) == 16
     # the tiles button again changes nothing; the list button and the tiles button switch back and forth
     click(page.c, page.layout_hits["Tiles"])
     assert app.cfg.library_layout == "Tiles"

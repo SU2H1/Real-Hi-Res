@@ -55,6 +55,8 @@ pub enum Icon {
     MoodSad,
     /// the tempo cards: a metronome (2.4)
     Tempo,
+    /// For You: a four-pointed star and a small one (2.5)
+    Sparkle,
 }
 
 fn heart_points(c: Pos2, s: f32) -> Vec<Pos2> {
@@ -466,6 +468,18 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 })
                 .collect();
             poly(p, &pts, stroke, false);
+        }
+        Icon::Sparkle => {
+            for (x, y, r) in [(c.x - 0.08 * s, c.y + 0.06 * s, 0.4 * s), (c.x + 0.3 * s, c.y - 0.3 * s, 0.17 * s)] {
+                let q = 0.28 * r;
+                let inner = [pos2(x + q, y - q), pos2(x + q, y + q), pos2(x - q, y + q), pos2(x - q, y - q)];
+                let tips = [pos2(x, y - r), pos2(x + r, y), pos2(x, y + r), pos2(x - r, y)];
+                p.add(Shape::convex_polygon(inner.to_vec(), color, Stroke::NONE));
+                for i in 0..4 {
+                    // a point between two corners of the inner square
+                    p.add(Shape::convex_polygon(vec![inner[(i + 3) % 4], tips[i], inner[i]], color, Stroke::NONE));
+                }
+            }
         }
         Icon::Tempo => {
             // a metronome: its body, the base and the pendulum

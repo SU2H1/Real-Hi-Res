@@ -62,6 +62,10 @@ pub enum Page {
     Moods,
     /// a card's songs (2.4): ("mood" or "tempo", its label in English)
     Mood(&'static str, String),
+    /// For You (2.5): a card per mix
+    ForYou,
+    /// a mix of For You, by its id (`recommend::MIXES`)
+    Mix(String),
 }
 
 impl Page {
@@ -93,6 +97,7 @@ impl Page {
             Page::Tab(_) => n_!("Tabs"),
             Page::Place(_) => crate::places::PLACES_TITLE,
             Page::Moods | Page::Mood(..) => n_!("Moods"),
+            Page::ForYou | Page::Mix(_) => n_!("For You"),
         }
     }
 
@@ -776,6 +781,8 @@ pub struct Player {
     pub places: crate::places::PlacesState,
     /// the songs' moods and their background analysis (2.4, `moodpages.rs`)
     pub moods: crate::moodpages::MoodState,
+    /// the mixes of For You (2.5, `foryou.rs`)
+    pub foryou: crate::foryou::ForYouState,
 }
 
 fn seed_now() -> u64 {
@@ -922,6 +929,7 @@ impl Player {
             tab_hits: Default::default(),
             places: Default::default(),
             moods: Default::default(),
+            foryou: Default::default(),
             seed: seed_now(),
             state,
             state_dirty: false,
@@ -1479,6 +1487,8 @@ impl Player {
                 .unwrap_or_default(),
             Page::Disliked => self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).map(|t| t.path.clone()).collect(),
             Page::Mood(kind, label) => realhires::moods::card_songs(kind, label, &self.lib.tracks, &self.moods.map),
+            Page::ForYou => self.foryou_page_songs(None), // 2.5
+            Page::Mix(id) => self.foryou_page_songs(Some(id)),
             _ => all(),
         }
     }
@@ -2591,6 +2601,10 @@ impl Player {
             if sidebar_item(ui, pal, Icon::Playlist, tr!("Playlists"), self.page == Page::Playlists).clicked() {
                 self.go(Page::Playlists);
             }
+            // 2.5: For You, above Liked Songs
+            if sidebar_item(ui, pal, Icon::Sparkle, tr!("For You"), matches!(self.page, Page::ForYou | Page::Mix(_))).clicked() {
+                self.go(Page::ForYou);
+            }
             if sidebar_item(ui, pal, Icon::Heart, tr!("Liked Songs"), self.page == Page::Liked).clicked() {
                 self.go(Page::Liked);
             }
@@ -2845,6 +2859,7 @@ impl Player {
                 }
             }
             Page::Mood(_, label) => return i18n::tr(label).to_string(), // 2.4
+            Page::Mix(id) => return i18n::tr(crate::foryou::mix_name(id)).to_string(), // 2.5
             Page::Folders(folder) => {
                 // with one library folder, Folders shows that folder (as Python's page does)
                 let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| realhires::paths::abspath(f)).collect();
@@ -4925,7 +4940,7 @@ mod tests {
             pages,
             [
                 Page::AllSongs, Page::Folders(None), Page::Albums, Page::Artists, Page::AlbumArtists, Page::Genres,
-                Page::Years, Page::Composers, Page::Moods, Page::Playlists, Page::Liked, Page::Disliked,
+                Page::Years, Page::Composers, Page::Moods, Page::Playlists, Page::ForYou, Page::Liked, Page::Disliked,
                 Page::RecentlyPlayed, Page::Recent, Page::Stats,
             ]
         );
@@ -4941,7 +4956,7 @@ mod tests {
         assert_eq!(p.scanner.cfg.library_layout, "List");
         assert_eq!(realhires::settings::load(None).library_layout, "List", "saved at once");
         let t = placed_texts(&ctx, &mut p);
-        let names = ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers", "Moods", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"];
+        let names = ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers", "Moods", "Playlists", "For You", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"];
         // the row (the page's first such text: "Recently Added" is also the albums' heading under the list)
         let rows: Vec<egui::Pos2> = names
             .iter()
@@ -5990,9 +6005,9 @@ mod tests {
         run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 3 && p.lib_rx.is_none());
         assert_eq!(p.tab_names(), vec!["Hi-Res".to_string()]);
         assert_eq!(p.tab_problems, vec![("notes.json".to_string(), "This file is not a tab of Universal Music Player.".to_string())]);
-        // the Library page lists the tab after its fifteen entries, the sidebar under "Tabs"
+        // the Library page lists the tab after its sixteen entries, the sidebar under "Tabs"
         let entries = p.library_entries();
-        assert_eq!(entries.len(), 16);
+        assert_eq!(entries.len(), 17);
         let last = entries.last().unwrap();
         assert_eq!((last.name.as_str(), last.count.as_str(), &last.page), ("Hi-Res", "1 song", &Page::Tab("Hi-Res".into())));
         let shown = texts(&ctx, &mut p);
@@ -6025,8 +6040,18 @@ mod tests {
         assert_eq!(p.back_label().as_deref(), Some("Hi-Res"));
         p.go_back();
 
-        // New Tab… from the sidebar
-        small_frame(&ctx, &mut p, vec![]);
+        // New Tab… from the sidebar, which scrolls at this height (2.5: For You is one more entry)
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: Default::default(),
+        };
+        small_frame(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(100.0, 400.0)), wheel]);
+        for _ in 0..30 {
+            small_frame(&ctx, &mut p, vec![]);
+        }
         let new_tab = p.tab_hits.new_tab.expect("New Tab…").center();
         click_at(&ctx, &mut p, new_tab, egui::PointerButton::Primary);
         let w = p.tab_win.as_mut().expect("the tab window");

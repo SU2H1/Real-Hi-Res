@@ -52,6 +52,7 @@ from .player_stats import MostPlayedPage
 from .player_places import PlacePage, PlacesMixin
 from .player_tabs import TabPage, TabsMixin
 from .player_moods import MoodPage, MoodsMixin, MoodsPage  # noqa: E402  (2.4)
+from .player_foryou import MIX_NAMES, ForYouMixin, ForYouPage, MixPage  # noqa: E402  (2.5)
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
@@ -92,6 +93,7 @@ PAGE_TITLES = {
     "most_played": N_("Most Played"),  # 2.4: the leaderboard's page
     "place": N_("Places"),  # 2.4: a place of Your Stats
     "moods": N_("Moods"), "mood": N_("Moods"),  # 2.4
+    "foryou": N_("For You"), "foryou_mix": N_("For You"),  # 2.5
 }
 
 
@@ -149,7 +151,9 @@ class Sidebar(tk.Frame):
     HISTORY = [("played", N_("Recently Played"), "history"), ("recent", N_("Recently Added"), "clock"),
                ("stats", N_("Your Stats"), "stats")]
     FOOT = [("quality", N_("Quality Check"), "check"), ("settings", N_("Settings"), "gear")]
-    PAGES = {"library"} | {k for k, _, _ in LIBRARY + HISTORY} | {"liked", "disliked"} | {k for k, _, _ in FOOT}
+    PLAYLISTS = [("foryou", N_("For You"), "sparkle"),  # 2.5
+                 ("liked", N_("Liked Songs"), "heart"), ("disliked", N_("Disliked Songs"), "thumbs_down")]
+    PAGES = {"library"} | {k for k, _, _ in LIBRARY + PLAYLISTS + HISTORY} | {k for k, _, _ in FOOT}
 
     def __init__(self, master, app: "PlayerApp"):
         super().__init__(master, width=self.WIDTH, bd=0, highlightthickness=0)
@@ -243,8 +247,8 @@ class Sidebar(tk.Frame):
         library = [(k, tr(text), icon) for k, text, icon in self.LIBRARY]
         history = [(k, tr(text), icon) for k, text, icon in self.HISTORY]
         return ([("library", tr("Library"), "library"), ("head", tr("Library"), "")] + library
-                + [("head", tr("Playlists"), ""), ("liked", tr("Liked Songs"), "heart"),
-                   ("disliked", tr("Disliked Songs"), "thumbs_down")] + lists
+                + [("head", tr("Playlists"), "")] + [(k, tr(text), icon) for k, text, icon in self.PLAYLISTS]
+                + lists
                 + [("new_playlist", tr("New Playlist…"), "plus"), ("head", tr("Tabs"), "")] + tabs
                 + [("new_tab", tr("New Tab…"), "plus"), ("head", tr("History"), "")] + history)
 
@@ -661,7 +665,7 @@ class UpNextPanel(tk.Frame):
 
 
 # ------------------------------------------------------------ the app ---
-class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
+class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin, ForYouMixin):
     """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py; where songs were
     played, 2.4: PlacesMixin in player_places.py; moods, 2.4: MoodsMixin in player_moods.py)."""
 
@@ -817,6 +821,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             "place": lambda: PlacePage(self),
             "moods": lambda: MoodsPage(self),  # 2.4
             "mood": lambda: MoodPage(self),
+            "foryou": lambda: ForYouPage(self),  # 2.5
+            "foryou_mix": lambda: MixPage(self),
         }
 
     def _build_popups(self) -> None:
@@ -937,7 +943,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
         elif name == "tab":
             self.sidebar.select(f"tab:{self.pages['tab'].name}")
         else:
-            self.sidebar.select("moods" if name == "mood" else name if name in Sidebar.PAGES else None)
+            side = {"mood": "moods", "foryou_mix": "foryou"}.get(name, name)  # a card's page: its section
+            self.sidebar.select(side if side in Sidebar.PAGES else None)
         self.bar.update_controls()
 
     def _page_args(self) -> dict:
@@ -960,6 +967,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             return {"place": p.key}
         if self.page_name == "mood" and isinstance(p, MoodPage):  # 2.4
             return {"kind": p.kind, "label": p.value}
+        if self.page_name == "foryou_mix" and isinstance(p, MixPage):  # 2.5
+            return {"mix": p.mid}
         return {}
 
     def go_back(self) -> None:
@@ -1101,6 +1110,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             return self.place_name(args["place"]) or tr(PAGE_TITLES["place"])
         if name == "mood" and args.get("label"):  # a mood's or tempo's name (2.4)
             return tr(args["label"])
+        if name == "foryou_mix" and args.get("mix"):  # a mix's name (2.5)
+            return tr(MIX_NAMES.get(args["mix"], "For You"))
         return tr(PAGE_TITLES.get(name, "Library"))
 
     def back_label(self) -> str:
@@ -1675,6 +1686,7 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             self.lib.add_play(t, li["started"], li["seconds"], place=self.play_place())
         except Exception:  # noqa: BLE001 - the history must never stop playback
             return
+        self.foryou_changed()  # 2.5: the mixes follow the history
         self._refresh_pages({"played", "library", "stats", "stats_details", "most_played", "place"})
 
     def plays(self, since: float = 0.0, until: Optional[float] = None):
@@ -1705,6 +1717,7 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
                 parent=self.root):
             return
         self.lib.clear_history()
+        self.foryou_changed()  # 2.5
         self._refresh_pages({"played", "library", "stats", "stats_details", "most_played"})
 
     # ---- themes ----------------------------------------------------------------
