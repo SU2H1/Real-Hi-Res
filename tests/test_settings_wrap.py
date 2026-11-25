@@ -40,15 +40,14 @@ for group in ("Library", "Playback", "Appearance", "Lyrics"):
         if isinstance(w, tk.Label) and w.winfo_ismapped() and int(float(str(w.cget("wraplength")))) > 0:
             checked += 1
             assert w.winfo_rootx() + w.winfo_reqwidth() <= right, (group, w.cget("text")[:60])
-    # a wider window gives the texts their full width again
+    # and narrowed no more than the page needs (on a wide screen they keep HELP_WIDTH);
+    # the window cannot be made wider than the CI runners' 1024 x 768 screens, so this is
+    # checked at the width the screen gives
+    for w in page.help_labels.values():
+        if w.winfo_ismapped():
+            room = right - w.winfo_rootx() - 24
+            assert int(float(str(w.cget("wraplength")))) >= min(page.HELP_WIDTH, room) - 1, (group, room)
 assert checked > 10, checked
-root.geometry("1600x900+0+0")
-end = time.monotonic() + 1.0
-while time.monotonic() < end:
-    root.update()
-    time.sleep(0.02)
-page = app.pages["settings"]
-assert any(int(float(str(w.cget("wraplength")))) == page.HELP_WIDTH for w in page.help_labels.values())
 root.destroy()
 print("OK")
 """
