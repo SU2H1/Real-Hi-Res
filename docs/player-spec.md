@@ -906,3 +906,65 @@ the calendar plus 360 px, the list goes under the calendar as before.
 centred vertically in the right half (and horizontally, the labels and values kept in their two columns), as the cover
 block is in the left half; a long file path wraps within the block. When the block is taller than the page it starts
 at the top and scrolls.
+
+## 2.4 (asked for on 2026-11-25, after 2.3.0 was released)
+
+"Folder cannot be scrolled, for stats allow to click the artist and songs, stats of the most played songs (like a
+leaderboard), location of where the song was played with the calendar, analyze whether are song are sad up-tempo etc.
+and create playlist." Asked about the location's source, the user chose the approximate location from the internet
+(off until turned on in Settings, kept only on the computer). Everything below is built in both apps, with Japanese
+texts (`i18n/ja/67-stats-2.4.json`, `68-places-2.4.json`, `69-moods-2.4.json`), parity vectors for the core, and
+tests that also run at 1024 × 768.
+
+### 1. Folders scroll
+
+The Folders page must scroll with the mouse wheel, the trackpad and the scroll bar however many subfolders and songs a
+folder holds, in both apps: the subfolders and the songs of a folder form one scrolling page (the subfolders above the
+songs), not two boxes of fixed height. The cause found is recorded here when it is fixed.
+
+### 2. Your Stats: names are links, and a leaderboard
+
+- Every song, artist, album and genre named on Your Stats (the cards, the top lists of Details, the day beside the
+  calendar) is a link: a song plays it (with the songs of that list as the queue), an artist opens the artist's page,
+  an album its page, a genre its page. The pointer becomes a hand over them, and the song menu opens on a right-click
+  of a song.
+- **Leaderboard**: a section of Your Stats (and a page of its own opened from it, "Most Played") ranking the most
+  played songs of the chosen period (the periods Your Stats already has): rank, cover, title, artist, plays and
+  minutes listened, the top three marked; a switch between Songs, Artists and Albums; up to 100 rows; ties share a
+  rank. Play / Shuffle play the ranked songs in rank order. The ranking is computed in the core (`stats.leaderboard()`)
+  with vectors.
+
+### 3. Where a song was played
+
+- Setting `play_location` (Library or Playback group, off by default) and `location_server`. When on, the app asks a
+  free IP geolocation service for the computer's approximate place (city, region, country, and the rounded latitude and
+  longitude the service gives) once when it starts and again after at most every 2 hours while music plays, and
+  stores the place with each play in the play history (`library.sqlite`, new columns; old plays have none). Only the
+  request itself goes out (the service sees the IP address); no song, path or tag is ever sent. The client follows the
+  service's published limits, names the app in its User-Agent, honours Retry-After, never retries in a loop, and a
+  failure only leaves the place empty. Tests never contact the real service (a fake server, as for LRCLIB).
+- The calendar of Your Stats shows where music was played: the day beside the calendar names the place of each play,
+  and a "Places" part of Your Stats lists the places of the period with their plays and minutes (a click shows that
+  place's songs). Settings has **Forget play locations** (confirmed), which clears the stored places but keeps the
+  plays.
+- The service is chosen by the implementer after reading its terms (free use without a key over HTTPS, no
+  registration); the choice, its limits and its terms are recorded here and in the README, which also says plainly what
+  the setting sends.
+
+### 4. Moods, tempo and playlists
+
+- Core `realhires/moods.py` / `rust/crates/core/src/moods.rs` analyses each song on this computer, from its audio, with
+  NumPy only in Python (no new dependency): the tempo (BPM, from an onset envelope's autocorrelation), the energy
+  (loudness), the brightness and whether it is in a major or a minor key (chroma against key profiles). From these it
+  gives labels: **Up-tempo** / **Mid-tempo** / **Slow**, **Energetic** / **Calm**, and a mood among **Happy**,
+  **Sad**, **Chill**, **Intense** (thresholds as module constants, documented). The labels are estimates and the app
+  says so. Both versions give the same labels and BPM (within rounding) on the test songs (vectors).
+- Results are kept in `library.sqlite` (a `moods` table keyed by path, size and modification time), so a song is
+  analysed once until it changes. The analysis runs in the background after library updates, one song at a time at a
+  low priority (setting `analyse_moods`, on by default; its progress shows in the sidebar's status like the library
+  update).
+- A **Moods** entry on the Library page (and in the sidebar's Library list) opens a page with a card per mood and per
+  tempo (with song counts); a card opens its songs with Play, Shuffle and **Create Playlist**, which makes an ordinary
+  playlist of those songs (named e.g. "Sad songs", a taken name gets " 2"). Song lists can show **BPM** and **Mood**
+  columns (choosable, as the other columns), Details on Now Playing shows the mood, tempo and key, and custom tabs get
+  the fields `bpm` (number), `mood` and `tempo` (text, chosen from a menu like Quality).
