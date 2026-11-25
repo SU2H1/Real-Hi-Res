@@ -249,8 +249,19 @@ settings! {
            where the system allows it (exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the \
            device is switched to the song's rate). Set the volume on your amplifier or DAC. While a song plays \
            this way, other programs may not be heard."), Bool, None, None, NUMS;
+    // 2.4: where songs were played (`places`); off until the user turns it on
+    play_location: bool = false, "Playback", "Remember where songs were played",
+        s("Store the approximate place (city, region and country) with each song in the play history, for Your \
+           Stats. The place is asked from the location service below when the app starts and again at most every 2 \
+           hours while music plays: only that request goes out, and the service sees this computer's IP address and \
+           the app's name, never a song, path or tag. The places are kept only on this computer. Off: nothing is \
+           asked and no place is stored."), Bool, None, None, NUMS;
+    location_server: String = s(crate::places::DEFAULT_SERVER), "Playback", "Location service",
+        s("Address the approximate place is asked from: FreeIPAPI's free service, which needs no account or key \
+           (terms: freeipapi.com/terms). Another service that answers with the same kind of JSON can be used."), Str,
+        None, None, NUMS;
 
-    // ---- Appearance (2.0) ---------------------------------------------------
+    // ---- Appearance (2.0)---------------------------------------------------
     language: String = s(crate::i18n::DEFAULT_LANGUAGE), "Appearance", "Language",
         s("The language of the app's menus, pages and windows: English or 日本語 (Japanese). The information of your \
            songs is shown as it is in their tags, and the command-line tool always writes English."), Choice, None,

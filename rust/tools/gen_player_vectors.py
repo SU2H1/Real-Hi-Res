@@ -1251,3 +1251,158 @@ with open(os.path.join(OUT, "python_tabs.json"), "w", encoding="utf-8") as fh:
                "folder": folder_loaded, "ops": ops, "op_results": op_results},
               fh, indent=0, ensure_ascii=False)
 print(len(evals), "tab evaluations,", len(checks_tab), "tab checks,", len(op_results), "tab file operations")
+
+# ------------------------------------------------- where songs were played (2.4) ---
+from realhires import places  # noqa: E402
+
+geo_answers = [
+    places_answer := {"ipVersion": 4, "ipAddress": "198.51.100.7", "latitude": 35.68951, "longitude": 139.69171,
+                      "countryName": "Japan", "countryCode": "JP", "cityName": "Shinjuku", "regionName": "Tokyo"},
+    {"ip": "198.51.100.8", "success": True, "country": "Japan", "country_code": "jp", "region": "Osaka",
+     "city": "Osaka", "latitude": 34.6937378, "longitude": 135.5021651},
+    {"city": "  San\tFrancisco \n(Financial District) ", "country_name": "United States", "country": "US",
+     "country_code": "usa", "latitude": "37.79", "longitude": -0.004},
+    {"countryName": "X" * 300, "latitude": 91, "longitude": True},
+    {"cityName": "A\x00B\x7fC", "regionName": None, "region": "Kantō", "latitude": 1e308, "longitude": -180},
+    {"cityName": "", "regionName": "", "countryName": "   "},
+    {"success": False, "message": "Reserved range"},
+    {"success": False},
+    {"cityName": 5, "countryName": ["Japan"], "latitude": 12.345, "longitude": 0.005},
+    {"cityName": "Ünïcødé  名古屋", "countryName": "日本", "countryCode": "JP", "latitude": -33.8688, "longitude": 151.209},
+    [1, 2],
+    "Tokyo",
+]
+geo_parsed = []
+for a in geo_answers:
+    try:
+        p = places.parse_place(a)
+        geo_parsed.append({"place": p.to_json(), "text": places.place_text(p), "key": places.place_key(p)})
+    except places.PlaceError as exc:
+        geo_parsed.append({"error": str(exc)})
+coords = [[v, lim, places.coordinate(v, lim)] for v, lim in
+          ((35.68951, 90), (-0.004, 180), (0.005, 180), (0.015, 180), (2.675, 90), (-90, 90), (90.0001, 90),
+           (180, 180), (-180.5, 180), (1.005, 90), (139.69171, 180))]
+texts = [[list(x), places.place_text(places.Place(*x)), places.place_key(places.Place(*x))] for x in
+         (("Tokyo", "tokyo", "Japan"), ("Singapore", "Singapore", "Singapore"), ("", "", "Japan"),
+          ("Straße", "STRASSE", "Deutschland"), ("Paris", "Île-de-France", "France"), ("", "Texas", "Texas"))]
+
+
+def gplay(path, started, seconds, place, title="", artist="", album_artist="", duration=200.0):
+    return stats.Play(path, started, seconds, duration, title, artist, album_artist=album_artist, place=place)
+
+
+TOKYO_P = places.Place("Tokyo", "Tokyo", "Japan", "JP", 35.69, 139.69)
+OSAKA_P = places.Place("Osaka", "Osaka", "Japan", "JP", 34.69, 135.5)
+place_plays = [gplay("/m/a.flac", 1_700_000_000, 120, TOKYO_P, "Alpha", "Ann"),
+               gplay("/m/b.flac", 1_700_000_600, 10, TOKYO_P, "Beta"),
+               gplay("/m/a.flac", 1_700_003_600, 200, places.Place("tokyo", "TOKYO", "japan"), "Alpha", "Ann"),
+               gplay("/m/c.flac", 1_700_090_000, 300, OSAKA_P, "Gamma", "", "Band", 250.0),
+               gplay("/m/d.flac", 1_700_090_100, 999, None, "Delta"),
+               gplay("/m/e.flac", 1_700_090_200, 25, OSAKA_P, " ", "", "", 40.0),
+               gplay("/m/f.flac", 1_700_090_300, 61, places.Place(country="Japan"), "Zeta", "Zed"),
+               gplay("/m/g.flac", 1_700_090_400, 61, places.Place("Ōsaka", "", "Japan"), "Eta", "Zed"),
+               gplay("/m/c.flac", 1_700_090_500, 30, OSAKA_P, "Gamma", "", "Band", 250.0)]
+period = places.period_places(place_plays)
+place_song_lists = {r["key"]: places.place_songs(place_plays, r["key"]) for r in period}
+day_rows = [[y, m, d, stats.day_plays(place_plays, y, m, d, localtime=tokyo)]
+            for y, m, d in ((2023, 11, 15), (2023, 11, 16))]
+# when a lookup is due: (now, playing, not_before) -> due; then begin/finish steps
+cache = places.PlaceCache()
+cache_steps = []
+for step in (("due", 0.0, False, 0.0), ("begin", 0.0), ("due", 0.0, True, 0.0), ("finish", True, 1000.0),
+             ("due", 7199.0, True, 0.0), ("due", 7200.0, False, 0.0), ("due", 7200.0, True, 7300.0),
+             ("due", 7300.0, True, 7300.0), ("begin", 7300.0), ("finish", False, 9000.0),
+             ("due", 7400.0, True, 0.0), ("due", 14500.0, True, 0.0), ("reset",), ("due", 3.0, False, 5.0),
+             ("due", 5.0, False, 5.0)):
+    if step[0] == "due":
+        out = cache.due(step[1], step[2], step[3])
+    elif step[0] == "begin":
+        out = cache.begin(step[1])
+    elif step[0] == "finish":
+        cache.finish(TOKYO_P if step[1] else None, "" if step[1] else "It failed.", wall=step[2])
+        out = None
+    else:
+        cache.reset()
+        out = None
+    cache_steps.append({"step": list(step), "out": out, "place": cache.place.to_json() if cache.place else None,
+                        "error": cache.error, "looked_up": cache.looked_up, "busy": cache.busy, "last": cache.last})
+
+
+class GeoClock:
+    def __init__(self):
+        self.t = 100.0
+        self.slept = []
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.slept.append(s)
+        self.t += s
+
+
+def geo_run(script):
+    """Lookups through a fake transport: each answer is [status, headers, body] or ["network", why]
+    or ["invalid", why]; returns what each lookup gave and how the client waited."""
+    todo = [list(a) for a in script["answers"]]
+    seen = []
+
+    def transport(url, headers, timeout):
+        seen.append([url, sorted(headers)])
+        a = todo.pop(0)
+        if a[0] == "network":
+            raise OSError(a[1])
+        if a[0] == "invalid":
+            raise ValueError(a[1])
+        return a[0], a[1], a[2].encode("utf-8")
+
+    clock = GeoClock()
+    c = places.GeoClient(script.get("server", places.DEFAULT_SERVER), transport=transport, clock=clock,
+                         sleep=clock.sleep)
+    results = []
+    for advance in script["lookups"]:
+        clock.t += advance
+        try:
+            results.append({"place": c.lookup().to_json()})
+        except places.PlaceError as exc:
+            results.append({"error": str(exc)})
+        results[-1].update(requests=c.requests, not_before=c.not_before, t=clock.t)
+    return {"script": script, "results": results, "slept": clock.slept, "seen": seen}
+
+
+import json as _json  # noqa: E402
+
+GOOD = [200, {}, _json.dumps(places_answer)]
+geo_runs = [geo_run(s) for s in (
+    {"answers": [GOOD, GOOD], "lookups": [0, 0]},
+    {"answers": [GOOD, GOOD], "lookups": [0, 5]},
+    {"answers": [[429, {"retry-after": "120"}, ""], GOOD, [503, {}, ""]], "lookups": [0, 60, 60, 0]},
+    {"answers": [[500, {}, ""], ["network", "connection refused"], [502, {}, ""]], "lookups": [0]},
+    {"answers": [["network", "no route"]] * 3, "lookups": [0]},
+    {"answers": [[500, {}, ""], GOOD], "lookups": [0]},
+    {"answers": [[403, {}, "no"]], "lookups": [0]},
+    {"answers": [[404, {}, ""]], "lookups": [0]},
+    {"answers": [[200, {}, "<html>"]], "lookups": [0]},
+    {"answers": [[200, {}, '{"ipAddress": "1.2.3.4"}']], "lookups": [0]},
+    {"answers": [[200, {}, '{"success": false, "message": "Reserved range"}']], "lookups": [0]},
+    {"answers": [["invalid", "unknown url type: ftp"]], "lookups": [0], "server": "ftp://example.org/"},
+    {"answers": [[503, {"retry-after": "soon"}, ""], [429, {"retry-after": "99999999"}, ""]],
+     "lookups": [0, 600, 0]},
+    {"answers": [GOOD], "lookups": [0], "server": "  ipwho.is/  "},
+)]
+servers = [[s, places.normalize_server(s), places.host_of(s), places.is_official(s)] for s in
+           ("", "  ", places.DEFAULT_SERVER, "freeipapi.com", "https://FREE.freeipapi.com./x", "ipwho.is/",
+            "http://127.0.0.1:5000/api/v1/json/", "https://notfreeipapi.com/")]
+with open(os.path.join(OUT, "python_places.json"), "w", encoding="utf-8") as fh:
+    json.dump({"default_server": places.DEFAULT_SERVER, "constants": {
+        "min_interval": places.MIN_INTERVAL_S, "max_attempts": places.MAX_ATTEMPTS, "backoff": places.BACKOFF_S,
+        "default_retry_after": places.DEFAULT_RETRY_AFTER_S, "max_retry_after": places.MAX_RETRY_AFTER_S,
+        "refresh": places.REFRESH_S, "max_name": places.MAX_NAME},
+        "answers": geo_answers, "parsed": geo_parsed, "coordinates": coords, "texts": texts,
+        "plays": [dict(p.__dict__, place=p.place.to_json() if p.place else None) for p in place_plays],
+        "period": period, "songs": place_song_lists, "days": day_rows, "cache": cache_steps, "runs": geo_runs,
+        "servers": servers, "retry_after": [[h, places.retry_after(h)] for h in (
+            {}, {"retry-after": "120"}, {"retry-after": " 7.5 "}, {"retry-after": "-5"}, {"retry-after": "x"},
+            {"retry-after": "1e9"}, {"retry-after": "nan"})]},
+        fh, indent=0, ensure_ascii=False)
+print(len(geo_parsed), "geolocation answers,", len(period), "places,", len(geo_runs), "client runs")

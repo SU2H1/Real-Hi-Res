@@ -32,6 +32,7 @@ pub mod lyrics;
 pub mod musicbrainz;
 pub mod musiclib;
 pub mod paths;
+pub mod places;
 pub mod playerstate;
 pub mod playqueue;
 pub mod probe;

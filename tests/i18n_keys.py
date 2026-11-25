@@ -39,7 +39,8 @@ sys.path.insert(0, ROOT)
 
 PY_FILES = ["realhires/gui.py", "realhires/player_gui.py", "realhires/player_pages.py",
             "realhires/player_collections.py", "realhires/player_widgets.py", "realhires/player_windows.py",
-            "realhires/player_theme.py", "realhires/player_mb.py", "realhires/player_tabs.py"]
+            "realhires/player_theme.py", "realhires/player_mb.py", "realhires/player_tabs.py",
+            "realhires/player_places.py"]
 RUST_DIR = "rust/crates/gui/src"
 TR_NAMES = {"tr", "N_"}
 CATALOG = os.path.join(ROOT, "realhires", "assets", "lang", "ja.json")

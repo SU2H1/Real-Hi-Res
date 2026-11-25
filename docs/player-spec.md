@@ -969,6 +969,50 @@ sorted), the songs follow, with the song columns' headings above the list only w
   registration); the choice, its limits and its terms are recorded here and in the README, which also says plainly what
   the setting sends.
 
+**Built (2.4).** The service is **FreeIPAPI**'s free API, `https://free.freeipapi.com/api/v1/json/`
+(`places.DEFAULT_SERVER`, the default of `location_server`), chosen on 2026-11-25 after reading the terms of FreeIPAPI,
+ipwho.is, ipapi.co and ipinfo.io. FreeIPAPI says it is "free for both commercial and non-commercial use with no account or
+API key required", its free plan includes TLS/SSL and "Commercial use allowed", and it allows 60 requests a minute (10 in
+10 seconds) per address (https://freeipapi.com/rate-limit); its terms (https://freeipapi.com/terms) ask for reasonable
+use (no scraping, no querying of large IP ranges) and say nothing against keeping the answer. ipapi.co's terms forbid
+keeping its data longer than 24 hours (a play history keeps it for good), ipinfo.io needs a token and gives only the
+country for free, and ipwho.is (1,000 requests a day, no key) grants use "for personal or internal business purposes"
+only; its answers are still understood, so `location_server` can point at it. What goes out: one GET of that address
+with the User-Agent `UniversalMusicPlayer/<version> ( <home page> )` and `Accept: application/json`, nothing else (no
+query, no song, path or tag); the service sees the IP address, which is how it finds the place. The answer's city,
+region, country, country code and latitude/longitude rounded to 2 decimals are kept (`places.Place`); everything else
+it says is dropped.
+
+- Core: `realhires/places.py` / `rust/crates/core/src/places.rs` (vectors `python_places.json`). `GeoClient` sends one
+  request at a time at least `MIN_INTERVAL_S` (2 s) apart; a 429/503 answer's Retry-After (else 10 minutes, at most 6
+  hours) is kept in `not_before` and the lookup gives up at once (no request before that time); server errors and
+  network errors are tried `MAX_ATTEMPTS` (3) times in all with a 2 s, then 4 s back-off; other 4xx answers and
+  answers without a place fail at once. `parse_place()` reads FreeIPAPI's field names (`cityName`, `regionName`,
+  `countryName`, `countryCode`, `latitude`, `longitude`) and ipwho.is's (`city`, `region`, `country`, `country_code`,
+  `success`/`message`), cleans the names (`MAX_NAME` 100 characters) and drops coordinates out of range. `place_text()`
+  ("Shinjuku, Tokyo, Japan", a region or country named like the part before it left out) and `place_key()` (the
+  names case-folded). `PlaceCache.due()`: a lookup at once the first time (the app starts with the setting on, or it is
+  turned on, or the service is changed), then only while music plays and `REFRESH_S` (2 hours) after the last one
+  began, never before `not_before`; a failure leaves the place empty and is not retried before the next 2 hours (no
+  loop). `period_places()` (the places of a period's plays: plays counted as in `stats.counted()`, minutes, songs,
+  most played first) and `place_songs()`.
+- `library.sqlite`: the `plays` table gained `place_city`, `place_region`, `place_country`, `place_country_code`,
+  `place_latitude`, `place_longitude` (added with `ALTER TABLE` to older databases; their plays have none).
+  `add_play(…, place=)` (Rust `add_play_at()`; `add_play()` keeps its three arguments), `plays()` gives each play's
+  `place` (`stats.Play.place`), `forget_places()`, `places_count()`. `stats.day_plays()` rows carry `place`.
+- Both apps: the lookup runs in a thread of its own; the Tk player's `PlacesMixin` (`realhires/player_places.py`)
+  takes its answer in every second (`_places_tick()`), the egui player's `places_tick()` every frame
+  (`rust/crates/gui/src/places.rs`); a play is stored with the place found last (`play_place()`, None while the
+  setting is off). Settings → Playback: the switch and the service (ordinary rows), then the note naming exactly what
+  is sent and to which host (HTTPS or, for an `http://` address, "unencrypted HTTP"), the lookup's state ("Approximate
+  place now: … (looked up at 14:05)", "Turned off…", or why none was found), how many plays have a place, and
+  **Forget play locations…** (confirmed). The day list of the calendar puts a line with a pin and the place's name
+  above each run of plays made at the same place ("Place unknown" for plays without one, shown only when the day has
+  places). Your Stats ends with **Places**: a row per place of the period with "N plays · M min" (a hint pointing at
+  the setting when it is off); a click opens the place's page (`show_page("place", place=key)` / `Page::Place(key)`):
+  its name, the period's minutes and plays there, Play, Shuffle and its songs, most played first, with the Played
+  column telling when each was last played there. Back and Now Playing's back link name the place.
+
 ### 4. Moods, tempo and playlists
 
 - Core `realhires/moods.py` / `rust/crates/core/src/moods.rs` analyses each song on this computer, from its audio, with

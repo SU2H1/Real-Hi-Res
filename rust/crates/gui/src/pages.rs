@@ -411,6 +411,7 @@ impl Player {
             Page::Settings => self.settings_page(ui, pal),
             Page::Quality => {}
             Page::Tab(name) => self.tab_page(ui, pal, &name),
+            Page::Place(key) => self.place_page(ui, pal, &key),
         }
     }
 
@@ -1864,6 +1865,9 @@ impl Player {
                     if draft != before {
                         *self.settings_draft() = draft;
                         self.settings_changed();
+                    }
+                    if group == "Playback" {
+                        self.places_settings_ui(ui, pal); // 2.4: what is sent, the lookup, Forget play locations…
                     }
                     if group == "Appearance" {
                         if !self.font_used.is_empty() {

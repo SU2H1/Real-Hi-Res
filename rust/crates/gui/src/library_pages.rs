@@ -338,7 +338,16 @@ impl Player {
         let mut play = None;
         let mut follow = None;
         let rows = self.calendar.rows.clone();
+        // 2.4: a line naming the place of the plays under it, when the day's plays have places
+        let with_places = rows.iter().any(|r| !r.place.is_empty());
+        let mut place: Option<String> = None;
+        let mut heads = vec![];
         for (i, r) in rows.iter().enumerate() {
+            if with_places && place.as_deref() != Some(r.place.as_str()) {
+                place = Some(r.place.clone());
+                crate::places::day_place_line(ui, pal, &r.place, width);
+                heads.push(r.place.clone());
+            }
             let (rect, _) = ui.allocate_exact_size(vec2(width, row_h), Sense::hover());
             let playable = self.lib.by_path.contains_key(&r.path);
             let resp = ui.interact(rect, ui.scope_id().with(("calendar-play", i)), if playable { Sense::click() } else { Sense::hover() });
@@ -377,6 +386,7 @@ impl Player {
                 follow = Some(l);
             }
         }
+        self.places.day_heads = heads;
         if let Some(i) = play {
             self.calendar_play(i);
         }
@@ -891,6 +901,7 @@ impl Player {
             }
             self.leaderboard_section(ui, pal); // 2.4
             ui.add_space(8.0);
+            self.places_section(ui, pal); // 2.4: the period's places
             if pill(ui, pal, Icon::Chart, tr!("Details")).clicked() {
                 self.go(Page::StatsDetails);
             }

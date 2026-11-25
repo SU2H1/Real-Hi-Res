@@ -2485,6 +2485,8 @@ class SettingsPage(Page):
                 side="left", padx=(8, 0))
             self.theme_editor = ThemeEditor(row, self.app)
             self.theme_editor.pack(anchor="w", fill="x", pady=(12, 0))
+        if name == "location_server":  # 2.4: what is sent, the lookup, Forget play locations…
+            self.app.places_settings_rows(self, row)
 
     def _language_note(self, parent, value: str) -> None:
         """Another language than the one the app runs in was chosen: it is used after a

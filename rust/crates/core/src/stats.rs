@@ -35,6 +35,8 @@ pub struct Play {
     pub genre: String,
     pub year: String,
     pub composer: String,
+    /// 2.4: where it was played, None when not known
+    pub place: Option<crate::places::Place>,
 }
 
 /// 30 s, or half of a shorter song.
@@ -417,6 +419,8 @@ pub struct DayPlay {
     pub seconds: f64,
     /// `minutes_label(seconds)`
     pub minutes: String,
+    /// 2.4: where it was played (`places::place_text()`, "" when not known)
+    pub place: String,
 }
 
 impl DayPlay {
@@ -430,6 +434,7 @@ impl DayPlay {
             .put("artist", self.artist.as_str())
             .put("seconds", self.seconds)
             .put("minutes", self.minutes.as_str())
+            .put("place", self.place.as_str())
             .build()
     }
 }
@@ -454,6 +459,7 @@ pub fn day_plays(plays: &[Play], year: i32, month: u32, day: u32, local: &dyn Fn
                 artist: artist.unwrap_or("Unknown Artist").to_string(),
                 seconds: p.seconds,
                 minutes: minutes_label(p.seconds),
+                place: crate::places::place_text(p.place.as_ref()),
             })
         })
         .collect();

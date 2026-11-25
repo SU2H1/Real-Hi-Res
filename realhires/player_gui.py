@@ -49,6 +49,7 @@ from .player_widgets import LABEL_DOT, Column, CoverCache, SongList, bind_wheel,
 from .player_windows import CoverWindow, EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .player_mb import MusicBrainzWindow
 from .player_stats import MostPlayedPage
+from .player_places import PlacePage, PlacesMixin
 from .player_tabs import TabPage, TabsMixin
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
@@ -88,6 +89,7 @@ PAGE_TITLES = {
     "stats_details": N_("Your Stats"), "search": N_("Search"), "nowplaying": N_("Now Playing"),
     "settings": N_("Settings"), "quality": N_("Quality Check"), "tab": N_("Tabs"),
     "most_played": N_("Most Played"),  # 2.4: the leaderboard's page
+    "place": N_("Places"),  # 2.4: a place of Your Stats
 }
 
 
@@ -653,8 +655,9 @@ class UpNextPanel(tk.Frame):
 
 
 # ------------------------------------------------------------ the app ---
-class PlayerApp(TabsMixin):
-    """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py)."""
+class PlayerApp(TabsMixin, PlacesMixin):
+    """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py; where songs were
+    played, 2.4: PlacesMixin in player_places.py)."""
 
     def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None):
         self.root = root
@@ -748,6 +751,7 @@ class PlayerApp(TabsMixin):
         self.show_page("quality" if initial else "library")
         if self.cfg.library_folders:
             self.refresh_library(then_check=self.cfg.scan_library_on_start)
+        self._init_places()  # 2.4: the place the plays are stored with
         self.root.after(TICK_MS, self._tick)
 
     @property
@@ -801,6 +805,7 @@ class PlayerApp(TabsMixin):
             "nowplaying": lambda: NowPlayingPage(self),
             "settings": lambda: SettingsPage(self),
             "tab": lambda: TabPage(self),
+            "place": lambda: PlacePage(self),
         }
 
     def _build_popups(self) -> None:
@@ -940,6 +945,8 @@ class PlayerApp(TabsMixin):
             return {"kind": p.kind, "group": p.name}
         if self.page_name == "tab" and isinstance(p, TabPage):
             return {"tab": p.name}
+        if self.page_name == "place" and isinstance(p, PlacePage):
+            return {"place": p.key}
         return {}
 
     def go_back(self) -> None:
@@ -1077,6 +1084,8 @@ class PlayerApp(TabsMixin):
             return os.path.basename(args["folder"].rstrip(os.sep)) or args["folder"]
         if name == "tab" and args.get("tab"):  # a tab's own name (2.3)
             return args["tab"]
+        if name == "place" and args.get("place"):  # a place's name (2.4)
+            return self.place_name(args["place"]) or tr(PAGE_TITLES["place"])
         return tr(PAGE_TITLES.get(name, "Library"))
 
     def back_label(self) -> str:
@@ -1281,6 +1290,7 @@ class PlayerApp(TabsMixin):
                 self.eq_window.show_bypass()
             if self.info_window is not None and self.info_window.win.winfo_exists():
                 self.info_window.refresh()
+        self.places_settings_changed(old, new)  # 2.4: turned on, off, or another location service
         if (list(old.library_folders), old.extension_set(), old.recursive) != (
                 list(new.library_folders), new.extension_set(), new.recursive):
             if new.library_folders:
@@ -1644,10 +1654,10 @@ class PlayerApp(TabsMixin):
             return
         t = self.by_path.get(li["path"]) or Track(li["path"])
         try:
-            self.lib.add_play(t, li["started"], li["seconds"])
+            self.lib.add_play(t, li["started"], li["seconds"], place=self.play_place())
         except Exception:  # noqa: BLE001 - the history must never stop playback
             return
-        self._refresh_pages({"played", "library", "stats", "stats_details", "most_played"})
+        self._refresh_pages({"played", "library", "stats", "stats_details", "most_played", "place"})
 
     def plays(self, since: float = 0.0, until: Optional[float] = None):
         try:
@@ -2471,6 +2481,7 @@ class PlayerApp(TabsMixin):
         self.save_state()
         self.lib_stop.set()
         self.mb_stop.set()
+        self._places_shutdown()
         self.engine.close()
         self.covers.close()
         self.qc.shutdown()
