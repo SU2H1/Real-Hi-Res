@@ -69,6 +69,19 @@ class Column:
     tip: bool = False       # hovering a cell shows tip_value(row, key) (the Quality column's resolution)
 
 
+LABEL_DOT = 8  # 2.3: the colour label's dot, in pixels
+
+
+def draw_label_dot(c: tk.Canvas, cx: float, cy: float, color: str, size: float = LABEL_DOT,
+                   outline: str = "", tags=()) -> int:
+    """A colour label (2.3): a dot `size` pixels wide centred on (cx, cy), in a 2-pixel ring
+    of `outline` when it sits on something of a similar colour (a cover, a selected row)."""
+    r = size / 2
+    if outline:
+        c.create_oval(cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2, fill=outline, outline="", tags=tags)
+    return c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline="", tags=tags)
+
+
 class SongList(tk.Frame):
     """A table of songs drawn on a Canvas.  `value(row, key)` gives a cell's text;
     `sort_value(row, key)` what a click on the column heading sorts by;
@@ -100,9 +113,14 @@ class SongList(tk.Frame):
                  is_dim: Optional[Callable[[Any], bool]] = None,
                  tip_value: Optional[Callable[[Any, str], str]] = None,
                  on_heading_context: Optional[Callable[[Any], None]] = None,
-                 on_move: Optional[Callable[[int, int], None]] = None):
+                 on_move: Optional[Callable[[int, int], None]] = None,
+                 label_of: Optional[Callable[[Any], Optional[str]]] = None,
+                 cell_color: Optional[Callable[[Any, str], Optional[str]]] = None):
         super().__init__(master, bd=0, highlightthickness=0)
         self.on_context, self.is_dim, self.tip_value = on_context, is_dim, tip_value
+        # 2.3: `label_of(row)` the colour label drawn as a dot before the title (None: no dot),
+        # `cell_color(row, key)` a cell's own text colour (the Quality column's quality colour)
+        self.label_of, self.cell_color = label_of, cell_color
         self.on_move = on_move
         self._press: Optional[Tuple[int, int]] = None   # (row, y) of a press that may become a drag
         self.drag_from: Optional[int] = None            # the row being dragged
@@ -524,6 +542,12 @@ class SongList(tk.Frame):
                 draw_icon(c, self.value(row, col.key), x + w / 2, mid, 16, t.c("on_accent") if sel
                           else t.c("accent"), tag=tags)
                 continue
+            dot = self.label_of(row) if self.label_of is not None and col.key in ("title", "name") \
+                and col.kind in ("text", "two") else None
+            if dot:  # 2.3: the colour label, a dot before the title
+                draw_label_dot(c, x + LABEL_DOT / 2, mid - (8 if col.kind == "two" else 0), dot,
+                               outline=t.c("on_accent") if sel else "", tags=tags + ("label",))
+                x, w = x + LABEL_DOT + 6, max(10, w - LABEL_DOT - 6)
             if col.kind == "two":
                 c.create_text(x, mid - 8, text=fit_text(t.f("body_b"), self.value(row, col.key), w, self._fit),
                               anchor="w", fill=fg, font=t.f("body_b"), tags=tags)
@@ -532,6 +556,9 @@ class SongList(tk.Frame):
                 continue
             text = fit_text(body, self.value(row, col.key), w, self._fit)
             color = fg if col.kind != "num" and col.key in ("title", "name") else (fg if sel or current else fg2)
+            own = self.cell_color(row, col.key) if self.cell_color is not None and not sel and not dim else None
+            if own:  # 2.3: e.g. the Quality column in the quality's colour
+                color = own
             if col.anchor == "e":
                 c.create_text(x + w, mid, text=text, anchor="e", fill=color, font=body, tags=tags)
             elif col.anchor == "center":
@@ -874,9 +901,11 @@ class AlbumGrid(tk.Frame):
 
     def __init__(self, master, theme: Theme, covers: CoverCache, on_open: Callable[[dict], None],
                  empty_text: str = "", on_context: Optional[Callable[[int, Any], None]] = None,
-                 multi: bool = False, on_selection: Optional[Callable[[], None]] = None):
+                 multi: bool = False, on_selection: Optional[Callable[[], None]] = None,
+                 label_of: Optional[Callable[[dict], Optional[str]]] = None):
         super().__init__(master, bd=0, highlightthickness=0)
         self.theme, self.covers, self.on_open, self.empty_text = theme, covers, on_open, empty_text
+        self.label_of = label_of  # 2.3: a card's colour label, a dot at its cover's bottom-left corner
         self.on_context, self.multi, self.on_selection = on_context, multi, on_selection
         self.albums: List[dict] = []
         self.positions: Dict[str, Tuple[float, float, int]] = {}
@@ -1006,6 +1035,10 @@ class AlbumGrid(tk.Frame):
             draw_icon(c, "check", x + cs - 21, y + 21, 22, t.c("on_accent"), tag=tag)
         elif self.hover == i:
             round_rect(c, x, y, x + cs, y + cs, 8, fill="", outline=t.c("sep"), width=1, tags=tag)
+        dot = self.label_of(a) if self.label_of is not None and not a.get("new") else None
+        if dot:  # 2.3: the colour label at the cover's bottom-left corner, ringed to stand out on it
+            draw_label_dot(c, x + 14, y + cs - 14, dot, outline=t.c("bg"),
+                           tags=(tag, "label", f"label{i}"))
         c.create_text(x, y + cs + 16, text=fit_text(t.f("card_title"), tr_name(a["title"]), cs, self._fit), anchor="w",
                       fill=t.c("text"), font=t.f("card_title"), tags=tag)
         c.create_text(x, y + cs + 34, text=fit_text(t.f("card_sub"), tr_name(a["artist"]), cs, self._fit), anchor="w",

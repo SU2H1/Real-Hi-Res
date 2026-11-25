@@ -108,6 +108,8 @@ class TabsMixin:
         m.add_command(label=tr("Edit Tab…"), command=lambda: self.edit_tab(name))
         m.add_command(label=tr("Export Tab…"), command=lambda: self.export_tab_file(name))
         m.add_command(label=tr("Delete Tab…"), command=lambda: self.delete_tab(name))
+        m.add_separator()
+        self.add_label_menu(m, "tab", name)
         self.theme_menu(m)
         self.last_menu = m
         return m
@@ -138,6 +140,11 @@ class TabsMixin:
         return next((t for t in self.tabs if t.get("file") == saved["file"]), saved)
 
     def _tab_renamed(self: "PlayerApp", old: str, new: str) -> None:
+        color = self.label_of("tab", old)  # the colour label follows the name (2.3)
+        if color and old != new:
+            self.state.set_label("tab", new, color)
+            self.state.set_label("tab", old, None)
+            self.save_state()
         for lst in (self.history, self.forward):
             for i, (name, args) in enumerate(lst):
                 if name == "tab" and args.get("tab") == old:
@@ -157,6 +164,9 @@ class TabsMixin:
                 parent=self.root):
             return False
         smarttabs.delete_tab(tab)
+        if self.label_of("tab", name):  # a new tab of that name starts without one
+            self.state.set_label("tab", name, None)
+            self.save_state()
         self.history = [h for h in self.history if not (h[0] == "tab" and h[1].get("tab") == name)]
         self.forward = [h for h in self.forward if not (h[0] == "tab" and h[1].get("tab") == name)]
         page = self.pages.get("tab")

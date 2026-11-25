@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from . import APP_NAME, embed, i18n
 from . import lyrics as lyrics_mod
 from . import musiclib, playerstate, stats, tagedit
+from . import themes as themes_mod
 from . import settings as settings_mod
 from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
@@ -284,6 +285,8 @@ def song_table(page: Page, parent, columns=None, value=None, extra_menu=None, so
 
     if kind is not None:
         columns = list(prefix) + song_columns(app.state.columns_of(kind))
+    kw.setdefault("label_of", lambda r: app.label_of("song", r.path))  # 2.3: the colour label's dot
+    kw.setdefault("cell_color", lambda r, key: track_color(page.theme, r, key))
     table = SongList(parent, page.theme, columns or SONG_COLUMNS, value or track_value, sort_value or track_sort,
                      on_heart=lambda r: app.toggle_like(r.path), is_liked=lambda r: app.is_liked(r.path),
                      is_current=lambda r: r.path == app.current, on_context=context,
@@ -338,6 +341,14 @@ def set_columns(app, kind: str, names: List[str]) -> None:
             table.set_columns(table.column_prefix + song_columns(names))
 
 
+def track_color(theme, t: Track, key: str) -> Optional[str]:
+    """A cell's own text colour (2.3): the Quality column in the quality's colour (gold for
+    Hi-Res Lossless, the accent for Lossless, grey for lossy, unless the theme sets them)."""
+    if key == "quality" and not getattr(t, "missing", False):
+        return theme.c(themes_mod.QUALITY_COLOR_KEYS[themes_mod.quality_kind(t)])
+    return None
+
+
 def track_tip(t: Track, key: str) -> str:
     """The tooltip of a cell: the Quality column's resolution ("24-bit/96 kHz")."""
     if key == "quality" and not getattr(t, "missing", False):
@@ -363,6 +374,8 @@ def album_menu(app, album: dict) -> tk.Menu:
     m.add_command(label=tr("Acquire Metadata…"), command=lambda: app.album_musicbrainz(album))
     first = next((t.path for t in album["tracks"] if not getattr(t, "missing", False)), "")
     m.add_command(label=tr("Change Cover…"), command=lambda: app.open_cover_window(first))
+    m.add_separator()
+    app.add_label_menu(m, "album", album["key"])  # 2.3
     app.theme_menu(m)
     app.last_menu = m
     return m
@@ -395,7 +408,8 @@ class AlbumsPage(Page):
         self.choose = PillButton(self.empty, t, tr("Choose a music folder…"), command=app.choose_music_folder)
         self.choose.pack()
         self.grid_w = AlbumGrid(self, t, app.covers, app.open_album,
-                                on_context=album_context(app, lambda: self.grid_w))
+                                on_context=album_context(app, lambda: self.grid_w),
+                                label_of=lambda a: app.label_of("album", a["key"]))
         self.albums: List[dict] = []
         self.refresh()
 
@@ -663,7 +677,8 @@ class GroupPage(Page):
         self.items: List[dict] = []
         self.grid_w = AlbumGrid(self, t, app.covers, self._open, on_context=self._context,
                                 multi=kind == "genres", on_selection=self._selection,
-                                empty_text=tr(GROUP_TEXTS[kind][0]))
+                                empty_text=tr(GROUP_TEXTS[kind][0]),
+                                label_of=lambda a: app.label_of(app.GROUP_LABEL_KINDS[kind], a.get("name", "")))
         self.grid_w.pack(fill="both", expand=True)
         self.grid_w.canvas.bind("<Escape>", lambda e: self.done_selecting())
         self.refresh()
@@ -779,7 +794,8 @@ class GroupItemPage(Page):
                                  tooltip=lambda: tr("More"))
         self.more_b.pack(side="right", padx=(0, 10))
         self.grid_w = AlbumGrid(self, t, app.covers, app.open_album,
-                                on_context=album_context(app, lambda: self.grid_w))
+                                on_context=album_context(app, lambda: self.grid_w),
+                                label_of=lambda a: app.label_of("album", a["key"]))
         self.table = song_table(self, self, kind="songs",
                                 on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
 
@@ -855,6 +871,9 @@ def group_menu(app, kind: str, name: str, here: bool = False) -> tk.Menu:
         m.add_command(label=tr(RENAME_TEXTS[kind]["menu"]), command=lambda: rename_group(app, kind, name))
         if kind == "genres":
             m.add_command(label=tr("Merge into…"), command=lambda: merge_groups(app, kind, [name]))
+    if kind in app.GROUP_LABEL_KINDS:  # 2.3
+        m.add_separator()
+        app.add_label_menu(m, app.GROUP_LABEL_KINDS[kind], name)
     app.theme_menu(m)
     app.last_menu = m
     return m
@@ -1061,7 +1080,8 @@ class SearchPage(Page):
         self.grid_box.pack(fill="x")
         self.grid_box.pack_propagate(False)
         self.grid_w = AlbumGrid(self.grid_box, t, app.covers, app.open_album,
-                                on_context=album_context(app, lambda: self.grid_w))
+                                on_context=album_context(app, lambda: self.grid_w),
+                                label_of=lambda a: app.label_of("album", a["key"]))
         self.grid_w.pack(fill="both", expand=True)
         self.song_head = label(self, t, tr("Songs"), "h2")
         self.song_head.pack(anchor="w", padx=28, pady=(4, 2))
@@ -1721,7 +1741,8 @@ class NowPlayingPage(Page):
                                    lambda r, k: r.display_title if k == "title" else tr_name(r.display_artist),
                                    header=False, zebra=False, row_height=48, on_activate=app.jump_to,
                                    empty_text=tr("Nothing comes after this song."), on_move=app.move_in_up_next,
-                                   on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root))
+                                   on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root),
+                                   label_of=lambda r: app.label_of("song", r.path))
         self.queue_list.pack(side="top", fill="both", expand=True, padx=(12, 8))
         self.queue_paths: Optional[list] = None
         # Details
@@ -2235,24 +2256,53 @@ class ThemeEditor(tk.Frame):
         grid = frame(self, t)
         grid.pack(anchor="w", pady=(10, 0))
         self.swatches: Dict[str, tk.Canvas] = {}
+        self.values: Dict[str, tk.Label] = {}      # the hex value under each label
+        self.resets: Dict[str, PillButton] = {}    # More colours: Reset, for each colour the theme sets
+        all_colors = themes.colors(theme)
         for i, key in enumerate(themes.COLOR_KEYS):
-            cell = frame(grid, t)
-            cell.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 28), pady=4)
-            sw = tk.Canvas(cell, width=30, height=30, highlightthickness=0, bd=0, cursor="hand2")
-            t.reg(sw, bg="bg")
-            sw.pack(side="left")
-            value = theme["colors"][key]
-            round_rect(sw, 1, 1, 29, 29, 7, fill=value, outline=t.c("sep"))
-            sw.bind("<Button-1>", lambda e, k=key: self._pick(k))
-            box = frame(cell, t)
-            box.pack(side="left", padx=(10, 0))
-            label(box, t, tr(themes.COLOR_LABELS[key]), "body").pack(anchor="w")
-            label(box, t, value, "small", fg="text2").pack(anchor="w")
-            self.swatches[key] = sw
+            self._swatch_cell(grid, i, key, theme["colors"][key], own)
+        # 2.3: every other colour the app draws; unset, its swatch shows the derived colour
+        label(self, t, tr("More colours"), "body_b").pack(anchor="w", pady=(16, 0))
+        label(self, t, tr("Unless the theme sets them, these follow the colours above. Reset makes a colour follow "
+                          "them again."), "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH - 80,
+              justify="left").pack(anchor="w", pady=(2, 4))
+        more = frame(self, t)
+        more.pack(anchor="w")
+        for i, key in enumerate(themes.EXTRA_COLOR_KEYS):
+            set_here = key in theme["colors"]
+            self._swatch_cell(more, i, key, all_colors[key], own, derived=not set_here)
         self.own = own
 
+    def _swatch_cell(self, grid, i: int, key: str, value: str, own: bool, derived: bool = False) -> None:
+        """A colour of the editor: its swatch (a click changes it), its name and value, and
+        for an extra colour the theme sets, Reset (2.3)."""
+        from . import themes
+
+        t = self.app.theme
+        cell = frame(grid, t)
+        cell.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 28), pady=4)
+        sw = tk.Canvas(cell, width=30, height=30, highlightthickness=0, bd=0, cursor="hand2")
+        t.reg(sw, bg="bg")
+        sw.pack(side="left")
+        round_rect(sw, 1, 1, 29, 29, 7, fill=value, outline=t.c("sep"))
+        sw.bind("<Button-1>", lambda e, k=key: self._pick(k))
+        box = frame(cell, t)
+        box.pack(side="left", padx=(10, 0))
+        label(box, t, tr(themes.color_label(key)), "body").pack(anchor="w")
+        line = frame(box, t)
+        line.pack(anchor="w")
+        shown = tr("{color} (automatic)", color=value) if derived else value
+        self.values[key] = label(line, t, shown, "small", fg="text2")
+        self.values[key].pack(side="left")
+        if key in themes.EXTRA_COLOR_KEYS and not derived and own:
+            b = PillButton(line, t, tr("Reset"), kind="plain", height=20,
+                           command=lambda k=key: self.app.set_theme_color(self.name, k, None))
+            b.pack(side="left", padx=(8, 0))
+            self.resets[key] = b
+        self.swatches[key] = sw
+
     def _pick(self, key: str) -> None:
-        from tkinter import colorchooser, messagebox
+        from tkinter import messagebox
 
         from . import themes as themes_mod
 
@@ -2269,11 +2319,11 @@ class ThemeEditor(tk.Frame):
                 return
             self.name = name
         theme = app.current_theme()
-        color = key.capitalize() if i18n.language() == "en" else tr(themes_mod.COLOR_LABELS[key])
-        got = colorchooser.askcolor(color=theme["colors"][key], parent=app.root,
-                                    title=f"{theme_label(theme['name'])}: {color}")
-        if got and got[1]:
-            app.set_theme_color(self.name, key, got[1])
+        color = key.capitalize() if i18n.language() == "en" and key in themes_mod.COLOR_KEYS \
+            else tr(themes_mod.color_label(key))
+        got = app.ask_color(themes_mod.colors(theme)[key], f"{theme_label(theme['name'])}: {color}")
+        if got:
+            app.set_theme_color(self.name, key, got)
 
 
 class SettingsPage(Page):

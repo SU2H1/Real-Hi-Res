@@ -454,9 +454,16 @@ class PlaylistsPage(Page):
         self.sub = label(box, t, "", "body", fg="text2")
         self.sub.pack(anchor="w")
         PillButton(top, t, tr("New Playlist…"), icon="plus", command=lambda: app.new_playlist()).pack(side="right")
-        self.grid_w = AlbumGrid(self, t, app.covers, self._open)
+        self.grid_w = AlbumGrid(self, t, app.covers, self._open, on_context=self._context,
+                                label_of=lambda a: app.label_of("playlist", a["key"]))
         self.grid_w.pack(fill="both", expand=True)
         self.refresh()
+
+    def _context(self, i: int, e) -> None:
+        """A playlist card's menu (2.3): Play, Shuffle, Rename…, Delete…, Colour Label."""
+        items = self.grid_w.albums
+        if 0 <= i < len(items) and not items[i].get("new"):
+            self.app.playlist_menu(items[i]["key"]).tk_popup(e.x_root, e.y_root)
 
     def refresh(self) -> None:
         app = self.app
@@ -804,14 +811,14 @@ class StatsPage(Page):
         y += 22
         now = time.localtime()
         today = (now.tm_year, now.tm_mon, now.tm_mday)
-        accent, base = t.c("accent"), t.c("lcd")
+        accent, base, tint = t.c("accent"), t.c("lcd"), t.c("calendar")  # 2.3: the tint is the theme's
         for week in stats.month_grid(year, month):
             for k, d in enumerate(week):
                 if not d:
                     continue
                 box = (m + k * cw + 2, y + 2, m + (k + 1) * cw - 2, y + ch - 2)
                 level = self.levels[d - 1] if d - 1 < len(self.levels) else 0
-                fill = mix(base, accent, self.TINTS[level])
+                fill = mix(base, tint, self.TINTS[level])
                 if self.hover == box:
                     fill = mix(fill, t.c("text"), 0.1)
                 chosen, is_today = self.day == (year, month, d), today == (year, month, d)

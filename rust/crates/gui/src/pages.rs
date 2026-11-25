@@ -36,8 +36,8 @@ fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(110.0), 32.0), Sense::click());
     let fill = if resp.hovered() { pal.accent.gamma_multiply(0.85) } else { pal.accent };
     ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(18.0, 18.0)), icon, Color32::WHITE);
-    ui.painter().text(pos2(rect.left() + 36.0, rect.center().y), Align2::LEFT_CENTER, label, font, Color32::WHITE);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(18.0, 18.0)), icon, pal.on_accent);
+    ui.painter().text(pos2(rect.left() + 36.0, rect.center().y), Align2::LEFT_CENTER, label, font, pal.on_accent);
     resp
 }
 
@@ -50,9 +50,9 @@ fn pill_button(ui: &mut Ui, pal: &Palette, icon: Option<Icon>, label: &str, acce
     let w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x) + iw + 34.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), if enabled { Sense::click() } else { Sense::hover() });
     let hovered = enabled && resp.hovered();
-    let disabled = pal.secondary.gamma_multiply(0.5);
+    let disabled = pal.disabled;
     let (fill, fg) = if accent {
-        (if !enabled { disabled } else if hovered { pal.accent.gamma_multiply(0.85) } else { pal.accent }, Color32::WHITE)
+        (if !enabled { disabled } else if hovered { pal.accent.gamma_multiply(0.85) } else { pal.accent }, pal.on_accent)
     } else {
         (if hovered { pal.hover } else { pal.lcd }, if enabled { pal.text } else { disabled })
     };
@@ -451,6 +451,9 @@ impl Player {
         let tex = self.covers.get(&key, &self.lib.album_paths[album]);
         let crect = Rect::from_min_size(rect.min, vec2(size, size));
         cover(ui.painter(), crect, tex.as_ref(), &title, 8);
+        if let Some(c) = self.label_of("album", &key) {
+            crate::labels::paint_cover_dot(ui.painter(), crect, c, pal); // 2.3: its colour label
+        }
         if resp.hovered() {
             ui.painter().rect_filled(crect, CornerRadius::same(8), Color32::from_black_alpha(40));
             let play = Rect::from_center_size(crect.left_bottom() + vec2(24.0, -24.0), vec2(32.0, 32.0));
@@ -519,6 +522,9 @@ impl Player {
             }
             ui.close();
         }
+        ui.separator();
+        let key = self.lib.albums[album].key.clone();
+        self.label_menu(ui, "album", &key); // 2.3
     }
 
     fn album_grid(&mut self, ui: &mut Ui, pal: &Palette, albums: &[usize]) {
@@ -669,6 +675,7 @@ impl Player {
                 ui.close();
             }
         });
+        self.label_menu(ui, "song", path); // 2.3
         if let Some(id) = self.table_playlist.clone() {
             ui.separator();
             if ui.button(tr!("Remove from this playlist")).clicked() {
@@ -865,13 +872,14 @@ impl Player {
                 let selected = self.selected_song.as_deref() == Some(path.as_str());
                 let playing = now.as_deref() == Some(path.as_str());
                 if selected {
-                    ui.painter().rect_filled(rect, CornerRadius::same(5), pal.hover);
+                    ui.painter().rect_filled(rect, CornerRadius::same(5), pal.selection);
                 } else if i % 2 == 1 {
-                    ui.painter().rect_filled(rect, CornerRadius::same(5), if pal.dark { Color32::from_white_alpha(6) } else { Color32::from_black_alpha(6) });
+                    ui.painter().rect_filled(rect, CornerRadius::same(5), pal.zebra);
                 }
                 let p = ui.painter_at(rect);
                 let heart_rect = Rect::from_center_size(pos2(rect.left() + 15.0, rect.center().y), vec2(16.0, 16.0));
                 let liked = self.state.is_liked(path);
+                let label = self.label_of("song", path); // 2.3: a dot before the title
                 if heart && (liked || resp.hovered()) {
                     icons::paint(&p, heart_rect, if liked { Icon::HeartFilled } else { Icon::Heart }, pal.accent);
                 }
@@ -885,10 +893,24 @@ impl Player {
                         c => cell_text(t, *c),
                     };
                     let first = *col == SongCol::Title;
-                    let color = if first && playing { pal.accent } else if first { pal.text } else { pal.secondary };
+                    let color = if first && playing {
+                        pal.accent
+                    } else if first {
+                        pal.text
+                    } else if *col == SongCol::Quality {
+                        pal.quality_of(t) // 2.3: the Quality column in the quality's colour
+                    } else {
+                        pal.secondary
+                    };
                     let font = if first { look::text(13.0) } else { look::text(12.5) };
-                    let g = elided(ui, &v, font, color, ws[k] - 10.0);
-                    let x = if col.info().3 { rect.left() + xs[k] + ws[k] - 6.0 - g.size().x } else { rect.left() + xs[k] + 4.0 };
+                    let (mut left, mut room) = (rect.left() + xs[k] + 4.0, ws[k] - 10.0);
+                    if let (true, Some(c)) = (first, label) {
+                        crate::labels::paint_dot(&p, pos2(left + crate::labels::DOT / 2.0, rect.center().y), c, None);
+                        left += crate::labels::DOT + 6.0;
+                        room -= crate::labels::DOT + 6.0;
+                    }
+                    let g = elided(ui, &v, font, color, room.max(10.0));
+                    let x = if col.info().3 { rect.left() + xs[k] + ws[k] - 6.0 - g.size().x } else { left };
                     p.galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
                 }
                 let mut resp = resp;
@@ -1016,7 +1038,7 @@ impl Player {
                     p.add(egui::epaint::RectShape::filled(r, radius, Color32::WHITE).with_texture(t.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))));
                 }
                 None => {
-                    p.rect_filled(r, radius, crate::style::placeholder_color(&self.lib.albums[a].title));
+                    p.rect_filled(r, radius, look::current(p.ctx()).placeholder);
                 }
             }
         }
@@ -1032,6 +1054,9 @@ impl Player {
         let albums = self.lib.group_albums.get(kind).and_then(|v| v.get(i)).cloned().unwrap_or_default();
         let crect = Rect::from_min_size(rect.min, vec2(size, size));
         self.group_mosaic(ui.painter(), crect, &albums, &name);
+        if let Some(c) = label_kind(kind).and_then(|k| self.label_of(k, &name)) {
+            crate::labels::paint_cover_dot(ui.painter(), crect, c, pal); // 2.3: its colour label
+        }
         let is_sel = kind == "genres" && self.group_selected.iter().any(|s| *s == name);
         if is_sel {
             ui.painter().rect_stroke(crect.expand(3.0), CornerRadius::same(10), Stroke::new(3.0, pal.accent), egui::StrokeKind::Inside);
@@ -1119,6 +1144,10 @@ impl Player {
                 self.ask_merge_groups(kind, vec![name.to_string()]);
                 ui.close();
             }
+        }
+        if let Some(k) = label_kind(kind) {
+            ui.separator();
+            self.label_menu(ui, k, name); // 2.3
         }
     }
 
@@ -1449,7 +1478,7 @@ impl Player {
                     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
                     let playing = t.path == path;
                     if resp.hovered() {
-                        ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::same(6), pal.hover);
+                        ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::same(6), pal.row_hover);
                     }
                     let mid = r.center().y;
                     if playing {
@@ -1635,12 +1664,12 @@ impl Player {
             return;
         }
         // 2.3: dragged to another place, or removed with a right click (crate::upnext)
-        let rows: Vec<(String, String)> = upcoming
+        let rows: Vec<(String, String, Option<Color32>)> = upcoming
             .iter()
             .map(|path| {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
-                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default())
+                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default(), self.label_of("song", path))
             })
             .collect();
         let action = egui::ScrollArea::vertical()
@@ -1648,8 +1677,14 @@ impl Player {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 crate::upnext::rows(ui, pal, "now-playing", rows.len(), 44.0, 12.0, |p, rect, i| {
-                    let (title, artist) = &rows[i];
-                    p.text(rect.left_top() + vec2(20.0, 5.0), Align2::LEFT_TOP, title, look::title(13.0), pal.text);
+                    let (title, artist, label) = &rows[i];
+                    let dx = if let Some(c) = label {
+                        crate::labels::paint_dot(p, rect.left_top() + vec2(20.0 + crate::labels::DOT / 2.0, 13.0), *c, None);
+                        crate::labels::DOT + 6.0
+                    } else {
+                        0.0
+                    };
+                    p.text(rect.left_top() + vec2(20.0 + dx, 5.0), Align2::LEFT_TOP, title, look::title(13.0), pal.text);
                     p.text(rect.left_top() + vec2(20.0, 24.0), Align2::LEFT_TOP, artist, look::text(11.5), pal.secondary);
                 })
             })
@@ -1740,9 +1775,9 @@ impl Player {
                     if sel {
                         ui.painter().rect_filled(rect, CornerRadius::same(6), pal.accent);
                     } else if resp.hovered() {
-                        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+                        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.row_hover);
                     }
-                    let color = if sel { Color32::WHITE } else { pal.text };
+                    let color = if sel { pal.on_accent } else { pal.text };
                     let label = elided(ui, i18n::tr(g), look::text(13.0), color, rect.width() - 14.0);
                     ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - label.size().y / 2.0), label, color);
                     if resp.clicked() {
@@ -2026,11 +2061,58 @@ impl Player {
                 }
             }
         });
+        // 2.3: every other colour the app draws; unset, a colour follows the eight above
+        // (its button shows the derived colour) until it is changed, and Reset makes it
+        // follow them again
+        ui.add_space(14.0);
+        ui.label(RichText::new(tr!("More colours")).font(look::title(13.0)).color(pal.text));
+        ui.label(
+            RichText::new(tr!(
+                "Unless the theme sets them, these follow the colours above. Reset makes a colour follow them again."
+            ))
+            .color(pal.secondary),
+        );
+        ui.add_space(4.0);
+        // two colours a row where the page is wide enough, else one (the 1024-pixel screens)
+        let per_row = if ui.available_width() >= 660.0 { 2 } else { 1 };
+        egui::Grid::new("theme-more-colours").num_columns(3 * per_row).spacing([10.0, 8.0]).show(ui, |ui| {
+            for (k, key) in themes::EXTRA_COLOR_KEYS.iter().enumerate() {
+                ui.label(i18n::tr(themes::extra_color_label(key)));
+                let set = t.extra_color(key).is_some();
+                let mut c = look::parse_hex(&t.any_color(key));
+                let r = egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque);
+                if r.changed() {
+                    t.set_extra(key, Some(&look::to_hex(c)));
+                }
+                if set {
+                    if ui.small_button(tr!("Reset")).clicked() {
+                        t.set_extra(key, None);
+                    }
+                } else {
+                    ui.label(RichText::new(tr!("automatic")).small().color(pal.secondary));
+                }
+                if k % per_row == per_row - 1 {
+                    ui.end_row();
+                }
+            }
+        });
         if t != before {
             self.custom_themes[i] = t;
             self.themes_changed();
         }
     }
+}
+
+/// The colour-label kind of a grouping page's cards (2.3: `playerstate::LABEL_KINDS`).
+pub fn label_kind(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "artists" => "artist",
+        "album_artists" => "album_artist",
+        "genres" => "genre",
+        "years" => "year",
+        "composers" => "composer",
+        _ => return None,
+    })
 }
 
 fn back_link(ui: &mut Ui, pal: &Palette, label: &str) -> egui::Response {

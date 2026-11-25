@@ -242,6 +242,14 @@ impl Player {
     }
 
     fn tab_renamed(&mut self, old: &str, new: &str) {
+        // the colour label follows the name (2.3)
+        if let Some(color) = self.state.label_of("tab", old).map(str::to_string) {
+            if old != new {
+                self.state.set_label("tab", new, Some(&color));
+                self.state.set_label("tab", old, None);
+                self.save_state();
+            }
+        }
         let (from, to) = (Page::Tab(old.to_string()), Page::Tab(new.to_string()));
         for p in self.back.iter_mut().chain(self.forward.iter_mut()) {
             if *p == from {
@@ -257,6 +265,11 @@ impl Player {
     pub fn delete_tab(&mut self, name: &str) {
         let Some(t) = self.tab(name).cloned() else { return };
         smarttabs::delete_tab(&t);
+        if self.state.label_of("tab", name).is_some() {
+            // a new tab of that name starts without one
+            self.state.set_label("tab", name, None);
+            self.save_state();
+        }
         let gone = Page::Tab(name.to_string());
         self.back.retain(|p| *p != gone);
         self.forward.retain(|p| *p != gone);
@@ -331,6 +344,8 @@ impl Player {
             self.confirm = Some(ConfirmAction::DeleteTab(name.to_string()));
             ui.close();
         }
+        ui.separator();
+        self.label_menu(ui, "tab", name);
     }
 
     // -------------------------------------------------------------- the page ---

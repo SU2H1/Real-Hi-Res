@@ -452,7 +452,7 @@ pub fn button(ui: &mut Ui, icon: Icon, size: f32, active: bool, enabled: bool, t
         ui.painter().circle_filled(rect.center(), size * 0.5, pal.hover);
     }
     let color = if !enabled {
-        pal.secondary.gamma_multiply(0.5)
+        pal.disabled
     } else if active {
         pal.accent
     } else {

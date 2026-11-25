@@ -65,7 +65,7 @@ pub fn rows(
             }
         }
         if dragging == Some(i) || (dragging.is_none() && resp.hovered()) {
-            ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+            ui.painter().rect_filled(rect, CornerRadius::same(6), pal.row_hover);
         }
         paint(&ui.painter_at(rect), rect, i);
         if resp.double_clicked() && dragging.is_none() {

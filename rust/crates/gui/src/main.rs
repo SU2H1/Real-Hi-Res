@@ -13,6 +13,7 @@ mod dialogs;
 mod editinfo;
 mod eqwin;
 mod icons;
+mod labels;
 mod look;
 mod library_pages;
 mod lyrics;

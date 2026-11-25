@@ -126,7 +126,8 @@ def loaded():
     assert tp.title_l.cget("text") == "Hi-Res" and tp.sub.cget("text") == "6 songs, 0 minutes", tp.sub.cget("text")
     assert [t.display_title for t in tp.table.rows] == HIRES
     m = tp.menu()
-    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["Edit Tab…", "Export Tab…", "Delete Tab…"]
+    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"] == [
+        "Edit Tab…", "Export Tab…", "Delete Tab…", "Colour Label"]
     # play from the tab: Now Playing's back link names it
     tp.table.on_activate(1)
     wait(lambda: app.current == LIB["songs"]["First Light"], playing, what="playback")
@@ -212,6 +213,8 @@ def by_hand():
     # Edit Tab…: renamed, with only Jazz; the file follows the name, the page and history too
     app.show_page("library")
     app.open_tab("Jazz and Ambient")
+    app.set_label("tab", "Jazz and Ambient", "#34c759")  # a colour label, drawn after the name
+    assert app.sidebar.label_of("tab:Jazz and Ambient") == "#34c759"
     w = app.edit_tab("Jazz and Ambient")
     assert w.win.title() == "Edit Tab" and w.template_cb is None and w.name_var.get() == "Jazz and Ambient"
     w.remove_rule(w.rows[1])
@@ -221,6 +224,9 @@ def by_hand():
     assert app.page("tab").name == "Jazz" and app.page("tab").title_l.cget("text") == "Jazz"
     assert [t.display_title for t in app.page("tab").table.rows] == ["Blue Kettle", "Porch Lamp"]
     assert app.history[-1] == ("library", {{}}) and app.sidebar.selected == "tab:Jazz"
+    # the colour label follows the new name
+    assert app.label_of("tab", "Jazz") == "#34c759" and app.label_of("tab", "Jazz and Ambient") is None
+    assert app.sidebar.label_of("tab:Jazz") == "#34c759"
     # a tab on likes follows them
     w = app.new_tab()
     w.name_var.set("Loved")
@@ -240,6 +246,7 @@ def by_hand():
     assert open(out, encoding="utf-8").read() == smarttabs.tab_text(app.tab("Jazz"))
     assert app.delete_tab("Jazz")
     assert "Jazz.json" not in os.listdir(TABS) and app.tab("Jazz") is None
+    assert app.label_of("tab", "Jazz") is None  # its label went with it
     assert "tab:Jazz" not in [k for k, _, _ in app.sidebar.items()]
     assert app.import_tab_file(out) == "Jazz" and app.page_name == "tab" and app.page("tab").name == "Jazz"
     assert app.import_tab_file(os.path.join(TABS, "Jazz.json")) is None
@@ -262,8 +269,8 @@ def by_hand():
     if sys.platform.startswith("linux"):
         side_click("tab:Short", "<Button-3>")
         m = app.last_menu
-        assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["Edit Tab…", "Export Tab…",
-                                                                               "Delete Tab…"]
+        assert [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"] == [
+            "Edit Tab…", "Export Tab…", "Delete Tab…", "Colour Label"]
         m.unpost()
     print("OK")
     root.destroy()
