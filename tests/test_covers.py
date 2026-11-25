@@ -190,18 +190,31 @@ SCROLL_SCRIPT = r'''
 import faulthandler, os, sys, time
 sys.path.insert(0, REPO)
 faulthandler.enable()
-faulthandler.dump_traceback_later(330, exit=True)  # (a slow macOS runner took over 2 minutes to make the 36 covers ahead)
+faulthandler.dump_traceback_later(450, exit=True)  # (a slow macOS runner took over 2 minutes to make the 36 covers ahead)
 import tkinter as tk
 from realhires import covers, musiclib
 from realhires.player_theme import Theme
 from realhires.player_widgets import AlbumGrid, CoverCache
 
 runs = []
+outcomes = []   # (source, PNG made, FFmpeg ran to the end, seconds) of every run
 real = covers._thumbnail
 def counting(source, size, embedded):
     runs.append(source)
-    return real(source, size, embedded)
+    t = time.time()
+    data, ok = real(source, size, embedded)
+    outcomes.append((source, data is not None, ok, time.time() - t))
+    return data, ok
 covers._thumbnail = counting
+
+finished = []   # albums (first path) whose cover the background pass has looked at
+real_cached = covers.cached_cover_png
+def cached_counting(paths, size):
+    try:
+        return real_cached(paths, size)
+    finally:
+        finished.append(list(paths)[0])
+covers.cached_cover_png = cached_counting
 
 tracks = []
 for i in range(ALBUMS):
@@ -265,12 +278,27 @@ def scroll_through(grid, cache):
 # first session: the library is read, the grid covers are made ahead
 cache = CoverCache(root)
 cache.library_changed(albums)
-cache.prefetch(albums)
-pump(lambda: cache.prefetching() == 0 and all(covers.is_cached([t.path for t in a["tracks"]], cache.GRID)
-                                               for a in albums),
-     lambda: "made ahead: %d FFmpeg runs, %d of %d covers saved, %d queued" % (
-         len(runs), sum(covers.is_cached([t.path for t in a["tracks"]], cache.GRID) for a in albums),
-         len(albums), cache.prefetching()), timeout=300)
+def unsaved():
+    return [a for a in albums if not covers.is_cached([t.path for t in a["tracks"]], cache.GRID)]
+
+# A cover whose FFmpeg run timed out or could not start is not saved: the app makes
+# it when it is shown.  The slow macOS runners (about 3 s per FFmpeg run) had such a
+# run once, so the pass is repeated for those albums, and what happened is printed.
+todo = albums
+for attempt in range(3):
+    finished.clear()
+    cache.prefetch(todo)
+    pump(lambda: len(finished) >= len(todo) and cache.prefetching() == 0,
+         lambda: "made ahead: %d FFmpeg runs, %d of %d covers looked at, %d queued" % (
+             len(runs), len(finished), len(todo), cache.prefetching()), timeout=300)
+    todo = unsaved()
+    if not todo:
+        break
+    print("not saved after pass %d: %s; slow or failed FFmpeg runs: %s" % (
+        attempt + 1, [a["key"] for a in todo],
+        [o for o in outcomes if not o[2] or o[3] > 10 or os.path.dirname(o[0]) in
+         {os.path.dirname(a["tracks"][0].path) for a in todo}]), file=sys.stderr, flush=True)
+assert not todo, [a["key"] for a in todo]
 made = len(runs)
 assert made >= ALBUMS, made
 assert cache.images == {}, "made ahead only on disk"
@@ -332,7 +360,7 @@ def test_scrolling_the_album_grid_does_not_run_ffmpeg_again(tmp_path):
     script = tmp_path / "scroll.py"
     script.write_text(f"REPO = {str(Path(__file__).resolve().parents[1])!r}\nMUSIC = {str(music)!r}\n"
                       f"ALBUMS = {albums}\n" + SCROLL_SCRIPT, encoding="utf-8")
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=360)
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=480)
     log = proc.stdout + proc.stderr
     assert proc.returncode == 0, log
     assert proc.stdout.splitlines()[-1] == "OK", log
