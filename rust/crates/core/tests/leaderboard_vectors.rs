@@ -63,6 +63,8 @@ fn leaderboards_equal_python() {
             genre: s(p, "genre"),
             year: s(p, "year"),
             composer: s(p, "composer"),
+            // 2.4: plays carry the place they were played at (none in these vectors)
+            place: p.get("place").filter(|v| !v.is_null()).map(|v| realhires::places::Place::from_json(v).unwrap()),
         })
         .collect();
     let kinds: Vec<String> = data.get("kinds").unwrap().as_array().unwrap().iter().map(|k| k.as_str().unwrap().to_string()).collect();

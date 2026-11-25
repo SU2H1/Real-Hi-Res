@@ -2383,7 +2383,7 @@ class SettingsPage(Page):
         self.inner = frame(self.canvas, t)
         self.win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.win, width=e.width))
+        self.canvas.bind("<Configure>", self._canvas_resized)
         bind_wheel(self.canvas, lambda n: self.canvas.yview_scroll(n, "units"))
         self.help_labels: Dict[str, tk.Label] = {}
         self.vars: Dict[str, Any] = {}
@@ -2391,6 +2391,36 @@ class SettingsPage(Page):
         self.restart_note: Optional[tk.Frame] = None
         self.sections.selected = 0
         self.build()
+
+    def _canvas_resized(self, e) -> None:
+        self.canvas.itemconfigure(self.win, width=e.width)
+        self.fit_wraps(e.width)
+
+    def fit_wraps(self, width: Optional[int] = None) -> None:
+        """Wrap the page's texts within the width it has (2.4): a label keeps the
+        wraplength it was made with (HELP_WIDTH and the like) as its widest, and is
+        narrowed so that it ends inside the page, which at 1024 pixels is narrower than
+        HELP_WIDTH (the help texts were cut off at the right)."""
+        width = int(width or self.canvas.winfo_width())
+        if width <= 1:
+            return
+        stack = list(self.inner.winfo_children())
+        while stack:
+            w = stack.pop()
+            stack.extend(w.winfo_children())
+            if not isinstance(w, tk.Label):
+                continue
+            widest = getattr(w, "_widest_wrap", None)
+            if widest is None:
+                try:
+                    widest = int(float(str(w.cget("wraplength"))))
+                except (tk.TclError, ValueError):
+                    continue
+                w._widest_wrap = widest  # type: ignore[attr-defined]
+            if widest <= 0:
+                continue
+            x = w.winfo_rootx() - self.inner.winfo_rootx() if w.winfo_ismapped() else 28
+            w.configure(wraplength=max(160, min(widest, width - x - 24)))
 
     def show(self, group: Optional[str] = None, **kw) -> None:
         if group in settings_mod.GROUPS:
@@ -2424,6 +2454,7 @@ class SettingsPage(Page):
                 self._field(box, info, getattr(cfg, info["name"]))
         self._actions(box)
         self.canvas.yview_moveto(0)
+        self.after_idle(self.fit_wraps)  # once laid out: the texts wrap within the page (2.4)
 
     def _field(self, parent, info: dict, value) -> None:
         t = self.theme

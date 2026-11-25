@@ -4144,6 +4144,10 @@ mod tests {
         let mut rest: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
         let mut out = vec![];
         for (t, _) in after {
+            // the moods' background analysis (2.4) changes the sidebar's status at any frame
+            if t.starts_with("Analysing moods") || t.starts_with("ムードを解析中") {
+                continue;
+            }
             match rest.iter().position(|b| b == t) {
                 Some(i) => {
                     rest.remove(i);

@@ -66,7 +66,7 @@ Every release page has an **Antivirus scan results** section. It lists each down
 
 Since version 2.0 the desktop app opens as a music player. Its window looks and works much like Apple Music. The first time, choose your music folder (the Library page offers a button, or use **Settings → Library**); Real-Hi-Res reads the tags of its songs in the background and keeps them, so the next start shows your library at once.
 
-![The Library page: the tiles from All Songs to Your Stats, then two custom tabs, the albums added last, and the sidebar with its Tabs section](docs/gui-player-library.png)
+![The Library page: the tiles from All Songs to Your Stats, then two custom tabs, the albums added last, and the sidebar with Moods and its Tabs section](docs/gui-player-library.png)
 
 **The Library page** is where the app starts. Its tiles, each with a count, open the pages below; **Settings → Appearance → Library page** (or the two small buttons at the right of the Library title) shows them as **tiles** or as a **list** with one entry per row:
 
