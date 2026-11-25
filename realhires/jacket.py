@@ -127,12 +127,12 @@ class BackLayout:
 
 def back_layout(size: int) -> BackLayout:
     size = max(int(size), 1)
-    big, mid = size >= 300, size >= 220
+    step = 3 if size >= 400 else 2 if size >= 300 else 1 if size >= 220 else 0
     pad = max(8, (size * 5 + 50) // 100)
-    title_px = 16 if big else 14 if mid else 12
-    text_px = 13 if big else 12 if mid else 11
-    small_px = 12 if big else 11 if mid else 10
-    row_h = 30 if big else 26 if mid else 22
+    title_px = (12, 14, 16, 18)[step]
+    text_px = (11, 12, 13, 14)[step]
+    small_px = (10, 11, 12, 13)[step]
+    row_h = (22, 26, 30, 34)[step]
     title_y = pad + title_px // 2 + 2
     artist_y = title_y + title_px // 2 + small_px // 2 + 5
     list_top = artist_y + small_px // 2 + 8

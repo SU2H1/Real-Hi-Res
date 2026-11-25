@@ -1225,8 +1225,9 @@ class CoverWindow:
     the cover of a song's album as large as the window allows (FFmpeg makes a PNG that
     fits, covers.fit_png(), because Tk cannot decode JPEG), its size in pixels, format
     and where it comes from (covers.cover_source()), and Change cover…, Search Cover
-    Online (2.3: Google Images in the browser, covers.cover_search_url()), Save image as…,
-    Remove cover, Show album and Close.  Changing and removing run in a thread
+    Online (2.3: Google Images in the browser, covers.cover_search_url(); 2.5: a menu
+    button with MusicBrainz…, the cover search window of player_coverart, and Google
+    Images), Save image as…, Remove cover, Show album and Close.  Changing and removing run in a thread
     (tagedit.set_cover()/remove_cover()) for all the album's songs or this song only,
     with a progress line and tagedit.cover_summary() afterwards; the player's covers
     are drawn again and the library reads the songs again.  Results reach Tk through
@@ -1311,7 +1312,9 @@ class CoverWindow:
         self.album_b.pack(side="right", padx=(16, 8))  # a gap from the left group when the window is narrow
         self.change_b = PillButton(btns, t, tr("Change cover…"), command=self.change)
         self.change_b.pack(side="left")
-        self.search_b = PillButton(btns, t, tr("Search Cover Online"), kind="plain", command=self.search_online)
+        # 2.5: a menu button: MusicBrainz… (covers from the Cover Art Archive) or Google Images
+        self.search_b = PillButton(btns, t, tr("Search Cover Online"), kind="plain", command=self.show_search_menu,
+                                   arrow=True)
         self.search_b.pack(side="left", padx=(8, 0))
         self.save_b = PillButton(btns, t, tr("Save image as…"), kind="plain", command=self.save_image)
         self.save_b.pack(side="left", padx=(8, 0))
@@ -1558,6 +1561,19 @@ class CoverWindow:
         self._start(data)
         return True
 
+    def change_to_data(self, data: bytes, name: str) -> bool:
+        """Make this picture the cover, as Change cover… does with a file (2.5: Use this
+        cover of the cover search); `name` says what it is when it cannot be used."""
+        if self.busy:
+            return False
+        try:
+            tagedit.check_picture(data)
+        except tagedit.TagError as exc:
+            self.summary.configure(text=tr("{file} cannot be used: {error}", file=name, error=tr_text(str(exc))))
+            return False
+        self._start(data)
+        return True
+
     def remove(self, confirm: bool = True) -> bool:
         """Remove cover: after a confirmation, the covers inside the songs go."""
         from tkinter import messagebox
@@ -1582,10 +1598,27 @@ class CoverWindow:
         return covers.cover_search_url(t.album_artist, t.artist, t.album, t.title or t.display_title)
 
     def search_online(self) -> None:
-        """Search Cover Online (2.3): the browser looks for the cover; a picture saved from
-        it can then be chosen with Change cover…."""
+        """Search Cover Online → Google Images (2.3): the browser looks for the cover; a
+        picture saved from it can then be chosen with Change cover…."""
         error = self.app.open_url(self.search_url())
         self.status.configure(text=error)
+
+    def search_menu(self) -> tk.Menu:
+        """Search Cover Online's menu (2.5): MusicBrainz… and Google Images."""
+        m = tk.Menu(self.win, tearoff=False)
+        m.add_command(label=tr("MusicBrainz…"), command=self.search_musicbrainz)
+        m.add_command(label=tr("Google Images"), command=self.search_online)
+        self.app.theme_menu(m)
+        self.last_menu = m
+        return m
+
+    def show_search_menu(self) -> None:
+        b = self.search_b
+        self.search_menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def search_musicbrainz(self):
+        """Search Cover Online → MusicBrainz… (2.5): the cover search window of this album."""
+        return self.app.open_cover_search(self.path)
 
     def save_image(self) -> None:
         """Save image as…: the picture as it is stored."""
@@ -1623,6 +1656,9 @@ class CoverWindow:
             return
         if getattr(self.app, "cover_window", None) is self:
             self.app.cover_window = None
+        search = getattr(self.app, "cover_search", None)
+        if search is not None and search.cw is self:  # its cover search window goes with it (2.5)
+            search.close()
         close_window(self.win)
 
 

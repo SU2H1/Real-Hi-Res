@@ -52,6 +52,7 @@ from .player_stats import MostPlayedPage
 from .player_places import PlacePage, PlacesMixin
 from .player_tabs import TabPage, TabsMixin
 from .player_moods import MoodPage, MoodsMixin, MoodsPage  # noqa: E402  (2.4)
+from .player_jacket import JacketMixin, add_search_menu  # noqa: E402  (2.5)
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
@@ -658,7 +659,7 @@ class UpNextPanel(tk.Frame):
 
 
 # ------------------------------------------------------------ the app ---
-class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
+class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin, JacketMixin):
     """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py; where songs were
     played, 2.4: PlacesMixin in player_places.py; moods, 2.4: MoodsMixin in player_moods.py)."""
 
@@ -882,6 +883,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             r.bind(seq, lambda e, fn=fn: None if self._typing(e) else (fn(), "break")[1])
         r.bind("<ButtonPress>", self._nav_button, add="+")
         r.bind("<Escape>", self._escape, add="+")
+        r.bind("<Left>", lambda e: self.jacket_key(e, -1))   # 2.5: over Now Playing's jacket they turn it
+        r.bind("<Right>", lambda e: self.jacket_key(e, 1))
 
     def _typing(self, e) -> bool:
         w = e.widget
@@ -1048,14 +1051,16 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             p.size_changed()
             p.tab_changed()
 
-    def set_np_side(self, side: str) -> None:
-        """Now Playing's left half (2.3): the "cover" or the album's "songs" (a swipe, the
-        dots); kept for the session."""
+    def set_np_side(self, side: str, direction: int = 0) -> None:
+        """Now Playing's jacket (2.3, 2.5): the "cover" or its back, the album's "songs" (a
+        swipe, the dots, the arrow keys); kept for the session.  The jacket turns over
+        (`direction`: the way the pointer went)."""
         if side in ("cover", "songs") and side != self.np_side:
-            self.np_side = side
             p = self.pages.get("nowplaying")
             if isinstance(p, NowPlayingPage):
-                p.draw_art()
+                p.jacket.turn_to(side, direction)
+            else:
+                self.np_side = side
 
     def _escape(self, e) -> Optional[str]:
         """Esc on Now Playing with Lyrics only on brings the cover back, and on the Genres page
@@ -1386,6 +1391,7 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
             m.add_command(label=tr("Acquire Metadata…"), command=lambda: self.musicbrainz([track]))
             # 2.3: the Cover window of the song's album (it was "Cover…")
             m.add_command(label=tr("Change Cover…"), command=lambda: self.open_cover_window(path))
+            add_search_menu(self, m, path)  # 2.5: Search Cover Online ▸ MusicBrainz…, Google Images
             m.add_command(label=tr("Show in folder"), command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
             m.add_command(label=tr("Playback Info…"), command=self.open_info)

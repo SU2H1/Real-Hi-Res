@@ -1,7 +1,12 @@
 """Now Playing's 2.3 requests in the Tk player, headless (docs/player-spec.md, "2.3"):
 an instrumental song's cover in the centre (4), the back link at the top left (5),
 Lyrics only (10), swiping the cover to the album's songs (11) and Details in the centre
-(14).  The GUI test runs in a subprocess, as in test_player_gui.py."""
+(14).  The GUI test runs in a subprocess, as in test_player_gui.py.
+
+2.5 changed two things this test touches (tests/test_jacket_25.py has the rest): a click
+on the cover opens the album (the Cover window is on the cover's right-click menu), and
+the album's songs are the back of the jacket, which turns over; the turn takes no time
+here (REALHIRES_NO_ANIMATION)."""
 
 import json
 import os
@@ -31,11 +36,13 @@ def test_now_playing_back_wide_instrumental_swipe_and_details(tmp_path):
     env = dict(os.environ, REALHIRES_SETTINGS=str(tmp_path / "settings.json"),
                REALHIRES_PLAYER=str(tmp_path / "player.json"), REALHIRES_LIBRARY=str(tmp_path / "library.sqlite"),
                REALHIRES_RESULTS=str(tmp_path / "results.sqlite"), REALHIRES_THEMES=str(tmp_path / "themes.json"),
-               REALHIRES_COVERS=str(tmp_path / "covers"), REALHIRES_AUDIO_BACKEND="null")
+               REALHIRES_COVERS=str(tmp_path / "covers"), REALHIRES_AUDIO_BACKEND="null",
+               REALHIRES_NO_ANIMATION="1")
     body = f"""
 LIB = {json.dumps(lib)}
 S = LIB["songs"]
 import tkinter as tk
+import tkinter.font as tkfont
 from realhires import player_gui, player_pages
 root = tk.Tk()
 root.geometry("1280x800")
@@ -156,12 +163,25 @@ def loaded():
     app.set_np_tab("lyrics")
     settle()
 
-    # 11. a sideways drag turns the left half to the album's songs; a click is still a click
+    # 11. a sideways drag turns the cover to the album's songs; a click is still a click
+    # (2.5: it opens the album, and the Cover window is Cover… of the cover's right-click menu)
     play("Northern Lights", "Glacier Song")
     cover = next(l for l in np.links if l[0] == "cover")
     cx, cy = int((cover[1] + cover[3]) / 2), int((cover[2] + cover[4]) / 2)
     click(np.art, cx, cy)
+    assert covers_opened == [] and app.page_name == "album", (covers_opened, app.page_name)
+    assert app.page("album").album["title"] == "Northern Lights"
+    app.go_back()
+    settle()
+    assert app.page_name == "nowplaying"
+    m = np.cover_menu()
+    labels = [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
+    assert labels == ["Cover…", "Change Cover…", "Search Cover Online", "-", "Go to Album"], labels
+    m.invoke(labels.index("Cover…"))
+    settle()
     assert covers_opened == [S["Glacier Song"]], covers_opened
+    cover = next(l for l in np.links if l[0] == "cover")
+    cx, cy = int((cover[1] + cover[3]) / 2), int((cover[2] + cover[4]) / 2)
     np.art.event_generate("<ButtonPress-1>", x=cx, y=cy)
     np.art.event_generate("<B1-Motion>", x=cx - 30, y=cy + 2)
     settle()
@@ -174,7 +194,10 @@ def loaded():
     assert titles == ["First Light", "Glacier Song", "Midnight Sun", "Polar Drift"], titles
     playing = np.art.find_withtag("playing")
     assert len(playing) == 1 and np.art.itemcget(playing[0], "text") == "Glacier Song"
-    assert np.art.itemcget(playing[0], "font") == str(app.theme.f("body_b")), "the song playing in bold"
+    font = tkfont.Font(root=root, font=np.art.itemcget(playing[0], "font"))
+    assert font.actual("weight") == "bold", "the song playing in bold"
+    other = next(i for i in np.art.find_withtag("song") if i not in playing)
+    assert tkfont.Font(root=root, font=np.art.itemcget(other, "font")).actual("weight") == "normal"
     assert [d[0] for d in np.dots] == ["cover", "songs"]
     # a double-click plays a song with the album as the list
     i, x0, y0, x1, y1 = np.song_rows[3]
