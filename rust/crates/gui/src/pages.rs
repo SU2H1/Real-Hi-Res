@@ -1812,6 +1812,11 @@ impl Player {
                     });
                 });
                 block = block.union(Rect::from_min_max(pos2(row.response.rect.left() + indent, top), row.response.rect.max));
+                if *k == "Format" {
+                    // 2.5: hovering the format shows the quality tooltip (bit rate, sample rate)
+                    let r = row.response.rect;
+                    crate::leaderboard::format_row_tip(ui, Rect::from_min_max(pos2(r.left() + indent, r.top()), r.max), track);
+                }
             }
             ui.add_space(8.0);
         });

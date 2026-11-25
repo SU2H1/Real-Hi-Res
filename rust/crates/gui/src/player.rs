@@ -749,6 +749,8 @@ pub struct Player {
     /// the period's leaderboards (made again when the period or the plays change)
     pub leaderboard_kind: &'static str,
     pub boards_cache: Option<(String, u64, crate::leaderboard::Boards)>,
+    /// 2.5: the leaderboard's "Sort by" and Most Played's own period
+    pub most: crate::leaderboard::MostState,
     /// the calendar of Your Stats (2.1)
     pub calendar: crate::library_pages::Calendar,
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
@@ -904,6 +906,7 @@ impl Player {
             stats_cache: None,
             leaderboard_kind: "songs",
             boards_cache: None,
+            most: Default::default(),
             calendar: Default::default(),
             recent_cache: None,
             name_dialog: None,
@@ -2973,7 +2976,8 @@ impl Player {
         let bcol = if bresp.hovered() { look::mix(qcol, pal.text, 0.35) } else { qcol };
         p.rect_stroke(brect, CornerRadius::same(4), Stroke::new(1.0, bcol), egui::StrokeKind::Inside);
         p.text(brect.center(), Align2::CENTER_CENTER, badge, badge_font, bcol);
-        if bresp.on_hover_text(tr!("Playback info")).clicked() {
+        // 2.5: hovering it shows the bit rate and sample rate
+        if bresp.on_hover_text(format!("{}\n{}", crate::leaderboard::quality_tip(&track), tr!("Playback info"))).clicked() {
             self.open_info();
         }
         match open {
