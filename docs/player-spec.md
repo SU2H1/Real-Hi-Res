@@ -1130,6 +1130,19 @@ when flipping it, there should be some kind of animation."
   so the turn is always shown; tests can set the duration to 0 (`REALHIRES_NO_ANIMATION=1`).
 - The dots, the session-long choice and following the song stay as in 2.3.
 
+Settled while building: the title and "Artist — Album" stay under the square while it turns (only the square is the
+jacket). The measures of the back come from one function (`jacket.back_layout(size)`: four steps of text size and row
+height by the square's size, 4 rows at 160 px, 12 at 480 px). A sideways drag may start anywhere in the left half, as
+in 2.3, and the side changes when the pointer lets go (in 2.3: when the drag passed 60 px); "60 px or a quarter of the
+width" is whichever is less. A sideways scroll keeps 2.3's meaning (one way the songs, the other way the cover); the
+arrow keys always turn to the other face, in the key's direction, and a turn asked for during a turn goes back from
+where it is. The easing is cubic. The far edge is drawn shorter and the near edge keeps the whole height, so the
+jacket never leaves its square. An album without a cover turns as a plain sleeve in the placeholder's colour. In Tk
+the back's text cannot be translucent: its colours are white mixed with the back's average colour (the fade too), and
+the hover tint is a brightened copy of the row's pixels; the Tk app scrolls the back by whole rows (three a wheel
+step), egui by pixels. A click on the back does nothing (a double-click on a song plays it), so the album is opened
+from the front, the album's name or Go to Album.
+
 ### 3. Close buttons
 
 "Acquire Metadata… and per-field Search buttons in Properties: there should be an X button."
@@ -1256,6 +1269,18 @@ the jacket itself should direct the user to the album."
   window), **Change Cover…**, **Search Cover Online ▸** (MusicBrainz…, Google Images) and **Go to Album**. The album
   page's own cover gets the same menu (without Go to Album) and keeps opening the Cover window on a click, since the
   page is the album already. Album cards and song menus keep Change Cover… and gain Search Cover Online ▸.
+
+Settled while building: the cover search belongs to the Cover window (MusicBrainz… opens the Cover window first when
+it is not open; Tk: a window on top of it, egui: a window beside it), so Use this cover goes through the Cover window's
+own Change cover… path, with its choice of songs and its "also save as cover.jpg" (both are shown again with the
+chosen cover) and its summary. The search fields (Album, Artist) are filled from the tags and can be changed; a song
+without an album is looked up by its title. Releases without a front cover are not shown (the status line counts
+them). A cover chosen a second time is not downloaded again. The archive is never asked twice for the same thing:
+HTTP 404 is "no cover", 429/503 end the batch with a message, anything else is that picture's error. Its address is
+`coverart.DEFAULT_SERVER`, or `$REALHIRES_COVERART` for tests. In a cover's own menu Cover… opens the Cover window
+and Change Cover… opens it with its file chooser at once (in the other menus Change Cover… opens the window, as in
+2.3). The cover's menu is also on the back of the jacket. The credit is in the search window and in About
+(`coverart.CREDIT`, `ABOUT_CREDIT`).
 
 ### 10. Genres: drag one onto another to merge
 
