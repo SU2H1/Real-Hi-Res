@@ -36,6 +36,63 @@ def frame(parent, theme: Theme, bg: str = "bg", **kw) -> tk.Frame:
     return theme.reg(tk.Frame(parent, bd=0, highlightthickness=0, **kw), bg=bg)
 
 
+class FlowRow(tk.Frame):
+    """A row of buttons that goes on in a further line when the page is too narrow for one
+    (2.3: on the 1024 px screens of the Windows CI runner the album page's buttons did not fit
+    beside its cover, and pack hid the last ones). Widgets are made as children of the row,
+    then given to add(); each line is a frame of the row, and the widgets are packed into it."""
+
+    def __init__(self, parent, theme: Theme, gap: int = 10, vgap: int = 8):
+        super().__init__(parent, bd=0, highlightthickness=0)
+        self.theme = theme
+        theme.reg(self, bg="bg")
+        self.gap, self.vgap = gap, vgap
+        self.items: List[tk.Widget] = []
+        self.lines: List[tk.Frame] = []
+        self._width = 0
+        self.bind("<Configure>", self._resized)
+
+    def add(self, *widgets: tk.Widget) -> None:
+        self.items.extend(widgets)
+        self.relayout()
+
+    def _resized(self, e) -> None:  # (not _configure: that name is Tk's own)
+        if e.width != self._width:
+            self._width = e.width
+            self.relayout()
+
+    def relayout(self) -> None:
+        width = self.winfo_width()
+        if width <= 1:  # not laid out yet: one line
+            width = 1 << 30
+        lines: List[List[tk.Widget]] = []
+        cur: List[tk.Widget] = []
+        x = 0
+        for w in self.items:
+            need = w.winfo_reqwidth()
+            if cur and x + self.gap + need > width:
+                lines.append(cur)
+                cur, x = [], 0
+            x += (self.gap if cur else 0) + need
+            cur.append(w)
+        if cur:
+            lines.append(cur)
+        for w in self.items:
+            w.pack_forget()
+        for f in self.lines:
+            f.pack_forget()
+        while len(self.lines) < len(lines):
+            self.lines.append(self.theme.reg(tk.Frame(self, bd=0, highlightthickness=0), bg="bg"))
+        for i, ws in enumerate(lines):
+            f = self.lines[i]
+            f.pack(anchor="w", pady=(self.vgap if i else 0, 0))
+            for j, w in enumerate(ws):
+                w.pack(in_=f, side="left", padx=(self.gap if j else 0, 0))
+                # made before the line's frame, so raised above it in the stacking order (Tk's
+                # window `raise`: a Canvas's own lift() raises the items drawn on it)
+                w.tk.call("raise", str(w), str(f))
+
+
 def format_label(t: Track) -> str:
     """The Format column: the codec ("FLAC", "MP3"; PCM for WAV and AIFF samples)."""
     c = (t.codec or "").lower()
@@ -397,20 +454,17 @@ class AlbumPage(Page):
         self.artist_l: Optional[tk.Label] = None  # the first link
         self.meta_l = label(info, t, "", "body", fg="text2")
         self.meta_l.pack(anchor="w", pady=(2, 14))
-        btns = frame(info, t)
-        btns.pack(anchor="w")
-        PillButton(btns, t, tr("Play"), icon="play", command=lambda: self._play(False)).pack(side="left")
-        PillButton(btns, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True)).pack(side="left",
-                                                                                                  padx=(10, 0))
+        btns = FlowRow(info, t)  # wraps on a narrow page instead of hiding the last buttons (2.3)
+        btns.pack(anchor="w", fill="x")
+        play_b = PillButton(btns, t, tr("Play"), icon="play", command=lambda: self._play(False))
+        shuffle_b = PillButton(btns, t, tr("Shuffle"), icon="shuffle", command=lambda: self._play(True))
         self.edit_b = PillButton(btns, t, tr("Album Properties…"), kind="plain", command=self.edit_info)
-        self.edit_b.pack(side="left", padx=(10, 0))
         self.mb_b = PillButton(btns, t, tr("Acquire Metadata…"), kind="plain",
                                command=self.musicbrainz)
-        self.mb_b.pack(side="left", padx=(10, 0))
         # 2.3: the album's menu (as an album card's right-click menu, with Change Cover…)
         self.more_b = IconButton(btns, t, "dots", command=self.show_menu, size=32, icon_size=18,
                                  tooltip=lambda: tr("More"))
-        self.more_b.pack(side="left", padx=(6, 0))
+        btns.add(play_b, shuffle_b, self.edit_b, self.mb_b, self.more_b)
         # the columns the user chose for album pages (the track number first by default),
         # sortable; in track order at first
         self.table = song_table(self, self, kind="album",

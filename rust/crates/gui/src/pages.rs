@@ -593,7 +593,8 @@ impl Player {
                 let meta: Vec<String> = [a.genre.clone(), a.year.clone(), minutes(&refs)].into_iter().filter(|s| !s.is_empty()).collect();
                 ui.label(RichText::new(meta.join(" · ")).color(pal.secondary));
                 ui.add_space(14.0);
-                ui.horizontal(|ui| {
+                // wraps on a narrow page instead of running past its edge (2.3)
+                ui.horizontal_wrapped(|ui| {
                     if pill(ui, pal, Icon::Play, tr!("Play")).clicked() {
                         self.play_list(paths.clone(), Some(&paths[0]), &a.title);
                     }

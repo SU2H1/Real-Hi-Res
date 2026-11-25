@@ -208,10 +208,19 @@ def loaded():
     assert app.np_side == "songs"
     np.swipe(-1)
     assert app.np_side == "cover"
-    np.art.event_generate("<Shift-Button-5>", x=cx, y=cy)
+    # X11 reports a sideways scroll as Shift-Button-4/5; Windows and macOS as Shift-MouseWheel (on
+    # Windows, Button-4/5 are the mouse's side buttons)
+    x11 = root.tk.call("tk", "windowingsystem") == "x11"
+    if x11:
+        np.art.event_generate("<Shift-Button-5>", x=cx, y=cy)
+    else:
+        np.art.event_generate("<Shift-MouseWheel>", x=cx, y=cy, delta=-120)
     settle()
     assert app.np_side == "songs"
-    np.art.event_generate("<Shift-Button-4>", x=cx, y=cy)
+    if x11:
+        np.art.event_generate("<Shift-Button-4>", x=cx, y=cy)
+    else:
+        np.art.event_generate("<Shift-MouseWheel>", x=cx, y=cy, delta=120)
     settle()
     assert app.np_side == "cover"
     assert len(covers_opened) == 1
