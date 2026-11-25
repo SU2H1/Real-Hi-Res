@@ -2053,7 +2053,9 @@ impl Player {
             .color(pal.secondary),
         );
         ui.add_space(4.0);
-        egui::Grid::new("theme-more-colours").num_columns(6).spacing([10.0, 8.0]).show(ui, |ui| {
+        // two colours a row where the page is wide enough, else one (the 1024-pixel screens)
+        let per_row = if ui.available_width() >= 660.0 { 2 } else { 1 };
+        egui::Grid::new("theme-more-colours").num_columns(3 * per_row).spacing([10.0, 8.0]).show(ui, |ui| {
             for (k, key) in themes::EXTRA_COLOR_KEYS.iter().enumerate() {
                 ui.label(i18n::tr(themes::extra_color_label(key)));
                 let set = t.extra_color(key).is_some();
@@ -2069,7 +2071,7 @@ impl Player {
                 } else {
                     ui.label(RichText::new(tr!("automatic")).small().color(pal.secondary));
                 }
-                if k % 2 == 1 {
+                if k % per_row == per_row - 1 {
                     ui.end_row();
                 }
             }

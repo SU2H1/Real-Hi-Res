@@ -5076,7 +5076,7 @@ mod tests {
         // 2.2: an album card's right-click menu, as the user asked ("right click songs/album
         // and press acquire metadata")
         let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
-        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
         p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
         {
@@ -5226,7 +5226,7 @@ mod tests {
         frame(&ctx, &mut p);
         // an album card's menu and the album page's "…" menu
         let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
-        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
         assert_eq!(p.cover_win.as_ref().map(|w| w.target_paths()), Some(paths.clone()));
         p.cover_win = None;
@@ -5245,7 +5245,7 @@ mod tests {
             p.mb_win = None;
             frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
         }
-        assert_eq!(new_texts(&before, &after), ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
+        assert_eq!(new_texts(&before, &after), ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
         assert!(p.cover_win.is_some(), "the page's menu opens the Cover window");
         p.cover_win = None;

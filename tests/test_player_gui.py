@@ -448,7 +448,7 @@ def lyrics_ok():
     def entries(m):
         return [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
     ALBUM_MENU = ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…", "Acquire Metadata…",
-                  "Change Cover…"]
+                  "Change Cover…", "-", "Colour Label"]  # 2.3: Colour Label
     assert entries(am) == ALBUM_MENU, entries(am)
     assert app.last_menu is am
     am.invoke(ALBUM_MENU.index("Add to Queue")); root.update()
@@ -1245,7 +1245,7 @@ def loaded():
     # an album card's menu (2.2) and the album page's buttons
     am = player_pages.album_menu(app, album)
     assert menu_labels(am) == [tr("Play"), tr("Shuffle"), "次に再生", "キューに追加", "アルバムのプロパティ…",
-                               "メタデータを取得…", "アートワークを変更…"], menu_labels(am)
+                               "メタデータを取得…", "アートワークを変更…", "カラーラベル"], menu_labels(am)
     assert app.page("album").mb_b.text == "メタデータを取得…" and app.page("album").edit_b.text == "アルバムのプロパティ…"
     # a name dialog: a new playlist
     def answer(tries=0):
@@ -1905,7 +1905,7 @@ def loaded():
     # rename a genre from its page ("…"): the files change, the page follows the new name
     app.show_page("group", kind="genres", group="Jazz")
     gp = app.page("group")
-    assert labels(gp.menu()) == ["Play", "Shuffle", "Rename genre…", "Merge into…"]
+    assert labels(gp.menu()) == ["Play", "Shuffle", "Rename genre…", "Merge into…", "Colour Label"]  # 2.3
     answer("Smooth Jazz")
     job = player_pages.rename_group(app, "genres", "Jazz")
     state["job"] = job

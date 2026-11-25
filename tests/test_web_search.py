@@ -164,7 +164,7 @@ def loaded():
     small = next(a for a in app.albums if a["title"] == "Small Hours")
     m = player_pages.album_menu(app, small)
     assert entries(m) == ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…",
-                          "Acquire Metadata…", "Change Cover…"], entries(m)
+                          "Acquire Metadata…", "Change Cover…", "-", "Colour Label"], entries(m)
     invoke(m, "Change Cover…")
     w = app.cover_window
     assert w is not None and w.target_paths() == [t.path for t in small["tracks"]]

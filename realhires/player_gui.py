@@ -2154,18 +2154,17 @@ class PlayerApp:
     def labels_changed(self) -> None:
         """Redraw what shows labels: the song tables, the cards, the sidebar and Up Next."""
         for p in self.pages.values():
-            if isinstance(p, Page):
-                p.likes_changed()  # the song tables
-                for name in ("grid_w", "albums_grid"):
-                    grid = getattr(p, name, None)
-                    if grid is not None and hasattr(grid, "relayout"):
-                        try:
-                            grid.relayout()
-                        except tk.TclError:
-                            pass
-                queue_list = getattr(p, "queue_list", None)
-                if queue_list is not None:
-                    queue_list.redraw()
+            if not isinstance(p, Page):
+                continue
+            for name in ("table", "queue_list", "grid_w"):  # song tables, Now Playing's Up Next, cards
+                w = getattr(p, name, None)
+                try:
+                    if isinstance(w, SongList):
+                        w.redraw()
+                    elif w is not None and hasattr(w, "relayout"):
+                        w.relayout()
+                except tk.TclError:
+                    pass
         self.sidebar.redraw()
         self.up_next.list.redraw()
 

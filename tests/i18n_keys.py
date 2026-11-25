@@ -102,8 +102,8 @@ def rust_keys(path: str) -> Dict[str, List[str]]:
 
 def core_keys() -> Dict[str, List[str]]:
     """The core's tables that the apps show translated."""
-    from realhires import (bitperfect, eq, i18n, lyrics, musiclib, playqueue, settings, stats,  # noqa: F401
-                           tagedit, themes)
+    from realhires import (bitperfect, eq, i18n, lyrics, musiclib, playerstate, playqueue, settings,  # noqa: F401
+                           stats, tagedit, themes)
     out: Dict[str, List[str]] = {}
 
     def add(text: str, where: str) -> None:
@@ -130,6 +130,10 @@ def core_keys() -> Dict[str, List[str]]:
         add(v, "eq.BAND_TYPE_LABELS")
     for v in themes.COLOR_LABELS.values():
         add(v, "themes.COLOR_LABELS")
+    for v in themes.EXTRA_COLOR_LABELS.values():  # 2.3: More colours
+        add(v, "themes.EXTRA_COLOR_LABELS")
+    for name, _ in playerstate.LABEL_COLORS:  # 2.3: the Colour Label menu
+        add(name, "playerstate.LABEL_COLORS")
     for name in themes.BUILTIN:
         add(name, "themes.BUILTIN")
     add(themes.SYSTEM, "themes.SYSTEM")

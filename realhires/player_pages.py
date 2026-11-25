@@ -2264,7 +2264,7 @@ class ThemeEditor(tk.Frame):
         # 2.3: every other colour the app draws; unset, its swatch shows the derived colour
         label(self, t, tr("More colours"), "body_b").pack(anchor="w", pady=(16, 0))
         label(self, t, tr("Unless the theme sets them, these follow the colours above. Reset makes a colour follow "
-                          "them again."), "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH,
+                          "them again."), "small", fg="text2", wraplength=SettingsPage.HELP_WIDTH - 80,
               justify="left").pack(anchor="w", pady=(2, 4))
         more = frame(self, t)
         more.pack(anchor="w")
