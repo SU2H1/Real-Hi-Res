@@ -208,13 +208,25 @@ def counting(source, size, embedded):
 covers._thumbnail = counting
 
 finished = []   # albums (first path) whose cover the background pass has looked at
+keys = {}       # first path -> the cache key when its cover was made
 real_cached = covers.cached_cover_png
 def cached_counting(paths, size):
+    keys[list(paths)[0]] = covers.cache_key(paths, size)
     try:
         return real_cached(paths, size)
+    except BaseException as e:
+        print("cached_cover_png(%r) raised %r" % (list(paths)[0], e), file=sys.stderr, flush=True)
+        raise
     finally:
         finished.append(list(paths)[0])
 covers.cached_cover_png = cached_counting
+
+written = {}    # cover file -> bytes written, or the error
+real_write = covers._write
+def writing(file, data):
+    real_write(file, data)
+    written[file] = len(data) if os.path.isfile(file) else "missing right after writing"
+covers._write = writing
 
 tracks = []
 for i in range(ALBUMS):
@@ -298,6 +310,12 @@ for attempt in range(3):
         attempt + 1, [a["key"] for a in todo],
         [o for o in outcomes if not o[2] or o[3] > 10 or os.path.dirname(o[0]) in
          {os.path.dirname(a["tracks"][0].path) for a in todo}]), file=sys.stderr, flush=True)
+    for a in todo:
+        paths = [t.path for t in a["tracks"]]
+        file = covers.cache_file(paths, cache.GRID)
+        print("  %s: written %r, cache key then %r, now %r; %d files in the covers folder" % (
+            a["key"], written.get(file, "never"), keys.get(paths[0]), covers.cache_key(paths, cache.GRID),
+            len(os.listdir(covers.cache_dir()))), file=sys.stderr, flush=True)
 assert not todo, [a["key"] for a in todo]
 made = len(runs)
 assert made >= ALBUMS, made
