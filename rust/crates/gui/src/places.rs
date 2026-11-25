@@ -103,8 +103,8 @@ pub fn day_place_line(ui: &mut Ui, pal: &Palette, text: &str, width: f32) {
 impl Player {
     fn place_client(&mut self) -> Option<&mut GeoClient> {
         let server = places::normalize_server(&self.scanner.cfg.location_server);
-        if self.places.rx.is_some() && self.places.cache.busy {
-            return None; // the thread holds it
+        if self.places.rx.is_some() {
+            return None; // a lookup's thread holds it: one request at a time
         }
         if self.places.client.as_ref().is_none_or(|c| c.server != server) {
             self.places.client = Some(GeoClient::new(&server).with_stop(self.places.stop.clone()));
@@ -115,17 +115,26 @@ impl Player {
     /// Every frame: take in a lookup's answer, and start the lookup that is due.
     pub fn places_tick(&mut self) {
         if let Some(rx) = &self.places.rx {
-            if let Ok((gen, client, place, error)) = rx.try_recv() {
-                self.places.rx = None;
-                let server = places::normalize_server(&self.scanner.cfg.location_server);
-                if gen == self.places.gen {
-                    self.places.cache.finish(place, &error, wall_clock());
+            match rx.try_recv() {
+                Ok((gen, client, place, error)) => {
+                    self.places.rx = None;
+                    let server = places::normalize_server(&self.scanner.cfg.location_server);
+                    if gen == self.places.gen {
+                        self.places.cache.finish(place, &error, wall_clock());
+                    }
+                    // the same service keeps its client (and its Retry-After)
+                    if client.server == server && self.places.client.is_none() {
+                        self.places.client = Some(client);
+                    }
                 }
-                if client.server == server && (gen == self.places.gen || self.places.client.is_none()) {
-                    self.places.client = Some(client);
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // the thread ended without an answer (the app is closing)
+                    self.places.rx = None;
+                    if self.places.cache.busy {
+                        self.places.cache.finish(None, "", wall_clock());
+                    }
                 }
-            } else if self.places.cache.busy {
-                self.ctx.request_repaint_after(Duration::from_millis(100));
+                Err(mpsc::TryRecvError::Empty) => self.ctx.request_repaint_after(Duration::from_millis(100)),
             }
         }
         if !self.scanner.cfg.play_location {
@@ -179,10 +188,10 @@ impl Player {
         if before == after {
             return;
         }
+        // a lookup still running is answered into the old generation, and dropped; the same
+        // service keeps its client (and its Retry-After)
         self.places.gen += 1;
         self.places.cache.reset();
-        // the same service keeps its client (and its Retry-After); a lookup still running is dropped
-        self.places.rx = None;
         if self.places.client.as_ref().is_some_and(|c| c.server != after.1) {
             self.places.client = None;
         }

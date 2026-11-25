@@ -84,13 +84,15 @@ class PlacesMixin:
                 self._place_status_changed()
         if not self.cfg.play_location:
             return
+        if self.place_thread is not None and self.place_thread.is_alive():
+            return  # one request at a time, also when the setting was changed while one runs
         client = self._place_client()
         if self.place_cache.due(time.monotonic(), self.engine.playing, client.not_before):
             self.lookup_place()
 
     def lookup_place(self: "PlayerApp") -> None:
         """Ask the location service now, in a thread (one lookup at a time)."""
-        if self.place_cache.busy:
+        if self.place_cache.busy or (self.place_thread is not None and self.place_thread.is_alive()):
             return
         client, gen = self._place_client(), self.place_gen
         self.place_cache.begin(time.monotonic())
