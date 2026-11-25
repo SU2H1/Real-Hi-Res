@@ -262,6 +262,12 @@ fn proxy_for(url: &str) -> Option<String> {
 
 /// The real transport: one ureq agent per proxy, so connections are reused.
 pub fn http_transport() -> Transport {
+    http_transport_limited(64 << 20)
+}
+
+/// The real transport, reading at most `limit` bytes of an answer's body (2.5:
+/// the Cover Art Archive's pictures have a size limit); redirects are followed.
+pub fn http_transport_limited(limit: u64) -> Transport {
     let mut agents: HashMap<Option<String>, ureq::Agent> = HashMap::new();
     Box::new(move |url: &str, headers: &[(&str, &str)], timeout: f64| {
         let scheme = url.split("://").next().unwrap_or("").to_lowercase();
@@ -309,7 +315,7 @@ pub fn http_transport() -> Transport {
             })
             .collect();
         let mut body = vec![];
-        if let Err(e) = resp.into_reader().take(64 << 20).read_to_end(&mut body) {
+        if let Err(e) = resp.into_reader().take(limit).read_to_end(&mut body) {
             return Err(TransportError::Network(io_reason(&e)));
         }
         Ok((status, hdrs, body))

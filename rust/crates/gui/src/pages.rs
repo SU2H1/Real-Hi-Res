@@ -300,8 +300,6 @@ fn segmented<T: Copy + PartialEq>(ui: &mut Ui, pal: &Palette, options: &[(T, &st
 
 /// Lyrics only (2.3): the lyrics this many pixels larger than the chosen size.
 pub const LYRICS_WIDE_EXTRA: i64 = 4;
-/// A sideways drag this long turns Now Playing's left half (2.3).
-pub const SWIPE_PX: f32 = 60.0;
 /// Now Playing's Details: the values' column at most this wide (2.3).
 const DETAILS_VALUE_W: f32 = 420.0;
 
@@ -528,6 +526,9 @@ impl Player {
             }
             ui.close();
         }
+        if let Some(first) = paths.first().cloned() {
+            self.search_cover_menu(ui, &first); // 2.5: MusicBrainz…, Google Images
+        }
         ui.separator();
         let key = self.lib.albums[album].key.clone();
         self.label_menu(ui, "album", &key); // 2.3
@@ -573,9 +574,21 @@ impl Player {
             self.set_album_sort_for(key);
         }
         ui.horizontal(|ui| {
-            let (crect, _) = ui.allocate_exact_size(vec2(220.0, 220.0), Sense::hover());
+            // 2.5: a click opens the Cover window (the page is the album already), a right click
+            // the cover's menu (Cover…, Change Cover…, Search Cover Online ▸)
+            let (crect, cresp) = ui.allocate_exact_size(vec2(220.0, 220.0), Sense::click());
             let tex = self.covers.get(&a.key, &self.lib.album_paths[idx]);
             cover(ui.painter(), crect, tex.as_ref(), &a.title, 10);
+            self.album_cover_rect = Some(crect);
+            if let Some(first) = paths.iter().find(|p| std::path::Path::new(p).is_file()).cloned() {
+                if cresp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if cresp.clicked() {
+                    self.open_cover_window(&first);
+                }
+                cresp.context_menu(|ui| self.cover_menu(ui, &first, false));
+            }
             ui.add_space(22.0);
             ui.vertical(|ui| {
                 ui.add_space(70.0);
@@ -726,6 +739,7 @@ impl Player {
             self.open_cover_window(path);
             ui.close();
         }
+        self.search_cover_menu(ui, path); // 2.5: MusicBrainz…, Google Images
         if ui.button(tr!("Check its quality")).clicked() {
             self.scanner.clear();
             self.scanner.add_source(path);
@@ -1415,45 +1429,14 @@ impl Player {
     }
 
     /// Now Playing's left half (or the whole page when the block is in the middle): the
-    /// cover block, or the album's songs (`np_songs`, 2.3), with two dots under it that switch
-    /// between them; a sideways drag of more than `SWIPE_PX` (either way) or a sideways scroll
-    /// turns it.  Returns true when a link opened another page.
+    /// cover block, whose cover turns over to the album's songs (`np_songs`, 2.3; 2.5: the
+    /// back of the jacket, `jacket.rs`), with two dots under it that switch between them.
+    /// Returns true when a link opened another page.
     fn np_left(&mut self, ui: &mut Ui, pal: &Palette, left: Rect, path: &str, track: &Track, instrumental: bool) -> bool {
         let album = self.lib.album_of(path).cloned();
-        if album.is_some() {
-            // the swipe: a drag that started here, or a sideways scroll over it
-            let (origin, latest, down, hover, dx) = ui.input(|i| {
-                (i.pointer.press_origin(), i.pointer.latest_pos(), i.pointer.primary_down(), i.pointer.hover_pos(), i.smooth_scroll_delta.x)
-            });
-            if !down {
-                self.np_swiped = false;
-            } else if let (Some(o), Some(p)) = (origin, latest) {
-                let d = p - o;
-                if left.contains(o) && !self.np_swiped && d.x.abs() > SWIPE_PX && d.x.abs() > d.y.abs() {
-                    self.np_swiped = true; // one turn per drag
-                    self.np_songs = !self.np_songs;
-                }
-            }
-            if hover.is_some_and(|h| left.contains(h)) && dx != 0.0 {
-                // the content moving left (a swipe to the left) shows the songs, to the right the cover
-                self.np_hscroll += dx;
-                if self.np_hscroll.abs() > 30.0 {
-                    self.set_np_side(self.np_hscroll < 0.0);
-                    self.np_hscroll = 0.0;
-                }
-            } else {
-                self.np_hscroll = 0.0;
-            }
-        }
-        let opened = match &album {
-            Some(a) if self.np_songs => {
-                // below the switch when it stands above the block
-                let list = if instrumental { Rect::from_min_max(left.min + vec2(0.0, 40.0), left.max) } else { left };
-                self.np_album_songs(ui, pal, list, path, a);
-                false
-            }
-            _ => self.np_block(ui, pal, left, path, track, album.is_some(), instrumental),
-        };
+        // 2.5: the album's songs are the back of the jacket, which `np_block()` draws in the
+        // cover's own square (`np_jacket()`: the swipe, the turn, the keys)
+        let opened = self.np_block(ui, pal, left, path, track, album.as_ref(), instrumental);
         if opened {
             return true;
         }
@@ -1481,9 +1464,10 @@ impl Player {
     /// The cover with the title and "Artist — Album" under it (and "Instrumental"), one
     /// block in the middle of `left`.  Returns true when a link opened another page.
     #[allow(clippy::too_many_arguments)]
-    fn np_block(&mut self, ui: &mut Ui, pal: &Palette, left: Rect, path: &str, track: &Track, has_album: bool, instrumental: bool) -> bool {
+    fn np_block(&mut self, ui: &mut Ui, pal: &Palette, left: Rect, path: &str, track: &Track, album: Option<&Album>, instrumental: bool) -> bool {
+        let has_album = album.is_some();
         let key = track.song().album_key();
-        let paths: Vec<String> = self.lib.album_of(path).map(|a| a.tracks.iter().map(|t| t.path.clone()).collect()).unwrap_or_else(|| vec![path.to_string()]);
+        let paths: Vec<String> = album.map(|a| a.tracks.iter().map(|t| t.path.clone()).collect()).unwrap_or_else(|| vec![path.to_string()]);
         let tex = self.covers.get_large(&key, &paths);
         // the block: the cover, the title and "Artist — Album" (80 px, and "Instrumental"), in the middle of `left`
         let text_h = if instrumental { 106.0 } else { 80.0 };
@@ -1491,15 +1475,12 @@ impl Player {
         let room = Rect::from_min_max(pos2(left.left(), left.top() + top), left.max);
         let size = (room.width() - 80.0).min(room.height() - 80.0 - text_h).clamp(120.0, 480.0);
         let crect = Rect::from_min_size(pos2(room.center().x - size / 2.0, room.center().y - (size + text_h) / 2.0), vec2(size, size));
-        cover(ui.painter(), crect, tex.as_ref(), &track.display_album(), 12);
-        let cresp = ui.interact(crect, ui.scope_id().with("np-cover"), Sense::click());
-        if cresp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
+        // 2.5: the cover, its back or the turn; a click on the cover opens the album (the Cover
+        // window is on its right-click menu)
         self.np_hits.cover = Some(crect);
-        if cresp.clicked() {
-            // a click without a drag (a drag is not a click): the Cover window
-            self.open_cover_window(path);
+        if self.np_jacket(ui, pal, crect, left, tex.as_ref(), path, album, &track.display_album()) == crate::jacket::Action::OpenAlbum {
+            self.open_album_of(path);
+            return true;
         }
         let title = elided(ui, &track.display_title(), look::title(20.0), pal.text, left.width() - 60.0);
         ui.painter().galley(pos2(left.center().x - title.size().x / 2.0, crect.bottom() + 30.0 - title.size().y / 2.0), title, pal.text);
@@ -1521,54 +1502,6 @@ impl Player {
                 true
             }
             None => false,
-        }
-    }
-
-    /// The album's songs in track order (2.3): number (the speaker for the song playing, whose
-    /// title is bold), title, time; a double-click plays one with the album as the list.
-    fn np_album_songs(&mut self, ui: &mut Ui, pal: &Palette, left: Rect, path: &str, album: &Album) {
-        let width = (left.width() - 80.0).min(560.0);
-        let x0 = left.center().x - width / 2.0;
-        let title = elided(ui, tr_name(&album.title), look::title(18.0), pal.text, width - 20.0);
-        ui.painter().galley(pos2(x0 + 10.0, left.top() + 36.0), title, pal.text);
-        let list = Rect::from_min_max(pos2(x0, left.top() + 78.0), pos2(x0 + width, left.bottom() - 36.0));
-        let new_album = self.np_songs_album != album.key;
-        self.np_songs_album = album.key.clone();
-        let mut play = None;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            egui::ScrollArea::vertical().id_salt(("np-album-songs", &album.key)).auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for t in &album.tracks {
-                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-                    let playing = t.path == path;
-                    if resp.hovered() {
-                        ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::same(6), pal.row_hover);
-                    }
-                    let mid = r.center().y;
-                    if playing {
-                        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 22.0, mid), vec2(16.0, 16.0)), Icon::Speaker, pal.accent);
-                        if new_album {
-                            resp.scroll_to_me(None);
-                        }
-                    } else if t.track > 0 {
-                        ui.painter().text(pos2(r.left() + 30.0, mid), Align2::RIGHT_CENTER, t.track.to_string(), look::text(13.0), pal.secondary);
-                    }
-                    let when = if t.duration > 0.0 { fmt_time(t.duration) } else { String::new() };
-                    let time_w = text_width(ui, &when, &look::text(13.0));
-                    ui.painter().text(pos2(r.right() - 12.0, mid), Align2::RIGHT_CENTER, &when, look::text(13.0), pal.secondary);
-                    let font = if playing { look::title(13.5) } else { look::text(13.5) };
-                    let name = elided(ui, &t.display_title(), font, pal.text, r.width() - 44.0 - time_w - 28.0);
-                    ui.painter().galley(pos2(r.left() + 44.0, mid - name.size().y / 2.0), name, pal.text);
-                    if resp.double_clicked() {
-                        play = Some(t.path.clone());
-                    }
-                    self.np_hits.album_songs.push((r, t.path.clone(), playing));
-                }
-            });
-        });
-        if let Some(p) = play {
-            let paths: Vec<String> = album.tracks.iter().map(|t| t.path.clone()).collect();
-            self.play_list(paths, Some(&p), &album.title);
         }
     }
 

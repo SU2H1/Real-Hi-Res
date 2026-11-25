@@ -11,7 +11,8 @@
 //! folder under `CACHE_LIMIT_BYTES` by deleting the least recently used files.
 //!
 //! For the Cover window (2.1): `cover_source()`, `image_info()`, `fit_png()` and
-//! `save_folder_cover()`, as in Python.
+//! `save_folder_cover()`, as in Python.  `back_picture()` (2.5) makes the back of
+//! the jacket: the cover mirrored and blurred.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -738,4 +739,122 @@ pub fn cover_search_query(album_artist: &str, artist: &str, album: &str, title: 
 pub fn cover_search_url(album_artist: &str, artist: &str, album: &str, title: &str) -> String {
     let q = cover_search_query(album_artist, artist, album, title);
     format!("{IMAGE_SEARCH_URL}?{}", crate::lyrics::urlencode(&[("tbm".into(), "isch".into()), ("q".into(), q)]))
+}
+
+// ------------------------------------------- the back of the jacket (2.5) ---
+// Now Playing's cover turns over like a record sleeve (docs/player-spec.md,
+// "2.5", item 2): its back is the cover itself, mirrored left to right and
+// blurred, under a black scrim.  Whole numbers only, as in Python
+// (`covers.back_picture()`), so both versions give the same pixels.
+
+/// The mirrored picture is scaled down to this many pixels a side,
+pub const BACK_SMALL: usize = 64;
+/// box-blurred with this radius (7 pixels wide)
+pub const BACK_BLUR_RADIUS: usize = 3;
+/// this many times (close to a Gaussian blur), and scaled up again.
+pub const BACK_BLUR_PASSES: usize = 3;
+/// The black scrim over it, so white text reads on any cover.
+pub const BACK_SCRIM: f64 = 0.5;
+
+/// `a` (w x h, RGB, mirrored while it is read) as n x n: each pixel the rounded
+/// mean of its block.
+fn shrink_mirrored(a: &[u8], w: usize, h: usize, n: usize) -> Vec<i64> {
+    let mut out = vec![0i64; n * n * 3];
+    for j in 0..n {
+        let (y0, y1) = (j * h / n, (j * h / n + 1).max((j + 1) * h / n));
+        for i in 0..n {
+            let (x0, x1) = (i * w / n, (i * w / n + 1).max((i + 1) * w / n));
+            let count = ((y1 - y0) * (x1 - x0)) as i64;
+            let mut sum = [0i64; 3];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let at = (y * w + (w - 1 - x)) * 3; // mirrored left to right
+                    for c in 0..3 {
+                        sum[c] += a[at + c] as i64;
+                    }
+                }
+            }
+            for c in 0..3 {
+                out[(j * n + i) * 3 + c] = (sum[c] + count / 2) / count;
+            }
+        }
+    }
+    out
+}
+
+/// One box blur of `a` (n x n x 3): along the rows, then along the columns, each
+/// the rounded mean of 2 * radius + 1 pixels (the edge pixels repeat beyond the edge).
+fn box_blur(a: &[i64], n: usize, radius: usize) -> Vec<i64> {
+    let width = (2 * radius + 1) as i64;
+    let at = |k: usize, d: usize| (k + d).saturating_sub(radius).min(n - 1);
+    let mut rows = vec![0i64; a.len()];
+    for y in 0..n {
+        for x in 0..n {
+            for c in 0..3 {
+                let total: i64 = (0..=2 * radius).map(|d| a[(y * n + at(x, d)) * 3 + c]).sum();
+                rows[(y * n + x) * 3 + c] = (total + width / 2) / width;
+            }
+        }
+    }
+    let mut out = vec![0i64; a.len()];
+    for y in 0..n {
+        for x in 0..n {
+            for c in 0..3 {
+                let total: i64 = (0..=2 * radius).map(|d| rows[(at(y, d) * n + x) * 3 + c]).sum();
+                out[(y * n + x) * 3 + c] = (total + width / 2) / width;
+            }
+        }
+    }
+    out
+}
+
+/// `a` (n x n x 3) as size x size x 3, bilinear with pixel centres aligned.
+fn enlarge(a: &[i64], n: usize, size: usize) -> Vec<u8> {
+    let den = 2 * size as i64;
+    let place: Vec<(usize, usize, i64)> = (0..size as i64)
+        .map(|k| {
+            let num = ((2 * k + 1) * n as i64 - size as i64).clamp(0, (n as i64 - 1) * den);
+            let i0 = (num / den) as usize;
+            (i0, (i0 + 1).min(n - 1), num % den)
+        })
+        .collect();
+    let mut out = vec![0u8; size * size * 3];
+    for (y, &(y0, y1, fy)) in place.iter().enumerate() {
+        for (x, &(x0, x1, fx)) in place.iter().enumerate() {
+            for c in 0..3 {
+                let top = a[(y0 * n + x0) * 3 + c] * (den - fx) + a[(y0 * n + x1) * 3 + c] * fx;
+                let bottom = a[(y1 * n + x0) * 3 + c] * (den - fx) + a[(y1 * n + x1) * 3 + c] * fx;
+                out[(y * size + x) * 3 + c] = ((top * (den - fy) + bottom * fy + den * den / 2) / (den * den)) as u8;
+            }
+        }
+    }
+    out
+}
+
+/// The picture (any bytes, each a channel) under a black scrim of `amount`
+/// (0 = unchanged, 1 = black).
+pub fn darken(rgb: &[u8], amount: f64) -> Vec<u8> {
+    let k = crate::pyfmt::round_int((1.0 - amount.clamp(0.0, 1.0)) * 256.0) as u32;
+    rgb.iter().map(|&v| ((v as u32 * k) >> 8) as u8).collect()
+}
+
+/// The back of a jacket (2.5): the cover `rgb` (`w` x `h`, three bytes a pixel)
+/// mirrored left to right, scaled down to `BACK_SMALL` pixels, box-blurred
+/// `BACK_BLUR_PASSES` times with `BACK_BLUR_RADIUS` and scaled up to `size` x
+/// `size` (the cover's width when 0), then darkened by `scrim` (the apps pass
+/// `BACK_SCRIM`).  `size` x `size` x 3 bytes; empty for an empty picture.
+pub fn back_picture(rgb: &[u8], w: usize, h: usize, size: usize, scrim: f64) -> Vec<u8> {
+    if w == 0 || h == 0 || rgb.len() < w * h * 3 {
+        return vec![];
+    }
+    let mut small = shrink_mirrored(rgb, w, h, BACK_SMALL);
+    for _ in 0..BACK_BLUR_PASSES {
+        small = box_blur(&small, BACK_SMALL, BACK_BLUR_RADIUS);
+    }
+    let out = enlarge(&small, BACK_SMALL, if size == 0 { w } else { size });
+    if scrim != 0.0 {
+        darken(&out, scrim)
+    } else {
+        out
+    }
 }

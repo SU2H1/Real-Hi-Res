@@ -1654,6 +1654,7 @@ impl App {
                         (tr!("This is the Rust version; it shares its settings, saved results, library and player state with the Python version.").to_string(), pal.text),
                         (tr_text(realhires::lyrics::ABOUT_CREDIT), pal.secondary),
                         (tr_text(realhires::musicbrainz::ABOUT_CREDIT), pal.secondary),
+                        (tr_text(realhires::coverart::ABOUT_CREDIT), pal.secondary),
                         (tr!("Windows and Linux use the Inter typeface by The Inter Project Authors (SIL Open Font License 1.1).").to_string(), pal.secondary),
                     ] {
                         ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());

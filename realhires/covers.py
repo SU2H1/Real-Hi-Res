@@ -18,7 +18,8 @@ For the Cover window (2.1), cover_source() says where that cover comes from and
 gives the picture as it is stored, image_info() reads a JPEG or PNG header as
 metaflac does, fit_png() makes the picture to show, and save_folder_cover()
 writes cover.jpg (cover.png) into the album's folder.  Search Cover Online
-(2.3) opens Google Images with the words of cover_search_url().
+(2.3) opens Google Images with the words of cover_search_url().  back_picture()
+(2.5) makes the back of the jacket: the cover mirrored and blurred.
 """
 
 from __future__ import annotations
@@ -551,6 +552,107 @@ def save_folder_cover(folder: str, data: bytes) -> str:
     return path
 
 
+# ------------------------------------------- the back of the jacket (2.5) ---
+# Now Playing's cover turns over like a record sleeve (docs/player-spec.md, "2.5", item 2):
+# its back is the cover itself, mirrored left to right and blurred, under a black scrim.
+# Whole numbers only, so the Rust version (covers::back_picture()) gives the same pixels.
+BACK_SMALL = 64        # the mirrored picture is scaled down to this many pixels a side,
+BACK_BLUR_RADIUS = 3   # box-blurred with this radius (7 pixels wide)
+BACK_BLUR_PASSES = 3   # this many times (close to a Gaussian blur), and scaled up again
+BACK_SCRIM = 0.5       # the black scrim over it, so white text reads on any cover
+
+
+def picture_rgb(data: bytes, size: int = 0) -> Optional["numpy.ndarray"]:  # noqa: F821
+    """The pixels of a picture (PNG, JPEG...) as a (height, width, 3) uint8 array, decoded
+    by FFmpeg; with `size`, scaled to size x size.  None when it cannot be read."""
+    import numpy as np
+
+    info = image_info(data) if not size else None
+    if not size and info is None:
+        return None
+    w, h = (size, size) if size else (info.width, info.height)
+    cmd = [tool("ffmpeg"), "-v", "error", "-nostdin", "-i", "pipe:0", "-frames:v", "1"]
+    cmd += ["-vf", f"scale={w}:{h}"] if size else []
+    cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    try:
+        proc = subprocess.run(cmd, input=data, capture_output=True, timeout=30, **_no_window())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or len(proc.stdout) != w * h * 3 or not w or not h:
+        return None
+    return np.frombuffer(proc.stdout, dtype=np.uint8).reshape(h, w, 3)
+
+
+def _shrink(a, n: int):
+    """`a` (h, w, 3) as n x n: each pixel the rounded mean of its block of `a`."""
+    import numpy as np
+
+    h, w = a.shape[:2]
+    s = np.zeros((h + 1, w + 1, 3), dtype=np.int64)
+    s[1:, 1:] = a.astype(np.int64).cumsum(axis=0).cumsum(axis=1)
+    k = np.arange(n, dtype=np.int64)
+    y0, x0 = k * h // n, k * w // n
+    y1, x1 = np.maximum(y0 + 1, (k + 1) * h // n), np.maximum(x0 + 1, (k + 1) * w // n)
+    total = s[y1][:, x1] - s[y0][:, x1] - s[y1][:, x0] + s[y0][:, x0]
+    count = ((y1 - y0)[:, None] * (x1 - x0)[None, :])[:, :, None]
+    return (total + count // 2) // count
+
+
+def _box_blur(a, radius: int):
+    """One box blur of `a` (int64, n x n x 3): along the rows, then along the columns, each
+    the rounded mean of 2 * radius + 1 pixels (the edge pixels repeat beyond the edge)."""
+    import numpy as np
+
+    width = 2 * radius + 1
+    for axis in (1, 0):
+        pad = [(0, 0)] * 3
+        pad[axis] = (radius, radius)
+        p = np.pad(a, pad, mode="edge")
+        n = a.shape[axis]
+        total = sum(np.take(p, np.arange(k, k + n), axis=axis) for k in range(width))
+        a = (total + width // 2) // width
+    return a
+
+
+def _enlarge(a, size: int):
+    """`a` (int64, n x n x 3) as size x size x 3, bilinear with pixel centres aligned."""
+    import numpy as np
+
+    n = a.shape[0]
+    den = 2 * size
+    num = np.clip((2 * np.arange(size, dtype=np.int64) + 1) * n - size, 0, (n - 1) * den)
+    i0, f = num // den, num % den
+    i1 = np.minimum(i0 + 1, n - 1)
+    fx, fy = f[None, :, None], f[:, None, None]
+    top = a[i0][:, i0] * (den - fx) + a[i0][:, i1] * fx
+    bottom = a[i1][:, i0] * (den - fx) + a[i1][:, i1] * fx
+    return (top * (den - fy) + bottom * fy + den * den // 2) // (den * den)
+
+
+def darken(rgb, amount: float):
+    """The picture under a black scrim of `amount` (0 = unchanged, 1 = black)."""
+    import numpy as np
+
+    k = int(round((1.0 - min(max(amount, 0.0), 1.0)) * 256))
+    return ((np.asarray(rgb).astype(np.uint16) * k) >> 8).astype(np.uint8)
+
+
+def back_picture(rgb, size: int = 0, scrim: float = 0.0):
+    """The back of a jacket (2.5): the cover `rgb` (height, width, 3; uint8) mirrored left
+    to right, scaled down to BACK_SMALL pixels, box-blurred BACK_BLUR_PASSES times with
+    BACK_BLUR_RADIUS and scaled up to size x size (the cover's width when 0), then darkened
+    by `scrim` (the apps pass BACK_SCRIM).  A (size, size, 3) uint8 array."""
+    import numpy as np
+
+    a = np.asarray(rgb, dtype=np.uint8)[:, ::-1, :3]
+    small = _shrink(a, BACK_SMALL)
+    for _ in range(BACK_BLUR_PASSES):
+        small = _box_blur(small, BACK_BLUR_RADIUS)
+    out = _enlarge(small, size or a.shape[1]).astype(np.uint8)
+    return darken(out, scrim) if scrim else out
+
+
 __all__ = ["cover_png", "folder_image", "image_info", "image_format", "cover_source", "CoverSource",
            "PictureInfo", "fit_png", "save_folder_cover", "folder_cover_name",
-           "cover_search_query", "cover_search_url"]
+           "cover_search_query", "cover_search_url", "picture_rgb", "back_picture", "darken",
+           "BACK_SMALL", "BACK_BLUR_RADIUS", "BACK_BLUR_PASSES", "BACK_SCRIM"]

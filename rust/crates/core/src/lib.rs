@@ -18,6 +18,7 @@ pub const PROJECT_URL: &str = "https://github.com/SU2H1/Universal-Music-Player";
 
 pub mod analysis;
 pub mod bitperfect;
+pub mod coverart;
 pub mod covers;
 pub mod dsp;
 pub mod embed;
@@ -26,6 +27,7 @@ pub mod eta;
 pub mod fix;
 pub mod i18n;
 pub mod imaging;
+pub mod jacket;
 pub mod json;
 pub mod library;
 pub mod lyrics;

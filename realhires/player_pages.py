@@ -387,6 +387,10 @@ def album_menu(app, album: dict) -> tk.Menu:
     m.add_command(label=tr("Acquire Metadata…"), command=lambda: app.album_musicbrainz(album))
     first = next((t.path for t in album["tracks"] if not getattr(t, "missing", False)), "")
     m.add_command(label=tr("Change Cover…"), command=lambda: app.open_cover_window(first))
+    if first:  # 2.5: Search Cover Online ▸ MusicBrainz…, Google Images
+        from .player_jacket import add_search_menu
+
+        add_search_menu(app, m, first)
     m.add_separator()
     app.add_label_menu(m, "album", album["key"])  # 2.3
     app.theme_menu(m)
@@ -470,6 +474,11 @@ class AlbumPage(Page):
         self.cover = tk.Canvas(top, width=self.COVER, height=self.COVER, highlightthickness=0, bd=0)
         t.reg(self.cover, bg="bg")
         self.cover.pack(side="left")
+        # 2.5: a click opens the Cover window, a right click the cover's menu
+        self.cover.configure(cursor="hand2")
+        self.cover.bind("<ButtonRelease-1>", lambda e: self.open_cover())
+        for seq in ("<Button-3>", "<Button-2>"):  # Button-2: the right click on macOS
+            self.cover.bind(seq, self._cover_context)
         info = frame(top, t)
         info.pack(side="left", fill="both", expand=True, padx=(24, 0))
         self.title_l = label(info, t, "", "big", wraplength=600, justify="left")
@@ -527,6 +536,26 @@ class AlbumPage(Page):
         if self.album is not None:
             return self.app.album_musicbrainz(self.album)
         return None
+
+    def cover_path(self) -> str:
+        """The album's first song that is still there (whose Cover window is the album's)."""
+        tracks = self.album["tracks"] if self.album else []
+        return next((t.path for t in tracks if not getattr(t, "missing", False)), "")
+
+    def open_cover(self):
+        """A click on the cover: the Cover window (the page is the album already)."""
+        path = self.cover_path()
+        return self.app.open_cover_window(path) if path else None
+
+    def cover_menu(self) -> Optional[tk.Menu]:
+        """The cover's right-click menu (2.5): Cover…, Change Cover…, Search Cover Online ▸."""
+        path = self.cover_path()
+        return self.app.cover_menu(path, go_album=False) if path else None
+
+    def _cover_context(self, e) -> None:
+        m = self.cover_menu()
+        if m is not None:
+            m.tk_popup(e.x_root, e.y_root)
 
     def menu(self) -> Optional[tk.Menu]:
         """The "…" button's menu: the album card's menu (album_menu())."""
@@ -1625,8 +1654,8 @@ class DetailsView(tk.Canvas):
 from .player_theme import draw_icon  # noqa: E402
 
 LYRICS_WIDE_EXTRA = 4   # Lyrics only: the lyrics this many pixels larger than the chosen size (2.3)
-SWIPE_PX = 60           # a sideways drag this long turns Now Playing's left half (2.3)
-DRAG_START_PX = 5       # a press that moves further is a drag, not a click
+from .jacket import SWIPE_PX  # noqa: E402,F401  (a drag this long turns Now Playing's jacket: 2.3, 2.5)
+from .player_jacket import DRAG_START_PX, Jacket  # noqa: E402,F401
 
 
 class BackLink(tk.Canvas):
@@ -1673,8 +1702,9 @@ class BackLink(tk.Canvas):
 
 class NowPlayingPage(Page):
     """The cover with the title and "Artist — Album" under it, as one block in the middle of
-    the left half (the album name opens the album, each artist name that artist, the cover
-    the Cover window);
+    the left half (the album name opens the album, each artist name that artist; 2.5: the
+    cover opens the album too, and a right click on it the cover's menu, with the Cover
+    window);
     on the right a switch Lyrics | Up Next | Details (`app.np_tab`).  Lyrics: a label
     ("Synced lyrics" / "Lyrics (not synced)", where they come from), A− / A+, Lyrics only
     and the lyrics; without lyrics "Get lyrics".  With the lyrics hidden (the Lyrics button
@@ -1682,12 +1712,14 @@ class NowPlayingPage(Page):
 
     2.3: an instrumental song's Lyrics view is the block in the middle too, with
     "Instrumental" under it (`mode()`); Lyrics only (`app.lyrics_wide`) hides the cover and
-    the lyrics fill the page; a sideways drag (or a horizontal scroll) turns the left half
+    the lyrics fill the page; a sideways drag (or a horizontal scroll) turns the cover
     to the album's songs (`app.np_side`, two dots under it); a back link at the top left
-    names the page it returns to (`app.back_label()`); Details is one centred block."""
+    names the page it returns to (`app.back_label()`); Details is one centred block.
+
+    2.5: the album's songs are the back of the jacket, inside the cover's square, and the
+    jacket turns over like a record sleeve (`self.jacket`, player_jacket.Jacket)."""
 
     SIZES = (160, 200, 240, 280, 320, 360, 400, 440, 480)
-    SONG_ROW = 36  # the album's songs in the left half (2.3)
 
     def __init__(self, app):
         super().__init__(app)
@@ -1698,12 +1730,8 @@ class NowPlayingPage(Page):
         self.hover_link: Optional[str] = None
         self.song_rows: List[tuple] = []      # the album's songs shown: (index, x0, y0, x1, y1)
         self.dots: List[tuple] = []           # the two dots: (side, x0, y0, x1, y1)
-        self.songs_first = 0                  # the first of the album's songs shown (scrolled)
-        self.songs_key: Optional[str] = None  # the album they are of
-        self.songs_hover: Optional[int] = None
-        self.press: Optional[tuple] = None    # where the button went down (x, y), for the swipe
-        self.dragged = False                  # the press moved: no click
-        self.swiped = False                   # this press turned the left half already
+        self.path: Optional[str] = None
+        self.jacket = Jacket(self)            # 2.5: the cover's square: front, back and the turn
         self.art.bind("<Configure>", lambda e: self.draw_art())
         self.art.bind("<Motion>", self._art_motion)
         self.art.bind("<Leave>", lambda e: self._art_leave())
@@ -1711,6 +1739,8 @@ class NowPlayingPage(Page):
         self.art.bind("<B1-Motion>", self._art_drag)
         self.art.bind("<ButtonRelease-1>", self._art_click)
         self.art.bind("<Double-Button-1>", self._art_double)
+        for seq in ("<Button-3>", "<Button-2>"):  # 2.5: the cover's menu (Button-2: the right click on macOS)
+            self.art.bind(seq, self._art_context)
         bind_wheel(self.art, self._art_wheel)
         self.art.bind("<Shift-MouseWheel>", lambda e: self.swipe(-1 if e.delta > 0 else 1))
         if self.art.tk.call("tk", "windowingsystem") == "x11":
@@ -1991,10 +2021,12 @@ class NowPlayingPage(Page):
     # ---- the cover block ---------------------------------------------------------
     def draw_art(self) -> None:
         """The left half (or the whole page in the centred layouts): the cover block, or
-        the album's songs (`app.np_side`, 2.3), and the two dots that switch between them."""
+        its back, the album's songs (`app.np_side`; 2.5: the jacket draws the square), and
+        the two dots that switch between them."""
         t, c = self.theme, self.art
         c.delete("all")
         self.links, self.song_rows, self.dots = [], [], []
+        self.jacket.box = None
         W, H = c.winfo_width(), c.winfo_height()
         if W <= 1:
             return
@@ -2003,10 +2035,7 @@ class NowPlayingPage(Page):
             c.create_text(W / 2, H / 2, text=tr("Nothing is playing"), fill=t.c("text2"), font=t.f("h2"))
             return
         album = self.app.album_of(trk)
-        if album is not None and self.app.np_side == "songs":
-            self._draw_songs(album, W, H)
-        else:
-            self._draw_block(trk, album, W, H)
+        self._draw_block(trk, album, W, H)
         if album is not None:
             self._draw_dots(W, H)
         self._underline()
@@ -2025,8 +2054,8 @@ class NowPlayingPage(Page):
         img = self.app.covers.get(key, paths, size)
         x = (W - size) / 2
         y = top + (H - top - size - text_h) / 2
-        draw_cover(c, t, img, x, y, size)
-        self.links.append(("cover", x, y, x + size, y + size, None))  # the Cover window
+        self.jacket.draw(x, y, size, img, key, paths, album)  # the cover, its back or the turn (2.5)
+        self.links.append(("cover", x, y, x + size, y + size, None))  # the album; a right click: its menu
         fit: dict = {}
         c.create_text(W / 2, y + size + 30, text=fit_text(t.f("h1"), trk.display_title, W - 60, fit),
                       fill=t.c("text"), font=t.f("h1"))
@@ -2042,58 +2071,6 @@ class NowPlayingPage(Page):
         if instrumental:
             c.create_text(W / 2, ty + 28, text=tr("Instrumental"), fill=t.c("text2"), font=t.f("body"),
                           tags=("instrumental",))
-
-    def _draw_songs(self, album: dict, W: int, H: int) -> None:
-        """The album's songs in track order: number (the speaker for the song playing, whose
-        title is bold), title, time; hover; a double-click plays one with the album as the
-        list (2.3)."""
-        t, c = self.theme, self.art
-        rows = list(album["tracks"])
-        if album["key"] != self.songs_key:  # another album: from the top, with the song playing in view
-            self.songs_key, self.songs_first = album["key"], 0
-            self._songs_to_current(rows, H)
-        width = min(W - 80, 560)
-        x0 = (W - width) / 2
-        fit: dict = {}
-        top = 52 + (40 if self.mode() == "instrumental" else 0)  # under the back link (and the switch)
-        c.create_text(x0 + 10, top, text=fit_text(t.f("h2"), tr_name(album["title"]), width - 20, fit), anchor="nw",
-                      fill=t.c("text"), font=t.f("h2"))
-        list_top = top + 44
-        shown = self._songs_shown(H - (top - 52))
-        self.songs_first = min(max(self.songs_first, 0), max(0, len(rows) - shown))
-        body, bold = t.f("body"), t.f("body_b")
-        R = self.SONG_ROW
-        for k in range(shown):
-            i = self.songs_first + k
-            if i >= len(rows):
-                break
-            r = rows[i]
-            y0 = list_top + k * R
-            mid = y0 + R / 2
-            if i == self.songs_hover:
-                round_rect(c, x0, y0 + 1, x0 + width, y0 + R - 1, 6, fill=t.c("hover"), outline="")
-            playing = r.path == self.path
-            if playing:
-                draw_icon(c, "speaker", x0 + 22, mid, 13, t.c("accent"))
-            elif r.track:
-                c.create_text(x0 + 30, mid, text=str(r.track), anchor="e", fill=t.c("text2"), font=body)
-            when = fmt_time(r.duration) if r.duration else ""
-            c.create_text(x0 + width - 12, mid, text=when, anchor="e", fill=t.c("text2"), font=body)
-            room = width - 44 - body.measure(when) - 28
-            c.create_text(x0 + 44, mid, text=fit_text(bold if playing else body, r.display_title, room, fit),
-                          anchor="w", fill=t.c("text"), font=bold if playing else body,
-                          tags=("song", "playing") if playing else ("song",))
-            self.song_rows.append((i, x0, y0, x0 + width, y0 + R))
-
-    def _songs_shown(self, H: int) -> int:
-        """How many of the album's songs fit between the album's name and the dots."""
-        return max(1, int((H - 52 - 44 - 44) // self.SONG_ROW))
-
-    def _songs_to_current(self, rows: List[Track], H: int) -> None:
-        i = next((k for k, r in enumerate(rows) if r.path == self.path), 0)
-        shown = self._songs_shown(H)
-        if i >= self.songs_first + shown:
-            self.songs_first = i - shown + 1
 
     def _draw_dots(self, W: int, H: int) -> None:
         """Two dots at the bottom: the cover, the album's songs; the one shown is filled."""
@@ -2118,11 +2095,11 @@ class NowPlayingPage(Page):
         return next((side for side, x0, y0, x1, y1 in self.dots if x0 <= x <= x1 and y0 <= y <= y1), None)
 
     def _art_motion(self, e) -> None:
-        self._art_hover(self._link_at(e.x, e.y))
-        song = self._song_at(e.x, e.y)
-        if song != self.songs_hover:
-            self.songs_hover = song
-            self.draw_art()
+        i = self._link_at(e.x, e.y)
+        if i is not None and self.links[i][0] == "cover" and self.jacket.side() == "songs":
+            i = None  # the back of the jacket is not a link: its rows are songs
+        self._art_hover(i)
+        self.jacket.pointer(e.x, e.y)
         if self.hover_link is None:
             self.art.configure(cursor="hand2" if self._dot_at(e.x, e.y) else "")
 
@@ -2134,9 +2111,7 @@ class NowPlayingPage(Page):
 
     def _art_leave(self) -> None:
         self._art_hover(None)
-        if self.songs_hover is not None:
-            self.songs_hover = None
-            self.draw_art()
+        self.jacket.left()
 
     def _underline(self) -> None:
         """The artist or album name under the pointer is underlined (not the cover)."""
@@ -2146,36 +2121,24 @@ class NowPlayingPage(Page):
             _, x0, _, x1, y1, _ = self.links[i]
             self.art.create_line(x0, y1 - 1, x1, y1 - 1, fill=self.theme.c("text2"), tags="underline")
 
-    # ---- the swipe (2.3) ------------------------------------------------------------
+    # ---- the swipe (2.3) and the turning jacket (2.5) ---------------------------------
     def _art_press(self, e) -> None:
-        self.press, self.dragged, self.swiped = (e.x, e.y), False, False
+        self.jacket.pressed(e)
 
     def _art_drag(self, e) -> None:
-        if self.press is None:
-            return
-        dx, dy = e.x - self.press[0], e.y - self.press[1]
-        if abs(dx) > DRAG_START_PX or abs(dy) > DRAG_START_PX:
-            self.dragged = True
-        if not self.swiped and abs(dx) > SWIPE_PX and abs(dx) > abs(dy):
-            self.swiped = True  # one turn per drag, either way
-            self.app.set_np_side("cover" if self.app.np_side == "songs" else "songs")
+        self.jacket.moved(e)  # a sideways drag turns the jacket with the pointer
 
     def swipe(self, direction: int) -> None:
         """A sideways scroll or trackpad swipe: to the right (1) the album's songs, to the
         left (-1) the cover again."""
         if self.path is not None:
-            self.app.set_np_side("songs" if direction > 0 else "cover")
+            self.app.set_np_side("songs" if direction > 0 else "cover", -direction)
 
     def _art_wheel(self, n: int) -> None:
-        if self.app.np_side != "songs" or not self.song_rows:
-            return
-        self.songs_first += n * 3
-        self.draw_art()
+        self.jacket.wheel(n)
 
     def _art_click(self, e) -> None:
-        dragged, self.press = self.dragged, None
-        self.dragged = False
-        if dragged:
+        if self.jacket.released(e):
             return  # a drag (or a swipe) is not a click
         side = self._dot_at(e.x, e.y)
         if side is not None:
@@ -2188,12 +2151,23 @@ class NowPlayingPage(Page):
         what, *_, name = self.links[i]
         if what == "artist":
             self.app.open_artist(name)
-        elif what == "cover":
-            self.app.open_cover_window(trk.path)
-        else:
+        elif what == "cover" and self.jacket.side() == "songs":
+            return  # the back of the jacket: a double-click on a song plays it
+        else:  # the album's name, and (2.5) the cover: the album's page
             album = self.app.album_of(trk)
             if album is not None:
                 self.app.open_album(album)
+
+    def cover_menu(self) -> Optional[tk.Menu]:
+        """The right-click menu of the cover (2.5): Cover…, Change Cover…, Search Cover
+        Online ▸ and Go to Album."""
+        return self.app.cover_menu(self.path) if self.path else None
+
+    def _art_context(self, e) -> None:
+        if self.jacket.contains(e.x, e.y):
+            m = self.cover_menu()
+            if m is not None:
+                m.tk_popup(e.x_root, e.y_root)
 
     def _art_double(self, e) -> None:
         self._art_press(e)  # (a second press soon after a click comes here, not to _art_press)

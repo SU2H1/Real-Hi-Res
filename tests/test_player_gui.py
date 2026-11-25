@@ -274,8 +274,7 @@ def lyrics_ok():
         assert needed in np.details.text(), (needed, np.details.text())
     app.toggle_now_playing(); root.update()  # the Lyrics button chooses Lyrics again
     assert app.np_tab == "lyrics" and np.lyrics.winfo_ismapped() and app.bar.lyrics.on and not app.lyrics_hidden
-    # the names are links: the artist opens the artist, the album name the album; the cover
-    # opens the Cover window (another branch)
+    # the names are links: the artist opens the artist, the album name the album
     class At:
         def __init__(self, box):
             self.x, self.y = (box[1] + box[3]) / 2, (box[2] + box[4]) / 2
@@ -286,10 +285,15 @@ def lyrics_ok():
     np._art_click(At(links["album_name"])); root.update()
     assert app.page_name == "album" and app.page("album").title_l.cget("text") == "Northern Lights"
     app.go_back(); root.update()
+    # 2.5: a click on the cover opens the album; the Cover window is on the cover's menu
     opened = []
     app.open_cover_window = opened.append
     np._art_click(At(links["cover"])); root.update()
-    assert app.page_name == "nowplaying" and opened == [glacier]
+    assert app.page_name == "album" and opened == [], (app.page_name, opened)
+    app.go_back(); root.update()
+    menu = np.cover_menu()
+    menu.invoke(0); root.update()  # Cover…
+    assert menu.entrycget(0, "label") == "Cover…" and app.page_name == "nowplaying" and opened == [glacier], opened
     del app.open_cover_window
     # several artists in one field: each one its own link, on Now Playing, in the LCD and in Details
     tr = app.track(glacier)
