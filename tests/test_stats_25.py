@@ -475,8 +475,9 @@ def badge():
     b = lcd.geo["badge"]
     lcd.event_generate("<Motion>", x=int((b[0] + b[2]) / 2), y=int((b[1] + b[3]) / 2))
     def shown():
-        assert lcd.badge_tip.win is not None and LOSSLESS.match(lcd.badge_tip.tip_text), lcd.badge_tip.tip_text
-        assert lcd.badge_tip.tip_text == musiclib.quality_detail(app.by_path[S["First Light"]])
+        tip = lcd.badge_tip.tip_text.splitlines()  # the quality, and what a click opens
+        assert lcd.badge_tip.win is not None and LOSSLESS.match(tip[0]) and tip[1:] == ["Playback info"], tip
+        assert tip[0] == musiclib.quality_detail(app.by_path[S["First Light"]])
         lcd.event_generate("<Motion>", x=int(b[0]) - 60, y=int((b[1] + b[3]) / 2))  # off the badge
         root.update()
         assert lcd.badge_tip.tip_text == "" and lcd.badge_tip.win is None

@@ -70,7 +70,7 @@ class AreaTip:
         t = self.theme
         self.win = w = tk.Toplevel(self.c)
         w.wm_overrideredirect(True)
-        tk.Label(w, text=text, bg=t.c("lcd"), fg=t.c("text"), font=t.f("small"), padx=8, pady=4,
+        tk.Label(w, text=text, bg=t.c("lcd"), fg=t.c("text"), font=t.f("small"), padx=8, pady=4, justify="left",
                  highlightthickness=1, highlightbackground=t.c("sep")).pack()
         w.wm_geometry(f"+{x}+{y}")
         return text
@@ -96,9 +96,13 @@ class AreaTip:
 
 
 def badge_tip(lcd) -> AreaTip:
-    """The playback bar's quality badge (`Lcd.geo["badge"]`): the song's quality tooltip."""
-    return AreaTip(lcd, lcd.app.theme, lambda: lcd.geo.get("badge") if lcd.track is not None else None,
-                   lambda: quality_tip(lcd.track))
+    """The playback bar's quality badge (`Lcd.geo["badge"]`): the song's quality tooltip,
+    and under it what a click opens ("Playback info"), as the Rust app's badge says."""
+    def text() -> str:
+        tip = quality_tip(lcd.track)
+        return tip + "\n" + tr("Playback info") if tip else ""
+
+    return AreaTip(lcd, lcd.app.theme, lambda: lcd.geo.get("badge") if lcd.track is not None else None, text)
 
 
 def details_row(view, label: str) -> Optional[Box]:
