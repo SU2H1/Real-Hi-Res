@@ -234,6 +234,19 @@ def open_with_default_app(path: str) -> None:
         subprocess.Popen(["xdg-open", path], env=external_env())
 
 
+def open_url(url: str) -> None:
+    """Open a web address in the system's browser (2.3: Search Cover Online, the
+    Properties window's Search buttons).  Python's webbrowser module is not used: on
+    Linux it starts the browser with the frozen app's library path."""
+    if sys.platform.startswith("win"):
+        os.startfile(url)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", url], env=external_env())
+    else:
+        subprocess.Popen(["xdg-open", url], env=external_env(), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+
+
 def fmt_duration(sec: Optional[float]) -> str:
     if sec is None:
         return "?"

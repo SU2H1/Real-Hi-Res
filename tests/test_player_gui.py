@@ -402,7 +402,8 @@ def lyrics_ok():
     am = player_pages.album_menu(app, small)
     def entries(m):
         return [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
-    ALBUM_MENU = ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Acquire Metadata…", "Album Properties…"]
+    ALBUM_MENU = ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…", "Acquire Metadata…",
+                  "Change Cover…"]
     assert entries(am) == ALBUM_MENU, entries(am)
     assert app.last_menu is am
     am.invoke(ALBUM_MENU.index("Add to Queue")); root.update()
