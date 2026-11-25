@@ -649,6 +649,9 @@ pub struct Player {
     details_rx: Receiver<(String, String)>,
     pub eq_open: bool,
     pub eq_tab: usize,
+    /// the Equalizer window's outer rectangle and its content's, as drawn last (2.3: the
+    /// content must lie inside the window in every language)
+    pub eq_rects: Option<(Rect, Rect)>,
     pub info: Option<InfoWindow>,
     pub settings_group: usize,
     settings_draft: Option<Settings>,
@@ -809,6 +812,7 @@ impl Player {
             details_rx,
             eq_open: false,
             eq_tab: 0,
+            eq_rects: None,
             info: None,
             settings_group: 0,
             settings_draft: None,
@@ -2606,7 +2610,7 @@ impl Player {
                     self.toggle_mute();
                 }
                 ui.add_space(6.0);
-                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled && !bit_perfect, true, tr!("Equalizer")).clicked() {
+                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled, true, tr!("Equalizer")).clicked() {
                     self.eq_open = !self.eq_open;
                 }
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, tr!("Up Next")).clicked() {
@@ -2868,28 +2872,52 @@ impl Player {
         if upcoming.is_empty() {
             ui.label(RichText::new(tr!("Nothing comes after this song.")).color(pal.secondary));
         }
-        let mut jump = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            for (i, path) in upcoming.iter().enumerate() {
+        // 2.3: a song can be dragged to another place or removed with a right click
+        let rows: Vec<(String, String)> = upcoming
+            .iter()
+            .map(|path| {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
-                let artist = t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default();
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
-                }
-                let p = ui.painter_at(rect);
-                p.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
-                p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
-                if resp.double_clicked() {
-                    jump = Some(i);
-                }
-            }
-        });
-        if let Some(i) = jump {
-            if let Some(p) = self.queue.as_mut().and_then(|q| q.jump(i)) {
-                self.play_path(&p);
-            }
+                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default())
+            })
+            .collect();
+        let action = egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                crate::upnext::rows(ui, pal, "panel", rows.len(), 38.0, 0.0, |p, rect, i| {
+                    let (title, artist) = &rows[i];
+                    p.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
+                    p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
+                })
+            })
+            .inner;
+        self.up_next_action(action);
+    }
+
+    /// What the user did with a row of Up Next (the panel's or Now Playing's).
+    pub(crate) fn up_next_action(&mut self, action: Option<crate::upnext::UpNextAction>) {
+        use crate::upnext::UpNextAction;
+        match action {
+            Some(UpNextAction::Jump(i)) => self.jump_up_next(i),
+            Some(UpNextAction::Move(src, dst)) => self.move_in_up_next(src, dst),
+            Some(UpNextAction::Remove(i)) => self.remove_from_up_next(i),
+            None => {}
+        }
+    }
+
+    /// Up Next (2.3): its song number `src` was dragged to place `dst`; the song that
+    /// follows gaplessly is set again.
+    pub fn move_in_up_next(&mut self, src: usize, dst: usize) {
+        if self.queue.as_mut().is_some_and(|q| q.move_upcoming(src, dst)) {
+            self.update_next();
+        }
+    }
+
+    /// Up Next (2.3): take its song number `index` out of the queue (right click → Remove
+    /// from Up Next); the song that follows gaplessly is set again.
+    pub fn remove_from_up_next(&mut self, index: usize) {
+        if self.queue.as_mut().and_then(|q| q.remove_upcoming(index)).is_some() {
+            self.update_next();
         }
     }
 
@@ -3734,8 +3762,9 @@ mod tests {
     #[test]
     fn bit_perfect_playback_controls() {
         // Settings, Playback, Bit-perfect playback (2.1): the song restarts where it was in its own
-        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is bypassed, and
-        // the Playback info has the Bit-perfect line and the device's real format
+        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is heard (2.3; it
+        // was bypassed before), and the Playback info has the Bit-perfect line and the device's real
+        // format
         let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("rhr-player-bitperfect-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -3776,14 +3805,20 @@ mod tests {
         let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
         for want in [
             "Output=96 kHz, 16-bit integer, stereo",
-            "Bit-perfect=Yes: 16-bit, 96 kHz, Null output (no sound)",
+            "Bit-perfect=No: The equalizer is on, so the samples are changed. The device still runs at 96 kHz.",
             "Volume=0.0 dB",
-            "Equalizer=Bypassed while bit-perfect playback is on.",
         ] {
             assert!(flat.contains(&want.to_string()), "{want}: {flat:?}");
         }
+        assert!(flat.iter().any(|x| x.starts_with("Equalizer=Graphic: Rock")), "{flat:?}");
         p.eq_open = true;
-        frame(&ctx, &mut p);
+        let shown = texts(&ctx, &mut p);
+        assert!(shown.contains("Bit-perfect playback is on: with the equalizer on"), "{shown}");
+        // the equalizer off: bit-perfect again
+        p.state.eq.enabled = false;
+        p.set_eq();
+        let info = p.engine.info().unwrap();
+        assert_eq!(info.bit_perfect, "Yes: 16-bit, 96 kHz, Null output (no sound)");
         p.set_volume(0.1); // the slider is disabled, and nothing else changes the volume either
         assert_eq!(p.state.volume, 0.5);
         p.settings_draft().bit_perfect = false;
@@ -5475,6 +5510,204 @@ mod tests {
         p.engine.stop();
         drop(p);
         realhires::i18n::set_thread_language("");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// One frame with these input events; returns the labels and rectangles of the
+    /// widgets AccessKit was told about (the context menu's buttons among them).
+    fn accesskit_frame(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) -> Vec<(String, Rect)> {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            events,
+            ..Default::default()
+        };
+        let out = ctx.run_ui(raw, |ui| p.ui(ui));
+        let mut nodes = vec![];
+        if let Some(update) = &out.platform_output.accesskit_update {
+            for (_, node) in &update.nodes {
+                if let (Some(label), Some(b)) = (node.label(), node.bounds()) {
+                    let rect = Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32));
+                    nodes.push((label.to_string(), rect));
+                }
+            }
+        }
+        out.drop_without_applying_deltas();
+        nodes
+    }
+
+    fn pointer(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() }
+    }
+
+    /// Drag Up Next's row `from` of `list` with the primary button to `to` (y), in steps.
+    fn drag_row(ctx: &egui::Context, p: &mut Player, list: &str, from: usize, to: f32) {
+        let start = ctx.read_response(crate::upnext::row_id(list, from)).expect("an Up Next row").rect.center();
+        accesskit_frame(ctx, p, vec![egui::Event::PointerMoved(start)]);
+        accesskit_frame(ctx, p, vec![pointer(start, egui::PointerButton::Primary, true)]);
+        accesskit_frame(ctx, p, vec![egui::Event::PointerMoved(pos2(start.x, start.y + if to < start.y { -3.0 } else { 3.0 }))]);
+        assert!(ctx.data(|d| d.get_temp::<usize>(egui::Id::unique(("up-next-drag", list)))).is_none(), "a drag before 5 px");
+        for y in [(start.y + to) / 2.0, to] {
+            accesskit_frame(ctx, p, vec![egui::Event::PointerMoved(pos2(start.x, y))]);
+        }
+        assert_eq!(ctx.data(|d| d.get_temp::<usize>(egui::Id::unique(("up-next-drag", list)))), Some(from), "not dragging");
+        accesskit_frame(ctx, p, vec![pointer(pos2(start.x, to), egui::PointerButton::Primary, false)]);
+        frame(ctx, p);
+    }
+
+    /// Right-click Up Next's row `i` of `list` and click "Remove from Up Next" in its menu.
+    fn remove_row(ctx: &egui::Context, p: &mut Player, list: &str, i: usize) {
+        let at = ctx.read_response(crate::upnext::row_id(list, i)).expect("an Up Next row").rect.center();
+        accesskit_frame(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        accesskit_frame(ctx, p, vec![pointer(at, egui::PointerButton::Secondary, true)]);
+        accesskit_frame(ctx, p, vec![pointer(at, egui::PointerButton::Secondary, false)]);
+        let mut item = None;
+        for _ in 0..3 {
+            let nodes = accesskit_frame(ctx, p, vec![]);
+            item = nodes.into_iter().find(|(label, _)| label == "Remove from Up Next").map(|(_, r)| r.center());
+            if item.is_some() {
+                break;
+            }
+        }
+        let item = item.expect("the right-click menu with Remove from Up Next");
+        accesskit_frame(ctx, p, vec![egui::Event::PointerMoved(item)]);
+        accesskit_frame(ctx, p, vec![pointer(item, egui::PointerButton::Primary, true)]);
+        accesskit_frame(ctx, p, vec![pointer(item, egui::PointerButton::Primary, false)]);
+        frame(ctx, p);
+    }
+
+    #[test]
+    fn up_next_songs_can_be_dragged_and_removed() {
+        // 2.3: in the Up Next panel and in Now Playing's Up Next view, a song is dragged to
+        // another place (across the parts of Up Next) or removed with a right click, and the
+        // song that follows gaplessly is set again
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        realhires::i18n::set_thread_language("en");
+        let tmp = std::env::temp_dir().join(format!("rhr-up-next-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let songs: Vec<String> = ["Dawn", "Noon", "Dusk", "Night"]
+            .iter()
+            .enumerate()
+            .map(|(n, t)| song(&music, "Four Hours", t, "Ada Quill", "Folk", n as u32 + 1, 44_100, 20.0))
+            .collect();
+        let extra = song(&music, "Elsewhere", "Detour", "Ben Oak", "Folk", 1, 44_100, 20.0);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 5 && p.lib_rx.is_none());
+        p.play_list(songs.clone(), Some(&songs[0]), "Four Hours");
+        p.engine.pause(); // the song must not end while the rows are dragged
+        p.queue_songs(std::slice::from_ref(&extra), true);
+        p.show_up_next = true;
+        frame(&ctx, &mut p);
+        frame(&ctx, &mut p);
+        let up = |p: &Player| p.queue.as_ref().unwrap().up_next(10);
+        assert_eq!(up(&p), vec![extra.clone(), songs[1].clone(), songs[2].clone(), songs[3].clone()]);
+        assert_eq!(p.engine.next_path(), Some(extra.clone()));
+        let row = |i: usize| ctx.read_response(crate::upnext::row_id("panel", i)).expect("an Up Next row").rect;
+
+        // drag "Night" (a song of the list, row 3) to the top, before the queued song: it is queued too
+        let to = row(0).top() + 3.0;
+        drag_row(&ctx, &mut p, "panel", 3, to);
+        assert_eq!(up(&p), vec![songs[3].clone(), extra.clone(), songs[1].clone(), songs[2].clone()]);
+        assert_eq!(p.queue.as_ref().unwrap().queued, vec![songs[3].clone(), extra.clone()]);
+        assert_eq!(p.engine.next_path(), Some(songs[3].clone()), "the gapless follower");
+
+        // right click the queued "Detour" (row 1): Remove from Up Next
+        remove_row(&ctx, &mut p, "panel", 1);
+        assert_eq!(up(&p), vec![songs[3].clone(), songs[1].clone(), songs[2].clone()]);
+        assert!(p.queue.as_ref().unwrap().removed.is_empty(), "a queued song is not kept out of the list");
+
+        // Now Playing's Up Next view does the same
+        p.show_up_next = false;
+        p.go(Page::NowPlaying);
+        p.set_np_tab(NpTab::UpNext);
+        frame(&ctx, &mut p);
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_hits.up_next, up(&p));
+        let np_row = |i: usize| ctx.read_response(crate::upnext::row_id("now-playing", i)).expect("a row").rect;
+        let to = np_row(2).bottom() - 3.0;
+        drag_row(&ctx, &mut p, "now-playing", 0, to); // "Night" back after "Dusk", into the list
+        assert_eq!(up(&p), vec![songs[1].clone(), songs[2].clone(), songs[3].clone()]);
+        assert!(p.queue.as_ref().unwrap().queued.is_empty());
+        assert_eq!(p.engine.next_path(), Some(songs[1].clone()));
+        remove_row(&ctx, &mut p, "now-playing", 0); // "Noon"
+        assert_eq!(up(&p), vec![songs[2].clone(), songs[3].clone()]);
+        assert_eq!(p.engine.next_path(), Some(songs[2].clone()));
+        // building the order again (a new shuffle mode) leaves the removed song out
+        p.set_shuffle("off");
+        assert_eq!(up(&p), vec![songs[2].clone(), songs[3].clone()]);
+        assert!(p.queue.as_ref().unwrap().removed.contains(&songs[1]));
+        // starting the list again brings it back
+        p.play_list(songs.clone(), Some(&songs[0]), "Four Hours");
+        assert_eq!(up(&p), songs[1..].to_vec());
+        p.on_exit();
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn equalizer_window_holds_its_content_in_japanese() {
+        // 2.3: in Japanese with bit-perfect playback on (its note above the curve), every widget
+        // of the Equalizer window lies inside the window, so its title bar and close button span
+        // the content; the preset row wraps instead of running past the window's edge
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        realhires::i18n::set_thread_language("日本語");
+        let tmp = std::env::temp_dir().join(format!("rhr-eq-window-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("Music")).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![tmp.join("Music").to_string_lossy().into_owned()];
+        cfg.language = "日本語".into();
+        cfg.bit_perfect = true;
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        realhires::i18n::set_thread_language("日本語");
+        // a preset of the user's own, so that Rename… and Delete… are buttons
+        p.state.eq.enabled = true;
+        p.state.eq.apply_preset("Rock");
+        let eq = p.state.eq.clone();
+        let _ = p.state.save_eq_preset("ロック（夜）", &eq, false);
+        p.eq_notes = vec!["“ロック（夜）”として読み込みました。".into()];
+        p.eq_open = true;
+        ctx.enable_accesskit();
+        for tab in [0, 1] {
+            p.eq_tab = tab;
+            let shown = texts(&ctx, &mut p);
+            assert!(shown.contains("ビットパーフェクト再生がオンです"), "{shown}");
+            let nodes = accesskit_frame(&ctx, &mut p, vec![]);
+            let (outer, content) = p.eq_rects.expect("the Equalizer window");
+            assert!(
+                outer.expand(0.5).contains_rect(content),
+                "tab {tab}: the content {content:?} runs past the window {outer:?}"
+            );
+            // the title bar spans the window: its close button sits at the window's right edge,
+            // to the right of every widget (in 2.2 the preset row ran about 100 px past it)
+            let close = nodes.iter().find(|(l, _)| l == "Close window").map(|(_, r)| *r).expect("the close button");
+            assert!(close.right() <= outer.right() + 0.5 && outer.right() - close.right() < 16.0, "tab {tab}: {close:?} in {outer:?}");
+            assert!(content.right() <= close.right() + 8.0, "tab {tab}: the content {content:?} runs past the close button {close:?}");
+        }
+        p.on_exit();
+        drop(p);
+        realhires::i18n::set_thread_language("en");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

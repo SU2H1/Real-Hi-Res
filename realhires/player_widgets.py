@@ -72,7 +72,12 @@ class Column:
 class SongList(tk.Frame):
     """A table of songs drawn on a Canvas.  `value(row, key)` gives a cell's text;
     `sort_value(row, key)` what a click on the column heading sorts by;
-    `tip_value(row, key)` the tooltip of a cell of a column with `tip`.
+    `tip_value(row, key)` the tooltip of a cell of a column with `tip`.  With
+    `on_move(src, dst)` its rows can be dragged to another place with the primary
+    button (Up Next, 2.3): a press becomes a drag after `DRAG_START` pixels, a line
+    in the accent colour shows the gap the row will drop into, the list scrolls
+    while the pointer is near its top or bottom edge, and `dst` is the row's index
+    after the move.
 
     Only the visible rows are drawn.  A scroll step moves the drawn rows and draws
     only the rows that come into view, and moving the pointer to another row only
@@ -81,6 +86,9 @@ class SongList(tk.Frame):
 
     HEADER = 30
     TIP_DELAY_MS = 450
+    DRAG_START = 5        # pixels the pointer must move before a press becomes a drag
+    DRAG_EDGE = 18        # pixels from the top or bottom edge where a drag scrolls the list
+    DRAG_SCROLL_MS = 40   # how often it scrolls then
 
     def __init__(self, master, theme: Theme, columns: Sequence[Column], value: Callable[[Any, str], str],
                  sort_value: Optional[Callable[[Any, str], Any]] = None, row_height: int = 32,
@@ -91,9 +99,16 @@ class SongList(tk.Frame):
                  on_context: Optional[Callable[[int, Any], None]] = None,
                  is_dim: Optional[Callable[[Any], bool]] = None,
                  tip_value: Optional[Callable[[Any, str], str]] = None,
-                 on_heading_context: Optional[Callable[[Any], None]] = None):
+                 on_heading_context: Optional[Callable[[Any], None]] = None,
+                 on_move: Optional[Callable[[int, int], None]] = None):
         super().__init__(master, bd=0, highlightthickness=0)
         self.on_context, self.is_dim, self.tip_value = on_context, is_dim, tip_value
+        self.on_move = on_move
+        self._press: Optional[Tuple[int, int]] = None   # (row, y) of a press that may become a drag
+        self.drag_from: Optional[int] = None            # the row being dragged
+        self.drop_at: Optional[int] = None              # the gap it would go to (0 = above the first row)
+        self._drag_y = 0                                # where the pointer is during a drag
+        self._drag_job: Optional[str] = None            # scrolling near an edge
         self.on_heading_context = on_heading_context  # right click on the headings (choose the columns)
         self.column_kind: Optional[str] = None
         self.column_prefix: List[Column] = []
@@ -131,6 +146,8 @@ class SongList(tk.Frame):
         c.bind("<Leave>", lambda e: (self._set_hover(None), self.hide_tip()))
         c.bind("<Button-1>", self._click)
         c.bind("<Double-Button-1>", self._double)
+        c.bind("<B1-Motion>", self._drag_motion)
+        c.bind("<ButtonRelease-1>", self._drag_end)
         c.bind("<Return>", lambda e: self._activate(self.selected))
         c.bind("<KP_Enter>", lambda e: self._activate(self.selected))
         c.bind("<Up>", lambda e: self._move(-1))
@@ -146,6 +163,7 @@ class SongList(tk.Frame):
     def set_rows(self, rows: Sequence[Any], keep: bool = False) -> None:
         sel = self.rows[self.selected] if keep and self.selected is not None and self.selected < len(self.rows) \
             else None
+        self.cancel_drag()  # the rows changed under a drag: it ends here
         self.rows = list(rows)
         if self.sort_key is not None and self.sort_value is not None:
             self._sort()
@@ -271,6 +289,88 @@ class SongList(tk.Frame):
             self.redraw()
             return
         self.select(i)
+        if self.on_move is not None:
+            self._press = (i, e.y)
+
+    # -------------------------------------------------- dragging a row ---
+    def _gap_at(self, y: int) -> int:
+        """The gap between rows nearest to `y` (0 = above the first row)."""
+        y -= self.HEADER if self.has_header else 0
+        return min(max(int(round((y + self.top) / self.rh)), 0), len(self.rows))
+
+    def _drag_motion(self, e) -> None:
+        if self._press is None:
+            return
+        row, y0 = self._press
+        if self.drag_from is None:
+            if abs(e.y - y0) < self.DRAG_START or row >= len(self.rows):
+                return
+            self.drag_from = row
+            self.hide_tip()
+            self.canvas.configure(cursor="fleur")
+        self._drag_y = e.y
+        self.drop_at = self._gap_at(e.y)
+        self._draw_drop()
+        if self._edge_step() and self._drag_job is None:
+            self._drag_job = self.after(self.DRAG_SCROLL_MS, self._drag_scroll)
+
+    def _edge_step(self) -> float:
+        """How far to scroll for the pointer near an edge during a drag (0: not near one)."""
+        head = self.HEADER if self.has_header else 0
+        if self._drag_y < head + self.DRAG_EDGE and self.top > 0:
+            return -self.rh / 3
+        if self._drag_y > self.canvas.winfo_height() - self.DRAG_EDGE and self.top < self._max_top():
+            return self.rh / 3
+        return 0.0
+
+    def _drag_scroll(self) -> None:
+        """Scroll along while a drag holds the pointer near an edge."""
+        self._drag_job = None
+        step = self._edge_step() if self.drag_from is not None else 0.0
+        if not step:
+            return
+        self._scroll_to(self.top + step)
+        self.drop_at = self._gap_at(self._drag_y)
+        self._draw_drop()
+        self._drag_job = self.after(self.DRAG_SCROLL_MS, self._drag_scroll)
+
+    def _drag_end(self, e) -> None:
+        src = self.drag_from
+        self.cancel_drag()
+        if src is None:
+            return
+        gap = self._gap_at(e.y)
+        dst = gap if gap <= src else gap - 1
+        if dst != src and self.on_move is not None and 0 <= dst < len(self.rows):
+            self.on_move(src, dst)
+
+    def cancel_drag(self) -> None:
+        """End a drag (or a press that could become one) without moving anything."""
+        if self._drag_job is not None:
+            try:
+                self.after_cancel(self._drag_job)
+            except tk.TclError:
+                pass
+            self._drag_job = None
+        was = self.drag_from is not None
+        self._press = self.drag_from = self.drop_at = None
+        if was:
+            self.canvas.configure(cursor="")
+            self.canvas.delete("drop")
+
+    def _draw_drop(self) -> None:
+        """The line in the accent colour, with a small circle at its left end, that shows
+        the gap the dragged row drops into."""
+        c = self.canvas
+        c.delete("drop")
+        if self.drag_from is None or self.drop_at is None:
+            return
+        head = self.HEADER if self.has_header else 0
+        y = head + self.drop_at * self.rh - self.top
+        y = min(max(y, head + 2), c.winfo_height() - 2)
+        W, accent = c.winfo_width(), self.theme.c("accent")
+        c.create_line(16, y, W - 10, y, fill=accent, width=2, tags="drop")
+        c.create_oval(6, y - 4, 14, y + 4, outline=accent, width=2, tags="drop")
 
     def select(self, i: Optional[int]) -> None:
         self.selected = i
@@ -468,6 +568,7 @@ class SongList(tk.Frame):
                 self._draw_row(i, head, W)
         if self.has_header:
             c.tag_raise("head")
+        self._draw_drop()
         self._update_scrollbar()
 
     def redraw(self) -> None:
@@ -505,6 +606,7 @@ class SongList(tk.Frame):
                     c.create_polygon(bx - 4, head / 2 - d, bx + 4, head / 2 - d, bx, head / 2 + d,
                                      fill=t.c("text2"), outline="", tags="head")
             c.create_line(12, head - 1, W - 12, head - 1, fill=t.c("sep"), tags="head")
+        self._draw_drop()
         self._update_scrollbar()
 
     def _update_scrollbar(self) -> None:

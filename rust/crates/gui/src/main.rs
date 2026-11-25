@@ -21,6 +21,7 @@ mod pages;
 mod player;
 mod plots;
 mod style;
+mod upnext;
 mod web;
 mod work;
 

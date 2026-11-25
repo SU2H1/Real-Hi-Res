@@ -1633,27 +1633,27 @@ impl Player {
             });
             return;
         }
-        let mut jump = None;
-        egui::ScrollArea::vertical().id_salt("np-up-next").auto_shrink([false, false]).show(ui, |ui| {
-            for (i, path) in upcoming.iter().enumerate() {
+        // 2.3: dragged to another place, or removed with a right click (crate::upnext)
+        let rows: Vec<(String, String)> = upcoming
+            .iter()
+            .map(|path| {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
-                let artist = t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default();
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width() - 12.0, 44.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
-                }
-                let p = ui.painter_at(rect);
-                p.text(rect.left_top() + vec2(20.0, 5.0), Align2::LEFT_TOP, title, look::title(13.0), pal.text);
-                p.text(rect.left_top() + vec2(20.0, 24.0), Align2::LEFT_TOP, artist, look::text(11.5), pal.secondary);
-                if resp.double_clicked() {
-                    jump = Some(i);
-                }
-            }
-        });
-        if let Some(i) = jump {
-            self.jump_up_next(i);
-        }
+                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default())
+            })
+            .collect();
+        let action = egui::ScrollArea::vertical()
+            .id_salt("np-up-next")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                crate::upnext::rows(ui, pal, "now-playing", rows.len(), 44.0, 12.0, |p, rect, i| {
+                    let (title, artist) = &rows[i];
+                    p.text(rect.left_top() + vec2(20.0, 5.0), Align2::LEFT_TOP, title, look::title(13.0), pal.text);
+                    p.text(rect.left_top() + vec2(20.0, 24.0), Align2::LEFT_TOP, artist, look::text(11.5), pal.secondary);
+                })
+            })
+            .inner;
+        self.up_next_action(action);
     }
 
     /// Now Playing's Details: the song's description, as one block centred in the right half

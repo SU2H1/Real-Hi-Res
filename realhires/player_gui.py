@@ -572,15 +572,18 @@ class PlaybackBar(tk.Frame):
         self.more.set(enabled=has)
         self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden and app.np_tab == "lyrics")
         self.queue.set(on=app.up_next_shown)
-        # bit-perfect playback: the equalizer is bypassed and the gain is exactly 1, so the slider shows
-        # full volume and cannot move
+        # bit-perfect playback: the gain is exactly 1, so the slider shows full volume and cannot move
+        # (2.3: the equalizer is heard then too, so its button shows whether it is on)
         bit_perfect = app.cfg.bit_perfect
-        self.eq.set(on=bool(st.eq.get("enabled")) and not bit_perfect)
+        self.eq.set(on=bool(st.eq.get("enabled")))
         self.speaker.set(level=0.0 if st.muted else 1.0 if bit_perfect else st.volume)
         self.volume.set(1.0 if bit_perfect else st.volume, enabled=not bit_perfect)
 
 
 class UpNextPanel(tk.Frame):
+    """The queue: double-click a song to play it now, drag it to another place, or
+    right-click it to take it out ("Remove from Up Next", 2.3)."""
+
     WIDTH = 300
 
     def __init__(self, master, app: "PlayerApp"):
@@ -595,16 +598,19 @@ class UpNextPanel(tk.Frame):
         self.list = SongList(self, t, [Column("title", "", 200, True, kind="two", key2="artist")],
                              lambda r, k: r.display_title if k == "title" else tr_name(r.display_artist),
                              header=False, zebra=False, row_height=48, bg_role="sidebar", on_activate=app.jump_to,
-                             empty_text=tr("Nothing is queued."))
+                             empty_text=tr("Nothing is queued."), on_move=app.move_in_up_next,
+                             on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root))
         self.list.pack(fill="both", expand=True, padx=(4, 0))
 
-    def refresh(self) -> None:
+    def refresh(self, keep: bool = False) -> None:
+        """Show the queue again; `keep` keeps the scroll position and the selected song
+        (after the user moved or removed one)."""
         app = self.app
         q = app.queue
         self.source.configure(text=tr("Playing from {name}", name=app.context_name)
                               if q is not None and app.context_name else "")
-        rows = [app.by_path[p] for p in (q.up_next(50) if q is not None else []) if p in app.by_path]
-        self.list.set_rows(rows)
+        rows = [app.by_path[p] for p in app._shown_up_next()]
+        self.list.set_rows(rows, keep=keep)
 
 
 # ------------------------------------------------------------ the app ---
@@ -1797,6 +1803,7 @@ class PlayerApp:
         c = copy.copy(q)
         c.order = list(q.order)
         c.queued = list(q.queued)  # next() takes the first queued song: not from the real queue
+        c.inserted, c.removed = set(q.inserted), set(q.removed)  # next() marks the song it takes
         c.rng = SplitMix64(0)
         c.rng.state = q.rng.state
         return c.next(auto=True)
@@ -1883,12 +1890,63 @@ class PlayerApp:
                                                                                    "duration", 0.0))
 
     def jump_to(self, index: int) -> None:
-        """Up Next: play that song now (the queue continues after it)."""
-        q = self.queue
-        if q is None:
+        """Up Next: play the song in row `index` now (the queue continues after it)."""
+        q, i = self.queue, self._queue_index(index)
+        if q is None or i is None:
             return
-        if q.jump(index) is not None:
+        if q.jump(i) is not None:
             self._play_path(q.current)  # type: ignore[arg-type]
+
+    # ---- editing Up Next (2.3) -------------------------------------------------
+    def _shown_up_next(self) -> List[str]:
+        """The paths Up Next shows (songs no longer in the index are left out there), in
+        the Up Next panel and in Now Playing's Up Next view alike."""
+        q = self.queue
+        return [p for p in (q.up_next(50) if q is not None else []) if p in self.by_path]
+
+    def _queue_index(self, index: int) -> Optional[int]:
+        """Up Next's row `index` as a place in the queue's own Up Next."""
+        q = self.queue
+        if q is None or index < 0:
+            return None
+        places = [i for i, p in enumerate(q.up_next(50)) if p in self.by_path]
+        return places[index] if index < len(places) else None
+
+    def up_next_menu(self, index: int) -> tk.Menu:
+        """The right-click menu of Up Next's row `index`."""
+        m = tk.Menu(self.root, tearoff=False)
+        m.add_command(label=tr("Remove from Up Next"), command=lambda: self.remove_from_up_next(index))
+        self._theme_menu(m)
+        self.last_menu = m
+        return m
+
+    def move_in_up_next(self, src: int, dst: int) -> None:
+        """Up Next: the song in row `src` was dragged to row `dst`."""
+        q, a, b = self.queue, self._queue_index(src), self._queue_index(dst)
+        if q is None or a is None or b is None or not q.move_upcoming(a, b):
+            return
+        self._up_next_edited()
+
+    def remove_from_up_next(self, index: int) -> None:
+        """Up Next: take the song in row `index` out of the queue."""
+        q, i = self.queue, self._queue_index(index)
+        if q is None or i is None or q.remove_upcoming(i) is None:
+            return
+        self.up_next.list.selected = None
+        np = self.pages.get("nowplaying")
+        if np is not None:
+            np.queue_list.selected = None
+        self._up_next_edited()
+
+    def _up_next_edited(self) -> None:
+        """After a move or a removal: the song that follows gaplessly is set again, and
+        both views of Up Next show the queue where they were scrolled to."""
+        self._update_next()
+        if self.up_next_shown:
+            self.up_next.refresh(keep=True)
+        np = self.pages.get("nowplaying")
+        if np is not None and hasattr(np, "refresh_queue"):
+            np.refresh_queue(keep=True)
 
     def queue_songs(self, paths: List[str], first: bool) -> None:
         """Play Next (`first`) / Add to Queue (2.1): the songs come after the current one
@@ -2114,8 +2172,7 @@ class PlayerApp:
                                                                          player_mod.resampler_name()))
                    if rate else dash),
                   (tr("Volume"), tr_text(player_mod.fmt_gain(gain, self.state.muted))),
-                  (tr("Equalizer"), tr(bitperfect.EQ_BYPASSED) if bit_perfect
-                   else tr_text(player_mod.eq_summary(self.state.eq))),
+                  (tr("Equalizer"), tr_text(player_mod.eq_summary(self.state.eq))),
                   (tr("Gapless"), tr("On") if self.cfg.gapless else tr("Off"))]
         quality = [(tr("Verdict"), tr("Not checked yet"))]
         store = self.qc.store

@@ -128,6 +128,52 @@ for shuffle in ("off", "songs", "album"):
                 steps.append(q.current)
             steps.append(q.up_next(6))
         user_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": 11, "steps": steps})
+# Up Next edited by the user (2.3): moves and removals within and across its three parts
+# (stepped back over, queued, the rest), then the order built again and played on
+edit_ops = ["next", "next", "prev", "prev", "play_next:9", "add:3,4",
+            "move:0:4", "move:3:0", "move:2:5", "remove:1", "remove:3", "move:5:1", "move:1:7", "move:4:4",
+            "move:0:99", "move:99:0", "remove:99", "next", "auto", "prev", "remove:0", "move:0:2", "next",
+            "set_shuffle:songs", "remove:2", "move:3:0", "add:7", "move:0:3", "set_repeat:album", "auto", "auto",
+            "auto", "auto", "auto", "auto", "prev", "move:0:1", "remove:1", "next", "set_shuffle:off", "auto",
+            "jump:2", "auto"]
+edit_runs = []
+for shuffle in ("off", "songs", "library", "album"):
+    for repeat in ("off", "album"):
+        for seed in (3, 41):
+            q = PlayQueue(songs, everything[:10], shuffle=shuffle, repeat=repeat, seed=seed,
+                          disliked={everything[7]})
+            q.start(everything[1])
+            steps = []
+            for op in edit_ops:
+                name, _, arg = op.partition(":")
+                if name == "move":
+                    a, b = arg.split(":")
+                    result = q.move_upcoming(int(a), int(b))
+                elif name == "remove":
+                    result = q.remove_upcoming(int(arg))
+                elif name == "auto":
+                    result = q.next(auto=True)
+                elif name == "next":
+                    result = q.next()
+                elif name == "prev":
+                    result = q.previous()
+                elif name == "jump":
+                    result = q.jump(int(arg))
+                elif name in ("play_next", "add"):
+                    picked = [everything[int(i)] for i in arg.split(",")]
+                    q.play_next(picked) if name == "play_next" else q.add_to_queue(picked)
+                    result = q.current
+                elif name == "set_shuffle":
+                    q.set_shuffle(arg)
+                    result = q.current
+                else:
+                    q.set_repeat(arg)
+                    result = q.current
+                steps.append({"result": result, "current": q.current, "up_next": q.up_next(30),
+                              "queued": list(q.queued), "pos": q.pos, "top": q.top, "inserted": sorted(q.inserted),
+                              "count": q.upcoming_count()})
+            edit_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": seed, "disliked": [everything[7]],
+                              "start": everything[1], "steps": steps, "removed": sorted(q.removed)})
 # several artists in one field (2.1): split_artists() and the groupings it gives
 art_tracks = [Track(path=f"/art/{i:02d}.flac", title=f"T{i}", artist=a, album_artist=aa)
               for i, (a, aa) in enumerate([
@@ -150,6 +196,7 @@ with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
                "ops": ["auto", "next", "auto", "prev", "next", "auto", "next", "next", "auto", "next", "auto",
                        "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"],
                "runs": runs, "user_ops": user_ops, "user_runs": user_runs,
+               "edit_ops": edit_ops, "edit_runs": edit_runs,
                "splitmix_2024": [str(rng.next()) for _ in range(5)],
                "shuffled_9": shuffled([str(i) for i in range(12)], SplitMix64(9))}, fh, indent=0)
 
@@ -536,6 +583,7 @@ for si, song in enumerate(bp_songs):
             bp_cases.append({"song": si, "modes": mi, "failure": failure, "rate": pl.rate, "format": pl.format,
                              "channels": pl.channels, "reasons": pl.reasons, "resampled": pl.resampled,
                              "access": access, "device": dev, "status": bp.status(song, pl, access, dev),
+                             "status_eq": bp.status(song, pl, access, dev, eq_on=True),
                              "output": bp.output_label(pl.rate, pl.format, bp.song_bits(song), pl.channels)})
 cards_text = (" 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n"
               "                      HDA Intel PCH at 0xf7f10000 irq 32\n"
@@ -574,9 +622,16 @@ with open(os.path.join(OUT, "python_bitperfect.json"), "w", encoding="utf-8") as
                "idle": [bp.status(None, None, enabled=False), bp.status(None, None)],
                "cards_text": cards_text, "cards": cards,
                "devices": [{"device": d, "hw": bp.alsa_device(d, cards)} for d in devices],
-               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq": bp.EQ_BYPASSED, "wasapi": bp.WASAPI_FORMAT_NOTE,
-                         "off": bp.OFF,
+               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq_on": bp.EQ_ON, "eq_note": bp.EQ_NOTE,
+                         "wasapi": bp.WASAPI_FORMAT_NOTE, "off": bp.OFF,
                          "idle": bp.ON_IDLE},
+               # 2.3: the equalizer with bit-perfect playback
+               "still": [{"rate": r, "access": a, "device": d, "text": bp.still_runs(r, a, d)}
+                         for r in (44100, 96000) for a in (bp.WASAPI, bp.ALSA, bp.COREAUDIO, bp.DIRECT)
+                         for d in ("", "hw:1,3", "Speakers")],
+               "dither": [{"x": x, "d": d, "i16": bp.dithered_int_sample(x, bp.I16, d),
+                           "i24": bp.dithered_int_sample(x, bp.I24, d), "i32": bp.dithered_int_sample(x, bp.I32, d)}
+                          for x in floats for d in (0.0, 0.5, -0.5, 0.999, -0.999, 0.25, -0.75, 1.5)],
                "standard_rates": list(bp.STANDARD_RATES)}, fh, indent=0, ensure_ascii=False)
 # ------------------------------------------------- covers kept on disk ---
 # The names of saved covers (covers.cache_key/cache_name), which both apps share:
