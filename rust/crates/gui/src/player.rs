@@ -20,6 +20,7 @@ use realhires::{n_, tr};
 
 use crate::app::App;
 use crate::audio::{Engine, Event};
+use crate::cover_cache::Covers;
 use crate::icons::{self, Icon};
 use crate::look::{self, Palette};
 
@@ -37,6 +38,8 @@ pub enum Page {
     Genres,
     Years,
     Composers,
+    /// one artist, album artist, genre, year or composer (a card of a grouping page)
+    Group(&'static str, String),
     Playlists,
     Playlist(String),
     Liked,
@@ -65,6 +68,7 @@ impl Page {
             Page::Genres => n_!("Genres"),
             Page::Years => n_!("Years"),
             Page::Composers => n_!("Composers"),
+            Page::Group(kind, _) => GROUPINGS.iter().find(|g| g.0 == *kind).map(|g| g.1).unwrap_or(n_!("Artists")),
             Page::Playlists | Page::Playlist(_) => n_!("Playlists"),
             Page::Liked => n_!("Liked Songs"),
             Page::Disliked => n_!("Disliked Songs"),
@@ -115,6 +119,75 @@ pub fn count(n: usize, one: &'static str, many: &'static str) -> String {
     }
 }
 
+/// A count of a noun of the pages ("1 song", "12 songs", "3 albums") in the language in
+/// use, as the Python app's `player_pages.plural()` (its `COUNTS`).
+pub fn plural(n: usize, noun: &str) -> String {
+    let (one, many) = match noun {
+        "song" => (n_!("1 song"), n_!("{n} songs")),
+        "album" => (n_!("1 album"), n_!("{n} albums")),
+        "minute" => (n_!("1 minute"), n_!("{n} minutes")),
+        "artist" => (n_!("1 artist"), n_!("{n} artists")),
+        "album artist" => (n_!("1 album artist"), n_!("{n} album artists")),
+        "genre" => (n_!("1 genre"), n_!("{n} genres")),
+        "year" => (n_!("1 year"), n_!("{n} years")),
+        "composer" => (n_!("1 composer"), n_!("{n} composers")),
+        "folder" => (n_!("1 folder"), n_!("{n} folders")),
+        "playlist" => (n_!("1 playlist"), n_!("{n} playlists")),
+        "play" => (n_!("1 play"), n_!("{n} plays")),
+        _ => {
+            let k = realhires::stats::thousands(n as i64);
+            return if n == 1 { format!("{k} {noun}") } else { format!("{k} {noun}s") };
+        }
+    };
+    count(n, one, many)
+}
+
+/// The texts of Rename… for each grouping that has it, whole sentences for the
+/// translations (the Python app's `RENAME_TEXTS`): (menu entry, title, prompt for the
+/// songs without one, prompt, question for the songs without one, question, nothing to
+/// change).
+pub struct RenameTexts {
+    pub menu: &'static str,
+    pub title: &'static str,
+    pub prompt_unknown: &'static str,
+    pub prompt: &'static str,
+    pub ask_unknown: &'static str,
+    pub ask: &'static str,
+    pub same: &'static str,
+}
+
+pub fn rename_texts(kind: &str) -> RenameTexts {
+    match kind {
+        "genres" => RenameTexts {
+            menu: n_!("Rename genre…"),
+            title: n_!("Rename genre"),
+            prompt_unknown: n_!("Give the songs without a genre this genre:"),
+            prompt: n_!("New name of the genre “{name}”:"),
+            ask_unknown: n_!("Give {n} without a genre the genre “{new}”?"),
+            ask: n_!("Rename the genre “{name}” to “{new}”? The genre of {n} changes."),
+            same: n_!("Every song already has the genre “{new}”: nothing to change."),
+        },
+        "composers" => RenameTexts {
+            menu: n_!("Rename composer…"),
+            title: n_!("Rename composer"),
+            prompt_unknown: n_!("Give the songs without a composer this composer:"),
+            prompt: n_!("New name of the composer “{name}”:"),
+            ask_unknown: n_!("Give {n} without a composer the composer “{new}”?"),
+            ask: n_!("Rename the composer “{name}” to “{new}”? The composer of {n} changes."),
+            same: n_!("Every song already has the composer “{new}”: nothing to change."),
+        },
+        _ => RenameTexts {
+            menu: n_!("Rename year…"),
+            title: n_!("Rename year"),
+            prompt_unknown: n_!("Give the songs without a year this year:"),
+            prompt: n_!("Change the year {name} of these songs to:"),
+            ask_unknown: n_!("Give {n} without a year the year “{new}”?"),
+            ask: n_!("Change the year {name} to {new}? The release date of {n} changes (only its year)."),
+            same: n_!("Every song already has the year “{new}”: nothing to change."),
+        },
+    }
+}
+
 /// The quality badge of a song ("Hi-Res Lossless", "Lossless" or the codec
 /// with its bit rate: the core's text) in the language in use.
 pub fn quality_label(t: &Track) -> String {
@@ -132,6 +205,10 @@ pub struct NameDialog {
     pub text: String,
     pub action: NameAction,
     pub error: String,
+    /// what the field is for ("Name" when empty)
+    pub prompt: String,
+    /// names to choose from (Merge into…); the field can still be typed into
+    pub choices: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +219,10 @@ pub enum NameAction {
     RenameEqPreset(String),
     NewTheme(String),
     RenameTheme(String),
+    /// rename a genre, composer or year (the kind, its name)
+    RenameGroup(&'static str, String),
+    /// merge genres into the name typed or chosen (the kind, their names)
+    MergeGroups(&'static str, Vec<String>),
 }
 
 /// A question before something is deleted.
@@ -151,6 +232,9 @@ pub enum ConfirmAction {
     DeleteEqPreset(String),
     DeleteTheme(String),
     ClearHistory,
+    /// write a new genre, composer or year into these files (the question, the kind, the
+    /// paths, the new name, the groups it came from)
+    RetagGroup { title: String, text: String, kind: &'static str, paths: Vec<String>, name: String, from: Vec<String> },
 }
 
 /// The song being listened to, for the play history.
@@ -193,30 +277,71 @@ pub struct LibView {
     /// album indices, newest first
     pub recent: Vec<usize>,
     pub songs: Vec<Song>,
+    /// the first four songs of each album (what its cover is made from), made once
+    pub album_paths: Vec<Vec<String>>,
+    /// per grouping ("artists"...), each group's albums (indices, in album order), made once
+    pub group_albums: HashMap<&'static str, Vec<Vec<usize>>>,
+    /// the artists that stand on their own (`musiclib::known_artists`), for split artist fields
+    pub known: std::collections::HashSet<String>,
+    /// a new number for each library read, so that the pages' caches know when to start again
+    pub gen: u64,
 }
+
+static LIB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The groupings of the pages: (page kind, title, noun).
+pub const GROUPINGS: [(&str, &str, &str); 5] = [
+    ("artists", n_!("Artists"), "artist"),
+    ("album_artists", n_!("Album Artists"), "album artist"),
+    ("genres", n_!("Genres"), "genre"),
+    ("years", n_!("Years"), "year"),
+    ("composers", n_!("Composers"), "composer"),
+];
 
 impl LibView {
     pub fn new(mut tracks: Vec<Track>) -> LibView {
         musiclib::sort_songs(&mut tracks);
         let by_path = tracks.iter().enumerate().map(|(i, t)| (t.path.clone(), i)).collect();
         let albums = musiclib::albums(&tracks);
-        let album_index = albums.iter().enumerate().map(|(i, a)| (a.key.clone(), i)).collect();
+        let album_index: HashMap<String, usize> = albums.iter().enumerate().map(|(i, a)| (a.key.clone(), i)).collect();
         let mut recent: Vec<usize> = (0..albums.len()).collect();
         let newest = |a: &Album| a.tracks.iter().map(|t| t.mtime_ns).max().unwrap_or(0);
         recent.sort_by(|a, b| newest(&albums[*b]).cmp(&newest(&albums[*a])));
-        LibView {
+        let album_paths = albums.iter().map(|a| a.tracks.iter().take(4).map(|t| t.path.clone()).collect()).collect();
+        let mut lib = LibView {
             artists: musiclib::artists(&tracks),
             album_artists: musiclib::album_artists(&tracks),
             genres: musiclib::genres(&tracks),
             years: musiclib::years(&tracks),
             composers: musiclib::composers(&tracks),
             songs: tracks.iter().map(Track::song).collect(),
+            known: musiclib::known_artists(&tracks),
             tracks,
             by_path,
             albums,
             album_index,
             recent,
+            album_paths,
+            group_albums: HashMap::new(),
+            gen: LIB_GEN.fetch_add(1, Ordering::Relaxed),
+        };
+        let album_of_path: HashMap<&str, usize> =
+            lib.albums.iter().enumerate().flat_map(|(i, a)| a.tracks.iter().map(move |t| (t.path.as_str(), i))).collect();
+        for (kind, _, _) in GROUPINGS {
+            let per: Vec<Vec<usize>> = lib
+                .groups(kind)
+                .iter()
+                .map(|g| {
+                    let mut idx: Vec<usize> = g.tracks.iter().filter_map(|t| album_of_path.get(t.path.as_str()).copied()).collect();
+                    idx.sort_unstable();
+                    idx.dedup();
+                    idx
+                })
+                .collect();
+            lib.group_albums.insert(kind, per);
         }
+        drop(album_of_path);
+        lib
     }
 
     pub fn track(&self, path: &str) -> Option<&Track> {
@@ -227,65 +352,63 @@ impl LibView {
         let key = self.track(path)?.song().album_key();
         self.album_index.get(&key).map(|i| &self.albums[*i])
     }
+
+    /// The artists of a song's artist field (`musiclib::split_artists()`), each a link.
+    pub fn artists_of(&self, t: &Track) -> Vec<String> {
+        let names = musiclib::split_artists(&t.display_artist(), &self.known);
+        if names.is_empty() {
+            vec![t.display_artist()]
+        } else {
+            names
+        }
+    }
+
+    /// The groups of a grouping page ("artists", "album_artists", "genres", "years", "composers").
+    pub fn groups(&self, kind: &str) -> &Vec<Group> {
+        match kind {
+            "artists" => &self.artists,
+            "album_artists" => &self.album_artists,
+            "genres" => &self.genres,
+            "years" => &self.years,
+            _ => &self.composers,
+        }
+    }
+
+    /// The index of a group by its name (in any case).
+    pub fn find_group(&self, kind: &str, name: &str) -> Option<usize> {
+        let key = casefold(name.trim());
+        self.groups(kind).iter().position(|g| casefold(g.name.trim()) == key)
+    }
 }
 
-/// Album covers, made by FFmpeg in a worker thread (`covers::cover_png`).
-pub struct Covers {
-    tx: Sender<(String, Vec<String>)>,
-    rx: Receiver<(String, Option<Vec<u8>>)>,
-    tex: HashMap<String, Option<egui::TextureHandle>>,
-    pending: HashSet<String>,
+/// Where Now Playing drew what can be clicked, and what it showed (for the tests).
+#[derive(Default)]
+pub struct NpHits {
+    pub cover: Option<Rect>,
+    /// the artist and album name links under the cover
+    pub links: Vec<(Rect, crate::pages::Link)>,
+    pub get_lyrics: Option<Rect>,
+    /// A− and A+
+    pub size_buttons: Vec<Rect>,
+    /// "Back to the current line"
+    pub back: Option<Rect>,
+    pub up_next: Vec<String>,
+    /// Details as "Label: value" lines
+    pub details: Vec<String>,
+    pub detail_links: Vec<(Rect, String)>,
 }
 
-impl Covers {
-    fn new(ctx: &egui::Context) -> Covers {
-        let (tx, jobs) = mpsc::channel::<(String, Vec<String>)>();
-        let (done, rx) = mpsc::channel();
-        let ctx = ctx.clone();
-        std::thread::Builder::new()
-            .name("player-covers".into())
-            .spawn(move || {
-                while let Ok((key, paths)) = jobs.recv() {
-                    let png = realhires::covers::cover_png(&paths, 480);
-                    if done.send((key, png)).is_err() {
-                        break;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-            .expect("cover thread");
-        Covers { tx, rx, tex: HashMap::new(), pending: HashSet::new() }
-    }
+/// Now Playing's right half (2.1): the switch Lyrics | Up Next | Details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NpTab {
+    Lyrics,
+    UpNext,
+    Details,
+}
 
-    fn poll(&mut self, ctx: &egui::Context) {
-        while let Ok((key, png)) = self.rx.try_recv() {
-            self.pending.remove(&key);
-            let tex = png.and_then(|d| image::load_from_memory(&d).ok()).map(|img| {
-                let rgba = img.to_rgba8();
-                let ci = egui::ColorImage::from_rgba_unmultiplied(
-                    [rgba.width() as usize, rgba.height() as usize],
-                    rgba.as_raw(),
-                );
-                ctx.load_texture(format!("player cover {key}"), ci, egui::TextureOptions::LINEAR)
-            });
-            self.tex.insert(key, tex);
-        }
-    }
-
-    /// The cover of an album (None while it is made, or when it has none).
-    pub fn get(&mut self, key: &str, paths: &[String]) -> Option<egui::TextureHandle> {
-        if let Some(t) = self.tex.get(key) {
-            return t.clone();
-        }
-        if self.pending.insert(key.to_string()) {
-            let _ = self.tx.send((key.to_string(), paths.iter().take(4).cloned().collect()));
-        }
-        None
-    }
-
-    pub fn clear(&mut self) {
-        self.tex.clear();
-    }
+impl NpTab {
+    pub const ALL: [(NpTab, &'static str); 3] =
+        [(NpTab::Lyrics, n_!("Lyrics")), (NpTab::UpNext, n_!("Up Next")), (NpTab::Details, n_!("Details"))];
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -302,14 +425,140 @@ pub struct InfoWindow {
     pub verdict: Option<(realhires::verdict::Verdict, String)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SongCol {
+    Num,
     Title,
     Artist,
     Album,
+    AlbumArtist,
+    Composer,
     Genre,
+    Year,
+    Disc,
     Time,
     Quality,
+    Format,
+    BitRate,
+    Added,
+    File,
+    /// the heart (not sortable)
+    Like,
+    /// Recently Played's "Played" column
+    Played,
+}
+
+impl SongCol {
+    /// The column of a name in player.json's "columns" (`playerstate::SONG_COLUMNS`).
+    pub fn from_name(name: &str) -> Option<SongCol> {
+        Some(match name {
+            "num" => SongCol::Num,
+            "title" => SongCol::Title,
+            "artist" => SongCol::Artist,
+            "album" => SongCol::Album,
+            "album_artist" => SongCol::AlbumArtist,
+            "composer" => SongCol::Composer,
+            "genre" => SongCol::Genre,
+            "year" => SongCol::Year,
+            "disc" => SongCol::Disc,
+            "time" => SongCol::Time,
+            "quality" => SongCol::Quality,
+            "format" => SongCol::Format,
+            "bit_rate" => SongCol::BitRate,
+            "added" => SongCol::Added,
+            "file" => SongCol::File,
+            "like" => SongCol::Like,
+            _ => return None,
+        })
+    }
+
+    /// (heading, menu label, width weight, right-aligned); the texts are English,
+    /// shown with `i18n::tr()`
+    pub fn info(self) -> (&'static str, &'static str, f32, bool) {
+        match self {
+            SongCol::Num => ("#", n_!("# (track number)"), 0.35, true),
+            SongCol::Title => (n_!("Title"), n_!("Title"), 3.0, false),
+            SongCol::Artist => (n_!("Artist"), n_!("Artist"), 2.0, false),
+            SongCol::Album => (n_!("Album"), n_!("Album"), 2.2, false),
+            SongCol::AlbumArtist => (n_!("Album Artist"), n_!("Album Artist"), 1.8, false),
+            SongCol::Composer => (n_!("Composer"), n_!("Composer"), 1.6, false),
+            SongCol::Genre => (n_!("Genre"), n_!("Genre"), 1.1, false),
+            SongCol::Year => (n_!("Year"), n_!("Year"), 0.55, false),
+            SongCol::Disc => (n_!("Disc"), n_!("Disc"), 0.45, true),
+            SongCol::Time => (n_!("Time"), n_!("Time"), 0.6, true),
+            SongCol::Quality => (n_!("Quality"), n_!("Quality"), 1.15, false),
+            SongCol::Format => (n_!("Format"), n_!("Format"), 0.7, false),
+            SongCol::BitRate => (n_!("Bit rate"), n_!("Bit rate"), 0.9, true),
+            SongCol::Added => (n_!("Date added"), n_!("Date added"), 1.0, false),
+            SongCol::File => (n_!("File"), n_!("File"), 1.8, false),
+            SongCol::Like => ("", n_!("Heart (like)"), 0.0, false),
+            SongCol::Played => (n_!("Played"), n_!("Played"), 1.1, false),
+        }
+    }
+}
+
+/// The Format column: the codec ("FLAC", "MP3"; PCM for WAV and AIFF samples).
+pub fn format_label(t: &Track) -> String {
+    let c = t.codec.to_lowercase();
+    if c.starts_with("pcm_") {
+        "PCM".into()
+    } else {
+        c.to_uppercase()
+    }
+}
+
+/// A song table's cell (Python `track_value`).
+pub fn cell_text(t: &Track, col: SongCol) -> String {
+    match col {
+        SongCol::Num => if t.track > 0 { t.track.to_string() } else { String::new() },
+        SongCol::Title => t.display_title(),
+        // "Unknown Artist" and "Unknown Album" in the language in use
+        SongCol::Artist => tr_name(&t.display_artist()).to_string(),
+        SongCol::Album => tr_name(&t.display_album()).to_string(),
+        SongCol::AlbumArtist => t.album_artist.clone(),
+        SongCol::Composer => t.composer.clone(),
+        SongCol::Genre => t.genre.clone(),
+        SongCol::Year => t.year.clone(),
+        SongCol::Disc => if t.disc > 0 { t.disc.to_string() } else { String::new() },
+        SongCol::Time => fmt_time(t.duration),
+        SongCol::Quality => quality_label(t),
+        SongCol::Format => format_label(t),
+        SongCol::BitRate => {
+            if t.bit_rate > 0 {
+                format!("{} kbps", realhires::stats::thousands(realhires::pyfmt::round_int(t.bit_rate as f64 / 1000.0)))
+            } else {
+                String::new()
+            }
+        }
+        SongCol::Added => {
+            if t.mtime_ns <= 0 {
+                return String::new();
+            }
+            let p = realhires::stats::local_parts(t.mtime_ns as f64 / 1e9);
+            tr_text(&realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", p.year, p.month, p.day)))
+        }
+        SongCol::File => realhires::paths::file_name(&t.path),
+        SongCol::Like | SongCol::Played => String::new(),
+    }
+}
+
+/// What a click on a column heading sorts by (Python `track_sort`; numbers padded).
+pub fn sort_key(t: &Track, col: SongCol) -> (String, String, String) {
+    let title = casefold(&t.display_title());
+    let n = |x: i64| if x == 0 { 9999 } else { x };
+    match col {
+        SongCol::Artist => (casefold(&t.display_artist()), casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track)),
+        SongCol::Num | SongCol::Disc => (format!("{:05}{:05}", n(t.disc), n(t.track)), title, t.path.clone()),
+        SongCol::Time => (format!("{:012.3}", t.duration), title, t.path.clone()),
+        SongCol::Quality => {
+            let (bits, rate, float, kbps) = musiclib::quality_sort(t);
+            (format!("{bits:04}{rate:09}{}{kbps:012}", float as u8), title, t.path.clone())
+        }
+        SongCol::BitRate => (format!("{:012}", t.bit_rate), title, t.path.clone()),
+        SongCol::Added => (format!("{:020}", t.mtime_ns), title, t.path.clone()),
+        SongCol::Title => (title, casefold(&t.display_artist()), t.path.clone()),
+        other => (casefold(&cell_text(t, other)), title, t.path.clone()),
+    }
 }
 
 pub struct NowPlaying {
@@ -331,6 +580,8 @@ pub struct Player {
     lib_stop: Arc<AtomicBool>,
     pub page: Page,
     pub back: Vec<Page>,
+    /// the pages left with Back (the mouse's back button, Alt+Left), for Forward (2.1)
+    pub forward: Vec<Page>,
     pub search: String,
     search_due: Option<Instant>,
     pub search_query: String,
@@ -342,16 +593,36 @@ pub struct Player {
     /// a message for the LCD's second line, and when playback moves on after it
     pub message: Option<(String, Option<Instant>)>,
     fail_streak: usize,
-    lyrics: Option<(String, u64, Option<ShownLyrics>)>,
+    /// the lyrics of the song playing: (path, lyrics_gen, lyrics, (label, source))
+    lyrics: Option<(String, u64, Option<ShownLyrics>, (String, String))>,
     pub covers: Covers,
     pub show_up_next: bool,
+    /// Now Playing without its lyrics column (the Lyrics button on that page, 2.1)
+    pub lyrics_hidden: bool,
+    /// Now Playing's right half: Lyrics, Up Next or Details (for the session)
+    pub np_tab: NpTab,
+    /// Details: per song its comment tag (None while ffprobe reads it) and saved verdict
+    details_extra: HashMap<String, (Option<String>, Option<(String, String)>)>,
+    details_song: String,
+    details_tx: Sender<(String, String)>,
+    details_rx: Receiver<(String, String)>,
     pub eq_open: bool,
     pub eq_tab: usize,
     pub info: Option<InfoWindow>,
     pub settings_group: usize,
     settings_draft: Option<Settings>,
     settings_due: Option<Instant>,
-    pub lyrics_scrolled: Option<Instant>,
+    /// the user scrolled the current line of synced lyrics out of view: no following, and
+    /// the "Back to the current line" button shows (2.1)
+    pub lyrics_away: bool,
+    /// the Back button was pressed: the current line is scrolled to at once
+    pub lyrics_back: bool,
+    /// the user scrolled the lyrics: whether the current line is in view is checked again
+    pub lyrics_check: bool,
+    pub np_hits: NpHits,
+    /// the LCD's links: the title and the album name (the album), each artist
+    pub lcd_links: Vec<(Rect, crate::pages::Link)>,
+    /// the line followed last
     pub lyrics_line: Option<usize>,
     pub song_sort: (SongCol, bool),
     applied_look: Option<(String, String, u64)>,
@@ -362,8 +633,17 @@ pub struct Player {
     pub selected_song: Option<String>,
     /// "Check new songs when the app starts": scan once the library is read
     check_after_update: bool,
-    /// the name chosen on each grouped page (Artists, Genres, Years...)
-    pub group_sel: HashMap<&'static str, String>,
+    /// the genres selected (Ctrl/Cmd-click) on the Genres page, to be merged
+    pub group_selected: Vec<String>,
+    /// the sort of album pages (None: track order) and the album it is for
+    pub album_sort: Option<(SongCol, bool)>,
+    album_sort_for: String,
+    /// sorted song lists, made again only when the library, the sort or the likes change
+    list_cache: HashMap<String, ((u64, Option<(SongCol, bool)>, u64), Arc<Vec<String>>)>,
+    /// counts likes and dislikes, for the lists made of them
+    likes_gen: u64,
+    /// renaming a genre, composer or year, or merging genres (one at a time)
+    pub tag_job: Option<crate::editinfo::RenameJob>,
     seed: u64,
     // 2.0 additions
     pub custom_themes: Vec<realhires::themes::Theme>,
@@ -373,6 +653,8 @@ pub struct Player {
     themes_gen: u64,
     /// the Edit Info window (one at a time)
     pub edit_info: Option<crate::editinfo::EditInfo>,
+    /// the Cover window (one at a time)
+    pub cover_win: Option<crate::coverwin::CoverWin>,
     /// the MusicBrainz window (2.1, one at a time)
     pub mb_win: Option<crate::mbwin::MbWindow>,
     /// the automatic MusicBrainz lookup (2.1): its messages, stop flag, progress and last summary
@@ -389,6 +671,8 @@ pub struct Player {
     listening: Option<Listening>,
     pub stats_period: String,
     stats_cache: Option<(String, u64, realhires::stats::Stats)>,
+    /// the calendar of Your Stats (2.1)
+    pub calendar: crate::library_pages::Calendar,
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
     pub name_dialog: Option<NameDialog>,
     pub confirm: Option<ConfirmAction>,
@@ -410,6 +694,30 @@ pub fn gain_of(state: &PlayerState) -> f32 {
     }
 }
 
+/// The gain the engine gets: exactly 1 (0 when muted) with bit-perfect playback,
+/// which keeps the saved volume for when it is turned off.
+pub fn engine_gain(state: &PlayerState, bit_perfect: bool) -> f32 {
+    if bit_perfect && !state.muted {
+        1.0
+    } else {
+        gain_of(state)
+    }
+}
+
+/// What bit-perfect playback needs to know about a library song (rate 0: the engine reads the file).
+pub fn song_of(t: Option<&Track>) -> realhires::bitperfect::Song {
+    match t {
+        Some(t) => realhires::bitperfect::Song {
+            rate: t.sample_rate.max(0) as u32,
+            channels: t.channels.max(0) as u32,
+            bits: t.bits.max(0) as u32,
+            is_float: t.is_float,
+            is_lossy: t.is_lossy,
+        },
+        None => Default::default(),
+    }
+}
+
 impl Player {
     pub fn new(ctx: &egui::Context, cfg: Settings, initial: Vec<String>) -> Player {
         realhires::i18n::set_language(&cfg.language);
@@ -417,10 +725,12 @@ impl Player {
         let scanner = App::new(ctx, cfg, initial);
         let state = playerstate::load(None);
         let tracks = Library::open(None).map(|l| l.tracks()).unwrap_or_default();
-        let engine = Engine::new();
-        engine.set_gain(gain_of(&state));
+        let mut engine = Engine::new();
+        let (details_tx, details_rx) = mpsc::channel();
+        engine.set_gain(engine_gain(&state, scanner.cfg.bit_perfect));
         engine.set_eq(&state.eq);
         engine.set_gapless(scanner.cfg.gapless);
+        engine.set_bit_perfect(scanner.cfg.bit_perfect);
         let mut p = Player {
             covers: Covers::new(ctx),
             ctx: ctx.clone(),
@@ -430,6 +740,7 @@ impl Player {
             lib_stop: Arc::new(AtomicBool::new(false)),
             page: if quality_first { Page::Quality } else { Page::Library },
             back: vec![],
+            forward: vec![],
             search: String::new(),
             search_due: None,
             search_query: String::new(),
@@ -442,13 +753,23 @@ impl Player {
             fail_streak: 0,
             lyrics: None,
             show_up_next: false,
+            lyrics_hidden: false,
+            np_tab: NpTab::Lyrics,
+            details_extra: HashMap::new(),
+            details_song: String::new(),
+            details_tx,
+            details_rx,
             eq_open: false,
             eq_tab: 0,
             info: None,
             settings_group: 0,
             settings_draft: None,
             settings_due: None,
-            lyrics_scrolled: None,
+            lyrics_away: false,
+            lyrics_back: false,
+            lyrics_check: false,
+            np_hits: NpHits::default(),
+            lcd_links: vec![],
             lyrics_line: None,
             song_sort: (SongCol::Artist, false),
             applied_look: None,
@@ -456,12 +777,18 @@ impl Player {
             font_used: String::new(),
             selected_song: None,
             check_after_update: false,
-            group_sel: HashMap::new(),
+            group_selected: vec![],
+            album_sort: None,
+            album_sort_for: String::new(),
+            list_cache: HashMap::new(),
+            likes_gen: 0,
+            tag_job: None,
             custom_themes: realhires::themes::load_custom(None),
             file_themes: vec![],
             file_themes_read: Instant::now(),
             themes_gen: 0,
             edit_info: None,
+            cover_win: None,
             mb_win: None,
             mb_rx: None,
             mb_stop: Arc::new(AtomicBool::new(false)),
@@ -474,6 +801,7 @@ impl Player {
             listening: None,
             stats_period: realhires::stats::DEFAULT_PERIOD.to_string(),
             stats_cache: None,
+            calendar: Default::default(),
             recent_cache: None,
             name_dialog: None,
             confirm: None,
@@ -486,6 +814,7 @@ impl Player {
             scanner,
         };
         p.file_themes = realhires::themes::load_folder(&p.custom_themes, None);
+        p.covers.library_changed(&p.lib.albums);
         p.fill_choices();
         p.engine.set_device(&p.scanner.cfg.output_device.clone());
         p.update_library();
@@ -503,8 +832,8 @@ impl Player {
             if let Some(q) = p.queue.as_mut() {
                 q.start(&last);
             }
-            let rate = p.lib.track(&last).map(|t| t.sample_rate as u32).unwrap_or(0);
-            let token = p.engine.cue(&last, pos, rate);
+            let song = song_of(p.lib.track(&last));
+            let token = p.engine.cue(&last, pos, song);
             p.now = Some(NowPlaying { token, path: last, active: true });
             p.update_next();
         }
@@ -570,7 +899,9 @@ impl Player {
             self.lib_rx = None;
             self.lib_progress = None;
             self.lib = LibView::new(tracks);
-            self.covers.clear();
+            // covers stay unless an album's songs changed; then the grid covers not on disk yet
+            self.covers.library_changed(&self.lib.albums);
+            self.covers.prefetch(&self.lib.albums);
             if let Some(q) = self.queue.as_mut() {
                 q.library = self.lib.songs.clone();
             }
@@ -757,8 +1088,8 @@ impl Player {
     }
 
     fn play_path(&mut self, path: &str) {
-        let rate = self.lib.track(path).map(|t| t.sample_rate as u32).unwrap_or(0);
-        let token = self.engine.play(path, 0.0, rate);
+        let song = song_of(self.lib.track(path));
+        let token = self.engine.play(path, 0.0, song);
         self.now = Some(NowPlaying { token, path: path.to_string(), active: true });
         self.message = None;
         self.update_next();
@@ -767,29 +1098,41 @@ impl Player {
         self.state_dirty = true;
     }
 
+    /// Play Next (`first`) / Add to Queue (2.1): the songs come after the current one (Play
+    /// Next before songs queued earlier, Add to Queue after them); with nothing playing they
+    /// start playing.
+    pub fn queue_songs(&mut self, paths: &[String], first: bool) {
+        let paths: Vec<String> = paths.iter().filter(|p| self.lib.track(p).is_some()).cloned().collect();
+        if paths.is_empty() {
+            return;
+        }
+        let playing = self.now.as_ref().is_some_and(|n| n.active);
+        match self.queue.as_mut() {
+            Some(q) if playing && q.current().is_some() => {
+                if first {
+                    q.play_next(&paths);
+                } else {
+                    q.add_to_queue(&paths);
+                }
+                self.update_next();
+            }
+            _ => self.play_list(paths, None, "Queue"),
+        }
+    }
+
     /// Tell the engine which song follows gaplessly.
     pub fn update_next(&mut self) {
         let Some(q) = self.queue.as_ref() else {
             self.engine.set_next(None);
             return;
         };
-        let Some(cur) = q.current().map(str::to_string) else {
-            self.engine.set_next(None);
-            return;
-        };
-        let next = match q.repeat.as_str() {
-            "song" => Some(cur.clone()),
-            "stop" => None,
-            "album" => {
-                let key = |p: &str| self.lib.track(p).map(|t| t.song().album_key());
-                q.up_next(1).into_iter().next().filter(|n| key(n) == key(&cur))
-            }
-            _ => q.up_next(1).into_iter().next(),
-        };
+        // what the queue plays when the current song ends by itself, asked of a copy (as the
+        // Python app does), so repeat, the album rules and queued songs all count
+        let next = q.clone().next(true);
         match next {
             Some(p) => {
-                let rate = self.lib.track(&p).map(|t| t.sample_rate as u32).unwrap_or(0);
-                self.engine.set_next(Some((&p, rate)));
+                let song = song_of(self.lib.track(&p));
+                self.engine.set_next(Some((&p, song)));
             }
             None => self.engine.set_next(None),
         }
@@ -878,18 +1221,22 @@ impl Player {
     pub fn toggle_like(&mut self, path: &str) {
         let liked = self.state.is_liked(path);
         self.state.set_liked(path, !liked);
+        self.likes_gen += 1;
         self.save_state();
     }
 
     pub fn set_volume(&mut self, v: f64) {
+        if self.scanner.cfg.bit_perfect {
+            return; // the volume is not used then: it is set on the amplifier or DAC
+        }
         self.state.volume = v.clamp(0.0, 1.0);
-        self.engine.set_gain(gain_of(&self.state));
+        self.engine.set_gain(engine_gain(&self.state, false));
         self.state_dirty = true;
     }
 
     pub fn toggle_mute(&mut self) {
         self.state.muted = !self.state.muted;
-        self.engine.set_gain(gain_of(&self.state));
+        self.engine.set_gain(engine_gain(&self.state, self.scanner.cfg.bit_perfect));
         self.state_dirty = true;
     }
 
@@ -916,6 +1263,12 @@ impl Player {
     }
 
     fn poll_engine(&mut self) {
+        // bit-perfect playback may also be switched in the Quality check page's Settings window
+        if self.engine.bit_perfect() != self.scanner.cfg.bit_perfect {
+            let on = self.scanner.cfg.bit_perfect;
+            self.engine.set_gain(engine_gain(&self.state, on));
+            self.engine.set_bit_perfect(on);
+        }
         for ev in self.engine.take_events() {
             match ev {
                 Event::Started { token, path } => {
@@ -996,6 +1349,11 @@ impl Player {
             Page::Liked => self.liked_songs().iter().map(|t| t.path.clone()).collect(),
             Page::AllSongs => self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect(),
             Page::Playlist(id) => self.playlist_songs(id),
+            Page::Group(kind, name) => self
+                .lib
+                .find_group(kind, name)
+                .map(|i| self.lib.groups(kind)[i].tracks.iter().map(|t| t.path.clone()).collect())
+                .unwrap_or_default(),
             Page::Disliked => self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).map(|t| t.path.clone()).collect(),
             _ => all(),
         }
@@ -1005,52 +1363,315 @@ impl Player {
         self.lib.tracks.iter().filter(|t| self.state.is_liked(&t.path)).collect()
     }
 
-    pub fn sorted_songs<'a>(&self, mut v: Vec<&'a Track>) -> Vec<&'a Track> {
-        let (col, rev) = self.song_sort;
-        let key = |t: &Track| -> (String, String, String) {
-            match col {
-                SongCol::Title => (casefold(&t.display_title()), casefold(&t.display_artist()), t.path.clone()),
-                SongCol::Artist => (casefold(&t.display_artist()), casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track)),
-                SongCol::Album => (casefold(&t.display_album()), format!("{:04}{:04}", t.disc, t.track), t.path.clone()),
-                SongCol::Genre => (casefold(&t.genre), casefold(&t.display_artist()), t.path.clone()),
-                SongCol::Time => (format!("{:012.3}", t.duration), String::new(), t.path.clone()),
-                SongCol::Quality => (musiclib::quality(t), casefold(&t.display_title()), t.path.clone()),
+    pub fn sorted_songs<'a>(&self, v: Vec<&'a Track>) -> Vec<&'a Track> {
+        sort_tracks(v, Some(self.song_sort))
+    }
+
+    /// A song list of a page, sorted, made again only when the library, the sort or the
+    /// likes changed: sorting thousands of songs every frame made scrolling lag.
+    pub fn cached_list(
+        &mut self,
+        id: &str,
+        sort: Option<(SongCol, bool)>,
+        make: impl FnOnce(&Player) -> Vec<String>,
+    ) -> Arc<Vec<String>> {
+        let key = (self.lib.gen, sort, self.likes_gen);
+        if let Some((k, v)) = self.list_cache.get(id) {
+            if *k == key {
+                return v.clone();
             }
-        };
-        v.sort_by_key(|t| key(t));
-        if rev {
-            v.reverse();
         }
+        let v = Arc::new(make(self));
+        if self.list_cache.len() > 64 {
+            self.list_cache.clear();
+        }
+        self.list_cache.insert(id.to_string(), (key, v.clone()));
         v
+    }
+
+    pub fn album_sort_for(&self) -> &str {
+        &self.album_sort_for
+    }
+
+    /// Another album page is shown: in track order again.
+    pub fn set_album_sort_for(&mut self, key: &str) {
+        self.album_sort_for = key.to_string();
+        self.album_sort = None;
+    }
+
+    /// The sort of a kind of song list: album pages have their own (track order at first).
+    pub fn sort_of(&self, kind: &str) -> Option<(SongCol, bool)> {
+        if kind == "album" {
+            self.album_sort
+        } else {
+            Some(self.song_sort)
+        }
+    }
+
+    pub fn set_sort(&mut self, kind: &str, col: SongCol) {
+        let cur = self.sort_of(kind);
+        let next = match cur {
+            Some((c, rev)) if c == col => (col, !rev),
+            _ => (col, false),
+        };
+        if kind == "album" {
+            self.album_sort = Some(next);
+        } else {
+            self.song_sort = next;
+        }
+    }
+
+    /// The page of an artist (Artists, else Album Artists).  Each artist of a field such
+    /// as "Mariah Carey, Michael Bublé" has a page of its own; a name that is not an
+    /// artist of the library opens the first artist `split_artists()` gives.
+    pub fn open_artist(&mut self, name: &str) {
+        let mut names = vec![name.to_string()];
+        names.extend(musiclib::split_artists(name, &self.lib.known).into_iter().take(1));
+        for n in &names {
+            for kind in ["artists", "album_artists"] {
+                if let Some(i) = self.lib.find_group(kind, n) {
+                    let name = self.lib.groups(kind)[i].name.clone();
+                    self.go(Page::Group(kind, name));
+                    return;
+                }
+            }
+        }
+        self.go(Page::Artists);
+    }
+
+    // --------------------------------------------- renaming and merging ---
+
+    /// Rename… a genre, composer or year: asks for the new name.
+    pub fn ask_rename_group(&mut self, kind: &'static str, name: &str) {
+        let texts = rename_texts(kind);
+        let unknown = name == unknown_name(kind);
+        let prompt = if unknown {
+            i18n::tr(texts.prompt_unknown).to_string()
+        } else {
+            i18n::fill(i18n::tr(texts.prompt), &[("name", name.to_string())])
+        };
+        let initial = if unknown { "" } else { name };
+        self.ask_name_with(i18n::tr(texts.title), &prompt, initial, NameAction::RenameGroup(kind, name.to_string()), vec![]);
+    }
+
+    /// Merge into… (one genre) or Merge N genres… (several): asks for the genre they become.
+    pub fn ask_merge_groups(&mut self, kind: &'static str, names: Vec<String>) {
+        let groups: Vec<&Group> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).map(|i| &self.lib.groups(kind)[i]).collect();
+        if groups.is_empty() {
+            return;
+        }
+        if groups.len() == 1 {
+            let mine = casefold(groups[0].name.trim());
+            let others: Vec<String> = self
+                .lib
+                .groups(kind)
+                .iter()
+                .filter(|g| casefold(g.name.trim()) != mine && g.name != unknown_name(kind))
+                .map(|g| g.name.clone())
+                .collect();
+            let prompt = tr!(
+                "Merge the genre “{name}” into which genre? Choose one, or type a new name.",
+                name = tr_name(&groups[0].name)
+            );
+            self.ask_name_with(tr!("Merge into"), &prompt, "", NameAction::MergeGroups(kind, names), others);
+        } else {
+            let mut biggest = groups.clone();
+            biggest.sort_by_key(|g| std::cmp::Reverse(g.tracks.len()));
+            let choices: Vec<String> = biggest.iter().filter(|g| g.name != unknown_name(kind)).map(|g| g.name.clone()).collect();
+            let first = choices.first().cloned().unwrap_or_default();
+            let k = groups.len();
+            self.ask_name_with(
+                &tr!("Merge {count} genres", count = k),
+                &tr!("Merge {count} genres into one. Its name:", count = k),
+                &first,
+                NameAction::MergeGroups(kind, names),
+                choices,
+            );
+        }
+    }
+
+    /// Check the new name, find the songs that do not have it yet and ask before
+    /// changing their files (`ConfirmAction::RetagGroup`); Err keeps the name dialog open.
+    pub fn retag_group(&mut self, kind: &'static str, names: &[String], text: &str, merge: bool) -> Result<(), String> {
+        // the core's message, in the language in use
+        let new = realhires::tagedit::check_group_name(kind, text).map_err(|e| tr_text(&e.0))?;
+        if self.tag_job.as_ref().is_some_and(|j| !j.done()) {
+            return Err(tr!("Songs are still being changed; try again when that has finished.").into());
+        }
+        let texts = rename_texts(kind);
+        let groups: Vec<usize> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).collect();
+        let mut seen = HashSet::new();
+        let mut paths = vec![];
+        for &g in &groups {
+            for t in &self.lib.groups(kind)[g].tracks {
+                if group_value(kind, t) != new && seen.insert(t.path.clone()) {
+                    paths.push(t.path.clone());
+                }
+            }
+        }
+        if paths.is_empty() {
+            return Err(i18n::fill(i18n::tr(texts.same), &[("new", new.clone())]));
+        }
+        let from: Vec<String> = groups.iter().map(|&g| self.lib.groups(kind)[g].name.clone()).collect();
+        let n = plural(paths.len(), "song");
+        let old = from.first().cloned().unwrap_or_default();
+        let (title, what) = if merge && from.len() > 1 {
+            let listed: Vec<String> = from.iter().map(|f| tr!("“{name}”", name = tr_name(f))).collect();
+            (
+                tr!("Merge genres").to_string(),
+                tr!(
+                    "Merge {count} genres ({listed}) into “{target}”? The genre of {n} becomes “{target}”.",
+                    count = from.len(),
+                    listed = listed.join(tr!(", ")),
+                    target = &new,
+                    n = &n
+                ),
+            )
+        } else if merge {
+            (
+                tr!("Merge genres").to_string(),
+                tr!(
+                    "Merge the genre “{name}” into “{target}”? The genre of {n} becomes “{target}”.",
+                    name = tr_name(&old),
+                    target = &new,
+                    n = &n
+                ),
+            )
+        } else if old == unknown_name(kind) {
+            (i18n::tr(texts.title).to_string(), i18n::fill(i18n::tr(texts.ask_unknown), &[("n", n.clone()), ("new", new.clone())]))
+        } else {
+            (
+                i18n::tr(texts.title).to_string(),
+                i18n::fill(i18n::tr(texts.ask), &[("name", old.clone()), ("new", new.clone()), ("n", n.clone())]),
+            )
+        };
+        self.confirm = Some(ConfirmAction::RetagGroup {
+            title,
+            text: tr!(
+                "{question} Only the information in the files is changed; the music itself is not touched.",
+                question = what
+            ),
+            kind,
+            paths,
+            name: new,
+            from,
+        });
+        Ok(())
+    }
+
+    /// The Equalizer's Delete…: the preset named (chosen from its menu), else the one the
+    /// equalizer is set to; asks first (`ConfirmAction::DeleteEqPreset`).
+    pub fn eq_delete(&mut self, name: Option<String>) -> bool {
+        let name = name.or_else(|| Some(self.state.matching_eq_preset()).filter(|n| !n.is_empty()));
+        match name {
+            Some(n) if self.state.eq_preset(&n).is_some() => {
+                self.confirm = Some(ConfirmAction::DeleteEqPreset(n));
+                true
+            }
+            _ => false,
+        }
     }
 
     // ------------------------------------------------------------ lyrics ---
 
     /// The lyrics of the song playing, read again when lyrics were saved.
     pub fn lyrics_of_now(&mut self) -> Option<ShownLyrics> {
+        use realhires::lyrics::Status;
         let path = self.now.as_ref()?.path.clone();
         let gen = self.scanner.lyrics_gen;
-        if let Some((p, g, l)) = &self.lyrics {
+        if let Some((p, g, l, _)) = &self.lyrics {
             if *p == path && *g == gen {
                 return l.clone();
             }
         }
-        let shown = realhires::lyrics::read_lyrics_file(&path).and_then(|(kind, text, _)| match kind {
-            realhires::lyrics::Status::Instrumental => Some(ShownLyrics::Instrumental),
-            realhires::lyrics::Status::Synced => {
-                let lines = realhires::embed::lrc_entries(&text);
-                if lines.is_empty() {
-                    let plain = realhires::lyrics::strip_timestamps(&text);
-                    (!plain.trim().is_empty()).then_some(ShownLyrics::Plain(plain))
-                } else {
-                    Some(ShownLyrics::Synced(lines))
+        let mut file = String::new();
+        let shown = realhires::lyrics::read_lyrics_file(&path).and_then(|(kind, text, f)| {
+            file = f;
+            match kind {
+                Status::Instrumental => Some(ShownLyrics::Instrumental),
+                Status::Synced => {
+                    let lines = realhires::embed::lrc_entries(&text);
+                    if lines.is_empty() {
+                        let plain = realhires::lyrics::strip_timestamps(&text);
+                        (!plain.trim().is_empty()).then_some(ShownLyrics::Plain(plain))
+                    } else {
+                        Some(ShownLyrics::Synced(lines))
+                    }
                 }
+                _ => (!text.trim().is_empty()).then(|| ShownLyrics::Plain(text)),
             }
-            _ => (!text.trim().is_empty()).then(|| ShownLyrics::Plain(text)),
         });
-        self.lyrics = Some((path, gen, shown.clone()));
+        // the label above them says what is shown (synced lyrics without a timed line show as plain)
+        let label = match &shown {
+            Some(l) => {
+                let kind = match l {
+                    ShownLyrics::Synced(_) => Status::Synced,
+                    ShownLyrics::Plain(_) => Status::Plain,
+                    ShownLyrics::Instrumental => Status::Instrumental,
+                };
+                let (a, b) = realhires::lyrics::shown_label(kind, &path, &file);
+                (a.to_string(), b)
+            }
+            None => (String::new(), String::new()),
+        };
+        self.lyrics = Some((path, gen, shown.clone(), label));
         self.lyrics_line = None;
+        self.lyrics_away = false;
         shown
+    }
+
+    /// What Now Playing writes above the lyrics: ("Synced lyrics", ".lrc file"), or empty.
+    pub fn lyrics_label_of_now(&mut self) -> (String, String) {
+        self.lyrics_of_now();
+        self.lyrics.as_ref().map(|l| l.3.clone()).unwrap_or_default()
+    }
+
+    /// A+ (+1) / A− (-1) on Now Playing: the lyrics larger or smaller, saved at once.
+    pub fn lyrics_size_step(&mut self, steps: i64) {
+        let before = self.state.lyrics_size;
+        if self.state.step_lyrics_size(steps) != before {
+            self.save_state();
+        }
+    }
+
+    /// Get lyrics (Now Playing, a song's menu): the lyrics window for these songs, which
+    /// starts downloading at once; Now Playing shows the lyrics when they are saved.
+    pub fn get_lyrics(&mut self, paths: Vec<String>) {
+        self.scanner.download_lyrics_now(paths);
+    }
+
+    /// Now Playing's Details for the song playing: the comment tag (read by ffprobe in a
+    /// thread) and the saved Quality check verdict, read again when the song changes.
+    pub fn details_extra(&mut self, path: &str) -> (String, Option<(String, String)>) {
+        while let Ok((p, comment)) = self.details_rx.try_recv() {
+            if let Some(e) = self.details_extra.get_mut(&p) {
+                e.0 = Some(comment);
+            }
+        }
+        if self.details_song != path {
+            self.details_song = path.to_string();
+            self.details_extra.retain(|_, e| e.0.is_none()); // still being read: the answer is on its way
+            self.details_extra.remove(path);
+        }
+        if !self.details_extra.contains_key(path) {
+            let skey = realhires::store::settings_key(&self.scanner.cfg);
+            let verdict = self
+                .scanner
+                .results
+                .get(path)
+                .cloned()
+                .or_else(|| self.scanner.store.as_ref().and_then(|s| s.lookup(path, &skey, None)))
+                .map(|r| (crate::style::verdict_style(r.verdict).0.to_string(), r.summary.clone()));
+            self.details_extra.insert(path.to_string(), (None, verdict));
+            let (tx, p, ctx) = (self.details_tx.clone(), path.to_string(), self.ctx.clone());
+            std::thread::spawn(move || {
+                let comment = read_comment(&p);
+                let _ = tx.send((p, comment));
+                ctx.request_repaint();
+            });
+        }
+        let e = &self.details_extra[path];
+        (e.0.clone().unwrap_or_default(), e.1.clone())
     }
 
     // ------------------------------------------------------------ settings ---
@@ -1150,6 +1771,20 @@ impl Player {
             return;
         }
         self.edit_info = Some(crate::editinfo::EditInfo::new(&self.ctx, paths, heading, subheading));
+    }
+
+    /// Open the Cover window of this song's cover (a click on Now Playing's
+    /// cover, Cover… in the song menus); one at a time, and not while it works.
+    pub fn open_cover_window(&mut self, path: &str) {
+        if self.cover_win.as_ref().is_some_and(|w| w.busy || w.path == path) {
+            return;
+        }
+        if !std::path::Path::new(path).is_file() {
+            return;
+        }
+        let album = self.lib.album_of(path).cloned();
+        let track = self.lib.track(path).cloned();
+        self.cover_win = Some(crate::coverwin::CoverWin::new(&self.ctx, path, album.as_ref(), track.as_ref(), &self.scanner.cfg));
     }
 
     /// Use the theme called `name` (saved in the settings at once).
@@ -1280,6 +1915,7 @@ impl Player {
     pub fn toggle_dislike(&mut self, path: &str) {
         let d = self.state.is_disliked(path);
         self.state.set_disliked(path, !d);
+        self.likes_gen += 1;
         self.save_state();
         if let Some(q) = self.queue.as_mut() {
             q.disliked = self.state.disliked.iter().cloned().collect();
@@ -1321,6 +1957,8 @@ impl Player {
                 self.themes_changed();
                 self.set_theme(&name);
             }
+            NameAction::RenameGroup(kind, name) => self.retag_group(kind, &[name], text, false)?,
+            NameAction::MergeGroups(kind, names) => self.retag_group(kind, &names, text, true)?,
             NameAction::RenameTheme(old) => {
                 let name = realhires::themes::check_name(text, &self.all_themes(), &old).map_err(|e| e.0)?;
                 if let Some(t) = self.custom_themes.iter_mut().find(|t| t.name == old) {
@@ -1340,7 +1978,10 @@ impl Player {
             ConfirmAction::DeletePlaylist(id) => {
                 self.state.delete_playlist(&id);
                 self.save_state();
-                if self.page == Page::Playlist(id) {
+                let gone = Page::Playlist(id);
+                self.back.retain(|p| *p != gone);
+                self.forward.retain(|p| *p != gone);
+                if self.page == gone {
                     self.page = Page::Playlists;
                 }
             }
@@ -1356,11 +1997,35 @@ impl Player {
                 }
             }
             ConfirmAction::ClearHistory => self.clear_history(),
+            ConfirmAction::RetagGroup { title, kind, paths, name, from, .. } => {
+                if self.tag_job.as_ref().is_none_or(|j| j.done()) {
+                    // the page of the group follows it to its new name
+                    if let Page::Group(k, n) = &self.page {
+                        if *k == kind && from.iter().any(|f| casefold(f.trim()) == casefold(n.trim())) {
+                            self.page = Page::Group(kind, name.clone());
+                        }
+                    }
+                    self.group_selected.clear();
+                    let cfg = self.scanner.cfg.clone();
+                    self.tag_job = Some(crate::editinfo::RenameJob::new(&self.ctx, title, kind, paths, name, cfg));
+                }
+            }
         }
     }
 
     pub fn ask_name(&mut self, title: &str, text: &str, action: NameAction) {
-        self.name_dialog = Some(NameDialog { title: title.into(), text: text.into(), action, error: String::new() });
+        self.ask_name_with(title, "", text, action, vec![]);
+    }
+
+    pub fn ask_name_with(&mut self, title: &str, prompt: &str, text: &str, action: NameAction, choices: Vec<String>) {
+        self.name_dialog = Some(NameDialog {
+            title: title.into(),
+            text: text.into(),
+            action,
+            error: String::new(),
+            prompt: prompt.into(),
+            choices,
+        });
     }
 
     /// Import an equalizer preset file's text: applied and kept under its name.
@@ -1426,6 +2091,11 @@ impl Player {
         if new.output_device != old.output_device {
             self.engine.set_device(&new.output_device);
         }
+        if new.bit_perfect != old.bit_perfect {
+            // the song playing restarts where it is, the device opened the new way
+            self.engine.set_gain(engine_gain(&self.state, new.bit_perfect));
+            self.engine.set_bit_perfect(new.bit_perfect);
+        }
         if new.library_folders != old.library_folders || new.extension_set() != old.extension_set() {
             self.lib_stop.store(true, Ordering::Relaxed);
             self.lib_rx = None;
@@ -1486,25 +2156,42 @@ impl Player {
 
     // -------------------------------------------------------------- pages ---
 
+    /// Open a page (a new page clears the Forward list, as in a browser).
     pub fn go(&mut self, page: Page) {
         if self.page != page {
-            let old = std::mem::replace(&mut self.page, page);
-            if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
-                self.back.push(old);
-                if self.back.len() > 20 {
-                    self.back.remove(0);
-                }
+            self.forward.clear();
+            self.enter(page);
+        }
+    }
+
+    /// Show `page`, remembering the page left for Back (not Now Playing, Search,
+    /// the Quality check or Settings).
+    fn enter(&mut self, page: Page) {
+        let old = std::mem::replace(&mut self.page, page);
+        if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
+            self.back.push(old);
+            if self.back.len() > 20 {
+                self.back.remove(0);
             }
-            if self.page == Page::Settings {
-                self.settings_draft = None;
-                self.fill_choices();
-            }
+        }
+        if self.page == Page::Settings {
+            self.settings_draft = None;
+            self.fill_choices();
         }
     }
 
     pub fn go_back(&mut self) {
         if let Some(p) = self.back.pop() {
-            self.page = p;
+            let left = std::mem::replace(&mut self.page, p);
+            self.forward.push(left);
+        }
+    }
+
+    /// Forward (the mouse's forward button, Alt+Right, Cmd+] on macOS): the page
+    /// left last with Back (2.1).
+    pub fn go_forward(&mut self) {
+        if let Some(p) = self.forward.pop() {
+            self.enter(p);
         }
     }
 
@@ -1597,17 +2284,45 @@ impl Player {
     }
 
     fn keys(&mut self, ctx: &egui::Context) {
-        if self.page == Page::Quality || ctx.egui_wants_keyboard_input() {
+        // the mouse's back and forward buttons, on every page; Alt+Left / Alt+Right
+        // (Cmd+[ / Cmd+] on macOS) when no text field has the keyboard (2.1)
+        let typing = ctx.egui_wants_keyboard_input();
+        let (back, forward) = ctx.input(|i| {
+            let mac = cfg!(target_os = "macos");
+            let key = |arrow, bracket| {
+                if mac {
+                    i.modifiers.mac_cmd && i.key_pressed(bracket)
+                } else {
+                    i.modifiers.alt && !i.modifiers.ctrl && i.key_pressed(arrow)
+                }
+            };
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                    || (!typing && key(egui::Key::ArrowLeft, egui::Key::OpenBracket)),
+                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                    || (!typing && key(egui::Key::ArrowRight, egui::Key::CloseBracket)),
+            )
+        });
+        if back {
+            self.go_back();
+        } else if forward {
+            self.go_forward();
+        }
+        if self.page == Page::Quality || typing {
             return;
         }
-        let (space, right, left, cmd_f) = ctx.input(|i| {
+        let (space, right, left, cmd_f, cmd_l) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.modifiers.command && i.key_pressed(egui::Key::ArrowRight),
                 i.modifiers.command && i.key_pressed(egui::Key::ArrowLeft),
                 i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.modifiers.command && i.key_pressed(egui::Key::L),
             )
         });
+        if cmd_l {
+            self.lyrics_button();
+        }
         if space {
             self.toggle_play();
         }
@@ -1642,7 +2357,8 @@ impl Player {
             ui.label(RichText::new(text).font(look::title(11.5)).color(pal.secondary));
             ui.add_space(2.0);
         };
-        let height = ui.available_height() - 64.0;
+        // room at the bottom for Quality Check, Settings and the library status
+        let height = ui.available_height() - 96.0;
         egui::ScrollArea::vertical().id_salt("sidebar").max_height(height.max(100.0)).auto_shrink([false, true]).show(ui, |ui| {
             if sidebar_item(ui, pal, Icon::Library, tr!("Library"), self.page == Page::Library).clicked() {
                 self.back.clear();
@@ -1650,14 +2366,14 @@ impl Player {
             }
             section(ui, tr!("Library"));
             let items: [(Icon, &str, Page); 8] = [
-                (Icon::Note, "All Songs", Page::AllSongs),
-                (Icon::Folder, "Folders", Page::Folders(None)),
-                (Icon::Albums, "Albums", Page::Albums),
-                (Icon::Person, "Artists", Page::Artists),
-                (Icon::People, "Album Artists", Page::AlbumArtists),
-                (Icon::Genres, "Genres", Page::Genres),
-                (Icon::Calendar, "Years", Page::Years),
-                (Icon::Composer, "Composers", Page::Composers),
+                (Icon::Note, n_!("All Songs"), Page::AllSongs),
+                (Icon::Folder, n_!("Folders"), Page::Folders(None)),
+                (Icon::Albums, n_!("Albums"), Page::Albums),
+                (Icon::Person, n_!("Artists"), Page::Artists),
+                (Icon::People, n_!("Album Artists"), Page::AlbumArtists),
+                (Icon::Genres, n_!("Genres"), Page::Genres),
+                (Icon::Calendar, n_!("Years"), Page::Years),
+                (Icon::Composer, n_!("Composers"), Page::Composers),
             ];
             for (icon, label, page) in items {
                 let selected = self.page == page
@@ -1689,9 +2405,9 @@ impl Player {
             }
             section(ui, tr!("History"));
             let items: [(Icon, &str, Page); 3] = [
-                (Icon::Clock, "Recently Played", Page::RecentlyPlayed),
-                (Icon::Albums, "Recently Added", Page::Recent),
-                (Icon::Chart, "Your Stats", Page::Stats),
+                (Icon::Clock, n_!("Recently Played"), Page::RecentlyPlayed),
+                (Icon::Albums, n_!("Recently Added"), Page::Recent),
+                (Icon::Chart, n_!("Your Stats"), Page::Stats),
             ];
             for (icon, label, page) in items {
                 let selected = self.page == page || (page == Page::Stats && self.page == Page::StatsDetails);
@@ -1708,9 +2424,8 @@ impl Player {
             if sidebar_item(ui, pal, Icon::Gear, tr!("Settings"), self.page == Page::Settings).clicked() {
                 self.go(Page::Settings);
             }
-            if self.page == Page::Quality
-                && sidebar_item(ui, pal, Icon::Check, tr!("Quality check"), true).clicked()
-            {
+            // always there (2.1: the menu bars are gone), just above Settings
+            if sidebar_item(ui, pal, Icon::Check, tr!("Quality Check"), self.page == Page::Quality).clicked() {
                 self.go(Page::Quality);
             }
         });
@@ -1769,8 +2484,19 @@ impl Player {
             self.lcd(ui, pal, lcd_w);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let mut v = self.state.volume as f32;
-                let slider = ui.add_sized([96.0, 20.0], egui::Slider::new(&mut v, 0.0..=1.0).show_value(false));
+                // bit-perfect playback: the gain is exactly 1, so the slider shows full volume and cannot move
+                let bit_perfect = self.scanner.cfg.bit_perfect;
+                let mut v = if bit_perfect { 1.0 } else { self.state.volume as f32 };
+                let slider = ui
+                    .add_enabled_ui(!bit_perfect, |ui| {
+                        ui.add_sized([96.0, 20.0], egui::Slider::new(&mut v, 0.0..=1.0).show_value(false))
+                    })
+                    .inner;
+                let slider = if bit_perfect {
+                    slider.on_disabled_hover_text(tr!("Bit-perfect playback is on: set the volume on your amplifier or DAC"))
+                } else {
+                    slider
+                };
                 if slider.changed() {
                     self.set_volume(v as f64);
                 }
@@ -1779,18 +2505,15 @@ impl Player {
                     self.toggle_mute();
                 }
                 ui.add_space(6.0);
-                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled, true, tr!("Equalizer")).clicked() {
+                if icons::button(ui, Icon::Equalizer, 28.0, self.state.eq.enabled && !bit_perfect, true, tr!("Equalizer")).clicked() {
                     self.eq_open = !self.eq_open;
                 }
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, tr!("Up Next")).clicked() {
                     self.show_up_next = !self.show_up_next;
                 }
-                if icons::button(ui, Icon::Lyrics, 28.0, self.page == Page::NowPlaying, true, tr!("Lyrics")).clicked() {
-                    if self.page == Page::NowPlaying {
-                        self.go_back_from_now();
-                    } else {
-                        self.go(Page::NowPlaying);
-                    }
+                let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden && self.np_tab == NpTab::Lyrics;
+                if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, tr!("Lyrics")).clicked() {
+                    self.lyrics_button();
                 }
                 let now_path = self.now.as_ref().map(|n| n.path.clone());
                 let r = icons::button(ui, Icon::More, 28.0, false, has, tr!("More"));
@@ -1819,6 +2542,54 @@ impl Player {
         self.page = back;
     }
 
+    /// The Lyrics button and Ctrl/Cmd+L: elsewhere they open Now Playing with the lyrics; on
+    /// Now Playing they hide or show the lyrics (hidden, the cover is in the middle) and the
+    /// page stays (2.1, as the user asked).
+    pub fn lyrics_button(&mut self) {
+        if self.page == Page::NowPlaying {
+            if self.np_tab != NpTab::Lyrics {
+                self.np_tab = NpTab::Lyrics;
+                self.lyrics_hidden = false;
+            } else {
+                self.lyrics_hidden = !self.lyrics_hidden;
+            }
+        } else {
+            self.lyrics_hidden = false;
+            self.np_tab = NpTab::Lyrics;
+            self.go(Page::NowPlaying);
+        }
+    }
+
+    /// Now Playing's switch: Lyrics, Up Next or Details (kept for the session).
+    pub fn set_np_tab(&mut self, tab: NpTab) {
+        self.np_tab = tab;
+        self.lyrics_hidden = false;
+    }
+
+    /// The album page of a song's album.
+    pub fn open_album_of(&mut self, path: &str) {
+        if let Some(key) = self.lib.album_of(path).map(|a| a.key.clone()) {
+            self.go(Page::Album(key));
+        }
+    }
+
+    /// Up Next (Now Playing): play that song now; the queue continues after it.
+    pub fn jump_up_next(&mut self, i: usize) {
+        // PlayQueue::jump() also handles the songs queued with Play Next / Add to Queue
+        if let Some(p) = self.queue.as_mut().and_then(|q| q.jump(i)) {
+            self.play_path(&p);
+        }
+    }
+
+    /// A click on the LCD's cover opens Now Playing, or leaves it when it is shown.
+    pub fn cover_clicked(&mut self) {
+        if self.page == Page::NowPlaying {
+            self.go_back_from_now();
+        } else {
+            self.go(Page::NowPlaying);
+        }
+    }
+
     /// The panel in the middle of the playback bar.
     fn lcd(&mut self, ui: &mut Ui, pal: &Palette, width: f32) {
         let (rect, _) = ui.allocate_exact_size(vec2(width, 54.0), Sense::hover());
@@ -1838,7 +2609,7 @@ impl Player {
         cover(&p, cover_rect, tex.as_ref(), &track.display_album(), 5);
         let cover_resp = ui.interact(cover_rect, ui.id().with("lcd-cover"), Sense::click());
         if cover_resp.on_hover_text(tr!("Now Playing")).clicked() {
-            self.go(Page::NowPlaying);
+            self.cover_clicked();
         }
         // texts
         let badge = quality_label(&track);
@@ -1849,13 +2620,36 @@ impl Player {
         let mid = (text_left + text_right) / 2.0;
         let clip = Rect::from_x_y_ranges(text_left..=text_right, rect.y_range());
         let tp = ui.painter_at(clip);
-        tp.text(pos2(mid, rect.top() + 13.0), Align2::CENTER_CENTER, track.display_title(), look::title(13.0), pal.text);
-        let second = match &self.message {
-            Some((m, _)) => m.clone(),
-            None => artist_album(&track),
-        };
-        let second_color = if self.message.is_some() { pal.accent } else { pal.secondary };
-        tp.text(pos2(mid, rect.top() + 29.0), Align2::CENTER_CENTER, second, look::text(11.5), second_color);
+        // the title and the album name open the album, each artist name that artist (2.1)
+        let has_album = self.lib.album_of(&path).is_some();
+        let mut open = None;
+        let title = crate::pages::elided(ui, &track.display_title(), look::title(13.0), pal.text, clip.width());
+        let trect = Rect::from_center_size(pos2(mid, rect.top() + 13.0), title.size());
+        tp.galley(trect.min, title, pal.text);
+        self.lcd_links.clear();
+        if has_album {
+            let r = ui.interact(trect, ui.scope_id().with("lcd-title"), Sense::click());
+            if r.hovered() {
+                tp.line_segment([pos2(trect.left(), trect.bottom() - 1.0), pos2(trect.right(), trect.bottom() - 1.0)], Stroke::new(1.0, pal.text));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if r.clicked() {
+                open = Some(crate::pages::Link::Album);
+            }
+            self.lcd_links.push((trect, crate::pages::Link::Album));
+        }
+        match &self.message {
+            Some((m, _)) => {
+                tp.text(pos2(mid, rect.top() + 29.0), Align2::CENTER_CENTER, m.clone(), look::text(11.5), pal.accent);
+            }
+            None => {
+                let artists = self.lib.artists_of(&track);
+                let pieces = crate::pages::artist_line(ui, look::text(11.5), pal.secondary, &artists, &track.display_album(), has_album, clip.width());
+                let (rects, clicked) = crate::pages::paint_links(ui, &tp, pieces, pos2(mid, rect.top() + 29.0), pal.secondary, ui.scope_id().with("lcd-links"));
+                self.lcd_links.extend(rects);
+                open = open.or(clicked);
+            }
+        }
         // seek bar
         let dur = track.duration.max(0.0);
         let pos = if now_active { self.engine.position().unwrap_or(0.0) } else { 0.0 };
@@ -1887,6 +2681,11 @@ impl Player {
         if bresp.on_hover_text(tr!("Playback info")).clicked() {
             self.open_info();
         }
+        match open {
+            Some(crate::pages::Link::Artist(name)) => self.open_artist(&name),
+            Some(crate::pages::Link::Album) => self.open_album_of(&path),
+            None => {}
+        }
     }
 
     fn up_next(&mut self, ui: &mut Ui, pal: &Palette) {
@@ -1901,7 +2700,6 @@ impl Player {
             return;
         };
         let upcoming = q.up_next(50);
-        let base = q.pos + 1;
         if upcoming.is_empty() {
             ui.label(RichText::new(tr!("Nothing comes after this song.")).color(pal.secondary));
         }
@@ -1919,14 +2717,12 @@ impl Player {
                 p.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
                 p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
                 if resp.double_clicked() {
-                    jump = Some(base + i);
+                    jump = Some(i);
                 }
             }
         });
         if let Some(i) = jump {
-            if let Some(q) = self.queue.as_mut() {
-                q.pos = i;
-                let p = q.order[i].clone();
+            if let Some(p) = self.queue.as_mut().and_then(|q| q.jump(i)) {
                 self.play_path(&p);
             }
         }
@@ -1934,6 +2730,7 @@ impl Player {
 
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
         self.dialogs(ctx, pal);
+        let cover_open = crate::coverwin::cover_window(self, ctx, pal);
         if let Some(mut w) = self.edit_info.take() {
             let cfg = self.scanner.cfg.clone();
             match w.show(ctx, pal, &cfg) {
@@ -1948,6 +2745,15 @@ impl Player {
             }
             if self.edit_info.is_some() {
                 return; // Esc belongs to the Edit Info window while it is open
+            }
+        }
+        if let Some(mut job) = self.tag_job.take() {
+            let (open, finished) = job.show(ctx, pal);
+            if finished {
+                self.update_library();
+            }
+            if open {
+                self.tag_job = Some(job);
             }
         }
         if let Some(mut w) = self.mb_win.take() {
@@ -1966,7 +2772,7 @@ impl Player {
             }
         }
         // Esc closes the topmost of the player's windows
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input() && !cover_open {
             if self.eq_open {
                 self.eq_open = false;
                 self.save_state();
@@ -1995,9 +2801,19 @@ impl Player {
                 .pivot(Align2::CENTER_CENTER)
                 .default_pos(ctx.content_rect().center())
                 .show(ctx, |ui| {
-                    ui.label(tr!("Name"));
+                    ui.set_max_width(420.0);
+                    ui.label(if d.prompt.is_empty() { tr!("Name") } else { d.prompt.as_str() });
                     let r = ui.add(egui::TextEdit::singleline(&mut d.text).desired_width(320.0));
                     r.request_focus();
+                    if !d.choices.is_empty() {
+                        egui::ScrollArea::vertical().max_height(160.0).id_salt("name-choices").show(ui, |ui| {
+                            for c in d.choices.clone() {
+                                if ui.selectable_label(d.text == c, &c).clicked() {
+                                    d.text = c;
+                                }
+                            }
+                        });
+                    }
                     if !d.error.is_empty() {
                         // the core's messages (a taken name...) are English: translated here
                         ui.label(RichText::new(tr_text(&d.error)).color(pal.accent));
@@ -2033,12 +2849,16 @@ impl Player {
                     ),
                     tr!("Delete"),
                 ),
-                ConfirmAction::DeleteEqPreset(n) => {
-                    (tr!("Delete preset"), tr!("Delete the equalizer preset “{name}”?", name = n), tr!("Delete"))
-                }
+                ConfirmAction::DeleteEqPreset(n) => (
+                    tr!("Delete preset"),
+                    tr!("Delete your preset “{name}”? The equalizer keeps its current settings.", name = n),
+                    tr!("Delete"),
+                ),
                 ConfirmAction::DeleteTheme(n) => {
                     (tr!("Delete theme"), tr!("Delete the theme “{name}”?", name = i18n::tr(n)), tr!("Delete"))
                 }
+                // the title and text are made (translated) by `retag_group()`
+                ConfirmAction::RetagGroup { title, text, .. } => (title.as_str(), text.clone(), tr!("Change")),
                 ConfirmAction::ClearHistory => (
                     tr!("Clear the play history"),
                     tr!("Forget every song played so far? Recently Played and Your Stats start again from nothing.").to_string(),
@@ -2101,7 +2921,63 @@ fn sidebar_item(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: b
     resp
 }
 
+/// The name of the group of songs without a genre, composer or year.
+pub fn unknown_name(kind: &str) -> &'static str {
+    match kind {
+        "genres" => "Unknown Genre",
+        "composers" => "Unknown Composer",
+        "years" => "Unknown Year",
+        _ => "",
+    }
+}
+
+/// A song's genre, composer or year, as a rename compares it with the new name.
+pub fn group_value(kind: &str, t: &Track) -> String {
+    match kind {
+        "years" => t.year.clone(),
+        "composers" => realhires::tagedit::clean_value(&t.composer),
+        _ => realhires::tagedit::clean_value(&t.genre),
+    }
+}
+
+/// Songs sorted by a column (None: as they are).
+pub fn sort_tracks(mut v: Vec<&Track>, sort: Option<(SongCol, bool)>) -> Vec<&Track> {
+    let Some((col, rev)) = sort else { return v };
+    v.sort_by_cached_key(|t| sort_key(t, col));
+    if rev {
+        v.reverse();
+    }
+    v
+}
+
 /// A cover, or a coloured square with a note when the album has none.
+/// The comment tag of a song ("" when it has none, or the file cannot be read); ffprobe,
+/// so call it off the window's thread.
+pub fn read_comment(path: &str) -> String {
+    let out = realhires::probe::command(realhires::probe::tool("ffprobe"))
+        .args(["-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", path])
+        .stdin(std::process::Stdio::null())
+        .output();
+    let Ok(out) = out else { return String::new() };
+    let Ok(data) = realhires::json::parse(&String::from_utf8_lossy(&out.stdout)) else { return String::new() };
+    let mut sources: Vec<&realhires::json::Value> = data.get("format").into_iter().collect();
+    if let Some(realhires::json::Value::Array(streams)) = data.get("streams") {
+        sources.extend(streams.iter());
+    }
+    for src in sources {
+        if let Some(realhires::json::Value::Object(tags)) = src.get("tags") {
+            for (k, v) in tags {
+                if casefold(k.trim()) == "comment" {
+                    if let Some(v) = v.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 pub fn cover(p: &egui::Painter, rect: Rect, tex: Option<&egui::TextureHandle>, title: &str, radius: u8) {
     match tex {
         Some(t) => {
@@ -2155,6 +3031,27 @@ mod tests {
         ctx.run_ui(input, |ui| p.ui(ui)).drop_without_applying_deltas();
     }
 
+    /// A frame with these input events; a key's modifiers are held during the frame
+    /// and let go in the next one.
+    fn frame_with(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) {
+        let held = events.iter().find_map(|e| if let egui::Event::Key { modifiers, .. } = e { Some(*modifiers) } else { None });
+        let run = |p: &mut Player, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| p.ui(ui)).drop_without_applying_deltas();
+        };
+        match held {
+            Some(m) => {
+                run(p, std::iter::once(egui::Event::ModifiersChanged(m)).chain(events).collect());
+                run(p, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)]);
+            }
+            None => run(p, events),
+        }
+    }
+
     /// A few frames (a new window takes some to reach its size), and every text the last one drew.
     fn texts(ctx: &egui::Context, p: &mut Player) -> String {
         fn walk(shape: &egui::Shape, out: &mut String) {
@@ -2202,6 +3099,7 @@ mod tests {
         std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
         std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
         let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 2.0);
         let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.5);
         let b1 = song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 1.5);
@@ -2249,6 +3147,34 @@ mod tests {
         let (subs, songs) = musiclib::folder_view(&p.lib.tracks, &music_dir);
         assert_eq!((subs.len(), songs.len()), (2, 0));
 
+        // Back and Forward between pages (2.1): the mouse's side buttons and Alt+Left/Right
+        // (Cmd+[ / Cmd+] on macOS); a new page clears the Forward list
+        p.go(Page::Albums);
+        p.go(Page::Genres);
+        // a click of a side button: pressed and let go
+        let side = |button| {
+            [true, false]
+                .map(|pressed| egui::Event::PointerButton { pos: pos2(700.0, 500.0), button, pressed, modifiers: egui::Modifiers::NONE })
+                .to_vec()
+        };
+        frame_with(&ctx, &mut p, side(egui::PointerButton::Extra1));
+        assert_eq!((&p.page, &p.forward), (&Page::Albums, &vec![Page::Genres]));
+        frame_with(&ctx, &mut p, side(egui::PointerButton::Extra2));
+        assert_eq!(p.page, Page::Genres);
+        assert!(p.forward.is_empty() && p.back.last() == Some(&Page::Albums));
+        let key = |key, mac_key| {
+            let (key, modifiers) =
+                if cfg!(target_os = "macos") { (mac_key, egui::Modifiers::MAC_CMD) } else { (key, egui::Modifiers::ALT) };
+            egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+        };
+        frame_with(&ctx, &mut p, vec![key(egui::Key::ArrowLeft, egui::Key::OpenBracket)]);
+        assert_eq!((&p.page, &p.forward), (&Page::Albums, &vec![Page::Genres]));
+        p.go(Page::Years);
+        assert!(p.forward.is_empty(), "a new page: nothing to go forward to");
+        p.go_back();
+        frame_with(&ctx, &mut p, vec![key(egui::Key::ArrowRight, egui::Key::CloseBracket)]);
+        assert_eq!(p.page, Page::Years);
+
         // play the album from its first song; the next song follows gaplessly
         let key = p.lib.track(&a1).unwrap().song().album_key();
         p.go(Page::Album(key.clone()));
@@ -2268,6 +3194,25 @@ mod tests {
             Some(ShownLyrics::Synced(lines)) => assert_eq!(lines.len(), 3),
             other => panic!("no synced lyrics: {other:?}"),
         }
+        // 2.1: on Now Playing the Lyrics button hides the lyrics and the page stays; pressed
+        // again it shows them; the LCD's cover leaves the page and opens it again
+        p.lyrics_button();
+        frame(&ctx, &mut p);
+        assert!(p.page == Page::NowPlaying && p.lyrics_hidden);
+        p.lyrics_button();
+        frame(&ctx, &mut p);
+        assert!(p.page == Page::NowPlaying && !p.lyrics_hidden);
+        p.cover_clicked();
+        assert!(p.page != Page::NowPlaying);
+        p.cover_clicked();
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::NowPlaying);
+        // 2.1: Play Next from a song's menu comes first; the gapless look-ahead leaves the queue alone
+        p.queue_songs(&[b1.clone()], true);
+        assert_eq!(p.queue.as_ref().unwrap().up_next(2), vec![b1.clone(), a2.clone()]);
+        assert_eq!(p.queue.as_ref().unwrap().queued, vec![b1.clone()]);
+        p.queue.as_mut().unwrap().queued.clear();
+        p.update_next();
 
         // likes are saved at once
         p.toggle_like(&a1);
@@ -2292,6 +3237,29 @@ mod tests {
             p.go(page);
             frame(&ctx, &mut p);
         }
+        // the calendar of Your Stats (2.1): the month of the plays, the day's plays newest
+        // first, and a song of the list plays the day's songs from it
+        p.go(Page::Stats);
+        frame(&ctx, &mut p);
+        let first = realhires::stats::local_parts(p.history.as_ref().unwrap().plays(0.0, None)[0].started);
+        p.calendar.month = (first.year, first.month);
+        frame(&ctx, &mut p);
+        let today = first.day as usize - 1;
+        assert!(p.calendar.minutes[today] > 0.0 && p.calendar.levels[today] >= 1, "{:?}", p.calendar.minutes);
+        p.calendar_choose(first.day);
+        frame(&ctx, &mut p);
+        let rows: Vec<(&str, &str, &str)> =
+            p.calendar.rows.iter().map(|r| (r.title.as_str(), r.artist.as_str(), r.minutes.as_str())).collect();
+        assert_eq!(rows, vec![("Paper in the Rain", "Mira Calloway", "<1 min"), ("Lanterns Over Water", "Mira Calloway", "<1 min")]);
+        let lp = realhires::stats::local_parts(p.calendar.rows[1].started);
+        assert_eq!(p.calendar.rows[1].time, format!("{:02}:{:02}", lp.hour, lp.minute));
+        p.calendar_play(1);
+        assert_eq!(p.now.as_ref().unwrap().path, a1);
+        assert_eq!(p.queue.as_ref().unwrap().context, vec![a2.clone(), a1.clone()]);
+        p.engine.stop();
+        p.calendar_choose(first.day);
+        frame(&ctx, &mut p);
+        assert!(p.calendar.day.is_none() && p.calendar.rows.is_empty(), "the chosen day again hides the list");
 
         // playlists: make one, add, play from it, rename, delete
         p.apply_name(NameAction::NewPlaylist(vec![b1.clone()]), "Road Trip").unwrap();
@@ -2381,7 +3349,7 @@ mod tests {
         p.set_eq();
         frame(&ctx, &mut p);
         let t = p.lib.track(&a1).unwrap().clone();
-        let secs = crate::eqwin::info_sections(&t, 2, p.engine.info().as_ref(), &p.state, true, None);
+        let secs = crate::eqwin::info_sections(&t, 2, p.engine.info().as_ref(), &p.state, true, false, None);
         let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
         assert!(flat.contains(&"Sample rate=44.1 kHz".to_string()), "{flat:?}");
         assert!(flat.contains(&"Track=1 of 2".to_string()), "{flat:?}");
@@ -2442,6 +3410,7 @@ mod tests {
         std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
         std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
         let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 1.0);
         let a2 = song(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", 2, 44_100, 1.0);
         let mut cfg = Settings::default();
@@ -2481,11 +3450,28 @@ mod tests {
         p.reload_file_themes();
         assert!(p.scanner.choices["theme"].contains(&"Neon 2".to_string()));
 
-        // Edit Info on one song: the composer and the release date
+        // Properties (2.0 "Edit Info") on one song: the composer and the release date
         p.go(Page::AllSongs);
         p.edit_song_info(&a1);
         run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
         assert_eq!(p.edit_info.as_ref().unwrap().text[0], "Lanterns Over Water");
+        // the window can be made bigger by its corner (2.1), and keeps that size for the next one
+        frame(&ctx, &mut p);
+        let window = || ctx.memory(|m| m.area_rect(egui::Id::new(crate::editinfo::WINDOW_ID))).unwrap();
+        let before = window();
+        assert!(before.width() >= 420.0, "{before:?}");
+        let corner = before.max - vec2(3.0, 3.0);
+        let wider = corner + vec2(200.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(corner)]);
+        frame_with(&ctx, &mut p, vec![button(corner, true)]);
+        for i in 1..=4 {
+            frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(corner + vec2(50.0 * i as f32, 0.0))]);
+        }
+        frame_with(&ctx, &mut p, vec![button(wider, false)]);
+        frame(&ctx, &mut p);
+        let after = window();
+        assert!(after.width() >= before.width() + 150.0, "{before:?} → {after:?}");
         {
             let cfg = p.scanner.cfg.clone();
             let w = p.edit_info.as_mut().unwrap();
@@ -2504,6 +3490,8 @@ mod tests {
         // a bad track number is refused and nothing is written
         p.edit_song_info(&a2);
         run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
+        frame(&ctx, &mut p);
+        assert_eq!(window().width(), after.width(), "the size is kept for the session");
         {
             let cfg = p.scanner.cfg.clone();
             let w = p.edit_info.as_mut().unwrap();
@@ -2553,9 +3541,759 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// The player in Japanese (2.1): every page, every Settings group and the
-    /// windows draw Japanese texts.  Only this thread uses Japanese, so the
-    /// tests that run at the same time keep English.
+    #[test]
+    fn bit_perfect_playback_controls() {
+        // Settings, Playback, Bit-perfect playback (2.1): the song restarts where it was in its own
+        // format, the gain is exactly 1 (the saved volume is kept), the equalizer is bypassed, and
+        // the Playback info has the Bit-perfect line and the device's real format
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-bitperfect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a = song(&music, "Night Train", "Coastline", "Ada Lux", "Pop", 1, 96_000, 3.0);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg.clone(), vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 1 && p.lib_rx.is_none());
+        p.set_volume(0.5);
+        p.state.eq.enabled = true;
+        p.state.eq.apply_preset("Rock");
+        p.set_eq();
+        p.play_list(vec![a.clone()], Some(&a), "Night Train");
+        run_until(&ctx, &mut p, "playback", |p| p.engine.position().unwrap_or(0.0) > 0.5);
+        assert_eq!(p.engine.gain(), 0.25);
+        assert_eq!(p.engine.info().unwrap().bit_perfect, "Off");
+        let before = p.engine.position().unwrap();
+        p.settings_draft().bit_perfect = true;
+        p.settings_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+        assert!(p.scanner.cfg.bit_perfect && realhires::settings::load(None).bit_perfect);
+        assert!(p.engine.bit_perfect() && p.engine.gain() == 1.0 && p.state.volume == 0.5);
+        run_until(&ctx, &mut p, "the restart", |p| p.engine.position().unwrap_or(0.0) > before + 0.1);
+        assert_eq!(p.now.as_ref().unwrap().path, a, "the same song goes on");
+        let info = p.engine.info().unwrap();
+        assert_eq!((info.rate, info.sample_format), (96_000, realhires::bitperfect::Format::I16));
+        let t = p.lib.track(&a).unwrap().clone();
+        let secs = crate::eqwin::info_sections(&t, 1, Some(&info), &p.state, true, true, None);
+        let flat: Vec<String> = secs.iter().flat_map(|(_, r)| r.iter().map(|(k, v)| format!("{k}={v}"))).collect();
+        for want in [
+            "Output=96 kHz, 16-bit integer, stereo",
+            "Bit-perfect=Yes: 16-bit, 96 kHz, Null output (no sound)",
+            "Volume=0.0 dB",
+            "Equalizer=Bypassed while bit-perfect playback is on.",
+        ] {
+            assert!(flat.contains(&want.to_string()), "{want}: {flat:?}");
+        }
+        p.eq_open = true;
+        frame(&ctx, &mut p);
+        p.set_volume(0.1); // the slider is disabled, and nothing else changes the volume either
+        assert_eq!(p.state.volume, 0.5);
+        p.settings_draft().bit_perfect = false;
+        p.settings_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+        assert!(!p.engine.bit_perfect() && p.engine.gain() == 0.25);
+        run_until(&ctx, &mut p, "the normal path", |p| {
+            p.engine.info().is_some_and(|i| i.sample_format == realhires::bitperfect::Format::F32)
+        });
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Album covers are made ahead once the library is read, stay when the
+    /// library is read again, and only a changed album's cover is made again.
+    #[test]
+    fn covers_are_made_ahead_and_kept() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-covers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let a1 = song(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", 1, 44_100, 0.5);
+        song(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", 1, 48_000, 0.5);
+        for (album, name, colour) in [("Paper Lanterns", "cover.png", "red"), ("Harbour Lights", "folder.png", "blue")] {
+            let img = music.join(album).join(name).to_string_lossy().into_owned();
+            ffmpeg(&["-f", "lavfi", "-i", &format!("color=c={colour}:s=96x96"), "-frames:v", "1", &img]);
+        }
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 2 && p.lib_rx.is_none());
+        let paths = |a: &Album| -> Vec<String> { a.tracks.iter().map(|t| t.path.clone()).collect() };
+        assert_eq!(p.covers.grid_px(), crate::cover_cache::GRID_PX);
+        run_until(&ctx, &mut p, "the covers made ahead", |p| {
+            p.covers.prefetching() == 0
+                && p.lib.albums.iter().all(|a| realhires::covers::is_cached(&paths(a), crate::cover_cache::GRID_PX))
+        });
+        p.go(Page::Albums);
+        let shown = |p: &Player| -> Vec<(String, egui::TextureId)> {
+            let mut v: Vec<(String, egui::TextureId)> = p
+                .lib
+                .albums
+                .iter()
+                .filter_map(|a| {
+                    let t = p.covers.tex.get(&a.key)?.iter().find(|(s, _)| *s == crate::cover_cache::GRID_PX)?;
+                    Some((a.key.clone(), t.1.as_ref()?.id()))
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        run_until(&ctx, &mut p, "the covers on screen", |p| shown(p).len() == 2);
+        let before = shown(&p);
+
+        // the library is read again: the textures stay
+        p.update_library();
+        run_until(&ctx, &mut p, "the second update", |p| p.lib_rx.is_none());
+        frame(&ctx, &mut p);
+        assert_eq!(shown(&p), before);
+
+        // a song changes: only its album's cover is made again
+        let f = std::fs::File::options().write(true).open(&a1).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(86_400)).unwrap();
+        drop(f);
+        let key_a = p.lib.track(&a1).unwrap().song().album_key();
+        p.update_library();
+        run_until(&ctx, &mut p, "the third update", |p| p.lib_rx.is_none());
+        let now = shown(&p);
+        assert_eq!(now.len(), 1, "{now:?}");
+        assert!(now[0].0 != key_a && before.contains(&now[0]));
+        run_until(&ctx, &mut p, "the new cover", |p| shown(p).len() == 2);
+        let after = shown(&p);
+        assert!(after.iter().any(|(k, id)| *k == key_a && !before.contains(&(k.clone(), *id))));
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A click as a person makes it: the pointer moves there, presses, releases.
+    fn click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame_with(ctx, p, vec![button(true)]);
+        frame_with(ctx, p, vec![button(false)]);
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
+    }
+
+    /// A click that leaves the pointer where it is and draws no frame after the release,
+    /// so a window it opens can be given a test client before it searches.
+    fn click_only(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        }
+    }
+
+    /// A right click (press, then the release in a later frame), which opens a context menu.
+    fn right_click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        }
+    }
+
+    /// Every text the last of a few frames drew and where, in drawing order (menus and
+    /// windows come after the page).
+    fn placed_texts(ctx: &egui::Context, p: &mut Player) -> Vec<(String, Rect)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.visual_bounding_rect())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        for _ in 0..3 {
+            frame(ctx, p);
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| p.ui(ui));
+        let mut out = vec![];
+        output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        output.drop_without_applying_deltas();
+        out
+    }
+
+    /// Where the last text `text` was drawn (a menu's item comes after the page's own).
+    fn last_text(texts: &[(String, Rect)], text: &str) -> egui::Pos2 {
+        let names: Vec<&str> = texts.iter().map(|(t, _)| t.as_str()).collect();
+        texts.iter().rev().find(|(t, _)| t == text).unwrap_or_else(|| panic!("no {text:?} in {names:?}")).1.center()
+    }
+
+    /// The texts of `after` that `before` did not have: what a menu opened in between shows.
+    fn new_texts(before: &[(String, Rect)], after: &[(String, Rect)]) -> Vec<String> {
+        let mut rest: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
+        let mut out = vec![];
+        for (t, _) in after {
+            match rest.iter().position(|b| b == t) {
+                Some(i) => {
+                    rest.remove(i);
+                }
+                None => out.push(t.clone()),
+            }
+        }
+        out
+    }
+
+    /// Right-click an album card (found by its title) and open its menu; the menu's items
+    /// and the texts drawn with it open.
+    fn album_card_menu(ctx: &egui::Context, p: &mut Player, title: &str) -> (Vec<String>, Vec<(String, Rect)>) {
+        p.go(Page::Albums);
+        let before = placed_texts(ctx, p);
+        let names: Vec<&str> = before.iter().map(|(t, _)| t.as_str()).collect();
+        // the lowest of the texts: the playback bar above may show the album's name too
+        let card = before
+            .iter()
+            .filter(|(t, _)| t == title)
+            .map(|(_, r)| *r)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("no card {title:?} in {names:?}"));
+        // on the cover, above the title
+        let at = pos2(card.left() + 60.0, card.top() - 80.0);
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        let before = placed_texts(ctx, p);
+        right_click(ctx, p, at);
+        let after = placed_texts(ctx, p);
+        (new_texts(&before, &after), after)
+    }
+
+    /// The mouse wheel over `at` (a negative `dy` moves the content up: scrolls down).
+    fn wheel(ctx: &egui::Context, p: &mut Player, at: egui::Pos2, dy: f32) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        frame_with(
+            ctx,
+            p,
+            vec![egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Default::default(),
+            }],
+        );
+        for _ in 0..30 {
+            frame_with(ctx, p, vec![]);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn link_at(links: &[(Rect, crate::pages::Link)], want: &crate::pages::Link) -> egui::Pos2 {
+        links.iter().find(|(_, l)| l == want).unwrap_or_else(|| panic!("no link {want:?} in {links:?}")).0.center()
+    }
+
+    /// One song on a fake LRCLIB: /api/get answers "Midnight Sun" with synced lyrics.
+    fn fake_lrclib() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut req = vec![];
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&req).lines().next().unwrap_or("").to_string();
+                let (status, body) = if line.starts_with("GET /api/get?") && line.contains("track_name=Midnight") {
+                    (
+                        "200 OK",
+                        r#"{"id": 7, "trackName": "Midnight Sun", "artistName": "Aurora Fields", "albumName": "Northern Lights", "duration": 20.0, "instrumental": false, "plainLyrics": "Midnight sun\nOver the bay", "syncedLyrics": "[00:00.50] Midnight sun\n[00:03.00] Over the bay"}"#,
+                    )
+                } else {
+                    ("404 Not Found", r#"{"message": "Failed to find specified track"}"#)
+                };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    /// Now Playing (2.1): the label above the lyrics, A− / A+ saved in player.json, "Back to
+    /// the current line" while the current line is scrolled away, the switch Lyrics | Up Next
+    /// | Details, one link per artist (also in the LCD and Details), the cover's hook, and Get
+    /// lyrics, which downloads at once (the user's "Get lyrics button doesn't work": it opened
+    /// the lyrics window, which waited for its own Download lyrics button).
+    #[test]
+    fn now_playing_switch_links_lyrics_size_and_get_lyrics() {
+        use crate::pages::Link;
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-np-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::lyrics::INTERVAL_ENV, "0");
+        let glacier = song(&music, "Northern Lights", "Glacier Song", "Aurora Fields", "Ambient", 1, 44_100, 20.0);
+        let sun = song(&music, "Northern Lights", "Midnight Sun", "Aurora Fields", "Ambient", 2, 44_100, 20.0);
+        let kettle = song(&music, "Small Hours", "Blue Kettle", "June Harbor", "Jazz", 1, 44_100, 1.0);
+        // a duet with a comment tag
+        let duet_dir = music.join("Duets");
+        std::fs::create_dir_all(&duet_dir).unwrap();
+        let duet = realhires::paths::abspath(&duet_dir.join("01 Together.flac").to_string_lossy());
+        ffmpeg(&["-f", "lavfi", "-i", "sine=frequency=500:sample_rate=44100:duration=2", "-metadata", "title=Together",
+                 "-metadata", "artist=June Harbor, Aurora Fields", "-metadata", "album=Duets", "-metadata",
+                 "comment=Recorded live", &duet]);
+        let lines: Vec<String> = (0..40).map(|i| format!("[00:{:02}.{:02}]Line number {i}", i / 2, (i % 2) * 50)).collect();
+        std::fs::write(realhires::lyrics::sidecar(&glacier, ".lrc"), lines.join("\n") + "\n").unwrap();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        cfg.lyrics_server = fake_lrclib();
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+        p.play_list(vec![glacier.clone(), sun.clone()], Some(&glacier), "Northern Lights");
+        run_until(&ctx, &mut p, "playback", |p| p.engine.position().unwrap_or(0.0) > 0.3);
+        p.toggle_play(); // paused, so the current line stays
+        p.lyrics_button();
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        assert_eq!((p.page.clone(), p.np_tab), (Page::NowPlaying, NpTab::Lyrics));
+        // the label says what the lyrics are and where they come from
+        assert_eq!(p.lyrics_label_of_now(), ("Synced lyrics".to_string(), ".lrc file".to_string()));
+        // the cover with the title and "Artist — Album": one block in the middle of the left half
+        let cover = p.np_hits.cover.expect("the cover");
+        let links = p.np_hits.links.clone();
+        let line = links.iter().map(|(r, _)| r.center().x).fold(0.0, f32::max);
+        assert!(cover.center().x < 640.0 && cover.left() < line && line < cover.right(), "{cover:?} {links:?}");
+        // A− / A+: 26 px by default, 2 px a step, saved at once
+        assert_eq!(p.state.lyrics_size, 26);
+        let sizes = p.np_hits.size_buttons.clone();
+        click(&ctx, &mut p, sizes[1].center());
+        assert_eq!((p.state.lyrics_size, playerstate::load(None).lyrics_size), (28, 28));
+        click(&ctx, &mut p, sizes[0].center());
+        assert_eq!((p.state.lyrics_size, playerstate::load(None).lyrics_size), (26, 26));
+        // scrolled away from the current line: following stops and the Back button shows
+        let lyrics_at = pos2(1000.0, 600.0);
+        wheel(&ctx, &mut p, lyrics_at, -3000.0);
+        assert!(p.lyrics_away, "scrolled away");
+        let back = p.np_hits.back.expect("the Back to the current line button");
+        for _ in 0..5 {
+            frame(&ctx, &mut p);
+        }
+        assert!(p.lyrics_away && p.np_hits.back.is_some(), "no automatic scrolling while it shows");
+        click(&ctx, &mut p, back.center());
+        for _ in 0..5 {
+            frame(&ctx, &mut p);
+        }
+        assert!(!p.lyrics_away && p.np_hits.back.is_none());
+        wheel(&ctx, &mut p, lyrics_at, -3000.0);
+        assert!(p.lyrics_away);
+        wheel(&ctx, &mut p, lyrics_at, 3000.0); // scrolled back into view: the button goes
+        assert!(!p.lyrics_away && p.np_hits.back.is_none());
+        // the switch: Up Next lists the rest of the album, Details describes the song
+        p.set_np_tab(NpTab::UpNext);
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_hits.up_next, vec![sun.clone()]);
+        p.set_np_tab(NpTab::Details);
+        frame(&ctx, &mut p);
+        for needed in ["Title: Glacier Song", "Artist: Aurora Fields", "Track: 1 of 2", "Format: FLAC · 16-bit/44.1 kHz", "Quality check: Not checked yet"] {
+            assert!(p.np_hits.details.iter().any(|l| l.starts_with(needed)), "{needed}: {:?}", p.np_hits.details);
+        }
+        p.lyrics_button(); // the Lyrics button chooses Lyrics again
+        assert!(p.np_tab == NpTab::Lyrics && !p.lyrics_hidden);
+        frame(&ctx, &mut p);
+        // the album name opens the album, the artist the artist, the cover the Cover window hook
+        let links = p.np_hits.links.clone();
+        click(&ctx, &mut p, link_at(&links, &Link::Album));
+        assert!(matches!(p.page, Page::Album(_)), "{:?}", p.page);
+        p.go(Page::NowPlaying);
+        frame(&ctx, &mut p);
+        click(&ctx, &mut p, link_at(&links, &Link::Artist("Aurora Fields".into())));
+        assert_eq!(p.page, Page::Group("artists", "Aurora Fields".into()));
+        p.go(Page::NowPlaying);
+        frame(&ctx, &mut p);
+        click(&ctx, &mut p, cover.center());
+        assert_eq!(p.page, Page::NowPlaying);
+        assert!(p.cover_win.is_some(), "the Now Playing cover opens the Cover window");
+        p.cover_win = None;
+        frame(&ctx, &mut p);
+        // the LCD: the title and the album name open the album, the artist the artist
+        let lcd = p.lcd_links.clone();
+        assert_eq!(lcd.iter().filter(|(_, l)| *l == Link::Album).count(), 2, "{lcd:?}");
+        click(&ctx, &mut p, lcd[0].0.center());
+        assert!(matches!(p.page, Page::Album(_)));
+        click(&ctx, &mut p, link_at(&lcd, &Link::Artist("Aurora Fields".into())));
+        assert_eq!(p.page, Page::Group("artists", "Aurora Fields".into()));
+
+        // several artists in one field: each its own link, on Now Playing, in the LCD and in Details
+        p.play_list(vec![duet.clone()], Some(&duet), "Duets");
+        p.toggle_play();
+        p.go(Page::NowPlaying);
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        let artists: Vec<Link> = p.np_hits.links.iter().map(|(_, l)| l.clone()).filter(|l| *l != Link::Album).collect();
+        assert_eq!(artists, vec![Link::Artist("June Harbor".into()), Link::Artist("Aurora Fields".into())]);
+        let links = p.np_hits.links.clone();
+        click(&ctx, &mut p, link_at(&links, &Link::Artist("June Harbor".into())));
+        assert_eq!(p.page, Page::Group("artists", "June Harbor".into()));
+        assert!(p.lcd_links.iter().any(|(_, l)| *l == Link::Artist("Aurora Fields".into())), "{:?}", p.lcd_links);
+        p.go(Page::NowPlaying);
+        p.set_np_tab(NpTab::Details);
+        run_until(&ctx, &mut p, "the comment tag", |p| p.np_hits.details.iter().any(|l| l == "Comment: Recorded live"));
+        assert!(p.np_hits.details.iter().any(|l| l == "Artist: June Harbor, Aurora Fields"), "{:?}", p.np_hits.details);
+        for _ in 0..3 {
+            frame(&ctx, &mut p); // the grid settles its column widths
+        }
+        let names: Vec<String> = p.np_hits.detail_links.iter().map(|(_, n)| n.clone()).collect();
+        assert_eq!(names, vec!["June Harbor".to_string(), "Aurora Fields".to_string()]);
+        let second = p.np_hits.detail_links[1].0.center();
+        click(&ctx, &mut p, second);
+        assert_eq!(p.page, Page::Group("artists", "Aurora Fields".into()));
+
+        // Get lyrics: the download starts at once, and Now Playing shows the lyrics, staying
+        p.play_list(vec![sun.clone()], Some(&sun), "Northern Lights");
+        p.toggle_play();
+        p.lyrics_button();
+        for _ in 0..3 {
+            frame(&ctx, &mut p);
+        }
+        assert!(p.lyrics_of_now().is_none());
+        let get = p.np_hits.get_lyrics.expect("the Get lyrics button");
+        click(&ctx, &mut p, get.center());
+        assert!(p.scanner.lyrics_win.as_ref().is_some_and(|w| w.running), "the download started at once");
+        run_until(&ctx, &mut p, "the lyrics", |p| p.scanner.lyrics_win.as_ref().is_some_and(|w| !w.running));
+        assert_eq!(p.scanner.lyrics_win.as_ref().unwrap().status, "1 with synced lyrics.");
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::NowPlaying);
+        match p.lyrics_of_now() {
+            Some(ShownLyrics::Synced(lines)) => assert_eq!(lines[0].1, "Midnight sun"),
+            other => panic!("no synced lyrics: {other:?}"),
+        }
+        assert!(std::path::Path::new(&realhires::lyrics::sidecar(&sun, ".lrc")).is_file());
+        // a song's menu has Get lyrics… too (get_lyrics): this one is not on LRCLIB
+        p.get_lyrics(vec![kettle.clone()]);
+        assert!(p.scanner.lyrics_win.as_ref().is_some_and(|w| w.running));
+        run_until(&ctx, &mut p, "the second lookup", |p| p.scanner.lyrics_win.as_ref().is_some_and(|w| !w.running));
+        assert_eq!(p.scanner.lyrics_win.as_ref().unwrap().outcomes[0].status, realhires::lyrics::Status::NotFound);
+        p.scanner.lyrics_win = None;
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A song with a composer and a release date too.
+    #[allow(clippy::too_many_arguments)]
+    fn tagged(dir: &std::path::Path, album: &str, title: &str, artist: &str, genre: &str, composer: &str, date: &str, n: u32) -> String {
+        let d = dir.join(album);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join(format!("{n:02} {title}.flac"));
+        let src = format!("sine=frequency={}:sample_rate=44100:duration=1", 300 + 40 * n);
+        let meta = [
+            format!("title={title}"),
+            format!("artist={artist}"),
+            format!("album_artist={artist}"),
+            format!("album={album}"),
+            format!("track={n}"),
+            format!("genre={genre}"),
+            format!("composer={composer}"),
+            format!("date={date}"),
+        ];
+        let mut args: Vec<&str> = vec!["-f", "lavfi", "-i", &src];
+        for m in &meta {
+            args.extend(["-metadata", m.as_str()]);
+        }
+        let out = f.to_string_lossy().into_owned();
+        args.push(&out);
+        ffmpeg(&args);
+        realhires::paths::abspath(&out)
+    }
+
+    fn tag_of(path: &str, key: &str) -> String {
+        realhires::probe::probe(path).unwrap().tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
+    /// Run a confirmed rename until its files are written and the library was read again.
+    fn rename(ctx: &egui::Context, p: &mut Player, what: &str, check: impl Fn(&Player) -> bool) {
+        let action = p.confirm.take().expect("a confirmation");
+        p.confirmed(action);
+        run_until(ctx, p, what, |p| p.tag_job.as_ref().is_some_and(|j| j.done()) && p.lib_rx.is_none() && check(p));
+        assert!(p.tag_job.as_ref().unwrap().outcomes.as_ref().unwrap().iter().all(|o| o.ok));
+    }
+
+    #[test]
+    fn grids_renames_columns_quality_and_preset_delete() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-grids-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a1 = tagged(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", "Ann", "2001-05-03", 1);
+        let a2 = tagged(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", "Ann", "2001", 2);
+        let b1 = tagged(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", "", "1999", 1);
+        let c1 = tagged(&music, "Two Rivers", "Where the Rivers Meet", "Mira Calloway, The Northern Quay", "Folk", "Ann", "2005", 1);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg.clone(), vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+
+        // the grouping pages are card grids: each group with its albums (a duet on both artists)
+        let names: Vec<&str> = p.lib.artists.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["Mira Calloway", "The Northern Quay"]);
+        assert_eq!(p.lib.group_albums["artists"][0].len(), 2, "Paper Lanterns and Two Rivers");
+        assert_eq!(p.lib.group_albums["composers"].len(), 2);
+        for page in [Page::Artists, Page::AlbumArtists, Page::Genres, Page::Years, Page::Composers] {
+            p.go(page);
+            frame(&ctx, &mut p);
+        }
+        // open_artist(): an artist, or the first artist of a field that is not one
+        p.open_artist("Mira Calloway & Somebody New");
+        assert_eq!(p.page, Page::Group("artists", "Mira Calloway".into()));
+        frame(&ctx, &mut p);
+        p.open_artist("The Northern Quay");
+        assert_eq!(p.page, Page::Group("artists", "The Northern Quay".into()));
+        // the album page: track order at first, sortable, the album columns (# first)
+        let key = p.lib.track(&a1).unwrap().song().album_key();
+        p.go(Page::Album(key.clone()));
+        frame(&ctx, &mut p);
+        assert_eq!(p.album_sort, None);
+        assert_eq!(p.state.columns_of("album")[0], "num");
+        p.set_sort("album", SongCol::Title);
+        p.set_sort("album", SongCol::Title);
+        assert_eq!(p.album_sort, Some((SongCol::Title, true)));
+        frame(&ctx, &mut p);
+        let duet = p.lib.track(&c1).unwrap().song().album_key();
+        p.go(Page::Album(duet));
+        frame(&ctx, &mut p);
+        assert_eq!(p.album_sort, None, "another album starts in track order");
+        // the Quality column: quality() in the cell, the resolution as its tooltip; sorted by bits, then rate
+        let t = p.lib.track(&a1).unwrap();
+        assert_eq!((cell_text(t, SongCol::Quality), musiclib::quality_detail(t)), ("Lossless".to_string(), "16-bit/44.1 kHz".to_string()));
+        p.song_sort = (SongCol::Quality, false);
+        p.go(Page::AllSongs);
+        frame(&ctx, &mut p);
+        // the columns of song lists: chosen per kind, kept in player.json
+        p.state.toggle_column("songs", "year");
+        p.save_state();
+        frame(&ctx, &mut p);
+        assert!(playerstate::load(None).columns_of("songs").contains(&"year".to_string()));
+        assert!(!p.state.columns_of("album").contains(&"year".to_string()));
+        p.state.reset_columns("songs");
+
+        // rename a genre from its page: the files change, the page follows the new name
+        p.go(Page::Group("genres", "Jazz".into()));
+        frame(&ctx, &mut p);
+        p.ask_rename_group("genres", "Jazz");
+        assert_eq!(p.name_dialog.as_ref().unwrap().text, "Jazz");
+        assert!(p.apply_name(NameAction::RenameGroup("genres", "Jazz".into()), "  ").is_err());
+        p.name_dialog = None;
+        p.retag_group("genres", &["Jazz".into()], "Smooth Jazz", false).unwrap();
+        match &p.confirm {
+            Some(ConfirmAction::RetagGroup { text, paths, .. }) => {
+                assert!(text.starts_with("Rename the genre “Jazz” to “Smooth Jazz”? The genre of 1 song changes."), "{text}");
+                assert_eq!(paths, &vec![b1.clone()]);
+            }
+            other => panic!("{other:?}"),
+        }
+        rename(&ctx, &mut p, "the genre renamed", |p| p.lib.track(&b1).is_some_and(|t| t.genre == "Smooth Jazz"));
+        assert_eq!(tag_of(&b1, "genre"), "Smooth Jazz");
+        assert_eq!(p.page, Page::Group("genres", "Smooth Jazz".into()));
+        // merge two genres: only the songs that do not have the name yet are written
+        p.group_selected = vec!["Pop".into(), "Folk".into()];
+        p.go(Page::Genres);
+        frame(&ctx, &mut p);
+        p.ask_merge_groups("genres", p.group_selected.clone());
+        assert_eq!(p.name_dialog.as_ref().unwrap().choices, vec!["Pop".to_string(), "Folk".to_string()], "the biggest first");
+        p.name_dialog = None;
+        p.retag_group("genres", &["Pop".into(), "Folk".into()], "Pop", true).unwrap();
+        rename(&ctx, &mut p, "the genres merged", |p| p.lib.genres.len() == 2);
+        assert_eq!(tag_of(&c1, "genre"), "Pop");
+        assert!(p.group_selected.is_empty());
+        assert!(p.retag_group("genres", &["Pop".into()], "Pop", true).is_err(), "nothing to change");
+        // a year: only the year of each release date changes
+        p.retag_group("years", &["2001".into()], "2004", false).unwrap();
+        rename(&ctx, &mut p, "the year renamed", |p| p.lib.track(&a2).is_some_and(|t| t.year == "2004"));
+        assert_eq!((tag_of(&a1, "date"), tag_of(&a2, "date")), ("2004-05-03".to_string(), "2004".to_string()));
+        assert!(p.retag_group("years", &["2004".into()], "04", false).is_err());
+        // a composer
+        p.retag_group("composers", &["Ann".into()], "Ann Lind", false).unwrap();
+        rename(&ctx, &mut p, "the composer renamed", |p| p.lib.track(&c1).is_some_and(|t| t.composer == "Ann Lind"));
+        p.tag_job = None;
+
+        // the Equalizer: a preset saved while the equalizer was off, chosen with it on, deleted
+        p.state.eq.apply_preset("Rock");
+        p.state.eq.enabled = false;
+        p.apply_name(NameAction::SaveEqPreset, "Quiet Rock").unwrap();
+        p.state.eq.enabled = true;
+        assert_eq!(p.state.matching_eq_preset(), "Quiet Rock");
+        let before = p.state.eq.clone();
+        p.eq_open = true;
+        frame(&ctx, &mut p);
+        assert!(p.eq_delete(None), "the Delete… button");
+        assert_eq!(p.confirm, Some(ConfirmAction::DeleteEqPreset("Quiet Rock".into())));
+        frame(&ctx, &mut p);
+        let action = p.confirm.take().unwrap();
+        p.confirmed(action);
+        assert!(p.state.eq_presets.is_empty() && playerstate::load(None).eq_presets.is_empty());
+        assert_eq!(p.state.eq, before, "the equalizer keeps its settings");
+        assert_eq!(p.state.matching_eq_preset(), "");
+        // set to none of the user's presets: Delete… lists them
+        p.apply_name(NameAction::SaveEqPreset, "Mine").unwrap();
+        p.state.eq.apply_preset("Jazz");
+        assert!(!p.eq_delete(None));
+        frame(&ctx, &mut p);
+        assert!(p.eq_delete(Some("Mine".into())));
+        let action = p.confirm.take().unwrap();
+        p.confirmed(action);
+        assert!(playerstate::load(None).eq_presets.is_empty());
+        p.eq_open = false;
+        let _ = a2;
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 5,000 invented songs on 500 albums (no files: the tracks are made directly).
+    pub fn invented_tracks() -> Vec<Track> {
+        let genres = ["Ambient", "Indie Pop", "Jazz", "Electronic", "Rock", "Classical", "Folk", "Soul", "Hip-Hop", "Metal"];
+        let mut out = vec![];
+        for a in 0..500usize {
+            let artist = format!("Invented Artist {}", a % 120);
+            let album = format!("Invented Album {a}");
+            let lossy = a % 7 == 0;
+            for n in 0..10usize {
+                out.push(Track {
+                    path: format!("/invented/Music/{artist}/{album}/{:02} Song {a}-{n}.{}", n + 1, if lossy { "mp3" } else { "flac" }),
+                    title: format!("Song {a}-{n} of the invented library"),
+                    artist: artist.clone(),
+                    album: album.clone(),
+                    album_artist: artist.clone(),
+                    genre: genres[a % genres.len()].to_string(),
+                    composer: format!("Composer {}", (a + n) % 60),
+                    disc: 1,
+                    track: n as i64 + 1,
+                    year: (1970 + a % 45).to_string(),
+                    duration: 120.0 + ((a * 7 + n * 13) % 200) as f64,
+                    codec: if lossy { "mp3".into() } else { "flac".into() },
+                    sample_rate: [44_100, 48_000, 96_000, 192_000][a % 4],
+                    bits: if lossy { 0 } else { [16, 24, 24, 32][a % 4] },
+                    is_lossy: lossy,
+                    channels: 2,
+                    bit_rate: if lossy { 320_000 } else { 900_000 },
+                    size: 1000,
+                    mtime_ns: (a * 1000 + n) as i64,
+                    ..Default::default()
+                });
+            }
+        }
+        out
+    }
+
+    /// One frame with a mouse-wheel step over the page, tessellated as the window would.
+    fn scroll_frame(ctx: &egui::Context, p: &mut Player, dy: f32) {
+        let mut events = vec![egui::Event::PointerMoved(pos2(760.0, 520.0))];
+        if dy != 0.0 {
+            events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| p.ui(ui));
+        let shapes = std::mem::take(&mut out.shapes);
+        let ppp = out.pixels_per_point;
+        out.drop_without_applying_deltas();
+        let _ = ctx.tessellate(shapes, ppp);
+    }
+
+    /// Frame times while scrolling the pages of a big library (run with
+    /// `cargo test --release -p realhires-gui profile_big_library -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn profile_big_library() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var("REALHIRES_COVERS", tmp.join("covers"));
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, Settings::default(), vec![]);
+        let t0 = Instant::now();
+        p.lib = LibView::new(invented_tracks());
+        println!("LibView::new (5,000 songs, 500 albums): {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        let pages = [
+            ("Library", Page::Library),
+            ("All Songs", Page::AllSongs),
+            ("Albums", Page::Albums),
+            ("Artists", Page::Artists),
+            ("Genres", Page::Genres),
+            ("Composers", Page::Composers),
+            ("Years", Page::Years),
+        ];
+        for (name, page) in pages {
+            p.go(page);
+            for _ in 0..5 {
+                scroll_frame(&ctx, &mut p, 0.0);
+            }
+            let mut ms = vec![];
+            for i in 0..60 {
+                let t = Instant::now();
+                scroll_frame(&ctx, &mut p, if i % 20 < 10 { -60.0 } else { 60.0 });
+                ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            let mean = ms.iter().sum::<f64>() / ms.len() as f64;
+            let max = ms.iter().cloned().fold(0.0, f64::max);
+            println!("{name:>10}: frame while scrolling: mean {mean:6.2} ms, max {max:6.2} ms");
+        }
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn musicbrainz_window_from_the_album_page() {
         let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -2583,10 +4321,68 @@ mod tests {
         // the switch is off by default: a library update asks MusicBrainz nothing
         assert!(!p.scanner.cfg.musicbrainz_auto);
         assert!(!p.lookup_library(false) && !p.musicbrainz_busy());
+        // never musicbrainz.org: each window gets the test client right after the click
+        // that opens it, and this server (nothing listens there) would only fail
+        p.scanner.cfg.musicbrainz_server = "http://127.0.0.1:9".into();
         let album = p.lib.albums.iter().find(|a| a.title == "Night Drive").cloned().unwrap();
-        p.go(Page::Album(album.key.clone()));
+        let album_paths: Vec<String> = album.tracks.iter().map(|t| t.path.clone()).collect();
+        assert_eq!(album_paths, paths, "in track order");
+
+        // 2.2: an album card's right-click menu, as the user asked ("right click songs/album
+        // and press acquire metadata")
+        let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Acquire Metadata…", "Album Properties…"]);
+        click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
+        p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
+        {
+            let w = p.mb_win.as_ref().unwrap();
+            assert!(w.album, "for the album");
+            assert_eq!((w.paths.clone(), w.heading.as_str()), (paths.clone(), "Night Drive"));
+        }
+        run_until(&ctx, &mut p, "the release from the card", |p| p.mb_win.as_ref().is_some_and(|w| w.detail.is_some() && !w.busy));
+        assert_eq!(p.mb_win.as_ref().unwrap().query_title, "Night Drive");
+        assert_eq!(p.mb_win.as_ref().unwrap().detail.as_ref().unwrap().release.id, "rel-night-2001");
+        p.mb_win = None;
         frame(&ctx, &mut p);
+        // Album Properties… opens Properties for all of the album's songs
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Album Properties…"));
+        {
+            let e = p.edit_info.as_ref().expect("Album Properties… opens Properties");
+            assert_eq!((e.paths.clone(), e.heading.as_str()), (paths.clone(), "Night Drive"));
+        }
+        p.edit_info = None;
+        frame(&ctx, &mut p);
+
+        // a song's right-click menu: Acquire Metadata… for that song (song tables select one song)
+        p.go(Page::Album(album.key.clone()));
+        let before = placed_texts(&ctx, &mut p);
+        let row = before.iter().find(|(t, _)| t == "Harbour Lights").expect("the song's row").1.center();
+        right_click(&ctx, &mut p, row);
+        let after = placed_texts(&ctx, &mut p);
+        let items = new_texts(&before, &after);
+        assert!(items.contains(&"Acquire Metadata…".to_string()) && items.contains(&"Properties…".to_string()), "{items:?}");
+        assert!(!items.iter().any(|t| t.contains("MusicBrainz")), "the old label is gone: {items:?}");
+        let pos = items.iter().position(|t| t == "Acquire Metadata…").unwrap();
+        assert_eq!(items[pos - 1], "Properties…", "after Properties…");
+        click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
+        p.mb_win.as_mut().expect("the song's MusicBrainz window").set_client(crate::mbwin::test_client());
+        {
+            let w = p.mb_win.as_ref().unwrap();
+            assert!(!w.album, "for one song");
+            assert_eq!((w.paths.clone(), w.heading.as_str()), (vec![paths[2].clone()], "Harbour Lights"));
+        }
+        // one MusicBrainz window at a time
         p.musicbrainz_album(&album);
+        assert!(!p.mb_win.as_ref().unwrap().album, "still the song's window");
+        p.mb_win = None;
+        frame(&ctx, &mut p);
+
+        // the album page's button, Acquire Metadata… (as "Get album info from MusicBrainz…" did)
+        p.go(Page::Album(album.key.clone()));
+        let shown = placed_texts(&ctx, &mut p);
+        assert!(!shown.iter().any(|(t, _)| t.contains("MusicBrainz")), "the old label is gone");
+        click_only(&ctx, &mut p, last_text(&shown, "Acquire Metadata…"));
         p.mb_win.as_mut().expect("the MusicBrainz window").set_client(crate::mbwin::test_client());
         run_until(&ctx, &mut p, "the release", |p| p.mb_win.as_ref().is_some_and(|w| w.detail.is_some() && !w.busy));
         {
@@ -2605,10 +4401,29 @@ mod tests {
         assert_eq!((tag("album_artist").as_str(), tag("date").as_str(), tag("genre").as_str()), ("The Example Band", "1999-05-28", "Pop"));
         let t = p.lib.track(&paths[2]).unwrap();
         assert_eq!((t.album_artist.as_str(), t.year.as_str()), ("The Example Band", "1999"));
+
+        // the card menu's Play, Add to Queue and Play Next: the album's songs in track order
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Play"));
+        assert_eq!(p.now.as_ref().map(|n| n.path.clone()), Some(paths[0].clone()), "Play starts with the first song");
+        assert_eq!(p.queue_name, "Night Drive");
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Add to Queue"));
+        assert_eq!(p.queue.as_ref().unwrap().queued, paths);
+        p.queue.as_mut().unwrap().queued = vec![paths[3].clone()];
+        let (_, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        click_only(&ctx, &mut p, last_text(&after, "Play Next"));
+        let want: Vec<String> = paths.iter().chain([&paths[3]]).cloned().collect();
+        assert_eq!(p.queue.as_ref().unwrap().queued, want, "Play Next comes before the songs queued earlier");
+        p.engine.stop();
+        frame(&ctx, &mut p);
         p.on_exit();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// The player in Japanese (2.1): every page, every Settings group and the
+    /// windows draw Japanese texts.  Only this thread uses Japanese, so the
+    /// tests that run at the same time keep English.
     #[test]
     fn japanese_pages_and_windows() {
         let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
@@ -2653,7 +4468,7 @@ mod tests {
             (Page::Folders(None), vec!["Music", "再生"]),
             (Page::Folders(Some(music_dir.clone())), vec!["Paper Lanterns", "2曲"]),
             (Page::Albums, vec!["アルバム", "Harbour Lights"]),
-            (Page::Album(key.clone()), vec!["戻る", "アルバムの情報を編集…", "2曲、"]),
+            (Page::Album(key.clone()), vec!["戻る", "アルバムのプロパティ…", "メタデータを取得…", "2曲、"]),
             (Page::Artists, vec!["アーティスト", "Mira Calloway"]),
             (Page::AlbumArtists, vec!["アルバムアーティスト"]),
             (Page::Genres, vec!["ジャンル", "Jazz"]),
@@ -2673,6 +4488,13 @@ mod tests {
             let t = texts(&ctx, &mut p);
             has(&t, &want, &format!("{page:?}"));
         }
+        // 2.2: an album card's right-click menu
+        let (items, _) = album_card_menu(&ctx, &mut p, "Harbour Lights");
+        for w in ["再生", "シャッフル", "キューに追加", "メタデータを取得…", "アルバムのプロパティ…"] {
+            assert!(items.iter().any(|t| t == w), "no {w:?} in the album menu: {items:?}");
+        }
+        egui::Popup::close_all(&ctx);
+        frame(&ctx, &mut p);
 
         // playing: the playback bar, Now Playing, Up Next and the play history
         p.go(Page::Album(key.clone()));
@@ -2690,6 +4512,20 @@ mod tests {
         let t = texts(&ctx, &mut p);
         has(&t, &["この曲には歌詞がありません。", "歌詞を取得", "再生元：すべての曲", "この曲の後に再生する曲はありません。"], "Now Playing");
         p.show_up_next = false;
+        // 2.2: Now Playing's switch and its Details, a grouping grid and the Cover window
+        p.set_np_tab(NpTab::Details);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["歌詞", "次に再生", "詳細", "タイトル", "品質チェック", "まだチェックしていません"], "Now Playing, Details");
+        assert!(p.np_hits.details.iter().any(|l| l.starts_with("タイトル: Tidewater")), "{:?}", p.np_hits.details);
+        p.set_np_tab(NpTab::Lyrics);
+        p.go(Page::Genres);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["ジャンル", "2ジャンル", "+クリックでジャンルを複数選択", "アルバム1枚 · 2曲"], "Genres");
+        p.open_cover_window(&b1);
+        let t = texts(&ctx, &mut p);
+        has(&t, &["アートワーク", "アートワークを変更…", "アルバムを表示", "閉じる"], "the Cover window");
+        p.cover_win = None;
+        p.go(Page::NowPlaying);
         p.engine.stop();
         for (page, want) in [
             (Page::RecentlyPlayed, vec!["再生日時", "今日 ", "履歴を消去…"]),
@@ -2765,7 +4601,7 @@ mod tests {
         p.edit_song_info(&a2);
         run_until(&ctx, &mut p, "the tags", |p| !p.edit_info.as_ref().unwrap().reading());
         let t = texts(&ctx, &mut p);
-        has(&t, &["情報を編集", "タイトル", "保存", "キャンセル"], "Edit Info");
+        has(&t, &["プロパティ", "タイトル", "保存", "キャンセル"], "Properties");
         p.edit_info = None;
         frame(&ctx, &mut p);
         p.engine.stop();

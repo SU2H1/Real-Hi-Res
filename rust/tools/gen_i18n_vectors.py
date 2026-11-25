@@ -1,7 +1,7 @@
 """Write rust/crates/core/tests/python_i18n.json: how realhires.i18n translates
 sample texts into Japanese (exact texts, patterns with numbers, "; " parts,
 sentences, translated values inside patterns), so the Rust port is checked to
-match (2.1).  Run it after changing realhires/i18n.py or the catalog:
+match (2.1; the core texts of 2.2 too).  Run it after changing realhires/i18n.py or the catalog:
 
     python3 tests/i18n_keys.py --merge && python3 rust/tools/gen_i18n_vectors.py
 """
@@ -35,6 +35,31 @@ TEXTS = [
     "4 attempts (the server asked to slow down).",
     "A sentence. Another one that is not known. 3 more.", "", "Unknown Album", "Rock", "Kind of Blue",
     "{n} songs", "x; y", "Off",
+    # 2.2: bit-perfect playback, the Quality tooltip, the stats calendar, the Cover window, renaming, lyrics labels
+    "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device could not be opened for this "
+    "app alone (this system has no way to do that), so the sound is mixed by the system. The device has no 24-bit "
+    "format, so the samples are converted.",
+    "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are "
+    "played as 32-bit float.",
+    "No: This 6-channel song is mixed down to stereo.", "On",
+    "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)",
+    "Yes (decoded lossy audio): 32-bit float, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+    "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1", "96 kHz, 24-bit integer in 32-bit, stereo",
+    "24-bit/96 kHz", "32-bit float/44.1 kHz", "MP3 · 320 kbps · 44.1 kHz",
+    "Tuesday 24 November 2026", "November 2026", "2 songs played, 42 minutes", "1 song played, 1 minute", "<1 min",
+    "1,250 min", "No music on this day.",
+    "1,200 × 1,200 pixels · JPEG · 245.3 KB", "Unknown format · 812 bytes", "PNG · 4.8 MB", "Inside 01 Song.flac",
+    "cover.jpg in the album's folder", "Changed the cover of 1 of 3 songs.", "2 of the songs had no cover inside.",
+    "b.wav had no cover inside.", "Could not save cover.png in the album's folder: [Errno 13] Permission denied",
+    "cover.jpg in the album's folder was not deleted; it is shown for the songs that have no cover inside.",
+    "Could not remove the cover of a.m4a: FFmpeg could not copy the file with the new cover: Invalid argument.",
+    "Could not save the information of a.flac: FFmpeg's copy did not have exactly the same audio as the original, "
+    "so the file was left unchanged.",
+    "The genre is too long: at most 1,000 characters fit.", "Write the year as four digits, such as 2004.",
+    "Already has lyrics (a.lrc).", "Saved synced lyrics as a.lrc and embedded them in a.flac.",
+    "Lyrics (not synced)", "inside the file",
+    "Could not change the cover of a.ogg: Only Ogg files with Vorbis or Opus audio can be changed directly.",
+    "The MP3 file has an ID3v2.2 tag, which cannot be updated.",
 ]
 
 

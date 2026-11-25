@@ -1,6 +1,7 @@
-"""The MusicBrainz window of the 2.1 player: "Get info from MusicBrainz…" for a song
-and "Get album info from MusicBrainz…" for an album (docs/player-spec.md, "Song
-information from MusicBrainz").
+"""The MusicBrainz window of the 2.1 player: "Acquire Metadata…" (2.2; it was "Get info
+from MusicBrainz…" and "Get album info from MusicBrainz…") in a song's menu, an album
+card's menu and on the album page (docs/player-spec.md, "Song information from
+MusicBrainz" and "Acquire Metadata").
 
 It reads the songs' tags in a thread, searches MusicBrainz for the album (or the
 song) with what the tags say, lists the releases found, reads the chosen

@@ -6,7 +6,7 @@ MusicBrainz is the open music encyclopedia behind MusicBrainz Picard
 title, artist, album, album artist, release date, track and disc numbers,
 genre and composer.
 
-* By hand: "Get info from MusicBrainz…" searches for the album (or the song),
+* By hand: "Acquire Metadata…" (2.2; "Get info from MusicBrainz…" in 2.1) searches for the album (or the song),
   lists the releases found, reads the chosen release's track list, matches the
   user's songs to its tracks (by disc and track number, then by title, then,
   for the same number of songs and tracks, in order) and shows what would

@@ -314,6 +314,8 @@ pub fn install_theme(ctx: &egui::Context, theme: &str, custom: &[realhires::them
         v.widgets.inactive.bg_fill = v.widgets.inactive.weak_bg_fill;
         v.widgets.hovered.weak_bg_fill = p.hover;
         v.widgets.hovered.bg_fill = p.hover;
+        // the title bar of the window in front (2.1: windows in the theme's colours)
+        v.widgets.open.weak_bg_fill = p.lcd;
         v.slider_trailing_fill = true;
         v.panel_fill = p.bg;
         v.window_fill = p.bg;

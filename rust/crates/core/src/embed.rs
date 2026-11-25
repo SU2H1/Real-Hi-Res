@@ -15,7 +15,9 @@ pub const VENDOR: &str = "Real-Hi-Res";
 const FLAC_SYNCED: &str = "LYRICS";
 const FLAC_PLAIN: &str = "UNSYNCEDLYRICS";
 const LANG: &[u8] = b"XXX";
-const NEW_PADDING: usize = 4096;
+pub const NEW_PADDING: usize = 4096;
+/// More room than this (a removed cover picture) is not kept as FLAC padding.
+pub const MAX_KEPT_PADDING: usize = 1 << 20;
 
 #[derive(Debug)]
 pub enum EmbedError {
@@ -66,6 +68,16 @@ pub fn lrc_entries(synced: &str) -> Vec<(u32, String)> {
     }
     out.sort_by_key(|e| e.0);
     out
+}
+
+/// Whether lyrics text is really LRC: at least half of its non-empty lines start with a
+/// timestamp (Python `looks_synced`).  Some programs keep LRC in a .txt file or in the
+/// plain-lyrics tag (USLT, UNSYNCEDLYRICS), and the player should still follow it.
+pub fn looks_synced(text: &str) -> bool {
+    let norm = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = norm.split('\n').filter(|l| !crate::pyunicode::strip(l).is_empty()).collect();
+    let timed = lines.iter().filter(|l| stamp(l.trim_start_matches(crate::pyunicode::is_space)).is_some()).count();
+    timed > 0 && timed * 2 >= lines.len()
 }
 
 /// `\[(\d+):(\d{1,2})(?:[.:](\d{1,3}))?\]` at the start of `s`.
@@ -121,7 +133,7 @@ fn to_syncsafe(n: usize) -> [u8; 4] {
     [((n >> 21) & 0x7F) as u8, ((n >> 14) & 0x7F) as u8, ((n >> 7) & 0x7F) as u8, (n & 0x7F) as u8]
 }
 
-fn id3_len(data: &[u8]) -> usize {
+pub(crate) fn id3_len(data: &[u8]) -> usize {
     if data.len() >= 10 && &data[..3] == b"ID3" {
         10 + syncsafe(&data[6..10]) + if data[5] & 0x10 != 0 { 10 } else { 0 }
     } else {
@@ -129,7 +141,7 @@ fn id3_len(data: &[u8]) -> usize {
     }
 }
 
-fn flac_blocks(data: &[u8], start: usize) -> Result<(Vec<(u8, Vec<u8>)>, usize), EmbedError> {
+pub(crate) fn flac_blocks(data: &[u8], start: usize) -> Result<(Vec<(u8, Vec<u8>)>, usize), EmbedError> {
     let mut pos = start + 4;
     let mut blocks = vec![];
     loop {
@@ -193,29 +205,48 @@ pub fn flac_rewrite(
     edit: impl FnOnce(Vec<Vec<u8>>) -> Vec<Vec<u8>>,
     too_long: &str,
 ) -> Result<Vec<u8>, EmbedError> {
+    let edit_blocks = |mut blocks: Vec<(u8, Vec<u8>)>| -> Result<Vec<(u8, Vec<u8>)>, EmbedError> {
+        let mut vendor = VENDOR.as_bytes().to_vec();
+        let mut comments = vec![];
+        let vi = blocks.iter().position(|(k, _)| *k == 4);
+        if let Some(i) = vi {
+            (vendor, comments) = parse_vorbis(&blocks[i].1)?;
+        }
+        let body = vorbis_body(&vendor, &edit(comments));
+        match vi {
+            Some(i) => blocks[i] = (4, body),
+            None => blocks.insert(1.min(blocks.len()), (4, body)),
+        }
+        Ok(blocks)
+    };
+    flac_rewrite_blocks(data, edit_blocks, too_long)
+}
+
+/// The FLAC file with its metadata blocks replaced by `edit(blocks)` (type,
+/// body); the padding is laid out again and the audio stays as it is (Python
+/// `flac_rewrite_blocks`).
+pub fn flac_rewrite_blocks(
+    data: &[u8],
+    edit: impl FnOnce(Vec<(u8, Vec<u8>)>) -> Result<Vec<(u8, Vec<u8>)>, EmbedError>,
+    too_long: &str,
+) -> Result<Vec<u8>, EmbedError> {
     let start = id3_len(data);
     if data.get(start..start + 4) != Some(b"fLaC") {
         return err("This is not a FLAC file.");
     }
-    let (mut blocks, audio) = flac_blocks(data, start)?;
+    let (blocks, audio) = flac_blocks(data, start)?;
     let old_meta = audio - start - 4;
-    let mut vendor = VENDOR.as_bytes().to_vec();
-    let mut comments = vec![];
-    let vi = blocks.iter().position(|(k, _)| *k == 4);
-    if let Some(i) = vi {
-        (vendor, comments) = parse_vorbis(&blocks[i].1)?;
-    }
-    let body = vorbis_body(&vendor, &edit(comments));
-    if body.len() >= 1 << 24 {
+    let mut blocks = edit(blocks)?;
+    if blocks.iter().any(|(_, b)| b.len() >= 1 << 24) {
         return err(too_long);
-    }
-    match vi {
-        Some(i) => blocks[i] = (4, body),
-        None => blocks.insert(1.min(blocks.len()), (4, body)),
     }
     blocks.retain(|(k, _)| *k != 1);
     let used: usize = blocks.iter().map(|(_, b)| 4 + b.len()).sum();
-    let pad = if old_meta >= used + 4 { old_meta - used - 4 } else { NEW_PADDING };
+    let pad = if old_meta >= used + 4 && old_meta - used - 4 <= MAX_KEPT_PADDING {
+        old_meta - used - 4
+    } else {
+        NEW_PADDING
+    };
     blocks.push((1, vec![0u8; pad]));
     let mut out = data[..start].to_vec();
     out.extend_from_slice(b"fLaC");
@@ -583,7 +614,8 @@ pub fn replace_file(path: &str, data: &[u8]) -> std::io::Result<()> {
     res
 }
 
-/// (kind, text) of the lyrics embedded in a song, for display (Python `lyrics_of`).
+/// (kind, text) of the lyrics embedded in a song, for display (Python `lyrics_of`): the
+/// synced lyrics, else the plain ones, which count as synced when they are LRC.
 pub fn lyrics_of(path: &str) -> Option<(crate::lyrics::Status, String)> {
     use crate::lyrics::{is_instrumental_lrc, Status};
     if !supported(path) {
@@ -595,7 +627,13 @@ pub fn lyrics_of(path: &str) -> Option<(crate::lyrics::Status, String)> {
         return Some((kind, synced));
     }
     if !plain.is_empty() {
-        let kind = if is_instrumental_lrc(&plain) { Status::Instrumental } else { Status::Plain };
+        let kind = if is_instrumental_lrc(&plain) {
+            Status::Instrumental
+        } else if looks_synced(&plain) {
+            Status::Synced
+        } else {
+            Status::Plain
+        };
         return Some((kind, plain));
     }
     None

@@ -1,8 +1,10 @@
 """Writes the Python answers the Rust player core is tested against:
 rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
-python_eqfiles.json, python_themes.json, python_playerstate.json and
-python_tagedit.json (the tag editor and the themes folder).  Run from
-the repository root:
+python_eqfiles.json, python_themes.json, python_playerstate.json,
+python_tagedit.json (the tag editor and the themes folder),
+python_bitperfect.json (bit-perfect playback's decisions and texts), python_covers.json
+(the names of covers kept on disk) and python_library.json (the Quality column's tooltip
+and sort, renaming groups, the EQ preset match).  Run from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -13,7 +15,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 import time  # noqa: E402
 
-from realhires import eq, musiclib, playerstate, stats, tagedit, themes  # noqa: E402
+from realhires import bitperfect, eq, musiclib, playerstate, stats, tagedit, themes  # noqa: E402
 from realhires.musiclib import Track  # noqa: E402
 from realhires.playqueue import PlayQueue, Song, SplitMix64, shuffled  # noqa: E402
 
@@ -96,12 +98,59 @@ for shuffle in ("off", "songs", "library", "artist"):
                 steps.append(q.current)
         runs.append({"shuffle": shuffle, "repeat": "off", "seed": seed, "steps": steps, "up_next": q.up_next(30),
                      "disliked": disliked})
+# the user's queue (2.1): Play Next / Add to Queue / Up Next jumps, with each mode
+user_ops = ["auto", "play_next:3,4", "add:7", "next", "play_next:9", "auto", "next", "prev", "next",
+            "add:1,2,6", "jump:1", "next", "jump:3", "add:8", "set_shuffle:songs", "next", "next", "auto"]
+user_runs = []
+for shuffle in ("off", "songs", "album"):
+    for repeat in ("off", "song", "album"):
+        q = PlayQueue(songs, everything[:10], shuffle=shuffle, repeat=repeat, seed=11)
+        steps = [q.start(everything[2])]
+        for op in user_ops:
+            name, _, arg = op.partition(":")
+            picked = [everything[int(i)] for i in arg.split(",")] if arg and name in ("play_next", "add") else []
+            if name == "auto":
+                steps.append(q.next(auto=True))
+            elif name == "next":
+                steps.append(q.next())
+            elif name == "prev":
+                steps.append(q.previous())
+            elif name == "play_next":
+                q.play_next(picked)
+                steps.append(q.current)
+            elif name == "add":
+                q.add_to_queue(picked)
+                steps.append(q.current)
+            elif name == "jump":
+                steps.append(q.jump(int(arg)))
+            else:
+                q.set_shuffle(arg)
+                steps.append(q.current)
+            steps.append(q.up_next(6))
+        user_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": 11, "steps": steps})
+# several artists in one field (2.1): split_artists() and the groupings it gives
+art_tracks = [Track(path=f"/art/{i:02d}.flac", title=f"T{i}", artist=a, album_artist=aa)
+              for i, (a, aa) in enumerate([
+                  ("Mariah Carey, Michael Bublé", ""), ("Michael Bublé", ""), ("Earth, Wind & Fire", ""),
+                  ("Simon & Garfunkel", ""), ("Drake (feat. Rihanna)", ""), ("One;Two", "Two"),
+                  ("Michael Bublé & Someone x Other / More", "Michael Bublé"), ("A FEAT. b, B", ""),
+                  ("  Mira Calloway ;  ", "Mira Calloway, The Northern Quay"), ("The Northern Quay ft Ann", ""),
+                  ("", "Various, Michael Bublé"), ("Ünïcode x ÉCLAIR", ""), ("ÉCLAIR", "")])]
+art_known = musiclib.known_artists(art_tracks)
+with open(os.path.join(OUT, "python_artists.json"), "w", encoding="utf-8") as fh:
+    json.dump({"tracks": [x.to_json() for x in art_tracks], "known": sorted(art_known),
+               "split": [[t.artist, musiclib.split_artists(t.artist, art_known)] for t in art_tracks]
+               + [[n, musiclib.split_artists(n, art_known)] for n in ("Earth, Wind", "X (ft. Y))", "a;;b", "ab FT. cd")],
+               "artists": [[g["name"], [x.path for x in g["tracks"]]] for g in musiclib.artists(art_tracks)],
+               "album_artists": [[g["name"], [x.path for x in g["tracks"]]] for g in musiclib.album_artists(art_tracks)]},
+              fh, indent=0, ensure_ascii=False)
 rng = SplitMix64(2024)
 with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
     json.dump({"songs": [s.__dict__ for s in songs], "context": everything[:10], "start": everything[2],
                "ops": ["auto", "next", "auto", "prev", "next", "auto", "next", "next", "auto", "next", "auto",
                        "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"],
-               "runs": runs, "splitmix_2024": [str(rng.next()) for _ in range(5)],
+               "runs": runs, "user_ops": user_ops, "user_runs": user_runs,
+               "splitmix_2024": [str(rng.next()) for _ in range(5)],
                "shuffled_9": shuffled([str(i) for i in range(12)], SplitMix64(9))}, fh, indent=0)
 
 # ------------------------------------------------------------- statistics ---
@@ -137,12 +186,34 @@ groups = {name: [[g["name"], [x.path for x in g["tracks"]]] for g in fn(tracks)]
 folders = {f: [[list(x) for x in musiclib.folder_view(tracks, f)[0]], [x.path for x in musiclib.folder_view(tracks, f)[1]]]
            for f in ("/lib", "/lib/A", "/lib/B", "/lib/A/sub", "/nope")}
 ls = stats.library_stats(tracks)
+# the calendar of Your Stats (2.1): every month with plays, a leap February and an empty month; the
+# extra plays have no title, only an album artist, and start just before and after midnight in Tokyo
+extra = [stats.Play("/lib/x/Night Walk.flac", 1_702_997_940.0, 75.0, 200.0, title="  ", artist=" ",
+                    album_artist=" Harbour Choir "),
+         stats.Play("/lib/x/Night Walk.flac", 1_702_998_000.0, 29.0, 200.0, title="Night Walk"),
+         stats.Play("/lib/y/Long.flac", 1_703_001_600.0, 3600.0 * 21.0 + 31.0, 99999.0, title="Long", artist="Ann")]
+cal_plays = sorted(plays + extra, key=lambda p: p.started)
+months = sorted({(tokyo(p.started).tm_year, tokyo(p.started).tm_mon) for p in cal_plays}) + [(2024, 2), (2026, 11)]
+cal = []
+for y, m in months:
+    mins = stats.month_minutes(cal_plays, y, m, localtime=tokyo)
+    days = []
+    for d in range(1, len(mins) + 1):
+        rows = stats.day_plays(cal_plays, y, m, d, localtime=tokyo)
+        if rows or d == 1:
+            days.append({"day": d, "title": stats.day_title(y, m, d), "plays": rows, "summary": stats.day_summary(rows)})
+    cal.append({"year": y, "month": m, "title": stats.month_title(y, m), "grid": stats.month_grid(y, m),
+                "minutes": mins, "levels": stats.month_levels(mins), "days": days})
 with open(os.path.join(OUT, "python_stats.json"), "w", encoding="utf-8") as fh:
     json.dump({"tracks": [x.to_json() for x in tracks], "plays": [p.__dict__ for p in plays], "offset": 9 * 3600,
                "stats": st, "cards": stats.cards(st), "stats_7": half, "cards_7": stats.cards(half),
                "cards_empty": stats.cards(stats.compute([], localtime=tokyo)), "groups": groups, "folders": folders,
-               "library": ls, "hours": [stats.hour_label(h) for h in range(24)]}, fh, indent=0,
-              ensure_ascii=False)
+               "library": ls, "hours": [stats.hour_label(h) for h in range(24)],
+               "calendar_plays": [p.__dict__ for p in extra], "calendar": cal,
+               "minutes_labels": [[s, stats.minutes_label(s)] for s in (0.0, 1.0, 29.9, 30.0, 89.9, 90.0, 74_043.0)],
+               "shift_month": [[y, m, d, *stats.shift_month(y, m, d)]
+                               for y, m, d in ((2026, 11, 1), (2026, 12, 1), (2026, 1, -1), (2026, 3, -27), (1999, 7, 0))]},
+              fh, indent=0, ensure_ascii=False)
 
 # ------------------------------------------------------------- EQ files ---
 param = eq.apply_preset(eq.default_state(), "Rock")
@@ -202,8 +273,19 @@ with open(os.path.join(OUT, "python_themes.json"), "w", encoding="utf-8") as fh:
 messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume": "0.4",
          "eq_presets": [{"name": " Night  Mode ", "eq": mixed}, {"name": "night mode", "eq": {}}, {"name": ""}, 7],
          "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
-                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}]}
+                       {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}],
+         "lyrics_size": "31.5",
+         "columns": {"songs": ["nope", "year", "artist", 3], "album": [], "folders": "x", "other": ["title"]}}
 ps = playerstate.PlayerState.from_json(messy)
+# Now Playing's lyrics size (A− / A+): what player.json may hold, and the steps
+sizes = [[v, playerstate.PlayerState.from_json({"lyrics_size": v}).lyrics_size]
+         for v in (26, 30, "30", " 31 ", 12, 60, 25.5, 26.5, 27.5, 30.49, True, None, "x", [], {}, -5, 1e308,
+                   float("nan"), float("inf"), "inf")]
+size_steps = []
+for start in (26, 47, 48, 16, 17, 99, "x"):
+    for steps in (1, -1, 3, -20):
+        st = playerstate.PlayerState(lyrics_size=start)
+        size_steps.append([start, steps, st.step_lyrics_size(steps), playerstate.plain_lyrics_size(st.lyrics_size)])
 ops = playerstate.PlayerState()
 pid = ops.create_playlist("Road Trip", ["/m/a", "/m/b", "/m/a"], now=1000.0)
 pid2 = ops.create_playlist("road trip", now=1000.0)
@@ -216,6 +298,14 @@ ops.set_disliked("/m/z", True)
 ops.save_eq_preset("  My   Jazz ", eq.apply_preset(eq.default_state(), "Jazz"))
 ops.save_eq_preset("Other", eq.default_state())
 ops.rename_eq_preset("Other", "Bright")
+ops.step_lyrics_size(1)
+ops.step_lyrics_size(1)
+ops.toggle_column("songs", "year")
+ops.toggle_column("songs", "like")
+ops.toggle_column("songs", "title")
+ops.toggle_column("album", "file")
+ops.set_columns("folders", ["bit_rate", "format"])
+ops.toggle_column("folders", "format")
 errors = []
 for name in ("rock", "my jazz", "", "  "):
     try:
@@ -224,7 +314,10 @@ for name in ("rock", "my jazz", "", "  "):
     except playerstate.InvalidName as exc:
         errors.append([name, str(exc)])
 with open(os.path.join(OUT, "python_playerstate.json"), "w", encoding="utf-8") as fh:
-    json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors},
+    json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors,
+               "lyrics_sizes": sizes, "lyrics_size_steps": size_steps,
+               "lyrics_size_limits": [playerstate.LYRICS_SIZE_MIN, playerstate.LYRICS_SIZE_DEFAULT,
+                                      playerstate.LYRICS_SIZE_MAX, playerstate.LYRICS_SIZE_STEP]},
               fh, indent=0, ensure_ascii=False)
 print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", len(plays), "plays,",
       len(imports), "EQ files")
@@ -409,3 +502,358 @@ with open(os.path.join(OUT, "python_tagedit.json"), "w", encoding="utf-8") as fh
                "folder": {"own": own, "files": folder_files, "loaded": loaded},
                "ogg_inputs": {name: data.hex() for name, data in oggs.items()}, "ogg": ogg_cases,
                "crc": crcs}, fh, indent=0, ensure_ascii=False)
+
+# ---- bit-perfect playback (2.1) ----
+bp = bitperfect
+bp_songs = [bp.Song(44100, 2, 16), bp.Song(48000, 1, 16), bp.Song(96000, 2, 24), bp.Song(192000, 2, 24),
+            bp.Song(88200, 2, 24), bp.Song(176400, 2, 24), bp.Song(96000, 2, 32), bp.Song(48000, 2, 32, True),
+            bp.Song(44100, 2, 64, True), bp.Song(44100, 2, 0, False, True), bp.Song(48000, 6, 24),
+            bp.Song(44100, 2, 0), bp.Song(22050, 2, 8), bp.Song(352800, 2, 24), bp.Song(11025, 1, 16)]
+ladder = (44100, 48000, 88200, 96000, 176400, 192000)
+bp_mode_sets = [
+    [],
+    [bp.Mode(f, r, r, 2) for f in bp.FORMATS for r in ladder],
+    [bp.Mode(bp.I16, r, r, 2) for r in (44100, 48000)],
+    [bp.Mode(bp.F32, 8000, 384000, 0)],
+    [bp.Mode(f, r, r, 2) for f in (bp.I24, bp.I16) for r in (48000, 96000)],
+    [bp.Mode(bp.I32, 48000, 48000, 8)],
+    [bp.Mode(bp.I16, 44100, 44100, 1)],
+    [bp.Mode(bp.I32, 44100, 96000, 2), bp.Mode(bp.I16, 44100, 192000, 2)],
+    [bp.Mode(bp.I24, 44100, 44100, 2)],
+    [bp.Mode(bp.F32, r, r, 6) for r in (44100, 48000)] + [bp.Mode(bp.I32, 48000, 48000, 4)],
+    [bp.Mode("u8", 48000, 48000, 2), bp.Mode(bp.I32, 96000, 96000, 0), bp.Mode(bp.F32, 0, 0, 2)],
+]
+accesses = [(bp.WASAPI, "Speakers"), (bp.ALSA, "hw:1,3"), (bp.COREAUDIO, "MacBook Speakers"),
+            (bp.DIRECT, "Test output")]
+bp_cases = []
+for si, song in enumerate(bp_songs):
+    for mi, ms in enumerate(bp_mode_sets):
+        for failure in ("", bp.BUSY):
+            if failure and mi not in (0, 1, 3):
+                continue
+            pl = bp.plan(song, ms, failure)
+            access, dev = accesses[(si + mi) % len(accesses)]
+            bp_cases.append({"song": si, "modes": mi, "failure": failure, "rate": pl.rate, "format": pl.format,
+                             "channels": pl.channels, "reasons": pl.reasons, "resampled": pl.resampled,
+                             "access": access, "device": dev, "status": bp.status(song, pl, access, dev),
+                             "output": bp.output_label(pl.rate, pl.format, bp.song_bits(song), pl.channels)})
+cards_text = (" 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n"
+              "                      HDA Intel PCH at 0xf7f10000 irq 32\n"
+              " 1 [DAC            ]: USB-Audio - USB Audio DAC\n"
+              "                      Manufacturer USB Audio DAC at usb-0000:00:14.0-1, high speed\n"
+              "  2 [NVidia         ]: HDA-Intel - HDA NVidia\n"
+              " 3 [Loopback]: Loopback - Loopback\n"
+              "x [bad]: no - number\n 4 [Odd] no colon\n 5 [NoDash         ]: just a name\n")
+cards = bp.alsa_cards(cards_text)
+devices = ["", "default", "hw:1", "hw:1,0", "hw:CARD=DAC,DEV=0", "plughw:CARD=PCH,DEV=3", "front:CARD=NVidia",
+           "sysdefault:CARD=dac", "hw:CARD=Unknown,DEV=2", "hw:", "hw:x,y", "USB Audio DAC Analog Stereo",
+           "HDA Intel PCH, ALC897 Analog", "HDA NVidia, HDMI 0", "Built-in Audio Analog Stereo",
+           "Default ALSA Output (currently PipeWire Media Server)", "hw:2,7", "dmix:CARD=1,DEV=0", "Loopback",
+           "loop", "HW:1", "Name with: colon"]
+floats = [0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, -3.0, 1.5 / 32768, 2.5 / 32768, -1.5 / 32768, 32767 / 32768,
+          8388607 / 8388608, -8388608 / 8388608, 0.123456789, -0.987654321, 1e-9, 4.656612873077393e-10,
+          float("nan"), float("inf"), float("-inf")]
+with open(os.path.join(OUT, "python_bitperfect.json"), "w", encoding="utf-8") as fh:
+    json.dump({"songs": [s.__dict__ for s in bp_songs],
+               "mode_sets": [[m.__dict__ for m in ms] for ms in bp_mode_sets],
+               "cases": bp_cases,
+               "preferred": [bp.preferred_formats(s) for s in bp_songs],
+               "rates": [bp.rates_offered(ms) for ms in bp_mode_sets],
+               "pick": [{"song": r, "rates": rs, "rate": bp.pick_rate(r, rs)}
+                        for r in (11025, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 0)
+                        for rs in ([], [48000], [44100, 48000], [48000, 96000], [44100, 48000, 88200, 96000],
+                                   [8000, 16000, 32000], [192000, 384000], [44100])],
+               "ints": [{"x": x, "i16": bp.int_sample(x, bp.I16), "i24": bp.int_sample(x, bp.I24),
+                         "i32": bp.int_sample(x, bp.I32)} for x in floats],
+               "labels": [{"format": f, "bits": b, "label": bp.format_label(f, b)}
+                          for f in bp.FORMATS for b in (0, 8, 16, 24, 32)],
+               "khz": [{"hz": hz, "text": bp.fmt_khz(hz)} for hz in (0, 8000, 11025, 22050, 44100, 48000, 88200,
+                                                                     96000, 352800, 705600, 12345)],
+               "failures": [{"detail": d, "text": bp.failure_reason(d)}
+                            for d in ("", "  ", "ALSA: Device or resource busy", "it did not switch to 96 kHz.")],
+               "idle": [bp.status(None, None, enabled=False), bp.status(None, None)],
+               "cards_text": cards_text, "cards": cards,
+               "devices": [{"device": d, "hw": bp.alsa_device(d, cards)} for d in devices],
+               "texts": {"busy": bp.BUSY, "lossy": bp.LOSSY_NOTE, "eq": bp.EQ_BYPASSED, "wasapi": bp.WASAPI_FORMAT_NOTE,
+                         "off": bp.OFF,
+                         "idle": bp.ON_IDLE},
+               "standard_rates": list(bp.STANDARD_RATES)}, fh, indent=0, ensure_ascii=False)
+# ------------------------------------------------- covers kept on disk ---
+# The names of saved covers (covers.cache_key/cache_name), which both apps share:
+# made-up paths that do not exist (every size and time is -1), and real files with
+# fixed sizes and times under a folder the Rust test makes itself ("{root}").
+from realhires import covers  # noqa: E402
+
+made_up = [
+    (["/no/such/Music/Album/01 One.flac"], 176),
+    (["/no/such/Music/Album/01 One.flac", "/no/such/Music/Album/02 Two.flac", "/no/such/Music/Album/CD2/03.flac",
+      "/no/such/Music/Album/04 Four.flac", "/no/such/Music/Other/05.flac"], 176),
+    (["/no/such/音楽/宇多田ヒカル/First Love/01 Automatic.flac", "/no/such/Música/Ça va/02 Été.mp3"], 220),
+    (["/no/such/a b/cé.wav"] * 3, 480),
+    (["/no/such/song.flac"], 44),
+    ([], 150),
+]
+cover_names = [{"paths": paths, "size": size, "key": covers.cache_key(paths, size),
+                "name": covers.cache_name(paths, size)} for paths, size in made_up]
+cover_layout = {
+    "files": [{"path": "Album A/01.flac", "bytes": 1234, "mtime_ns": 1_700_000_001_234_567_800},
+              {"path": "Album A/02.flac", "bytes": 0, "mtime_ns": 1_700_000_002_000_000_000},
+              {"path": "Album B/Disc 1/01.wav", "bytes": 44, "mtime_ns": 999_999_999_900},
+              {"path": "Album B/Disc 2/02.wav", "bytes": 70000, "mtime_ns": 1_800_000_000_000_000_100}],
+    "folders": [{"path": "Album A", "mtime_ns": 1_700_000_100_000_000_000},
+                {"path": "Album B/Disc 1", "mtime_ns": 1_700_000_200_000_000_500},
+                {"path": "Album B/Disc 2", "mtime_ns": 1_700_000_300_000_000_000}],
+}
+cover_files = []
+with tempfile.TemporaryDirectory() as root:
+    for f in cover_layout["files"]:
+        p = root + "/" + f["path"]
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as fh:
+            fh.write(b"\0" * f["bytes"])
+        os.utime(p, ns=(f["mtime_ns"], f["mtime_ns"]))
+    for f in cover_layout["folders"]:
+        os.utime(root + "/" + f["path"], ns=(f["mtime_ns"], f["mtime_ns"]))
+    for rel, size in ((["Album A/01.flac", "Album A/02.flac"], 176),
+                      (["Album B/Disc 1/01.wav", "Album B/Disc 2/02.wav", "Album A/missing.flac"], 480)):
+        paths = [root + "/" + r for r in rel]
+        cover_files.append({"paths": rel, "size": size, "key": covers.cache_key(paths, size).replace(root, "{root}")})
+
+with open(os.path.join(OUT, "python_covers.json"), "w", encoding="utf-8") as fh:
+    json.dump({"version": covers.CACHE_VERSION, "paths": covers.CACHE_PATHS, "names": cover_names,
+               "layout": cover_layout, "files": cover_files}, fh, indent=0, ensure_ascii=False)
+# -------------------------------------- quality column, renaming groups ---
+# python_library.json: the Quality column's tooltip and sort, the EQ preset match,
+# and renaming a genre, composer or year
+q_tracks = list(tracks) + [
+    Track(path="/q/a.ogg", codec="vorbis", is_lossy=True, sample_rate=48000, bit_rate=0),
+    Track(path="/q/b.opus", codec="opus", is_lossy=True, sample_rate=0, bit_rate=128499),
+    Track(path="/q/c.wav", codec="pcm_s24le", sample_rate=0, bits=24),
+    Track(path="/q/d.flac", codec="flac", sample_rate=88200, bits=0),
+    Track(path="/q/e.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True),
+    Track(path="/q/f.mp3", codec="mp3", is_lossy=True, sample_rate=44100, bit_rate=320000),
+]
+quality = [{"track": x.to_json(), "quality": musiclib.quality(x), "detail": musiclib.quality_detail(x),
+            "sort": list(musiclib.quality_sort(x))} for x in q_tracks]
+dates = [[old, year, tagedit.renamed_date(old, year)] for old, year in (
+    ("2001-05-03", "2004"), ("2001", "1999"), ("", "2004"), ("May 2001", "2004"), (" 1987-11 ", "1990"),
+    ("12345", "2000"), ("199", "2000"), ("２００１", "2002"))]
+group_names = []
+for kind, name in (("genres", "  Rock   Pop "), ("genres", ""), ("composers", "Ann"), ("composers", " "),
+                   ("years", "2004"), ("years", " 1999 "), ("years", "99"), ("years", "20045"),
+                   ("years", "２００４"), ("years", ""), ("genres", "x" * 1001)):
+    try:
+        group_names.append({"kind": kind, "name": name, "ok": tagedit.check_group_name(kind, name)})
+    except tagedit.TagError as exc:
+        group_names.append({"kind": kind, "name": name, "error": str(exc)})
+group_cases = [{"kind": k, "name": n, "tags": tg, "changes": tagedit.group_changes(k, n, tg)} for k, n, tg in (
+    ("genres", "Jazz", {"genre": "jazz", "date": "2001"}), ("composers", "Ann", {}),
+    ("years", "2004", {"date": "2001-05-03"}), ("years", "2004", {}), ("years", "1990", {"date": "Spring"}))]
+pst = playerstate.PlayerState()
+pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+pst.eq["enabled"] = False
+pst.save_eq_preset("Quiet", pst.eq)
+matches = []
+for enabled, nudge in ((False, 0.0), (True, 0.0), (True, 0.5)):
+    pst.eq = eq.apply_preset(eq.default_state(), "Rock")
+    pst.eq["enabled"] = enabled
+    pst.eq["graphic"]["gains"][0] += nudge
+    matches.append({"eq": eq.normalize(pst.eq), "match": pst.matching_eq_preset()})
+with open(os.path.join(OUT, "python_library.json"), "w", encoding="utf-8") as fh:
+    json.dump({"quality": quality, "dates": dates, "group_names": group_names, "group_changes": group_cases,
+               "presets": pst.to_json()["eq_presets"], "matches": matches}, fh, indent=0, ensure_ascii=False)
+
+# ------------------------------------------------------------ covers (2.1) ---
+import random  # noqa: E402
+import zlib  # noqa: E402
+
+from realhires import covers, embed  # noqa: E402
+
+
+def png_image(w, h, color=2, bits=8, palette=0, noise=0):
+    rng = random.Random(w * 1000 + h)
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, bits, color, 0, 0, 0))
+    if palette:
+        out += chunk(b"PLTE", bytes(range(palette * 3)))
+    raw = bytes(rng.getrandbits(8) for _ in range(noise)) if noise else b"\x00" * h
+    return out + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def jpeg_image(w, h, sof=0xC0, comps=3, fill=False):
+    app0 = b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof_seg = bytes([0xFF, sof]) + struct.pack(">HBHHB", 8 + 3 * comps, 8, h, w, comps) + bytes(3 * comps)
+    return b"\xff\xd8" + app0 + (b"\xff\xff" if fill else b"") + sof_seg + b"\xff\xda\x00\x08SCANDATA\xff\xd9"
+
+
+images = {
+    "png_rgb": png_image(3, 2),
+    "png_rgba16": png_image(640, 480, color=6, bits=16),
+    "png_gray": png_image(9, 9, color=0, bits=1),
+    "png_palette": png_image(12, 7, color=3, bits=4, palette=5),
+    "png_palette_no_plte": png_image(12, 7, color=3, bits=4),
+    "jpeg": jpeg_image(1200, 1000),
+    "jpeg_progressive": jpeg_image(800, 600, sof=0xC2, fill=True),
+    "jpeg_gray": jpeg_image(31, 17, comps=1),
+    "jpeg_no_sof": b"\xff\xd8\xff\xe0\x00\x04ab\xff\xda\x00\x02",
+    "jpeg_short": b"\xff\xd8\xff",
+    "gif": b"GIF89a\x01\x00\x01\x00\x00\x00\x00;",
+    "bmp": b"BM" + b"\x00" * 30,
+    "webp": b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 8,
+    "text": b"hello",
+    "empty": b"",
+    "big_png": png_image(150, 150, noise=150 * 150 * 3),
+}
+infos = {}
+for name, data in images.items():
+    info = covers.image_info(data)
+    infos[name] = {"format": covers.image_format(data),
+                   "info": None if info is None else [info.mime, info.width, info.height, info.depth, info.colors]}
+checks_pic = []
+for name, mime in (("png_rgb", ""), ("jpeg", "image/jpeg"), ("jpeg", "image/JPG"), ("png_rgb", "image/gif"),
+                   ("gif", ""), ("text", "image/png"), ("png_palette_no_plte", "")):
+    try:
+        tagedit.check_picture(images[name], mime)
+        checks_pic.append({"image": name, "mime": mime, "error": ""})
+    except tagedit.TagError as exc:
+        checks_pic.append({"image": name, "mime": mime, "error": str(exc)})
+
+
+def picture_struct(kind, mime=b"image/png", desc=b"", payload=b"PIXELS"):
+    return (struct.pack(">II", kind, len(mime)) + mime + struct.pack(">I", len(desc)) + desc
+            + struct.pack(">IIIII", 1, 1, 24, 0, len(payload)) + payload)
+
+
+def flac_with_blocks(extra, padding=64):
+    base = flac_file(["TITLE=Old", "ARTIST=One"], padding=0)
+    blocks, audio = embed._flac_blocks(base, 0)
+    blocks = [b for b in blocks if b[0] != 6] + extra + ([(1, b"\x00" * padding)] if padding else [])
+    out = b"fLaC"
+    for i, (k, b) in enumerate(blocks):
+        out += bytes([k | (0x80 if i == len(blocks) - 1 else 0)]) + len(b).to_bytes(3, "big") + b
+    return out + base[audio:]
+
+
+cover_flacs = {
+    "plain": flacs["plain"],                     # its PICTURE-like block is a front cover
+    "no_padding": flacs["no_padding"],
+    "no_vorbis": flacs["no_vorbis"],
+    "id3_front": flacs["id3_front"],
+    "mixed": flac_with_blocks([(6, picture_struct(4, desc=b"back")), (2, b"APPLDATA"), (6, picture_struct(0)),
+                               (6, picture_struct(3, b"image/jpeg")), (6, b"\x00\x00")]),
+    "none": flac_with_blocks([], padding=10),
+    "not_flac": b"OggS-not-a-flac",
+}
+
+
+def id3_flagged(major, frames, padding=16):
+    body = b""
+    for fid, flags, fb in frames:
+        size = embed._to_syncsafe(len(fb)) if major == 4 else struct.pack(">I", len(fb))
+        body += fid + size + flags + fb
+    body += b"\x00" * padding
+    return b"ID3" + bytes([major, 0, 0]) + embed._to_syncsafe(len(body)) + body
+
+
+def apic(kind, mime=b"image/png"):
+    return b"\x00" + mime + b"\x00" + bytes([kind]) + b"desc\x00" + b"PIXELS"
+
+
+cover_mp3s = {
+    "v23": id3_flagged(3, [(b"TIT2", b"\x00\x00", b"\x00Old"), (b"APIC", b"\x00\x00", apic(4)),
+                           (b"APIC", b"\x00\x00", apic(0)), (b"APIC", b"\x00\x80", apic(3)),
+                           (b"APIC", b"\x00\x00", apic(3, b"image/jpeg"))]) + MP3_AUDIO,
+    "v24": id3_flagged(4, [(b"TIT2", b"\x00\x00", b"\x03Old"), (b"APIC", b"\x00\x00", apic(3)),
+                           (b"APIC", b"\x00\x01", apic(3)), (b"TPE1", b"\x00\x00", b"\x03Art")], padding=0) + MP3_AUDIO,
+    "no_apic": mp3s["v23"],
+    "none": MP3_AUDIO,
+    "v22": mp3s["v22"],
+    "short_apic": id3_flagged(3, [(b"APIC", b"\x00\x00", b"\x00x"), (b"APIC", b"\x00\x00", b"")]) + MP3_AUDIO,
+}
+
+
+def mbp(kind):
+    return "METADATA_BLOCK_PICTURE=" + tagedit.b64encode(picture_struct(kind)).decode()
+
+
+cover_oggs = {
+    "vorbis": ogg_file(VORBIS_ID, [vorbis_comment(b"\x03vorbis", small + [mbp(4), "COVERART=xyz", mbp(3), mbp(0),
+                                                                          "metadata_block_picture=!!!!!!!!"], b"\x01"),
+                                   SETUP]),
+    "vorbis_plain": oggs["vorbis"],
+    "opus": ogg_file(OPUS_HEAD, [vorbis_comment(b"OpusTags", small + [mbp(3)], b"\x00\x00padding")]),
+    "speex": oggs["speex"],
+}
+picks = [("png_rgb", images["png_rgb"]), ("jpeg", images["jpeg"]), ("remove", None)]
+cover_cases = []
+for kind, files, fn in (("flac", cover_flacs, tagedit.flac_with_cover), ("mp3", cover_mp3s, tagedit.mp3_with_cover),
+                        ("ogg", cover_oggs, tagedit.ogg_with_cover)):
+    for name, data in files.items():
+        for pick, image in picks:
+            case = {"kind": kind, "name": name, "image": pick}
+            try:
+                out, n = fn(data, image)
+                case.update(removed=n, sha1=hashlib.sha1(out).hexdigest(), size=len(out))
+                if len(out) < 4000:
+                    case["output"] = out.hex()
+            except tagedit.TagError as exc:
+                case["error"] = str(exc)
+            cover_cases.append(case)
+for kind, name, fn in (("ogg", "vorbis", tagedit.ogg_with_cover), ("flac", "mixed", tagedit.flac_with_cover),
+                       ("mp3", "v24", tagedit.mp3_with_cover)):
+    data = {"ogg": cover_oggs, "flac": cover_flacs, "mp3": cover_mp3s}[kind][name]
+    out, n = fn(data, images["big_png"])  # a picture over several pages (Ogg), or a tag that grows
+    cover_cases.append({"kind": kind, "name": name, "image": "big_png", "removed": n,
+                        "sha1": hashlib.sha1(out).hexdigest(), "size": len(out)})
+types = {"mbp": {c: tagedit.mbp_type(c.encode()) for c in (mbp(3), mbp(0), mbp(4), mbp(21), "METADATA_BLOCK_PICTURE=",
+                                                            "METADATA_BLOCK_PICTURE=AAAA", "X=AAAAAwAA",
+                                                            "METADATA_BLOCK_PICTURE=AAAA*wAA", "nothing")},
+         "apic": [[major, flags.hex(), body.hex(), tagedit.apic_type(major, flags, body)]
+                  for major, flags, body in ((3, b"\x00\x00", apic(3)), (3, b"\x00\x20", apic(3)),
+                                             (4, b"\x00\x40", apic(3)), (4, b"\x00\x80", apic(4)),
+                                             (3, b"\x00\x00", b"\x00image/png"), (3, b"\x00\x00", b""),
+                                             (4, b"\x00\x00", b"\x01\x00\x03"))],
+         "streams": [[a, c, tagedit.cover_stream(a, c)] for a in (True, False)
+                     for c in ("", "Other", "Cover (front)", " cover  (FRONT) ", "Cover (back)", "Artist/performer")]}
+cover_commands = []
+for src in ("/m/a.m4a", "/m/b.AIFF", "/m/c.mp3"):
+    for image in ("/tmp/realhires-cover-x.jpg", None):
+        for streams in ([], [(1, True)], [(1, False), (2, True), (3, True)]):
+            cover_commands.append({"src": src, "image": image, "streams": streams,
+                                   "args": tagedit.ffmpeg_cover_args(src, image, "/tmp/out", streams)})
+cannot_cover = {p: tagedit.cannot_hold_cover(p) for p in ("a.wav", "b.WV", "c.ape", "d.dsf", "e.flac", "f.M4A", "g.aif",
+                                                           "h.opus", "i.wma", "j.mka", "noext", "k.caf")}
+T = tagedit.TagOutcome
+cover_summaries = []
+for removing, oc, notes in ((False, [T("a", True), T("b", True)], []), (False, [T("a", True)], []),
+                            (False, [], []), (False, [T("a", False, "WAV x."), T("b", False, "WAV x."), T("c", True)],
+                                              [tagedit.folder_saved_note("/m/Album/cover.png")]),
+                            (False, [T("a", False, "No.")], [tagedit.folder_failed_note("/m/cover.jpg", "denied")]),
+                            (True, [T("a", True), T("b", True, "b had no cover inside.")],
+                             [tagedit.folder_kept_note("/m/Folder.JPG")]),
+                            (True, [T("a", True, "a had no cover inside.")], []),
+                            (True, [T("a", True, "a."), T("b", True, "b.")], []),
+                            (True, [T("a", True), T("b", True, "b."), T("c", True, "c."), T("d", False, "No.")], []),
+                            (True, [T("a", True, "a."), T("d", False, "No.")], ["", "x"]),
+                            (True, [T(str(i), True) for i in range(1200)], [])):
+    cover_summaries.append({"removing": removing, "outcomes": [[o.path, o.ok, o.message] for o in oc], "notes": notes,
+                            "summary": tagedit.cover_summary(oc, removing, notes)})
+texts = {"where": [[k, p, covers.where_text(k, p)] for k, p in (("embedded", "/m/A/01 Song.flac"),
+                                                                 ("folder", "/m/A/cover.jpg"),
+                                                                 ("embedded", "日本.mp3"))],
+         "details": [[w, h, f, n, covers.details_text(w, h, f, n)]
+                     for w, h, f, n in ((1200, 1200, "JPEG", 251187), (0, 0, "", 12), (64, 48, "PNG", 1023),
+                                        (12000, 9000, "WebP", 3 * 1024 * 1024), (5, 0, "GIF", 0))]}
+with open(os.path.join(OUT, "python_covers_embed.json"), "w", encoding="utf-8") as fh:
+    json.dump({"images": {k: v.hex() for k, v in images.items()}, "infos": infos, "checks": checks_pic,
+               "flac_inputs": {k: v.hex() for k, v in cover_flacs.items()},
+               "mp3_inputs": {k: v.hex() for k, v in cover_mp3s.items()},
+               "ogg_inputs": {k: v.hex() for k, v in cover_oggs.items()}, "cases": cover_cases,
+               "pictures": {k: tagedit.flac_picture(images[k]).hex() for k in ("png_rgb", "png_palette", "jpeg")},
+               "apic_bodies": {k: tagedit.apic_body(images[k]).hex() for k in ("png_rgb", "jpeg")},
+               "types": types, "commands": cover_commands, "cannot": cannot_cover, "summaries": cover_summaries,
+               "texts": texts}, fh, indent=0, ensure_ascii=False)
+print(len(cover_cases), "cover cases")

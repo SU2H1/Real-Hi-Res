@@ -1,8 +1,10 @@
 """The language setting (2.1): the catalog, its completeness and placeholders,
-the pattern matcher, and that the Rust vectors are current."""
+the pattern matcher, the order of the patterns, the core texts of 2.2 in
+Japanese, and that the Rust vectors are current."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -77,6 +79,55 @@ def test_patterns_take_numbers_only_where_marked():
     assert i18n.match_template("{d:num} {m} {y:num}", "Upsampled from 44.1 kHz") is None
     assert i18n.match_template("{a}, {b}", "x, y, z") == {"a": "x", "b": "y, z"}
     assert i18n.match_template("{a} kHz", " kHz") is None
+
+
+def _sample(template: str, value: str) -> str:
+    """A text the template gives: every {name:num} filled with 7, every {name} with `value`."""
+    return re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)(:num)?\}", lambda m: "7" if m.group(2) else value, template)
+
+
+def test_no_pattern_takes_the_texts_of_a_later_one():
+    # The first pattern that matches wins, so a general one ("Could not save {file}: {error}") must come
+    # after the specific ones it would also match ("Could not save the information of {file}: {error}").
+    patterns = list(i18n_keys.catalog()["patterns"])
+    for j, later in enumerate(patterns):
+        for value in ("x", "a b", "x.flac"):
+            text = _sample(later, value)
+            for earlier in patterns[:j]:
+                assert i18n.match_template(earlier, text) is None, f"{earlier!r} takes {text!r} from {later!r}"
+
+
+def test_core_texts_of_2_2_in_japanese():
+    from realhires import bitperfect as bp, covers, lyrics, musiclib, stats, tagedit
+
+    i18n.set_language("日本語")
+    song = bp.Song(96000, 2, 24)
+    status = bp.status(song, bp.plan(song, [bp.Mode(bp.I16, 48000, 48000)], bp.BUSY), bp.ALSA, "hw:1")
+    assert status.count(". ") == 2  # three reasons, each translated on its own
+    assert i18n.tr_text(status) == (
+        "いいえ：デバイスが96 kHzを再生できないため、曲を48 kHzにリサンプリングします。"
+        "デバイスがほかのプログラムで使用中のため、音はシステムでミックスされます。"
+        "デバイスに24ビットの形式がないため、サンプルを変換します。")
+    assert i18n.tr_text(bp.status(song, bp.plan(song, []), bp.WASAPI)) == "はい：24ビット、96 kHz、排他モード（WASAPI）"
+    assert i18n.tr(bp.EQ_BYPASSED) == "ビットパーフェクト再生がオンの間はバイパスされます。"
+    assert i18n.tr_text(bp.output_label(96000, bp.I32, 24)) == "96 kHz、24ビット整数（32ビットのコンテナ）、ステレオ"
+    track = musiclib.Track(path="/m/a.flac", sample_rate=96000, bits=24)
+    assert i18n.tr_text(musiclib.quality_detail(track)) == "24ビット/96 kHz"
+    assert i18n.tr_text(stats.month_title(2026, 11)) == "2026年11月"
+    assert i18n.tr_text(stats.day_title(2026, 11, 24)) == "2026年11月24日 火曜日"
+    assert i18n.tr_text(stats.day_summary([{"seconds": 600}, {"seconds": 1900}])) == "2曲を再生、42分"
+    assert i18n.tr_text(stats.minutes_label(20)) == "1分未満"
+    assert [i18n.tr(x) for x in lyrics.shown_label(lyrics.PLAIN, "/m/a.flac", "/m/a.txt")] == ["歌詞（同期なし）", ".txtファイル"]
+    assert i18n.tr_text(covers.details_text(1200, 1200, "JPEG", 251187)) == "1,200 × 1,200ピクセル・JPEG・245.3 KB"
+    assert i18n.tr_text(covers.where_text("embedded", "/m/01 Song.flac")) == "01 Song.flacの中"
+    head, lines = tagedit.cover_summary([tagedit.TagOutcome("a", True), tagedit.TagOutcome("b", True, "b.wav had no cover inside.")])
+    assert [i18n.tr_text(x) for x in [head] + lines] == ["2曲中1曲のアートワークを変更しました。",
+                                                          "b.wavの中にアートワークはありませんでした。"]
+    with pytest.raises(tagedit.TagError) as err:
+        tagedit.check_group_name("genres", " ")
+    assert i18n.tr_text(str(err.value)) == "ジャンルの名前を入力してください。"
+    assert i18n.tr_text("Could not save the information of a.flac: This is not a FLAC file.") == \
+        "a.flacの情報を保存できませんでした：これはFLACファイルではありません。"
 
 
 def test_rust_vectors_are_current(tmp_path):

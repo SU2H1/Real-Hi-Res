@@ -4,18 +4,18 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use egui::{pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Galley, Layout, Rect, RichText, Sense, Stroke, Ui};
 use realhires::i18n::{self, tr_name, tr_text};
-use realhires::musiclib::{Album, Track};
+use realhires::musiclib::{self, Album, Track};
+use realhires::playerstate;
 use realhires::pyunicode::casefold;
 use realhires::settings::{Settings, GROUPS};
 use realhires::{n_, tr};
 
 use crate::icons::{self, Icon};
 use crate::look::{self, Palette};
-use crate::player::{artist_album, cover, fmt_time, quality_label, Page, Player, ShownLyrics, SongCol};
+use crate::player::{cell_text, cover, fmt_time, NpHits, NpTab, Page, Player, ShownLyrics, SongCol};
 
 /// One line of text, cut with "…" to `width`.
 pub fn elided(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
@@ -59,6 +59,228 @@ fn matches(t: &Track, q: &str) -> bool {
         .any(|f| casefold(f).contains(q))
 }
 
+/// What a piece of a link line opens (Now Playing, the LCD).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Link {
+    Artist(String),
+    Album,
+}
+
+fn text_width(ui: &Ui, text: &str, font: &FontId) -> f32 {
+    ui.ctx().fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x)
+}
+
+/// "Artist, Artist — Album" in pieces: each artist its own link, the album name a link when
+/// `album_link`, the separators plain; cut with "…" to fit `width` (the shorter part keeps
+/// its room), as the Python app's `artist_line()`.
+pub fn artist_line(ui: &Ui, font: FontId, color: Color32, artists: &[String], album: &str, album_link: bool, width: f32) -> Vec<(Arc<Galley>, Option<Link>)> {
+    // "Unknown Artist" / "Unknown Album" are shown in the language in use; the links keep the names
+    let shown_names: Vec<String> = artists.iter().map(|a| tr_name(a).to_string()).collect();
+    let album = tr_name(album);
+    let sep = " — ";
+    let galley = |t: &str| ui.ctx().fonts_mut(|f| f.layout_no_wrap(t.to_string(), font.clone(), color));
+    let joined = shown_names.join(", ");
+    let (aw, sw, bw) = (text_width(ui, &joined, &font), text_width(ui, sep, &font), text_width(ui, album, &font));
+    let (a_room, b_room) = if aw + sw + bw <= width {
+        (aw, bw)
+    } else {
+        let room = (width - sw).max(0.0);
+        if aw <= room / 2.0 {
+            (aw, room - aw)
+        } else if bw <= room / 2.0 {
+            (room - bw, bw)
+        } else {
+            (room / 2.0, room / 2.0)
+        }
+    };
+    // a name with no room left is dropped with its ", ", and the name before it ends with "…"
+    // ("June Harbor… — Album", never "June Harbor,  — Album"), as in the Python app
+    let mut out: Vec<(Arc<Galley>, Option<Link>)> = vec![];
+    let mut used = 0.0;
+    let comma = text_width(ui, ", ", &font);
+    for (i, (link, name)) in artists.iter().zip(&shown_names).enumerate() {
+        let cw = if i > 0 { comma } else { 0.0 };
+        let nw = text_width(ui, name, &font);
+        if used + cw + nw <= a_room + 0.5 {
+            if i > 0 {
+                out.push((galley(", "), None));
+            }
+            out.push((galley(name), Some(Link::Artist(link.clone()))));
+            used += cw + nw;
+            continue;
+        }
+        let room = a_room - used - cw;
+        if room > 12.0 {
+            if i > 0 {
+                out.push((galley(", "), None));
+            }
+            let mut g = elided(ui, name, font.clone(), color, room);
+            if i + 1 < artists.len() && shown(&g) == *name {
+                // egui's layout fits a name a fraction of a pixel wider than measured: it still
+                // ends with "…", since more artists follow
+                g = elided(ui, &format!("{name}…"), font.clone(), color, room);
+            }
+            out.push((g, Some(Link::Artist(link.clone()))));
+        } else if i > 0 {
+            let last = &shown_names[i - 1];
+            let w = out.pop().map_or(0.0, |(g, _)| g.size().x) + (a_room - used);
+            out.push((elided(ui, &format!("{last}…"), font.clone(), color, w + 0.5), Some(Link::Artist(artists[i - 1].clone()))));
+        }
+        break;
+    }
+    out.push((galley(sep), None));
+    out.push((elided(ui, album, font, color, b_room + 0.5), album_link.then_some(Link::Album)));
+    out
+}
+
+/// What a galley shows: its glyphs, with the "…" of an elided text (`Galley::text()` is the
+/// whole text it was made from).
+pub fn shown(g: &Galley) -> String {
+    g.rows.iter().flat_map(|r| r.glyphs.iter().map(|gl| gl.chr)).collect()
+}
+
+/// Paints link pieces centred at `center` with `painter`; the links get the pointer cursor and
+/// an underline on hover.  Returns the rectangles of the links and the link clicked.
+pub fn paint_links(ui: &Ui, painter: &egui::Painter, pieces: Vec<(Arc<Galley>, Option<Link>)>, center: egui::Pos2, color: Color32, id: egui::Id) -> (Vec<(Rect, Link)>, Option<Link>) {
+    let total: f32 = pieces.iter().map(|(g, _)| g.size().x).sum();
+    let mut x = center.x - total / 2.0;
+    let mut rects = vec![];
+    let mut clicked = None;
+    for (i, (g, link)) in pieces.into_iter().enumerate() {
+        let r = Rect::from_min_size(pos2(x, center.y - g.size().y / 2.0), g.size());
+        x += g.size().x;
+        painter.galley(r.min, g, color);
+        let Some(link) = link else { continue };
+        let resp = ui.interact(r, id.with(i), Sense::click());
+        if resp.hovered() {
+            painter.line_segment([pos2(r.left(), r.bottom() - 1.0), pos2(r.right(), r.bottom() - 1.0)], Stroke::new(1.0, color));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            clicked = Some(link.clone());
+        }
+        rects.push((r, link));
+    }
+    (rects, clicked)
+}
+
+/// Details' format line: "FLAC · 24-bit/96 kHz · 2,304 kbps" (lossy: "MP3 · 44.1 kHz · 320
+/// kbps"); unknown parts are left out (Python `format_line()`).
+pub fn format_line(t: &Track) -> String {
+    let mut parts = vec![];
+    if !t.codec.is_empty() {
+        parts.push(t.codec.to_uppercase());
+    }
+    if t.sample_rate > 0 {
+        let khz = crate::eqwin::khz(t.sample_rate);
+        if t.is_lossy || t.bits == 0 {
+            parts.push(khz);
+        } else {
+            let bits = if t.is_float { tr!("{n}-bit float", n = t.bits) } else { tr!("{n}-bit", n = t.bits) };
+            parts.push(format!("{bits}/{khz}"));
+        }
+    }
+    if t.bit_rate > 0 {
+        let k = (t.bit_rate as f64 / 1000.0).round_ties_even() as i64;
+        let digits = k.to_string();
+        let mut grouped = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(c);
+        }
+        parts.push(format!("{grouped} kbps"));
+    }
+    if parts.is_empty() {
+        "—".into()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// Now Playing's Details: (label, value) rows (Python `song_details()`). `verdict` is the
+/// saved Quality check (verdict label, summary); `artists` the artists of the artist field.
+/// The labels stay English (shown with `i18n::tr()`); the values are as shown.
+pub fn song_details(t: &Track, album_tracks: usize, comment: &str, verdict: Option<&(String, String)>, artists: &[String]) -> Vec<(&'static str, String)> {
+    let dash = |s: &str| if s.is_empty() { "—".to_string() } else { s.to_string() };
+    let track_no = if t.track > 0 && album_tracks >= t.track as usize && album_tracks > 1 {
+        tr!("{n} of {total}", n = t.track, total = album_tracks)
+    } else if t.track > 0 {
+        t.track.to_string()
+    } else {
+        "—".into()
+    };
+    let artist = if !artists.is_empty() && !t.artist.is_empty() { artists.join(", ") } else { t.artist.clone() };
+    let mut rows = vec![
+        (n_!("Title"), t.display_title()),
+        (n_!("Artist"), dash(&artist)),
+        (n_!("Album"), dash(&t.album)),
+        (n_!("Album artist"), dash(&t.album_artist)),
+        (n_!("Composer"), dash(&t.composer)),
+        (n_!("Genre"), dash(&t.genre)),
+        (n_!("Year"), dash(&t.year)),
+        (n_!("Track"), track_no),
+        (n_!("Disc"), if t.disc > 0 { t.disc.to_string() } else { "—".into() }),
+        (n_!("Duration"), fmt_time(t.duration)),
+        (n_!("Format"), format_line(t)),
+        (n_!("File"), t.path.clone()),
+    ];
+    if !comment.trim().is_empty() {
+        rows.push((n_!("Comment"), comment.trim().to_string()));
+    }
+    match verdict {
+        None => rows.push((n_!("Quality check"), tr!("Not checked yet").into())),
+        Some((v, why)) => {
+            // the verdict's English label and the core's summary, in the language in use
+            rows.push((n_!("Quality check"), i18n::tr(v).to_string()));
+            if !why.is_empty() {
+                rows.push((n_!("Why"), tr_text(why)));
+            }
+        }
+    }
+    rows
+}
+
+/// A segmented switch (Now Playing's Lyrics | Up Next | Details): a rounded panel in the LCD
+/// colour, the chosen segment raised in the page colour.  Returns the segment clicked.
+fn segmented<T: Copy + PartialEq>(ui: &mut Ui, pal: &Palette, options: &[(T, &str)], value: T) -> Option<T> {
+    let font = look::title(13.0);
+    // the labels are English, shown in the language in use
+    let seg = options.iter().map(|(_, t)| text_width(ui, i18n::tr(t), &font)).fold(0.0, f32::max) + 30.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(seg * options.len() as f32 + 4.0, 30.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(9), pal.lcd);
+    let mut chosen = None;
+    for (i, (key, text)) in options.iter().enumerate() {
+        let r = Rect::from_min_size(pos2(rect.left() + 2.0 + i as f32 * seg, rect.top() + 2.0), vec2(seg, 26.0));
+        let resp = ui.interact(r, ui.scope_id().with(("segment", i)), Sense::click());
+        let on = *key == value;
+        if on {
+            ui.painter().rect_filled(r, CornerRadius::same(7), pal.bg);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, CornerRadius::same(7), pal.hover);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, i18n::tr(text), font.clone(), if on { pal.text } else { pal.secondary });
+        if resp.clicked() {
+            chosen = Some(*key);
+        }
+    }
+    chosen
+}
+
+/// A filled pill with white text (the "Back to the current line" button), at `rect`.
+fn floating_pill(ui: &mut Ui, pal: &Palette, rect: Rect, label: &str, id: egui::Id) -> bool {
+    let resp = ui.interact(rect, id, Sense::click());
+    let fill = if resp.hovered() { pal.accent.gamma_multiply(0.85) } else { pal.accent };
+    ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, look::title(13.0), Color32::WHITE);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}
+
 impl Player {
     pub fn content(&mut self, ui: &mut Ui, pal: &Palette) {
         let page = self.page.clone();
@@ -85,20 +307,23 @@ impl Player {
                 self.album_grid(ui, pal, &list);
             }
             Page::Album(key) => self.album_page(ui, pal, &key),
-            Page::Artists => self.group_page(ui, pal, "artists"),
-            Page::AlbumArtists => self.group_page(ui, pal, "album_artists"),
-            Page::Genres => self.group_page(ui, pal, "genres"),
-            Page::Years => self.group_page(ui, pal, "years"),
-            Page::Composers => self.group_page(ui, pal, "composers"),
+            Page::Artists => self.group_grid(ui, pal, "artists"),
+            Page::AlbumArtists => self.group_grid(ui, pal, "album_artists"),
+            Page::Genres => self.group_grid(ui, pal, "genres"),
+            Page::Years => self.group_grid(ui, pal, "years"),
+            Page::Composers => self.group_grid(ui, pal, "composers"),
+            Page::Group(kind, name) => self.group_item_page(ui, pal, kind, &name),
             Page::AllSongs => {
                 page_title(ui, pal, tr!("All Songs"));
-                let list: Vec<String> = self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect();
+                // sorted once, not every frame: that made scrolling a big library lag
+                let sort = Some(self.song_sort);
+                let list = self.cached_list("all", sort, |p| p.sorted_songs(p.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect());
                 ui.horizontal(|ui| {
                     if pill(ui, pal, Icon::Play, tr!("Play")).clicked() {
-                        self.play_list(list.clone(), Some(&list[0]), "All Songs");
+                        self.play_list(list.to_vec(), Some(&list[0]), "All Songs");
                     }
                     if pill(ui, pal, Icon::Shuffle, tr!("Shuffle")).clicked() {
-                        self.shuffle_list(list.clone(), "All Songs");
+                        self.shuffle_list(list.to_vec(), "All Songs");
                     }
                 });
                 ui.add_space(10.0);
@@ -112,12 +337,15 @@ impl Player {
                 // the English name is the queue's (and the table's id); shown translated
                 let title = if liked { "Liked Songs" } else { "Disliked Songs" };
                 page_title(ui, pal, i18n::tr(title));
-                let songs: Vec<&Track> = if liked {
-                    self.liked_songs()
-                } else {
-                    self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).collect()
-                };
-                let list: Vec<String> = self.sorted_songs(songs).iter().map(|t| t.path.clone()).collect();
+                let sort = Some(self.song_sort);
+                let list = self.cached_list(if liked { "liked" } else { "disliked" }, sort, |p| {
+                    let songs: Vec<&Track> = if liked {
+                        p.liked_songs()
+                    } else {
+                        p.lib.tracks.iter().filter(|t| p.state.is_disliked(&t.path)).collect()
+                    };
+                    p.sorted_songs(songs).iter().map(|t| t.path.clone()).collect()
+                });
                 if list.is_empty() {
                     let hint = if liked {
                         tr!("Songs you like appear here. Click the heart next to a song, or in the playback bar while it plays.")
@@ -128,10 +356,10 @@ impl Player {
                 } else {
                     ui.horizontal(|ui| {
                         if pill(ui, pal, Icon::Play, tr!("Play")).clicked() {
-                            self.play_list(list.clone(), Some(&list[0]), title);
+                            self.play_list(list.to_vec(), Some(&list[0]), title);
                         }
                         if liked && pill(ui, pal, Icon::Shuffle, tr!("Shuffle")).clicked() {
-                            self.shuffle_list(list.clone(), title);
+                            self.shuffle_list(list.to_vec(), title);
                         }
                     });
                     ui.add_space(10.0);
@@ -183,8 +411,7 @@ impl Player {
         let a = &self.lib.albums[album];
         let key = a.key.clone();
         let (title, artist) = (a.title.clone(), a.artist.clone());
-        let paths: Vec<String> = a.tracks.iter().map(|t| t.path.clone()).collect();
-        let tex = self.covers.get(&key, &paths);
+        let tex = self.covers.get(&key, &self.lib.album_paths[album]);
         let crect = Rect::from_min_size(rect.min, vec2(size, size));
         cover(ui.painter(), crect, tex.as_ref(), &title, 8);
         if resp.hovered() {
@@ -200,10 +427,53 @@ impl Player {
         if resp.clicked() {
             let quick = resp.interact_pointer_pos().is_some_and(|p| (p - (crect.left_bottom() + vec2(24.0, -24.0))).length() < 17.0);
             if quick {
+                let paths: Vec<String> = self.lib.albums[album].tracks.iter().map(|t| t.path.clone()).collect();
                 self.play_list(paths, None, &title);
             } else {
                 self.go(Page::Album(key));
             }
+        }
+        resp.context_menu(|ui| self.album_menu(ui, album));
+    }
+
+    /// The right-click menu of an album card (every album grid): Play, Shuffle,
+    /// Play Next, Add to Queue, Acquire Metadata… (the MusicBrainz window for the
+    /// album) and Album Properties…, as the album page's buttons do.
+    pub fn album_menu(&mut self, ui: &mut Ui, album: usize) {
+        let Some(a) = self.lib.albums.get(album) else {
+            ui.close();
+            return;
+        };
+        let title = a.title.clone();
+        let paths: Vec<String> = a.tracks.iter().map(|t| t.path.clone()).collect();
+        if ui.button(tr!("Play")).clicked() {
+            if let Some(first) = paths.first().cloned() {
+                self.play_list(paths.clone(), Some(&first), &title);
+            }
+            ui.close();
+        }
+        if ui.button(tr!("Shuffle")).clicked() {
+            self.shuffle_list(paths.clone(), &title);
+            ui.close();
+        }
+        if ui.button(tr!("Play Next")).clicked() {
+            self.queue_songs(&paths, true);
+            ui.close();
+        }
+        if ui.button(tr!("Add to Queue")).clicked() {
+            self.queue_songs(&paths, false);
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…"))).clicked() {
+            let a = self.lib.albums[album].clone();
+            self.musicbrainz_album(&a);
+            ui.close();
+        }
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Album Properties…"))).clicked() {
+            let a = self.lib.albums[album].clone();
+            self.edit_album_info(&a);
+            ui.close();
         }
     }
 
@@ -242,19 +512,43 @@ impl Player {
         }
         let a: Album = self.lib.albums[idx].clone();
         let paths: Vec<String> = a.tracks.iter().map(|t| t.path.clone()).collect();
+        if self.album_sort_for() != key {
+            // another album: in track order again
+            self.set_album_sort_for(key);
+        }
         ui.horizontal(|ui| {
             let (crect, _) = ui.allocate_exact_size(vec2(220.0, 220.0), Sense::hover());
-            let tex = self.covers.get(&a.key, &paths);
+            let tex = self.covers.get(&a.key, &self.lib.album_paths[idx]);
             cover(ui.painter(), crect, tex.as_ref(), &a.title, 10);
             ui.add_space(22.0);
             ui.vertical(|ui| {
                 ui.add_space(70.0);
                 ui.label(RichText::new(tr_name(&a.title)).font(look::title(26.0)).color(pal.text));
-                ui.label(RichText::new(tr_name(&a.artist)).font(look::title(18.0)).color(pal.accent));
-                let meta: Vec<&str> = [a.genre.as_str(), a.year.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
-                if !meta.is_empty() {
-                    ui.label(RichText::new(meta.join(" · ")).color(pal.secondary));
-                }
+                // each artist of the field its own link to its page
+                let names = {
+                    let v = musiclib::split_artists(&a.artist, &self.lib.known);
+                    if v.is_empty() { vec![a.artist.clone()] } else { v }
+                };
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (i, n) in names.iter().enumerate() {
+                        if i > 0 {
+                            ui.label(RichText::new(", ").font(look::title(18.0)).color(pal.secondary));
+                        }
+                        // "Unknown Artist" (an album without one) is shown translated
+                        let r = ui.add(egui::Label::new(RichText::new(tr_name(n)).font(look::title(18.0)).color(pal.accent)).sense(Sense::click()));
+                        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if r.hovered() {
+                            ui.painter().line_segment([r.rect.left_bottom(), r.rect.right_bottom()], Stroke::new(1.0, pal.accent));
+                        }
+                        if r.clicked() {
+                            self.open_artist(n);
+                        }
+                    }
+                });
+                let refs: Vec<&Track> = a.tracks.iter().collect();
+                let meta: Vec<String> = [a.genre.clone(), a.year.clone(), minutes(&refs)].into_iter().filter(|s| !s.is_empty()).collect();
+                ui.label(RichText::new(meta.join(" · ")).color(pal.secondary));
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     if pill(ui, pal, Icon::Play, tr!("Play")).clicked() {
@@ -265,14 +559,14 @@ impl Player {
                     }
                     ui.add_space(6.0);
                     if ui
-                        .add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Edit album info…")))
+                        .add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Album Properties…")))
                         .on_hover_text(tr!("Change the album, album artist, genre, release date… of all its songs"))
                         .clicked()
                     {
                         self.edit_album_info(&a);
                     }
                     if ui
-                        .add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Get album info from MusicBrainz…")))
+                        .add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…")))
                         .clicked()
                     {
                         self.musicbrainz_album(&a);
@@ -281,79 +575,26 @@ impl Player {
             });
         });
         ui.add_space(18.0);
-        let now = self.now.as_ref().map(|n| n.path.clone());
-        let mut play = None;
-        let mut like = None;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt(("album", key)).show(ui, |ui| {
-            let multi_disc = a.tracks.iter().any(|t| t.disc > 1);
-            let mut last_disc = 0;
-            for t in &a.tracks {
-                if multi_disc && t.disc != last_disc {
-                    last_disc = t.disc;
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(tr!("Disc {n}", n = t.disc.max(1))).font(look::title(13.0)).color(pal.secondary));
-                }
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
-                let selected = self.selected_song.as_deref() == Some(t.path.as_str());
-                let playing = now.as_deref() == Some(t.path.as_str());
-                if selected {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover.gamma_multiply(0.6));
-                }
-                ui.painter().line_segment([rect.left_bottom() + vec2(36.0, 0.0), rect.right_bottom()], Stroke::new(0.5, pal.separator));
-                let p = ui.painter_at(rect);
-                if playing {
-                    icons::paint(&p, Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0)), Icon::Speaker, pal.accent);
-                } else {
-                    let n = if t.track > 0 { t.track.to_string() } else { String::new() };
-                    p.text(pos2(rect.left() + 26.0, rect.center().y), Align2::RIGHT_CENTER, n, look::text(13.0), pal.secondary);
-                }
-                let title_color = if playing { pal.accent } else { pal.text };
-                let g = elided(ui, &t.display_title(), look::text(13.5), title_color, rect.width() - 200.0);
-                p.galley(pos2(rect.left() + 40.0, rect.center().y - g.size().y / 2.0), g, title_color);
-                if t.artist != a.artist && !t.artist.is_empty() {
-                    // shown only when a track's artist differs from the album's
-                }
-                p.text(pos2(rect.right() - 10.0, rect.center().y), Align2::RIGHT_CENTER, fmt_time(t.duration), look::text(12.5), pal.secondary);
-                let heart = Rect::from_center_size(pos2(rect.right() - 76.0, rect.center().y), vec2(18.0, 18.0));
-                let liked = self.state.is_liked(&t.path);
-                if liked || resp.hovered() {
-                    icons::paint(&p, heart, if liked { Icon::HeartFilled } else { Icon::Heart }, pal.accent);
-                }
-                if resp.clicked() {
-                    if resp.interact_pointer_pos().is_some_and(|q| heart.expand(4.0).contains(q)) {
-                        like = Some(t.path.clone());
-                    } else {
-                        self.selected_song = Some(t.path.clone());
-                    }
-                }
-                if resp.double_clicked() {
-                    play = Some(t.path.clone());
-                }
-                let path = t.path.clone();
-                resp.context_menu(|ui| self.song_menu(ui, &path));
-            }
-            ui.add_space(10.0);
-            let refs: Vec<&Track> = a.tracks.iter().collect();
-            ui.label(RichText::new(minutes(&refs)).color(pal.secondary));
+        // the columns the user chose for album pages (# first by default), in track order
+        // until a heading is clicked
+        let sort = self.album_sort;
+        let list = self.cached_list(&format!("album:{key}"), sort, |_| {
+            crate::player::sort_tracks(a.tracks.iter().collect(), sort).iter().map(|t| t.path.clone()).collect()
         });
-        if let Some(p) = like {
-            self.toggle_like(&p);
-        }
-        if let Some(p) = play {
-            self.play_list(paths, Some(&p), &a.title);
-        }
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !ui.ctx().egui_wants_keyboard_input() {
-            if let Some(p) = self.selected_song.clone().filter(|p| a.tracks.iter().any(|t| t.path == *p)) {
-                let paths: Vec<String> = a.tracks.iter().map(|t| t.path.clone()).collect();
-                self.play_list(paths, Some(&p), &a.title);
-            }
-        }
+        self.song_table_kind(ui, pal, &list, &a.title, "album", true);
     }
 
     /// The right-click menu of a song.
     pub fn song_menu(&mut self, ui: &mut Ui, path: &str) {
+        if ui.button(tr!("Play Next")).clicked() {
+            self.queue_songs(&[path.to_string()], true);
+            ui.close();
+        }
+        if ui.button(tr!("Add to Queue")).clicked() {
+            self.queue_songs(&[path.to_string()], false);
+            ui.close();
+        }
+        ui.separator();
         let liked = self.state.is_liked(path);
         if ui.button(if liked { tr!("Unlike") } else { tr!("Like") }).clicked() {
             self.toggle_like(path);
@@ -407,15 +648,20 @@ impl Player {
             }
         }
         if ui.button(tr!("Get lyrics…")).clicked() {
-            self.scanner.download_lyrics(vec![path.to_string()]);
+            self.get_lyrics(vec![path.to_string()]);
             ui.close();
         }
-        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Edit info…"))).clicked() {
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Properties…"))).clicked() {
             self.edit_song_info(path);
             ui.close();
         }
-        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Get info from MusicBrainz…"))).clicked() {
+        // song tables select one song at a time, so this is always the right-clicked song
+        if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…"))).clicked() {
             self.musicbrainz_song(path);
+            ui.close();
+        }
+        if ui.button(tr!("Cover…")).clicked() {
+            self.open_cover_window(path);
             ui.close();
         }
         if ui.button(tr!("Check its quality")).clicked() {
@@ -431,12 +677,20 @@ impl Player {
         }
     }
 
-    /// A table of songs (Songs, Liked Songs, a genre, search results).
+    /// A table of songs (Songs, Liked Songs, a genre, search results) with the columns
+    /// the user chose for song lists.
     pub fn song_table(&mut self, ui: &mut Ui, pal: &Palette, list: &[String], name: &str, sortable: bool) {
-        self.song_table_ex(ui, pal, list, name, sortable, None);
+        self.song_table_kind(ui, pal, list, name, "songs", sortable);
     }
 
-    /// The same, with a "Played" column instead of Genre (Recently Played).
+    /// A table with the columns the user chose for this kind of list ("songs",
+    /// "folders", "album"); a right click on its headings chooses them.
+    pub fn song_table_kind(&mut self, ui: &mut Ui, pal: &Palette, list: &[String], name: &str, kind: &'static str, sortable: bool) {
+        let cols: Vec<SongCol> = self.state.columns_of(kind).iter().filter_map(|c| SongCol::from_name(c)).collect();
+        self.table(ui, pal, list, name, cols, Some(kind), sortable, None);
+    }
+
+    /// Recently Played: its own columns, with "Played" instead of Genre.
     pub fn song_table_ex(
         &mut self,
         ui: &mut Ui,
@@ -446,61 +700,114 @@ impl Player {
         sortable: bool,
         played: Option<&HashMap<String, f64>>,
     ) {
-        let w = ui.available_width();
-        // the English headings are ids; they are shown translated
-        let cols: [(SongCol, &str, f32); 6] = [
-            (SongCol::Title, n_!("Title"), 0.30),
-            (SongCol::Artist, n_!("Artist"), 0.20),
-            (SongCol::Album, n_!("Album"), 0.22),
-            (SongCol::Genre, if played.is_some() { n_!("Played") } else { n_!("Genre") }, 0.11),
-            (SongCol::Time, n_!("Time"), 0.06),
-            (SongCol::Quality, n_!("Quality"), 0.11),
-        ];
-        let sortable = sortable && played.is_none();
-        let heart_w = 30.0;
-        let usable = w - heart_w;
-        let mut xs = vec![];
-        let mut x = heart_w;
-        for (_, _, f) in &cols {
-            xs.push(x);
-            x += usable * f;
-        }
-        // header
-        let (hrect, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-        for (i, (col, label, f)) in cols.iter().enumerate() {
-            let r = Rect::from_min_size(pos2(hrect.left() + xs[i], hrect.top()), vec2(usable * f, 26.0));
-            let resp = ui.interact(r, ui.id().with(("song-head", *label)), if sortable { Sense::click() } else { Sense::hover() });
-            let arrow = if sortable && self.song_sort.0 == *col {
-                if self.song_sort.1 { "  ▼" } else { "  ▲" }
-            } else {
-                ""
-            };
-            let color = if resp.hovered() { pal.text } else { pal.secondary };
-            // cut with "…" to the column, so a long heading never runs into the next one
-            let g = elided(ui, &format!("{}{arrow}", i18n::tr(label)), look::title(11.5), color, r.width() - 6.0);
-            ui.painter().galley(pos2(r.left() + 4.0, r.center().y - g.size().y / 2.0), g, color);
-            if resp.clicked() {
-                if self.song_sort.0 == *col {
-                    self.song_sort.1 = !self.song_sort.1;
-                } else {
-                    self.song_sort = (*col, false);
-                }
+        let cols = vec![SongCol::Like, SongCol::Title, SongCol::Artist, SongCol::Album, SongCol::Played, SongCol::Time, SongCol::Quality];
+        self.table(ui, pal, list, name, cols, None, sortable && played.is_none(), played);
+    }
+
+    /// The heading's menu: a check item per column (Title stays) and Reset columns.
+    fn columns_menu(&mut self, ui: &mut Ui, kind: &'static str) {
+        let shown = self.state.columns_of(kind);
+        let mut changed = false;
+        for name in realhires::playerstate::SONG_COLUMNS {
+            let Some(col) = SongCol::from_name(name) else { continue };
+            let mut on = shown.iter().any(|c| c == name);
+            let r = ui.add_enabled(name != "title", egui::Checkbox::new(&mut on, i18n::tr(col.info().1)));
+            if r.changed() {
+                self.state.toggle_column(kind, name);
+                changed = true;
             }
         }
+        ui.separator();
+        if ui.button(tr!("Reset columns")).clicked() {
+            self.state.reset_columns(kind);
+            changed = true;
+            ui.close();
+        }
+        if changed {
+            self.save_state();
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn table(
+        &mut self,
+        ui: &mut Ui,
+        pal: &Palette,
+        list: &[String],
+        name: &str,
+        cols: Vec<SongCol>,
+        kind: Option<&'static str>,
+        sortable: bool,
+        played: Option<&HashMap<String, f64>>,
+    ) {
+        let w = ui.available_width();
+        let heart = cols.contains(&SongCol::Like);
+        let heart_w = if heart { 30.0 } else { 6.0 };
+        let shown: Vec<SongCol> = cols.iter().copied().filter(|c| *c != SongCol::Like).collect();
+        let total: f32 = shown.iter().map(|c| c.info().2).sum::<f32>().max(0.1);
+        let usable = w - heart_w;
+        let mut xs = vec![];
+        let mut ws = vec![];
+        let mut x = heart_w;
+        for c in &shown {
+            xs.push(x);
+            let cw = usable * c.info().2 / total;
+            ws.push(cw);
+            x += cw;
+        }
+        let sort = kind.map(|k| self.sort_of(k)).unwrap_or(Some(self.song_sort));
+        // header
+        let (hrect, hresp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
+        let mut menu_open = false;
+        for (i, col) in shown.iter().enumerate() {
+            let r = Rect::from_min_size(pos2(hrect.left() + xs[i], hrect.top()), vec2(ws[i], 26.0));
+            let can_sort = sortable && *col != SongCol::Played;
+            let resp = ui.interact(r, ui.id().with(("song-head", name, i)), if can_sort { Sense::click() } else { Sense::hover() });
+            let mut text = i18n::tr(col.info().0).to_string();
+            if can_sort && sort.is_some_and(|(c, _)| c == *col) {
+                text += if sort.is_some_and(|(_, rev)| rev) { "  ▼" } else { "  ▲" };
+            }
+            let color = if resp.hovered() && can_sort { pal.text } else { pal.secondary };
+            let right = col.info().3;
+            let (px, align) = if right { (r.right() - 6.0, Align2::RIGHT_CENTER) } else { (r.left() + 4.0, Align2::LEFT_CENTER) };
+            ui.painter().text(pos2(px, r.center().y), align, text, look::title(11.5), color);
+            if resp.clicked() && can_sort {
+                match kind {
+                    Some(k) => self.set_sort(k, *col),
+                    None => {
+                        self.song_sort = if self.song_sort.0 == *col { (*col, !self.song_sort.1) } else { (*col, false) };
+                    }
+                }
+            }
+            if let Some(k) = kind {
+                resp.context_menu(|ui| {
+                    menu_open = true;
+                    self.columns_menu(ui, k);
+                });
+            }
+        }
+        if let Some(k) = kind {
+            hresp.context_menu(|ui| {
+                menu_open = true;
+                self.columns_menu(ui, k);
+            });
+        }
+        let _ = menu_open;
         ui.painter().line_segment([hrect.left_bottom(), hrect.right_bottom()], Stroke::new(0.5, pal.separator));
         let now = self.now.as_ref().map(|n| n.path.clone());
         let mut play = None;
         let mut like = None;
+        let qcol = shown.iter().position(|c| *c == SongCol::Quality);
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt(("songs", name)).show_rows(ui, 30.0, list.len(), |ui, range| {
             for i in range {
                 let path = &list[i];
-                let Some(t) = self.lib.track(path).cloned() else {
+                let Some(t) = self.lib.track(path) else {
                     // a playlist song whose file is gone
                     let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
                     let p = ui.painter_at(rect);
                     let g = elided(ui, &realhires::paths::file_name(path), look::text(13.0), pal.secondary.gamma_multiply(0.7), usable * 0.5);
-                    p.galley(pos2(rect.left() + xs[0] + 4.0, rect.center().y - g.size().y / 2.0), g, pal.secondary);
-                    p.text(pos2(rect.left() + xs[2] + 4.0, rect.center().y), Align2::LEFT_CENTER, tr!("Not in the library"), look::text(12.0), pal.secondary.gamma_multiply(0.7));
+                    p.galley(pos2(rect.left() + heart_w + 4.0, rect.center().y - g.size().y / 2.0), g, pal.secondary);
+                    p.text(pos2(rect.left() + heart_w + usable * 0.55, rect.center().y), Align2::LEFT_CENTER, tr!("Not in the library"), look::text(12.0), pal.secondary.gamma_multiply(0.7));
                     let p2 = path.clone();
                     resp.context_menu(|ui| self.song_menu(ui, &p2));
                     continue;
@@ -514,31 +821,37 @@ impl Player {
                     ui.painter().rect_filled(rect, CornerRadius::same(5), if pal.dark { Color32::from_white_alpha(6) } else { Color32::from_black_alpha(6) });
                 }
                 let p = ui.painter_at(rect);
-                let heart = Rect::from_center_size(pos2(rect.left() + 15.0, rect.center().y), vec2(16.0, 16.0));
+                let heart_rect = Rect::from_center_size(pos2(rect.left() + 15.0, rect.center().y), vec2(16.0, 16.0));
                 let liked = self.state.is_liked(path);
-                if liked || resp.hovered() {
-                    icons::paint(&p, heart, if liked { Icon::HeartFilled } else { Icon::Heart }, pal.accent);
+                if heart && (liked || resp.hovered()) {
+                    icons::paint(&p, heart_rect, if liked { Icon::HeartFilled } else { Icon::Heart }, pal.accent);
                 }
-                let fourth = match played {
-                    Some(m) => played_label(m.get(path).copied().unwrap_or(0.0)),
-                    None => t.genre.clone(),
-                };
-                let vals = [
-                    t.display_title(),
-                    tr_name(&t.display_artist()).to_string(),
-                    tr_name(&t.display_album()).to_string(),
-                    fourth,
-                    fmt_time(t.duration),
-                    quality_label(&t),
-                ];
-                for (k, v) in vals.iter().enumerate() {
-                    let color = if k == 0 && playing { pal.accent } else if k == 0 { pal.text } else { pal.secondary };
-                    let font = if k == 0 { look::text(13.0) } else { look::text(12.5) };
-                    let g = elided(ui, v, font, color, usable * cols[k].2 - 10.0);
-                    p.galley(pos2(rect.left() + xs[k] + 4.0, rect.center().y - g.size().y / 2.0), g, color);
+                for (k, col) in shown.iter().enumerate() {
+                    let v = match col {
+                        SongCol::Played => played_label(played.and_then(|m| m.get(path).copied()).unwrap_or(0.0)),
+                        SongCol::Num if playing => {
+                            icons::paint(&p, Rect::from_center_size(pos2(rect.left() + xs[k] + ws[k] - 12.0, rect.center().y), vec2(15.0, 15.0)), Icon::Speaker, pal.accent);
+                            continue;
+                        }
+                        c => cell_text(t, *c),
+                    };
+                    let first = *col == SongCol::Title;
+                    let color = if first && playing { pal.accent } else if first { pal.text } else { pal.secondary };
+                    let font = if first { look::text(13.0) } else { look::text(12.5) };
+                    let g = elided(ui, &v, font, color, ws[k] - 10.0);
+                    let x = if col.info().3 { rect.left() + xs[k] + ws[k] - 6.0 - g.size().x } else { rect.left() + xs[k] + 4.0 };
+                    p.galley(pos2(x, rect.center().y - g.size().y / 2.0), g, color);
+                }
+                let mut resp = resp;
+                if let Some(q) = qcol {
+                    let cell = Rect::from_min_size(pos2(rect.left() + xs[q], rect.top()), vec2(ws[q], rect.height()));
+                    if ui.rect_contains_pointer(cell) {
+                        // the Quality cell's tooltip: the resolution ("24-bit/96 kHz", "MP3 · 320 kbps · 44.1 kHz")
+                        resp = resp.on_hover_text_at_pointer(tr_text(&musiclib::quality_detail(t)));
+                    }
                 }
                 if resp.clicked() {
-                    if resp.interact_pointer_pos().is_some_and(|q| heart.expand(5.0).contains(q)) {
+                    if heart && resp.interact_pointer_pos().is_some_and(|q| heart_rect.expand(5.0).contains(q)) {
                         like = Some(path.clone());
                     } else {
                         self.selected_song = Some(path.clone());
@@ -564,96 +877,259 @@ impl Player {
         }
     }
 
-    pub fn side_list(&mut self, ui: &mut Ui, pal: &Palette, names: &[(String, usize)], selected: &Option<String>) -> Option<String> {
-        let mut pick = None;
-        egui::ScrollArea::vertical().id_salt(("side", self.page.title())).auto_shrink([false, false]).show(ui, |ui| {
-            for (name, n) in names {
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
-                let sel = selected.as_deref() == Some(name.as_str());
-                if sel {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.accent);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
-                }
-                let color = if sel { Color32::WHITE } else { pal.text };
-                let g = elided(ui, tr_name(name), look::text(13.0), color, rect.width() - 50.0);
-                ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - g.size().y / 2.0), g, color);
-                ui.painter().text(pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, n.to_string(), look::text(11.0), if sel { Color32::WHITE } else { pal.secondary });
-                if resp.clicked() {
-                    pick = Some(name.clone());
-                }
-            }
-        });
-        pick
-    }
+    // ------------------------------------------------------ grouping pages ---
 
-    /// Artists, Album Artists (album cards), Genres, Years, Composers (song
-    /// tables): the names on the left, the chosen one's music on the right.
-    fn group_page(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str) {
-        let (title, groups, cards) = match kind {
-            "artists" => ("Artists", &self.lib.artists, true),
-            "album_artists" => ("Album Artists", &self.lib.album_artists, true),
-            "genres" => ("Genres", &self.lib.genres, false),
-            "years" => ("Years", &self.lib.years, false),
-            _ => ("Composers", &self.lib.composers, false),
-        };
-        page_title(ui, pal, i18n::tr(title));
-        let names: Vec<(String, usize)> = groups.iter().map(|g| (g.name.clone(), g.tracks.len())).collect();
-        if self.group_sel.get(kind).is_none_or(|s| !names.iter().any(|(n, _)| n == s)) {
-            if let Some((n, _)) = names.first() {
-                self.group_sel.insert(kind, n.clone());
-            }
-        }
-        let sel = self.group_sel.get(kind).cloned();
-        let height = ui.available_height();
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(vec2(240.0, height), Layout::top_down(Align::Min), |ui| {
-                if let Some(p) = self.side_list(ui, pal, &names, &sel) {
-                    self.group_sel.insert(kind, p);
-                }
-            });
-            ui.add_space(20.0);
+    /// Artists, Album Artists, Genres, Years and Composers: a card each, like the albums
+    /// (a mosaic of up to four of its album covers, the name, "N albums · M songs"); a
+    /// click opens its page.  On Genres, Ctrl/Cmd-click selects several to merge.
+    fn group_grid(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str) {
+        let (_, title, noun) = crate::player::GROUPINGS.iter().copied().find(|g| g.0 == kind).unwrap_or(crate::player::GROUPINGS[0]);
+        let n = self.lib.groups(kind).len();
+        let selected = if kind == "genres" { self.group_selected.len() } else { 0 };
+        ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                let Some(name) = sel else { return };
-                let groups = match kind {
-                    "artists" => &self.lib.artists,
-                    "album_artists" => &self.lib.album_artists,
-                    "genres" => &self.lib.genres,
-                    "years" => &self.lib.years,
-                    _ => &self.lib.composers,
-                };
-                let Some(g) = groups.iter().find(|g| g.name == name) else { return };
-                let tracks = g.tracks.clone();
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(tr_name(&name)).font(look::title(22.0)).color(pal.text));
-                    ui.add_space(14.0);
-                    let list: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
-                    if pill(ui, pal, Icon::Play, tr!("Play")).clicked() {
-                        self.play_list(list.clone(), Some(&list[0]), &name);
+                ui.label(RichText::new(i18n::tr(title)).font(look::title(28.0)).color(pal.text));
+                let mut sub = crate::player::plural(n, noun);
+                if kind == "genres" {
+                    let m = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+                    sub += " · ";
+                    sub += &if selected > 0 {
+                        tr!("{n} selected", n = selected)
+                    } else {
+                        tr!("{mod}-click genres to select several and merge them", mod = m)
+                    };
+                }
+                ui.label(RichText::new(sub).color(pal.secondary));
+            });
+            if selected >= 2 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button(tr!("Clear selection")).clicked() {
+                        self.group_selected.clear();
                     }
-                    if pill(ui, pal, Icon::Shuffle, tr!("Shuffle")).clicked() {
-                        self.shuffle_list(list, &name);
+                    if pill(ui, pal, Icon::Genres, &tr!("Merge {n} genres…", n = selected)).clicked() {
+                        let names = self.group_selected.clone();
+                        self.ask_merge_groups(kind, names);
                     }
                 });
-                ui.add_space(12.0);
-                if cards {
-                    let mut keys: Vec<String> = vec![];
-                    for t in &tracks {
-                        let key = t.song().album_key();
-                        if !keys.contains(&key) {
-                            keys.push(key);
-                        }
+            }
+        });
+        ui.add_space(12.0);
+        let gap = 22.0;
+        let width = ui.available_width();
+        let cols = ((width + gap) / (180.0 + gap)).floor().max(1.0) as usize;
+        let size = ((width + gap) / cols as f32 - gap).min(240.0);
+        let rows = n.div_ceil(cols);
+        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt(("groups", kind)).show_rows(ui, size + 44.0 + gap, rows, |ui, range| {
+            for r in range {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for i in (r * cols)..((r + 1) * cols).min(n) {
+                        self.group_card(ui, pal, kind, i, size);
                     }
-                    let albums: Vec<usize> = keys.iter().filter_map(|k| self.lib.album_index.get(k).copied()).collect();
-                    self.album_grid(ui, pal, &albums);
-                } else {
-                    let list: Vec<String> = self.sorted_songs(tracks.iter().collect()).iter().map(|t| t.path.clone()).collect();
-                    self.song_table(ui, pal, &list, &name, true);
-                }
-            });
+                });
+                ui.add_space(gap - ui.spacing().item_spacing.y);
+            }
         });
     }
 
+    /// Up to four album covers, 2 x 2 (fewer repeat), or the one cover there is.
+    fn group_mosaic(&mut self, p: &egui::Painter, rect: Rect, albums: &[usize], name: &str) {
+        let shown: Vec<usize> = albums.iter().take(4).copied().collect();
+        if shown.len() <= 1 {
+            let tex = shown.first().and_then(|&a| self.covers.get(&self.lib.albums[a].key, &self.lib.album_paths[a]));
+            cover(p, rect, tex.as_ref(), name, 8);
+            return;
+        }
+        let half = rect.width() / 2.0;
+        for q in 0..4 {
+            let a = shown[q % shown.len()];
+            let r = Rect::from_min_size(rect.min + vec2((q % 2) as f32 * half, (q / 2) as f32 * half), vec2(half, half));
+            let tex = self.covers.get(&self.lib.albums[a].key, &self.lib.album_paths[a]);
+            let radius = CornerRadius {
+                nw: if q == 0 { 8 } else { 0 },
+                ne: if q == 1 { 8 } else { 0 },
+                sw: if q == 2 { 8 } else { 0 },
+                se: if q == 3 { 8 } else { 0 },
+            };
+            match tex {
+                Some(t) => {
+                    p.add(egui::epaint::RectShape::filled(r, radius, Color32::WHITE).with_texture(t.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))));
+                }
+                None => {
+                    p.rect_filled(r, radius, crate::style::placeholder_color(&self.lib.albums[a].title));
+                }
+            }
+        }
+    }
+
+    fn group_card(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str, i: usize, size: f32) {
+        let (rect, resp) = ui.allocate_exact_size(vec2(size, size + 44.0), Sense::click());
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let name = self.lib.groups(kind)[i].name.clone();
+        let songs = self.lib.groups(kind)[i].tracks.len();
+        let albums = self.lib.group_albums.get(kind).and_then(|v| v.get(i)).cloned().unwrap_or_default();
+        let crect = Rect::from_min_size(rect.min, vec2(size, size));
+        self.group_mosaic(ui.painter(), crect, &albums, &name);
+        let is_sel = kind == "genres" && self.group_selected.iter().any(|s| *s == name);
+        if is_sel {
+            ui.painter().rect_stroke(crect.expand(3.0), CornerRadius::same(10), Stroke::new(3.0, pal.accent), egui::StrokeKind::Inside);
+            let c = crect.right_top() + vec2(-20.0, 20.0);
+            ui.painter().circle_filled(c, 13.0, pal.accent);
+            icons::paint(ui.painter(), Rect::from_center_size(c, vec2(16.0, 16.0)), Icon::Check, Color32::WHITE);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(crect, CornerRadius::same(8), Color32::from_black_alpha(30));
+        }
+        // "Unknown Genre" and the like in the language in use
+        let g = elided(ui, tr_name(&name), look::title(13.0), pal.text, size);
+        ui.painter().galley(pos2(rect.left(), crect.bottom() + 6.0), g, pal.text);
+        let sub = format!("{} · {}", crate::player::plural(albums.len(), "album"), crate::player::plural(songs, "song"));
+        let g = elided(ui, &sub, look::text(12.0), pal.secondary, size);
+        ui.painter().galley(pos2(rect.left(), crect.bottom() + 24.0), g, pal.secondary);
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.clicked() {
+            let toggle = kind == "genres" && ui.input(|i| i.modifiers.command);
+            if toggle {
+                if is_sel {
+                    self.group_selected.retain(|s| *s != name);
+                } else {
+                    self.group_selected.push(name.clone());
+                }
+            } else {
+                self.group_selected.clear();
+                self.go(Page::Group(kind, name.clone()));
+            }
+        }
+        resp.context_menu(|ui| {
+            if is_sel && self.group_selected.len() > 1 {
+                let k = self.group_selected.len();
+                if ui.button(tr!("Merge {n} genres…", n = k)).clicked() {
+                    let names = self.group_selected.clone();
+                    self.ask_merge_groups(kind, names);
+                    ui.close();
+                }
+                if ui.button(tr!("Clear selection")).clicked() {
+                    self.group_selected.clear();
+                    ui.close();
+                }
+            } else {
+                self.group_menu(ui, kind, &name, false);
+            }
+        });
+    }
+
+    /// The menu of a genre, year, composer or artist: Open, Play, Shuffle, and for genres,
+    /// composers and years Rename… (genres also Merge into…).
+    pub fn group_menu(&mut self, ui: &mut Ui, kind: &'static str, name: &str, here: bool) {
+        let songs = |p: &Player| -> Vec<String> {
+            p.lib.find_group(kind, name).map(|i| p.lib.groups(kind)[i].tracks.iter().map(|t| t.path.clone()).collect()).unwrap_or_default()
+        };
+        if !here && ui.button(tr!("Open")).clicked() {
+            self.go(Page::Group(kind, name.to_string()));
+            ui.close();
+        }
+        if ui.button(tr!("Play")).clicked() {
+            let list = songs(self);
+            if !list.is_empty() {
+                self.play_list(list.clone(), Some(&list[0]), name);
+            }
+            ui.close();
+        }
+        if ui.button(tr!("Shuffle")).clicked() {
+            let list = songs(self);
+            if !list.is_empty() {
+                self.shuffle_list(list, name);
+            }
+            ui.close();
+        }
+        if matches!(kind, "genres" | "composers" | "years") {
+            ui.separator();
+            let menu = crate::player::rename_texts(kind).menu;
+            if ui.add_enabled(self.tag_job.is_none(), egui::Button::new(i18n::tr(menu))).clicked() {
+                self.ask_rename_group(kind, name);
+                ui.close();
+            }
+            if kind == "genres" && ui.add_enabled(self.tag_job.is_none(), egui::Button::new(tr!("Merge into…"))).clicked() {
+                self.ask_merge_groups(kind, vec![name.to_string()]);
+                ui.close();
+            }
+        }
+    }
+
+    /// One artist, album artist, genre, year or composer: its albums (artists) or songs,
+    /// Play, Shuffle and "…" (its menu).
+    fn group_item_page(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str, name: &str) {
+        if back_link(ui, pal, tr!("Back")).clicked() {
+            self.go_back();
+            return;
+        }
+        // the word before the page's counts, and the page of a group with no songs left
+        // (the Python app's `GROUP_TEXTS`)
+        let (word, gone) = match kind {
+            "artists" => (n_!("Artist"), ""),
+            "album_artists" => (n_!("Album artist"), ""),
+            "genres" => (n_!("Genre"), n_!("No songs have this genre any more.")),
+            "years" => (n_!("Year"), n_!("No songs have this year any more.")),
+            _ => (n_!("Composer"), n_!("No songs have this composer any more.")),
+        };
+        let Some(gi) = self.lib.find_group(kind, name) else {
+            page_title(ui, pal, tr_name(name));
+            ui.label(RichText::new(i18n::tr(gone)).color(pal.secondary));
+            return;
+        };
+        let gname = self.lib.groups(kind)[gi].name.clone();
+        let albums = self.lib.group_albums.get(kind).and_then(|v| v.get(gi)).cloned().unwrap_or_default();
+        let songs = self.lib.groups(kind)[gi].tracks.len();
+        let cards = matches!(kind, "artists" | "album_artists");
+        let id = format!("group:{kind}:{gname}");
+        let sort = Some(self.song_sort);
+        let list = self.cached_list(&id, if cards { None } else { sort }, |p| {
+            let g = &p.lib.groups(kind)[gi];
+            if cards {
+                // album order, as the albums are shown
+                let mut v: Vec<&Track> = g.tracks.iter().collect();
+                v.sort_by_cached_key(|t| (p.lib.album_index.get(&t.song().album_key()).copied().unwrap_or(usize::MAX), t.disc, t.track));
+                v.iter().map(|t| t.path.clone()).collect()
+            } else {
+                crate::player::sort_tracks(g.tracks.iter().collect(), sort).iter().map(|t| t.path.clone()).collect()
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new(tr_name(&gname)).font(look::title(28.0)).color(pal.text));
+                let word = i18n::tr(word);
+                let sub = if cards {
+                    let counts = tr!(
+                        "{a}, {b}",
+                        a = crate::player::plural(albums.len(), "album"),
+                        b = crate::player::plural(songs, "song")
+                    );
+                    format!("{word} · {counts}")
+                } else {
+                    format!("{word} · {}", crate::player::plural(songs, "song"))
+                };
+                ui.label(RichText::new(sub).color(pal.secondary));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if matches!(kind, "genres" | "composers" | "years") {
+                    ui.menu_button("…", |ui| self.group_menu(ui, kind, &gname, true));
+                }
+                if pill(ui, pal, Icon::Shuffle, tr!("Shuffle")).clicked() {
+                    self.shuffle_list(list.to_vec(), &gname);
+                }
+                if pill(ui, pal, Icon::Play, tr!("Play")).clicked() && !list.is_empty() {
+                    self.play_list(list.to_vec(), Some(&list[0]), &gname);
+                }
+            });
+        });
+        ui.add_space(12.0);
+        if cards {
+            self.album_grid(ui, pal, &albums);
+        } else {
+            self.song_table(ui, pal, &list, &gname, true);
+        }
+    }
     fn search_page(&mut self, ui: &mut Ui, pal: &Palette) {
         let q = casefold(&self.search_query);
         page_title(ui, pal, &tr!("Results for “{query}”", query = self.search_query));
@@ -695,7 +1171,12 @@ impl Player {
 
     // --------------------------------------------------------- now playing ---
 
+    /// Now Playing (2.1): the cover with the title and "Artist — Album" as one block in the
+    /// middle of the left half (the album name opens the album, each artist name that artist,
+    /// the cover the Cover window); on the right a switch Lyrics | Up Next | Details.  With
+    /// the lyrics hidden (the Lyrics button on this page) only the block, in the middle.
     fn now_playing(&mut self, ui: &mut Ui, pal: &Palette) {
+        self.np_hits = NpHits::default();
         let Some(path) = self.now.as_ref().map(|n| n.path.clone()) else {
             ui.add_space(ui.available_height() * 0.35);
             ui.vertical_centered(|ui| {
@@ -706,85 +1187,266 @@ impl Player {
         };
         let track = self.lib.track(&path).cloned().unwrap_or_else(|| Track { path: path.clone(), ..Default::default() });
         let key = track.song().album_key();
+        let has_album = self.lib.album_of(&path).is_some();
         let paths: Vec<String> = self.lib.album_of(&path).map(|a| a.tracks.iter().map(|t| t.path.clone()).collect()).unwrap_or_else(|| vec![path.clone()]);
-        let tex = self.covers.get(&key, &paths);
+        let tex = self.covers.get_large(&key, &paths);
         let lyrics = self.lyrics_of_now();
         let area = ui.available_rect_before_wrap();
-        let show_lyrics = matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));
-        if !show_lyrics {
-            // the cover in the centre, with the title under it
-            let size = (area.height() - 150.0).min(area.width() - 40.0).clamp(120.0, 480.0);
-            let crect = Rect::from_center_size(pos2(area.center().x, area.top() + 20.0 + size / 2.0), vec2(size, size));
-            cover(ui.painter(), crect, tex.as_ref(), &track.display_album(), 12);
-            let p = ui.painter();
-            p.text(pos2(area.center().x, crect.bottom() + 26.0), Align2::CENTER_CENTER, track.display_title(), look::title(20.0), pal.text);
-            p.text(pos2(area.center().x, crect.bottom() + 50.0), Align2::CENTER_CENTER, artist_album(&track), look::text(14.0), pal.secondary);
-            let label_y = crect.bottom() + 70.0;
-            ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(pos2(area.center().x, label_y + 22.0), vec2(320.0, 40.0))), |ui| {
-                ui.vertical_centered(|ui| {
-                    if matches!(lyrics, Some(ShownLyrics::Instrumental)) {
-                        ui.label(RichText::new(tr!("Instrumental")).color(pal.secondary));
-                    } else {
-                        ui.label(RichText::new(tr!("No lyrics for this song.")).color(pal.secondary));
-                        if ui.button(tr!("Get lyrics")).clicked() {
-                            self.scanner.download_lyrics(vec![path.clone()]);
+        let right = !self.lyrics_hidden;
+        let left = if right { Rect::from_min_max(area.min, pos2(area.center().x, area.bottom())) } else { area };
+        // the block: the cover, the title and "Artist — Album" (80 px), in the middle of `left`
+        let text_h = 80.0;
+        let size = (left.width() - 80.0).min(left.height() - 80.0 - text_h).clamp(120.0, 480.0);
+        let crect = Rect::from_min_size(pos2(left.center().x - size / 2.0, left.center().y - (size + text_h) / 2.0), vec2(size, size));
+        cover(ui.painter(), crect, tex.as_ref(), &track.display_album(), 12);
+        let cresp = ui.interact(crect, ui.scope_id().with("np-cover"), Sense::click());
+        if cresp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        self.np_hits.cover = Some(crect);
+        if cresp.clicked() {
+            self.open_cover_window(&path);
+        }
+        let title = elided(ui, &track.display_title(), look::title(20.0), pal.text, left.width() - 60.0);
+        ui.painter().galley(pos2(left.center().x - title.size().x / 2.0, crect.bottom() + 30.0 - title.size().y / 2.0), title, pal.text);
+        let artists = self.lib.artists_of(&track);
+        let pieces = artist_line(ui, look::text(14.0), pal.secondary, &artists, &track.display_album(), has_album, left.width() - 60.0);
+        let (rects, clicked) = paint_links(ui, ui.painter(), pieces, pos2(left.center().x, crect.bottom() + 58.0), pal.secondary, ui.scope_id().with("np-links"));
+        self.np_hits.links = rects;
+        match clicked {
+            Some(Link::Artist(name)) => return self.open_artist(&name),
+            Some(Link::Album) => return self.open_album_of(&path),
+            None => {}
+        }
+        if !right {
+            return; // the lyrics are hidden (the Lyrics button): the block only
+        }
+        let rrect = Rect::from_min_max(pos2(area.center().x + 10.0, area.top()), area.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rrect), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(4.0);
+                if let Some(tab) = segmented(ui, pal, &NpTab::ALL, self.np_tab) {
+                    self.set_np_tab(tab);
+                }
+                ui.add_space(8.0);
+            });
+            match self.np_tab {
+                NpTab::Lyrics => self.np_lyrics(ui, pal, &path, lyrics),
+                NpTab::UpNext => self.np_up_next(ui, pal),
+                NpTab::Details => self.np_details(ui, pal, &track),
+            }
+        });
+    }
+
+    /// Now Playing's Lyrics: the label and A− / A+, then the lyrics (synced ones follow the
+    /// song unless the user scrolled the current line away; then "Back to the current line").
+    fn np_lyrics(&mut self, ui: &mut Ui, pal: &Palette, path: &str, lyrics: Option<ShownLyrics>) {
+        let Some(lyrics) = lyrics else {
+            ui.add_space(ui.available_height() * 0.3);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(tr!("No lyrics for this song.")).color(pal.secondary));
+                ui.add_space(8.0);
+                let r = pill(ui, pal, Icon::Lyrics, tr!("Get lyrics"));
+                self.np_hits.get_lyrics = Some(r.rect);
+                if r.clicked() {
+                    self.get_lyrics(vec![path.to_string()]);
+                }
+            });
+            return;
+        };
+        let (label, source) = self.lyrics_label_of_now();
+        let size = self.state.lyrics_size.clamp(playerstate::LYRICS_SIZE_MIN, playerstate::LYRICS_SIZE_MAX);
+        ui.horizontal(|ui| {
+            // `lyrics::shown_label()`'s English texts, in the language in use
+            ui.label(RichText::new(i18n::tr(&label)).font(look::title(13.0)).color(pal.text));
+            ui.label(RichText::new(i18n::tr(&source)).font(look::text(11.5)).color(pal.secondary));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(12.0);
+                let small = |t: &str| egui::Button::new(RichText::new(t).font(look::title(13.0))).fill(pal.lcd).corner_radius(8).min_size(vec2(44.0, 26.0));
+                let bigger = ui.add_enabled(size < playerstate::LYRICS_SIZE_MAX, small("A+")).on_hover_text(tr!("Larger lyrics"));
+                let smaller = ui.add_enabled(size > playerstate::LYRICS_SIZE_MIN, small("A−")).on_hover_text(tr!("Smaller lyrics"));
+                self.np_hits.size_buttons = vec![smaller.rect, bigger.rect];
+                if bigger.clicked() {
+                    self.lyrics_size_step(1);
+                }
+                if smaller.clicked() {
+                    self.lyrics_size_step(-1);
+                }
+            });
+        });
+        ui.add_space(4.0);
+        let lrect = ui.available_rect_before_wrap();
+        let font = look::title(size as f32);
+        let plain_font = look::title(playerstate::plain_lyrics_size(size) as f32);
+        let pos_ms = (self.engine.position().unwrap_or(0.0) * 1000.0) as u32;
+        let mut seek_to = None;
+        let user_scrolled = ui.rect_contains_pointer(lrect) && ui.input(|i| i.smooth_scroll_delta.y != 0.0);
+        let back = std::mem::take(&mut self.lyrics_back);
+        let mut cur_in_view = None;
+        let mut cur_line = None;
+        egui::ScrollArea::vertical().id_salt("lyrics").auto_shrink([false, false]).show(ui, |ui| {
+            ui.add_space(if matches!(lyrics, ShownLyrics::Synced(_)) { lrect.height() * 0.3 } else { 6.0 });
+            match &lyrics {
+                ShownLyrics::Synced(lines) => {
+                    let cur = lines.iter().rposition(|(ms, _)| *ms <= pos_ms);
+                    cur_line = cur;
+                    let seen = cur.unwrap_or(0); // before the first line: the first one
+                    for (i, (ms, text)) in lines.iter().enumerate() {
+                        let is_cur = Some(i) == cur;
+                        let color = if is_cur { pal.text } else { pal.secondary.gamma_multiply(0.75) };
+                        let shown = if text.trim().is_empty() { "…".to_string() } else { text.clone() };
+                        let resp = ui.add(egui::Label::new(RichText::new(shown).font(font.clone()).color(color)).wrap().sense(Sense::click()));
+                        ui.add_space(10.0);
+                        if resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if resp.clicked() {
+                            seek_to = Some(*ms as f64 / 1000.0);
+                        }
+                        if i == seen {
+                            cur_in_view = Some(ui.clip_rect().contains_rect(resp.rect));
+                            if back {
+                                resp.scroll_to_me_animation(Some(Align::Center), egui::style::ScrollAnimation::none());
+                            }
+                        }
+                        if is_cur && !back && !self.lyrics_away && self.lyrics_line != Some(i) {
+                            resp.scroll_to_me_animation(Some(Align::Center), egui::style::ScrollAnimation::duration(0.35));
                         }
                     }
-                });
+                }
+                ShownLyrics::Plain(text) => {
+                    ui.add(egui::Label::new(RichText::new(text).font(plain_font.clone()).color(pal.text)).wrap());
+                }
+                ShownLyrics::Instrumental => {
+                    ui.label(RichText::new(tr!("This song is instrumental.")).font(plain_font.clone()).color(pal.secondary));
+                }
+            }
+            ui.add_space(lrect.height() * 0.5);
+        });
+        if matches!(lyrics, ShownLyrics::Synced(_)) {
+            if seek_to.is_some() || back {
+                self.lyrics_away = false; // follow the line clicked, or the current one again
+                if seek_to.is_some() {
+                    self.lyrics_line = None;
+                }
+            } else if user_scrolled || self.lyrics_check {
+                // the user scrolls: following stops while the current line is out of view (checked
+                // once more after the last scroll, since a scroll shows a frame later)
+                if let Some(v) = cur_in_view {
+                    self.lyrics_away = !v;
+                }
+                self.lyrics_check = user_scrolled;
+                ui.ctx().request_repaint();
+            } else if self.lyrics_away && cur_in_view == Some(true) {
+                self.lyrics_away = false; // the current line came back into view
+            }
+            if !self.lyrics_away && seek_to.is_none() {
+                self.lyrics_line = cur_line;
+            }
+            if self.lyrics_away {
+                let label = tr!("Back to the current line");
+                let w = text_width(ui, label, &look::title(13.0)) + 36.0;
+                let r = Rect::from_center_size(pos2(lrect.center().x, lrect.bottom() - 34.0), vec2(w, 32.0));
+                self.np_hits.back = Some(r);
+                if floating_pill(ui, pal, r, label, ui.scope_id().with("lyrics-back")) {
+                    self.lyrics_back = true;
+                    self.lyrics_away = false;
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+        if let Some(s) = seek_to {
+            self.seek(s);
+        }
+    }
+
+    /// Now Playing's Up Next: the queue, as in the Up Next panel (double-click plays a song).
+    fn np_up_next(&mut self, ui: &mut Ui, pal: &Palette) {
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            if !self.queue_name.is_empty() {
+                let from = tr!("Playing from {name}", name = crate::player::shown_queue_name(&self.queue_name));
+                ui.label(RichText::new(from).color(pal.secondary));
+            }
+        });
+        ui.add_space(6.0);
+        let upcoming = self.queue.as_ref().map(|q| q.up_next(50)).unwrap_or_default();
+        self.np_hits.up_next = upcoming.clone();
+        if upcoming.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new(tr!("Nothing comes after this song.")).color(pal.secondary));
             });
             return;
         }
-        // cover on the left, lyrics on the right
-        let half = area.width() / 2.0;
-        let size = (half - 60.0).min(area.height() - 120.0).clamp(120.0, 480.0);
-        let crect = Rect::from_center_size(pos2(area.left() + half / 2.0, area.top() + 10.0 + size / 2.0), vec2(size, size));
-        cover(ui.painter(), crect, tex.as_ref(), &track.display_album(), 12);
-        ui.painter().text(pos2(crect.center().x, crect.bottom() + 24.0), Align2::CENTER_CENTER, track.display_title(), look::title(18.0), pal.text);
-        ui.painter().text(pos2(crect.center().x, crect.bottom() + 46.0), Align2::CENTER_CENTER, artist_album(&track), look::text(13.0), pal.secondary);
-        let lrect = Rect::from_min_max(pos2(area.left() + half + 10.0, area.top()), area.max);
-        let pos_ms = (self.engine.position().unwrap_or(0.0) * 1000.0) as u32;
-        let mut seek_to = None;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(lrect), |ui| {
-            if ui.rect_contains_pointer(lrect) && ui.input(|i| i.smooth_scroll_delta.y != 0.0) {
-                self.lyrics_scrolled = Some(Instant::now());
-            }
-            let follow = self.lyrics_scrolled.is_none_or(|t| t.elapsed() > Duration::from_secs(3));
-            egui::ScrollArea::vertical().id_salt("lyrics").auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(lrect.height() * 0.3);
-                match &lyrics {
-                    Some(ShownLyrics::Synced(lines)) => {
-                        let cur = lines.iter().rposition(|(ms, _)| *ms <= pos_ms);
-                        for (i, (ms, text)) in lines.iter().enumerate() {
-                            let is_cur = Some(i) == cur;
-                            let color = if is_cur { pal.text } else { pal.secondary.gamma_multiply(0.75) };
-                            let shown = if text.trim().is_empty() { "…".to_string() } else { text.clone() };
-                            let resp = ui.add(egui::Label::new(RichText::new(shown).font(look::title(24.0)).color(color)).wrap().sense(Sense::click()));
-                            ui.add_space(10.0);
-                            if resp.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                            if resp.clicked() {
-                                seek_to = Some(*ms as f64 / 1000.0);
-                                self.lyrics_scrolled = None;
-                            }
-                            if is_cur && follow && self.lyrics_line != Some(i) {
-                                resp.scroll_to_me_animation(Some(Align::Center), egui::style::ScrollAnimation::duration(0.35));
-                            }
-                        }
-                        if follow {
-                            self.lyrics_line = cur;
-                        }
-                    }
-                    Some(ShownLyrics::Plain(text)) => {
-                        ui.add(egui::Label::new(RichText::new(text).font(look::title(18.0)).color(pal.text)).wrap());
-                    }
-                    _ => {}
+        let mut jump = None;
+        egui::ScrollArea::vertical().id_salt("np-up-next").auto_shrink([false, false]).show(ui, |ui| {
+            for (i, path) in upcoming.iter().enumerate() {
+                let t = self.lib.track(path);
+                let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
+                let artist = t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default();
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width() - 12.0, 44.0), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
                 }
-                ui.add_space(lrect.height() * 0.5);
-            });
+                let p = ui.painter_at(rect);
+                p.text(rect.left_top() + vec2(20.0, 5.0), Align2::LEFT_TOP, title, look::title(13.0), pal.text);
+                p.text(rect.left_top() + vec2(20.0, 24.0), Align2::LEFT_TOP, artist, look::text(11.5), pal.secondary);
+                if resp.double_clicked() {
+                    jump = Some(i);
+                }
+            }
         });
-        if let Some(s) = seek_to {
-            self.seek(s);
+        if let Some(i) = jump {
+            self.jump_up_next(i);
+        }
+    }
+
+    /// Now Playing's Details: the song's description; its artists are links.
+    fn np_details(&mut self, ui: &mut Ui, pal: &Palette, track: &Track) {
+        let (comment, verdict) = self.details_extra(&track.path);
+        let n_album = self.lib.album_of(&track.path).map(|a| a.tracks.len()).unwrap_or(0);
+        let artists = if track.artist.is_empty() { vec![] } else { musiclib::split_artists(&track.artist, &self.lib.known) };
+        let rows = song_details(track, n_album, &comment, verdict.as_ref(), &artists);
+        // the labels are English (`song_details()`), shown in the language in use
+        self.np_hits.details = rows.iter().map(|(k, v)| format!("{}: {v}", i18n::tr(k))).collect();
+        let mut open = None;
+        let label_w = rows.iter().map(|(k, _)| text_width(ui, i18n::tr(k), &look::text(13.0))).fold(0.0, f32::max) + 18.0;
+        egui::ScrollArea::vertical().id_salt("np-details").auto_shrink([false, false]).show(ui, |ui| {
+            let value_w = (ui.available_width() - label_w - 44.0).max(120.0);
+            for (k, v) in &rows {
+                ui.horizontal_top(|ui| {
+                    ui.add_space(20.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(label_w);
+                        ui.label(RichText::new(i18n::tr(k)).font(look::text(13.0)).color(pal.secondary));
+                    });
+                    ui.vertical(|ui| {
+                        ui.set_width(value_w);
+                        if *k == "Artist" && !artists.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                for (i, name) in artists.iter().enumerate() {
+                                    if i > 0 {
+                                        ui.label(RichText::new(", ").font(look::text(13.0)).color(pal.text));
+                                    }
+                                    let r = ui.add(egui::Link::new(RichText::new(name).font(look::text(13.0)).color(pal.text)));
+                                    self.np_hits.detail_links.push((r.rect, name.clone()));
+                                    if r.clicked() {
+                                        open = Some(name.clone());
+                                    }
+                                }
+                            });
+                        } else {
+                            ui.add(egui::Label::new(RichText::new(v).font(look::text(13.0)).color(pal.text)).wrap());
+                        }
+                    });
+                });
+                ui.add_space(7.0);
+            }
+        });
+        if let Some(name) = open {
+            self.open_artist(&name);
         }
     }
 
@@ -811,7 +1473,8 @@ impl Player {
                     }
                 }
                 ui.add_space(12.0);
-                if ui.button(tr!("About {app}", app = realhires::APP_NAME)).clicked() {
+                // under the group list: the About box (2.1: there is no Help menu)
+                if crate::style::flat_button(ui, &tr!("About {app}", app = realhires::APP_NAME), true).clicked() {
                     self.scanner.show_about();
                 }
             });
@@ -1100,4 +1763,43 @@ pub fn played_label(ts: f64) -> String {
         (Some(a), Some(b)) if a.pred_opt() == Some(b) => format!("{} {minute}", tr!("Yesterday")),
         _ => tr_text(&realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", t.year, t.month, t.day))),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The LCD's "Artist, Artist — Album" at every width, as the Python app's
+    /// `test_artist_line_cuts_names_without_a_dangling_comma`: each name a link, cut with "…",
+    /// and a name with no room left goes with its ", " ("June Harbor,  — Northern Lig…" before).
+    #[test]
+    fn artist_line_cuts_names_without_a_dangling_comma() {
+        let ctx = egui::Context::default();
+        let names = vec!["June Harbor".to_string(), "Aurora Fields".to_string()];
+        let mut seen = std::collections::BTreeSet::new();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..Default::default() };
+        ctx.run_ui(input, |ui| {
+            let font = FontId::proportional(12.0);
+            let mut width = 400.0;
+            while width > 40.0 {
+                let pieces = artist_line(ui, font.clone(), Color32::WHITE, &names, "Northern Lights", true, width);
+                let line: String = pieces.iter().map(|(g, _)| shown(g)).collect();
+                let links: Vec<String> = pieces.iter().filter_map(|(_, l)| match l { Some(Link::Artist(n)) => Some(n.clone()), _ => None }).collect();
+                assert_eq!(links, names[..links.len()].to_vec(), "{width}: {line}");
+                assert!(!line.contains(",  —") && !line.starts_with(", "), "{width}: {line}");
+                assert_eq!(pieces.last().map(|p| p.1.clone()), Some(Some(Link::Album)), "{width}: {line}");
+                if links.len() == 1 {
+                    assert!(shown(&pieces[0].0).ends_with('…'), "{width}: {line}"); // more artists follow
+                }
+                if width >= 300.0 {
+                    assert_eq!(line, "June Harbor, Aurora Fields — Northern Lights");
+                }
+                seen.insert(links.len());
+                width -= 3.0;
+            }
+        })
+        .drop_without_applying_deltas();
+        assert!(seen.contains(&1) && seen.contains(&2), "{seen:?}");
+    }
+
 }

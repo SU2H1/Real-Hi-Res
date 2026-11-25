@@ -68,8 +68,8 @@ class Settings:
         "When new songs come into the library, look those that miss some information (artist, album, album "
         "artist, release date, track number or genre) up on MusicBrainz and fill in what is missing. Only a "
         "certain match is used, and information already in a tag is never replaced. Each song is looked up once, "
-        "one request per second, as MusicBrainz asks. Off: use Get info from MusicBrainz… in a song's or an "
-        "album's menu.", kind="bool")
+        "one request per second, as MusicBrainz asks. Off: use Acquire Metadata… in a song's or an album's "
+        "right-click menu.", kind="bool")
     musicbrainz_server: str = _f(
         "https://musicbrainz.org", "Library", "MusicBrainz server",
         "Address of the MusicBrainz server the song information comes from. Change it only for a mirror of your "
@@ -83,6 +83,13 @@ class Settings:
         True, "Playback", "Gapless playback",
         "Start the next song without a pause, so albums that flow from track to track play as one.",
         kind="bool")
+    bit_perfect: bool = _f(
+        False, "Playback", "Bit-perfect playback",
+        "Send each song's samples to the sound device exactly as they are in the file: at the song's own sample "
+        "rate, without the equalizer, the volume control or resampling, and with the device to this app alone "
+        "where the system allows it (exclusive mode on Windows, the ALSA hardware device on Linux; on macOS the "
+        "device is switched to the song's rate). Set the volume on your amplifier or DAC. While a song plays "
+        "this way, other programs may not be heard.", kind="bool")
 
     # ---- Appearance (2.0) ---------------------------------------------------
     language: str = _f(

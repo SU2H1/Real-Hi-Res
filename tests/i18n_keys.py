@@ -17,7 +17,12 @@ that the apps show translated: the Settings fields (groups, labels, help,
 choices), the shuffle and repeat modes, the equalizer's presets and band
 types, the theme colours and built-in themes, the Edit Info labels and hints,
 the Your Stats periods, the verdict names and the placeholder names such as
-"Unknown Album".
+"Unknown Album"; since 2.2 also the bit-perfect texts the apps show as they are
+(the Equalizer's note, the Windows format note, "On"/"Off" and the fixed
+reasons), the lyrics labels of Now Playing (`lyrics.shown_label()`) and the
+calendar's month names.  The finished texts the core builds with values (the
+"Bit-perfect" line, the Quality tooltip, the calendar's titles, the Cover
+window, renaming...) are translated by the `patterns` of ``00-core.json``.
 """
 
 from __future__ import annotations
@@ -97,7 +102,8 @@ def rust_keys(path: str) -> Dict[str, List[str]]:
 
 def core_keys() -> Dict[str, List[str]]:
     """The core's tables that the apps show translated."""
-    from realhires import eq, musiclib, playqueue, settings, stats, tagedit, themes, i18n  # noqa: F401
+    from realhires import (bitperfect, eq, i18n, lyrics, musiclib, playqueue, settings, stats,  # noqa: F401
+                           tagedit, themes)
     out: Dict[str, List[str]] = {}
 
     def add(text: str, where: str) -> None:
@@ -135,6 +141,19 @@ def core_keys() -> Dict[str, List[str]]:
         add(label, "stats.PERIODS")
     for label in stats.WEEKDAYS + stats.MONTHS:
         add(label, "stats.WEEKDAYS/MONTHS")
+    for label in stats.FULL_MONTHS:  # 2.2: the calendar's month names
+        add(label, "stats.FULL_MONTHS")
+    # 2.2: bit-perfect playback's texts that the apps show as they are
+    for text in (bitperfect.OFF, bitperfect.ON_IDLE, bitperfect.EQ_BYPASSED, bitperfect.WASAPI_FORMAT_NOTE,
+                 bitperfect.BUSY, bitperfect.LOSSY_NOTE, bitperfect.failure_reason(),
+                 bitperfect.access_label(bitperfect.WASAPI, 0), bitperfect.access_label(bitperfect.ALSA, 0),
+                 bitperfect.access_label(bitperfect.DIRECT, 0)):
+        add(text, "bitperfect")
+    # 2.2: the label above the lyrics on Now Playing and where they come from
+    for v in lyrics.SHOWN_LABELS.values():
+        add(v, "lyrics.SHOWN_LABELS")
+    for file in ("song.lrc", "song.txt", "song.flac"):
+        add(lyrics.shown_label(lyrics.SYNCED, "song.flac", file)[1], "lyrics.shown_label")
     for name in i18n.PLACEHOLDER_NAMES:
         add(name, "i18n.PLACEHOLDER_NAMES")
     for v in i18n.VERDICT_NAMES:

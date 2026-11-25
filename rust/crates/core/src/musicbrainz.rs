@@ -1,7 +1,7 @@
 //! Song information from MusicBrainz (https://musicbrainz.org), 2.1: the port
 //! of `realhires/musicbrainz.py`, which explains it in full.
 //!
-//! "Get info from MusicBrainz…" searches for an album (or a song), reads the
+//! "Acquire Metadata…" (2.2; "Get info from MusicBrainz…" in 2.1) searches for an album (or a song), reads the
 //! chosen release's track list, matches the user's songs to its tracks and
 //! shows what would change; the automatic lookup (`musicbrainz_auto`, off by
 //! default) fills in only empty tags of songs it is certain about, and records

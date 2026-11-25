@@ -71,31 +71,40 @@ fn strings(v: &Value) -> Value {
 fn stats_groupings_and_folders_match_python() {
     let data = load("python_stats.json");
     let tracks: Vec<Track> = data.get("tracks").unwrap().as_array().unwrap().iter().filter_map(Track::from_json).collect();
-    let plays: Vec<Play> = data
-        .get("plays")
-        .unwrap()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| Play {
-            path: s(p, "path"),
-            started: p.get("started").unwrap().as_f64().unwrap(),
-            seconds: p.get("seconds").unwrap().as_f64().unwrap(),
-            duration: p.get("duration").unwrap().as_f64().unwrap(),
-            title: s(p, "title"),
-            artist: s(p, "artist"),
-            album: s(p, "album"),
-            album_artist: s(p, "album_artist"),
-            genre: s(p, "genre"),
-            year: s(p, "year"),
-            composer: s(p, "composer"),
-        })
-        .collect();
+    let plays_of = |key: &str| -> Vec<Play> {
+        data.get(key)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| Play {
+                path: s(p, "path"),
+                started: p.get("started").unwrap().as_f64().unwrap(),
+                seconds: p.get("seconds").unwrap().as_f64().unwrap(),
+                duration: p.get("duration").unwrap().as_f64().unwrap(),
+                title: s(p, "title"),
+                artist: s(p, "artist"),
+                album: s(p, "album"),
+                album_artist: s(p, "album_artist"),
+                genre: s(p, "genre"),
+                year: s(p, "year"),
+                composer: s(p, "composer"),
+            })
+            .collect()
+    };
+    let plays = plays_of("plays");
     let offset = data.get("offset").unwrap().as_f64().unwrap();
     let tokyo = move |ts: f64| {
         let t = chrono::DateTime::from_timestamp((ts + offset).floor() as i64, 0).unwrap().naive_utc();
         use chrono::{Datelike, Timelike};
-        LocalParts { year: t.year(), month: t.month(), day: t.day(), hour: t.hour(), wday: t.weekday().num_days_from_monday() }
+        LocalParts {
+            year: t.year(),
+            month: t.month(),
+            day: t.day(),
+            hour: t.hour(),
+            minute: t.minute(),
+            wday: t.weekday().num_days_from_monday(),
+        }
     };
     let cards = |st: &stats::Stats| {
         Value::Array(
@@ -114,6 +123,45 @@ fn stats_groupings_and_folders_match_python() {
     same(&cards(&stats::compute(&[], &tokyo)), data.get("cards_empty").unwrap(), "cards_empty");
     let hours: Vec<Value> = (0..24).map(|h| Value::Str(stats::hour_label(h))).collect();
     same(&Value::Array(hours), data.get("hours").unwrap(), "hours");
+
+    // the calendar of Your Stats (2.1)
+    let mut cal_plays = plays.clone();
+    cal_plays.extend(plays_of("calendar_plays"));
+    cal_plays.sort_by(|a, b| a.started.partial_cmp(&b.started).unwrap());
+    let months = data.get("calendar").unwrap().as_array().unwrap();
+    assert!(months.len() >= 5);
+    for c in months {
+        let y = c.get("year").unwrap().as_f64().unwrap() as i32;
+        let m = c.get("month").unwrap().as_f64().unwrap() as u32;
+        let at = format!("calendar {y}-{m}");
+        assert_eq!(stats::month_title(y, m), s(c, "title"), "{at}");
+        let grid = Value::Array(
+            stats::month_grid(y, m)
+                .iter()
+                .map(|w| Value::Array(w.iter().map(|d| Value::Int(*d as i64)).collect()))
+                .collect(),
+        );
+        same(&grid, c.get("grid").unwrap(), &format!("{at} grid"));
+        let minutes = stats::month_minutes(&cal_plays, y, m, &tokyo);
+        same(&Value::Array(minutes.iter().map(|x| Value::Float(*x)).collect()), c.get("minutes").unwrap(), &format!("{at} minutes"));
+        let levels = Value::Array(stats::month_levels(&minutes).iter().map(|l| Value::Int(*l as i64)).collect());
+        same(&levels, c.get("levels").unwrap(), &format!("{at} levels"));
+        for d in c.get("days").unwrap().as_array().unwrap() {
+            let day = d.get("day").unwrap().as_f64().unwrap() as u32;
+            assert_eq!(stats::day_title(y, m, day), s(d, "title"), "{at}-{day}");
+            let rows = stats::day_plays(&cal_plays, y, m, day, &tokyo);
+            same(&Value::Array(rows.iter().map(|r| r.to_json()).collect()), d.get("plays").unwrap(), &format!("{at}-{day}"));
+            assert_eq!(stats::day_summary(&rows), s(d, "summary"), "{at}-{day}");
+        }
+    }
+    for pair in data.get("minutes_labels").unwrap().as_array().unwrap() {
+        let pair = pair.as_array().unwrap();
+        assert_eq!(stats::minutes_label(pair[0].as_f64().unwrap()), pair[1].as_str().unwrap());
+    }
+    for row in data.get("shift_month").unwrap().as_array().unwrap() {
+        let n: Vec<i64> = row.as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as i64).collect();
+        assert_eq!(stats::shift_month(n[0] as i32, n[1] as u32, n[2] as i32), (n[3] as i32, n[4] as u32), "{n:?}");
+    }
 
     let groups = data.get("groups").unwrap();
     for (name, list) in [
@@ -259,7 +307,39 @@ fn player_state_matches_python() {
     ops.save_eq_preset("  My   Jazz ", &jazz, false).unwrap();
     ops.save_eq_preset("Other", &EqState::default(), false).unwrap();
     ops.rename_eq_preset("Other", "Bright").unwrap();
+    ops.step_lyrics_size(1);
+    ops.step_lyrics_size(1);
+    ops.toggle_column("songs", "year");
+    ops.toggle_column("songs", "like");
+    ops.toggle_column("songs", "title");
+    ops.toggle_column("album", "file");
+    ops.set_columns("folders", &["bit_rate".to_string(), "format".to_string()]);
+    ops.toggle_column("folders", "format");
     same(&ops.to_json(), data.get("ops_out").unwrap(), "ops");
+    // Now Playing's lyrics size (A− / A+)
+    let limits: Vec<i64> =
+        data.get("lyrics_size_limits").unwrap().as_array().unwrap().iter().map(|v| v.as_i64().unwrap()).collect();
+    assert_eq!(
+        limits,
+        vec![
+            playerstate::LYRICS_SIZE_MIN,
+            playerstate::LYRICS_SIZE_DEFAULT,
+            playerstate::LYRICS_SIZE_MAX,
+            playerstate::LYRICS_SIZE_STEP
+        ]
+    );
+    for case in data.get("lyrics_sizes").unwrap().as_array().unwrap() {
+        let case = case.as_array().unwrap();
+        let obj = Value::Object(vec![("lyrics_size".to_string(), case[0].clone())]);
+        assert_eq!(PlayerState::from_json(&obj).lyrics_size, case[1].as_i64().unwrap(), "{case:?}");
+    }
+    for case in data.get("lyrics_size_steps").unwrap().as_array().unwrap() {
+        let case = case.as_array().unwrap();
+        let obj = Value::Object(vec![("lyrics_size".to_string(), case[0].clone())]);
+        let mut st = PlayerState::from_json(&obj);
+        assert_eq!(st.step_lyrics_size(case[1].as_i64().unwrap()), case[2].as_i64().unwrap(), "{case:?}");
+        assert_eq!(playerstate::plain_lyrics_size(st.lyrics_size), case[3].as_i64().unwrap(), "{case:?}");
+    }
     for e in data.get("name_errors").unwrap().as_array().unwrap() {
         let e = e.as_array().unwrap();
         let got = ops.check_preset_name(e[0].as_str().unwrap(), "").err().map(|x| x.0);
@@ -267,4 +347,42 @@ fn player_state_matches_python() {
     }
     let _ = strings(&Value::Null);
     let _ = playerstate::clean_name("x");
+}
+
+
+/// Several artists in one field (2.1): the split and the groupings it gives equal Python's.
+#[test]
+fn several_artists_split_as_in_python() {
+    let path = format!("{}/tests/python_artists.json", env!("CARGO_MANIFEST_DIR"));
+    let data = realhires::json::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let tracks: Vec<musiclib::Track> =
+        data.get("tracks").unwrap().as_array().unwrap().iter().filter_map(musiclib::Track::from_json).collect();
+    let known = musiclib::known_artists(&tracks);
+    let mut want_known: Vec<String> =
+        data.get("known").unwrap().as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let mut got_known: Vec<String> = known.iter().cloned().collect();
+    want_known.sort();
+    got_known.sort();
+    assert_eq!(got_known, want_known);
+    for case in data.get("split").unwrap().as_array().unwrap() {
+        let c = case.as_array().unwrap();
+        let want: Vec<String> = c[1].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(musiclib::split_artists(c[0].as_str().unwrap(), &known), want, "{:?}", c[0]);
+    }
+    for (name, groups) in [("artists", musiclib::artists(&tracks)), ("album_artists", musiclib::album_artists(&tracks))] {
+        let got: Vec<(String, Vec<String>)> =
+            groups.iter().map(|g| (g.name.clone(), g.tracks.iter().map(|t| t.path.clone()).collect())).collect();
+        let want: Vec<(String, Vec<String>)> = data
+            .get(name)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| {
+                let g = g.as_array().unwrap();
+                (g[0].as_str().unwrap().to_string(), g[1].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect())
+            })
+            .collect();
+        assert_eq!(got, want, "{name}");
+    }
 }

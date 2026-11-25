@@ -13,8 +13,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from . import i18n, musiclib, stats
 from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
-from .player_pages import (Page, album_order, frame, label, plural, song_table, track_sort,
-                           track_value)
+from .player_pages import (Page, album_menu, album_order, frame, label, library_groups, plural, song_table,
+                           track_sort, track_value)
 from .player_theme import IconButton, PillButton, draw_icon, fit_text, mix, round_rect
 from .player_widgets import (AlbumGrid, Column, SongList, bind_wheel, draw_cover, draw_mosaic,
                              show_scrollbar)
@@ -37,7 +37,8 @@ def fmt_played(ts: float, now: Optional[float] = None) -> str:
     return tr_text(stats.day_label(f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d}"))
 
 
-# the weekdays under the bars of Your Stats → Details (stats.WEEKDAYS cut to three letters)
+# the weekdays under the bars of Your Stats → Details and above the calendar (stats.WEEKDAYS cut
+# to three letters), Monday first
 WEEKDAYS_SHORT = [N_("Mon"), N_("Tue"), N_("Wed"), N_("Thu"), N_("Fri"), N_("Sat"), N_("Sun")]
 
 
@@ -101,12 +102,15 @@ class LibraryPage(Page):
         self.area.pack(fill="both", expand=True)
         self.c = self.area.c
         self.hits: List[Tuple[tuple, Callable[[], None]]] = []
+        self.album_hits: List[Tuple[tuple, dict]] = []  # the Recently Added cards (their right-click menu)
         self.hover: Optional[tuple] = None
         self.counts: Dict[str, str] = {}
         self.newest: List[dict] = []
         self.year_minutes = 0
         self._fit: dict = {}
         self.c.bind("<Button-1>", self._click)
+        self.c.bind("<Button-3>", self._context)
+        self.c.bind("<Button-2>", self._context)  # macOS right click
         self.c.bind("<Motion>", self._motion)
         app.covers.listeners.append(lambda key, size: size == self.CARD and self.winfo_exists()
                                     and self.area.redraw())
@@ -127,11 +131,11 @@ class LibraryPage(Page):
             "songs": count(n(tracks), "song"),
             "folders": count(n({os.path.dirname(t.path) for t in tracks}), "folder"),
             "albums": count(n(app.albums), "album"),
-            "artists": count(n(musiclib.artists(tracks)), "artist"),
-            "album_artists": count(n(musiclib.album_artists(tracks)), "album artist"),
-            "genres": count(n(musiclib.genres(tracks)), "genre"),
-            "years": count(n(musiclib.years(tracks)), "year"),
-            "composers": count(n(musiclib.composers(tracks)), "composer"),
+            "artists": count(n(library_groups(app, "artists")), "artist"),  # grouped once per library
+            "album_artists": count(n(library_groups(app, "album_artists")), "album artist"),
+            "genres": count(n(library_groups(app, "genres")), "genre"),
+            "years": count(n(library_groups(app, "years")), "year"),
+            "composers": count(n(library_groups(app, "composers")), "composer"),
             "playlists": count(n(app.state.playlists), "playlist"),
             "liked": count(n(app.state.liked), "song"),
             "disliked": count(n(app.state.disliked), "song"),
@@ -148,6 +152,7 @@ class LibraryPage(Page):
         t, c = self.theme, self.c
         W = c.winfo_width()
         self.hits = []
+        self.album_hits = []
         m = self.MARGIN
         c.create_text(m, 40, text=tr("Library"), anchor="w", fill=t.c("text"), font=t.f("title"))
         cols = max(1, int((W - 2 * m + self.GAP) // (self.TILE_W + self.GAP)))
@@ -191,6 +196,7 @@ class LibraryPage(Page):
                                                                    self._fit), anchor="w", fill=t.c("text2"),
                               font=t.f("card_sub"))
                 self.hits.append(((x, y, x + self.CARD, y + self.CARD + 40), lambda a=a: self.app.open_album(a)))
+                self.album_hits.append(((x, y, x + self.CARD, y + self.CARD + 40), a))
             y += self.CARD + 56
         if self.year_minutes:
             box = (m, y, W - m, y + 84)
@@ -217,6 +223,19 @@ class LibraryPage(Page):
         hit = self._hit(e)
         if hit:
             hit[1]()
+
+    def album_at(self, x: float, y: float) -> Optional[dict]:
+        """The Recently Added album whose card is at (x, y) on the canvas, if any."""
+        for box, a in self.album_hits:
+            if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                return a
+        return None
+
+    def _context(self, e) -> None:
+        """Right click on a Recently Added card: the album menu (2.2), as on the album grids."""
+        a = self.album_at(self.c.canvasx(e.x), self.c.canvasy(e.y))
+        if a is not None:
+            album_menu(self.app, a).tk_popup(e.x_root, e.y_root)
 
     def _motion(self, e) -> None:
         hit = self._hit(e)
@@ -255,7 +274,8 @@ class FoldersPage(Page):
                              lambda r, k: "folder" if k == "icon" else (r[1] if k == "name" else plural(r[2], "song")),
                              header=False, zebra=False, row_height=36,
                              on_select=lambda i: self.open(self.dirs.rows[i][0]))
-        self.table = song_table(self, self, on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
+        self.table = song_table(self, self, kind="folders",
+                                on_activate=lambda i: app.play_list(self.table.rows, i, self.list_name))
         self.parts: List[Tuple[str, Optional[str]]] = []
 
     def roots(self) -> List[str]:
@@ -419,10 +439,10 @@ class PlaylistPage(Page):
         PillButton(btns, t, tr("Delete…"), kind="plain", command=lambda: self.pid and app.delete_playlist(self.pid)
                    ).pack(side="left", padx=(8, 0))
         self.pos: Dict[int, int] = {}
-        cols = [Column("pos", "", 34, anchor="e", kind="num"), Column("title", N_("Title"), 300, True),
-                Column("artist", N_("Artist"), 200, True), Column("album", N_("Album"), 200, True),
-                Column("time", N_("Time"), 52, anchor="e"), Column("like", "", 30, kind="heart")]
-        self.table = song_table(self, self, cols, value=self._value, extra_menu=self._extra, sortable=False,
+        # the playlist position, then the columns the user chose for song lists (not sortable: the
+        # order is the playlist's)
+        self.table = song_table(self, self, value=self._value, extra_menu=self._extra, sortable=False,
+                                kind="songs", prefix=[Column("pos", "", 34, anchor="e", kind="num")],
                                 on_activate=lambda i: self.app.play_list(self.table.rows, i, self.list_name),
                                 empty_text=tr("This playlist is empty. Add songs with “Add to playlist” in a "
                                               "song's menu (right click)."))
@@ -530,10 +550,20 @@ class RecentlyPlayedPage(Page):
 
 
 # --------------------------------------------------------------- your stats ---
+def this_month(now: Optional[float] = None) -> Tuple[int, int]:
+    t = time.localtime(time.time() if now is None else now)
+    return t.tm_year, t.tm_mon
+
+
 class StatsPage(Page):
-    """A period menu and the summary cards (stats.cards()), each in its own colour."""
+    """A month calendar (2.1: ‹ month ›, Monday first, days tinted by the minutes
+    played, today outlined; a click on a day lists its plays under it, a click on
+    a song plays it), then the summary cards of the period chosen in the menu
+    (stats.cards()), each in its own colour."""
 
     list_name = N_("Your Stats")
+    CELL_W, CELL_H, ROW_H = 62, 44, 30
+    TINTS = (0.0, 0.25, 0.45, 0.7, 1.0)  # the share of the accent colour for stats.month_levels() 0..4
 
     def __init__(self, app):
         super().__init__(app)
@@ -556,6 +586,18 @@ class StatsPage(Page):
         self.area.pack(fill="both", expand=True)
         self.st: Optional[dict] = None
         self._fit: dict = {}
+        # the calendar: the month shown and the day chosen stay for the session
+        self.month: Tuple[int, int] = this_month()
+        self.day: Optional[Tuple[int, int, int]] = None
+        self.minutes: List[float] = []
+        self.levels: List[int] = []
+        self.day_rows: List[dict] = []
+        self.hits: List[Tuple[tuple, Callable[[], None]]] = []
+        self.hover: Optional[tuple] = None
+        c = self.area.c
+        c.bind("<Button-1>", self._click)
+        c.bind("<Motion>", self._motion)
+        c.bind("<Leave>", lambda e: self._set_hover(None))
 
     def _period(self) -> None:
         i = self.period_box.current()
@@ -574,21 +616,168 @@ class StatsPage(Page):
         self.sub.configure(text=tr("{period}: {minutes}, {plays}", period=period,
                                    minutes=plural(int(st["seconds"] / 60 + 0.5), "minute"),
                                    plays=plural(st["plays"], "play")) if st["logged"] else period)
+        self._load_calendar()
         self.area.redraw()
+
+    def song_changed(self) -> None:
+        if self.day_rows:
+            self.area.redraw()
+
+    # ---- the calendar ---------------------------------------------------
+    def _load_calendar(self) -> None:
+        """The month's minutes per day and the chosen day's plays, read between local midnights."""
+        y, m = self.month
+        self.minutes = stats.month_minutes(self.app.plays(*stats.month_bounds(y, m)), y, m)
+        self.levels = stats.month_levels(self.minutes)
+        self.day_rows = stats.day_plays(self.app.plays(*stats.day_bounds(*self.day)), *self.day) if self.day else []
+
+    def show_month(self, year: int, month: int) -> None:
+        self.month = (year, month)
+        self._load_calendar()
+        self.area.redraw()
+
+    def step_month(self, delta: int) -> None:
+        self.show_month(*stats.shift_month(*self.month, delta))
+
+    def choose_day(self, day: Optional[int]) -> None:
+        """List the plays of this day of the month shown (None, or the chosen day again: hide the list)."""
+        chosen = (self.month[0], self.month[1], day) if day else None
+        self.day = None if chosen == self.day else chosen
+        self._load_calendar()
+        self.area.redraw()
+
+    def play_row(self, i: int) -> None:
+        """A click on a song of the day's list: play the day's songs (each once) from it."""
+        tracks: List[Track] = []
+        for r in self.day_rows:
+            trk = self.app.by_path.get(r["path"])
+            if trk is not None and trk not in tracks:
+                tracks.append(trk)
+        trk = self.app.by_path.get(self.day_rows[i]["path"]) if 0 <= i < len(self.day_rows) else None
+        if trk is not None:
+            self.app.play_list(tracks, tracks.index(trk), self.list_name)
+
+    def _hit(self, e) -> Optional[tuple]:
+        x, y = self.area.c.canvasx(e.x), self.area.c.canvasy(e.y)
+        for box, fn in self.hits:
+            if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                return box, fn
+        return None
+
+    def _click(self, e) -> None:
+        hit = self._hit(e)
+        if hit:
+            hit[1]()
+
+    def _motion(self, e) -> None:
+        hit = self._hit(e)
+        self.area.c.configure(cursor="hand2" if hit else "")
+        self._set_hover(hit[0] if hit else None)
+
+    def _set_hover(self, box: Optional[tuple]) -> None:
+        if box != self.hover:
+            self.hover = box
+            self.area.redraw()
+
+    def _draw_calendar(self, y: float) -> float:
+        t, c = self.theme, self.area.c
+        W = c.winfo_width()
+        m = 28
+        cw, ch = max(30.0, min(self.CELL_W, (W - 2 * m) / 7)), self.CELL_H
+        right = m + 7 * cw
+        year, month = self.month
+        title = c.create_text(m, y + 16, text=tr_text(stats.month_title(year, month)), anchor="w", fill=t.c("text"),
+                              font=t.f("h2"))
+        total = int(sum(self.minutes) + 0.5)
+        if total:
+            c.create_text(c.bbox(title)[2] + 10, y + 17, text=plural(total, "minute"), anchor="w",
+                          fill=t.c("text2"), font=t.f("body"))
+        newest = (year, month) >= this_month()  # no months after this one
+        for icon, cx, delta, on in (("back", right - 50, -1, True), ("chevron", right - 16, 1, not newest)):
+            box = (cx - 15, y + 1, cx + 15, y + 31)
+            if on and self.hover == box:
+                round_rect(c, *box, 8, fill=t.c("hover"), outline="")
+            draw_icon(c, icon, cx, y + 16, 18, t.c("accent") if on else t.c("disabled"))
+            if on:
+                self.hits.append((box, lambda d=delta: self.step_month(d)))
+        y += 42
+        for k, name in enumerate(WEEKDAYS_SHORT):
+            c.create_text(m + k * cw + cw / 2, y + 8, text=tr(name), fill=t.c("text2"), font=t.f("small_b"))
+        y += 22
+        now = time.localtime()
+        today = (now.tm_year, now.tm_mon, now.tm_mday)
+        accent, base = t.c("accent"), t.c("lcd")
+        for week in stats.month_grid(year, month):
+            for k, d in enumerate(week):
+                if not d:
+                    continue
+                box = (m + k * cw + 2, y + 2, m + (k + 1) * cw - 2, y + ch - 2)
+                level = self.levels[d - 1] if d - 1 < len(self.levels) else 0
+                fill = mix(base, accent, self.TINTS[level])
+                if self.hover == box:
+                    fill = mix(fill, t.c("text"), 0.1)
+                chosen, is_today = self.day == (year, month, d), today == (year, month, d)
+                outline, width = (t.c("text"), 3) if chosen else (accent, 2) if is_today else ("", 0)
+                round_rect(c, *box, 8, fill=fill, outline=outline, width=width)
+                c.create_text((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, text=str(d),
+                              fill=t.c("on_accent") if level >= 3 else t.c("text"),
+                              font=t.f("body_b" if chosen or is_today else "body"))
+                self.hits.append((box, lambda d=d: self.choose_day(d)))
+            y += ch
+        return y + 12
+
+    def _draw_day(self, y: float) -> float:
+        t, c = self.theme, self.area.c
+        W = c.winfo_width()
+        m = 28
+        if self.day is None:
+            c.create_text(m, y + 10, text=tr("Click a day to see the songs you played on it."), anchor="w",
+                          fill=t.c("text2"), font=t.f("body"))
+            return y + 40
+        c.create_text(m, y + 12, text=tr_text(stats.day_title(*self.day)), anchor="w", fill=t.c("text"),
+                      font=t.f("h2"))
+        c.create_text(m, y + 36, text=tr_text(stats.day_summary(self.day_rows)), anchor="w", fill=t.c("text2"),
+                      font=t.f("body"))
+        y += 56
+        rest = W - 2 * m - 70 - 90
+        tw = rest * 0.55
+        aw = rest - tw - 16
+        for i, r in enumerate(self.day_rows):
+            box = (m, y, W - m, y + self.ROW_H)
+            playable = r["path"] in self.app.by_path
+            if playable and self.hover == box:
+                round_rect(c, *box, 6, fill=t.c("hover"), outline="")
+            elif i % 2:
+                round_rect(c, *box, 6, fill=t.c("zebra"), outline="")
+            mid = y + self.ROW_H / 2
+            playing = r["path"] == self.app.current
+            font = t.f("body_b" if playing else "body")
+            c.create_text(m + 12, mid, text=r["time"], anchor="w", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(m + 70, mid, text=fit_text(font, r["title"], int(tw), self._fit), anchor="w",
+                          fill=t.c("accent") if playing else t.c("text") if playable else t.c("text2"), font=font)
+            c.create_text(m + 70 + tw + 16, mid, text=fit_text(t.f("body"), tr_name(r["artist"]), int(aw), self._fit),
+                          anchor="w", fill=t.c("text2"), font=t.f("body"))
+            c.create_text(W - m - 12, mid, text=tr_text(r["minutes"]), anchor="e", fill=t.c("text2"),
+                          font=t.f("body"))
+            if playable:
+                self.hits.append((box, lambda i=i: self.play_row(i)))
+            y += self.ROW_H
+        return y + 18
 
     def _draw(self) -> float:
         t, c = self.theme, self.area.c
         W = c.winfo_width()
         m, gap = 28, 16
+        self.hits = []
+        y0 = self._draw_day(self._draw_calendar(8))
         cards = stats.cards(self.st) if self.st else []
         if not cards:
-            c.create_text(W / 2, 120, text=tr("No listening yet in this period. Play some music and come back."),
+            c.create_text(W / 2, y0 + 40, text=tr("No listening yet in this period. Play some music and come back."),
                           fill=t.c("text2"), font=t.f("h2"), width=W - 80)
-            return 200
+            return y0 + 100
         cols = 3 if W >= 760 else 2 if W >= 480 else 1
         cw = (W - 2 * m - (cols - 1) * gap) / cols
         ch = 150
-        y = 8
         for i, (lab, big, detail) in enumerate(cards):
             # stats.cards() gives English texts: the label and the detail are the core's sentences, the
             # big text a name from the library (top song, artist...) or a value such as "3 PM"
@@ -596,7 +785,7 @@ class StatsPage(Page):
                                           "Your top genre") else tr_text(big)
             lab, detail = tr_text(lab), tr_text(detail)
             r, k = divmod(i, cols)
-            x, y = m + k * (cw + gap), 8 + r * (ch + gap)
+            x, y = m + k * (cw + gap), y0 + r * (ch + gap)
             color = CARD_COLORS[i % len(CARD_COLORS)]
             round_rect(c, x, y, x + cw, y + ch, 16, fill=color, outline="")
             c.create_text(x + 20, y + 26, text=lab.upper(), anchor="w", fill=mix(color, "#ffffff", 0.78),
@@ -606,7 +795,7 @@ class StatsPage(Page):
             c.create_text(x + 20, y + 118, text=fit_text(t.f("stat_detail"), detail, int(cw - 40), self._fit),
                           anchor="w", fill=mix(color, "#ffffff", 0.85), font=t.f("stat_detail"))
         rows = (len(cards) + cols - 1) // cols
-        return 8 + rows * (ch + gap) + 20
+        return y0 + rows * (ch + gap) + 20
 
 
 class StatsDetailsPage(Page):

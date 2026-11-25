@@ -1169,31 +1169,68 @@ pub fn write_text(path: &str, text: &str) -> std::io::Result<()> {
     res
 }
 
-/// (kind, text, file) of the lyrics next to a song, for display; kind is
-/// Synced, Instrumental or Plain.  None when there is none.
+/// (kind, text, file) of a song's lyrics, for display (Python `read_lyrics_file`).  Synced
+/// lyrics win wherever they are: the .lrc next to the song, then the lyrics inside the file
+/// when they are synced, then the .txt, then plain lyrics inside the file.  (LRCGET's
+/// "plain text" and "embed" exports together leave a .txt beside a file whose tag holds
+/// synced lyrics.)  A .txt or plain tag that holds LRC (`embed::looks_synced`) counts as synced.
 pub fn read_lyrics_file(path: &str) -> Option<(Status, String, String)> {
     let (lrc, txt) = existing_lyrics(path);
-    for (file, is_lrc) in [(lrc, true), (txt, false)] {
-        let Some(file) = file else { continue };
+    let read = |file: &str| -> Option<String> {
         let mut raw = vec![];
-        match std::fs::File::open(&file) {
-            Ok(f) => {
-                if f.take(MAX_LYRICS_BYTES).read_to_end(&mut raw).is_err() {
-                    continue;
-                }
-            }
-            Err(_) => continue,
-        }
+        let f = std::fs::File::open(file).ok()?;
+        f.take(MAX_LYRICS_BYTES).read_to_end(&mut raw).ok()?;
         let body = raw.strip_prefix(b"\xef\xbb\xbf".as_slice()).unwrap_or(&raw);
-        let text = String::from_utf8_lossy(body).into_owned();
-        if is_lrc {
+        Some(String::from_utf8_lossy(body).into_owned())
+    };
+    if let Some(file) = lrc {
+        if let Some(text) = read(&file) {
             let kind = if is_instrumental_lrc(&text) { Status::Instrumental } else { Status::Synced };
             return Some((kind, text, file));
         }
-        return Some((Status::Plain, text, file));
     }
     // 2.0: lyrics inside the file (MP3, FLAC)
-    crate::embed::lyrics_of(path).map(|(kind, text)| (kind, text, path.to_string()))
+    let inside = crate::embed::lyrics_of(path);
+    if let Some((kind, text)) = &inside {
+        if *kind != Status::Plain {
+            return Some((*kind, text.clone(), path.to_string()));
+        }
+    }
+    if let Some(file) = txt {
+        if let Some(text) = read(&file) {
+            let kind = if is_instrumental_lrc(&text) {
+                Status::Instrumental
+            } else if crate::embed::looks_synced(&text) {
+                Status::Synced
+            } else {
+                Status::Plain
+            };
+            return Some((kind, text, file));
+        }
+    }
+    inside.map(|(kind, text)| (kind, text, path.to_string()))
+}
+
+/// The label above the lyrics on Now Playing (Python `shown_label`), for lyrics of `kind`
+/// (as shown: synced lyrics without a single timed line are shown as plain) that
+/// `read_lyrics_file(path)` found in `file`: ("Synced lyrics" / "Lyrics (not synced)" /
+/// "Instrumental", where they come from: ".lrc file", "inside the file" or ".txt file").
+pub fn shown_label(kind: Status, path: &str, file: &str) -> (&'static str, String) {
+    let label = match kind {
+        Status::Synced => "Synced lyrics",
+        Status::Instrumental => "Instrumental",
+        _ => "Lyrics (not synced)",
+    };
+    let source = if file == path {
+        "inside the file".to_string()
+    } else {
+        let ext = std::path::Path::new(file)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+            .unwrap_or_else(|| "lyrics".into());
+        format!("{ext} file")
+    };
+    (label, source)
 }
 
 #[derive(Clone, Debug, PartialEq)]

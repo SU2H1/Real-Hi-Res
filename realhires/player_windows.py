@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from . import eq, i18n, tagedit
+from . import bitperfect, eq, i18n, tagedit
 from .i18n import N_, tr, tr_name, tr_text
 from .player import fmt_db
 from .player_theme import PillButton, Slider
@@ -44,11 +44,13 @@ def _window(app: "PlayerApp", title: str) -> tk.Toplevel:
 
 
 class NameDialog:
-    """Asks for a name (playlist, preset, theme); `check(name)` returns the cleaned
-    name or raises an error whose message is shown under the field."""
+    """Asks for a name (playlist, preset, theme, genre); `check(name)` returns the
+    cleaned name or raises an error whose message is shown under the field.  With
+    `choices` the field is a drop-down of them that can also be typed into."""
 
     def __init__(self, app: "PlayerApp", title: str, prompt: str, initial: str = "",
-                 check: Optional[Callable[[str], str]] = None, ok: str = N_("OK"), parent=None):
+                 check: Optional[Callable[[str], str]] = None, ok: str = N_("OK"), parent=None,
+                 choices: Optional[List[str]] = None):
         self.app, t = app, app.theme
         self.check = check
         self.result: Optional[str] = None
@@ -59,9 +61,13 @@ class NameDialog:
         self.win.bind("<<Close>>", lambda e: self.cancel())
         box = frame(self.win, t)
         box.pack(fill="both", expand=True, padx=22, pady=18)
-        label(box, t, prompt, "body_b").pack(anchor="w")
+        label(box, t, prompt, "body_b", wraplength=420, justify="left").pack(anchor="w")
         self.var = tk.StringVar(value=initial)
-        self.entry = ttk.Entry(box, textvariable=self.var, width=40, style="P.TEntry", font=t.f("body"))
+        if choices:
+            self.entry = ttk.Combobox(box, textvariable=self.var, values=list(choices), width=40, font=t.f("body"),
+                                      height=min(len(choices), 14))
+        else:
+            self.entry = ttk.Entry(box, textvariable=self.var, width=40, style="P.TEntry", font=t.f("body"))
         self.entry.pack(anchor="w", fill="x", pady=(6, 0))
         self.error = label(box, t, "", "small", fg="error", wraplength=360, justify="left")
         self.error.pack(anchor="w", pady=(4, 0))
@@ -107,9 +113,10 @@ class NameDialog:
 
 
 def ask_name(app: "PlayerApp", title: str, prompt: str, initial: str = "",
-             check: Optional[Callable[[str], str]] = None, ok: str = N_("OK"), parent=None) -> Optional[str]:
+             check: Optional[Callable[[str], str]] = None, ok: str = N_("OK"), parent=None,
+             choices: Optional[List[str]] = None) -> Optional[str]:
     """A name from the user, or None when they cancel (waits for the dialog)."""
-    return NameDialog(app, title, prompt, initial, check, ok, parent).run()
+    return NameDialog(app, title, prompt, initial, check, ok, parent, choices).run()
 
 
 class PlaybackInfoWindow:
@@ -215,10 +222,17 @@ class EqualizerWindow:
         self.preset_btn.pack(side="left")
         for text, cmd in ((tr("Export…"), self._export), (tr("Import…"), self._import), (tr("Delete…"), self._delete),
                           (tr("Rename…"), self._rename), (tr("Save as preset…"), self._save_as)):
-            PillButton(presets, t, text, kind="plain", command=cmd).pack(side="right", padx=(8, 0))
+            b = PillButton(presets, t, text, kind="plain", command=cmd)
+            b.pack(side="right", padx=(8, 0))
+            if cmd == self._delete:
+                self.delete_btn = b
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
+        # bit-perfect playback bypasses the equalizer (its settings are kept); shown only then,
+        # so it leaves no empty line above the curve (show_bypass())
+        self.bypass = label(box, t, "", "body", fg="accent", wraplength=640, justify="left")
         self.preset_menu: Optional[tk.Menu] = None
+        self.delete_menu: Optional[tk.Menu] = None
         self.curve = tk.Canvas(box, width=self.CURVE_W, height=self.CURVE_H, highlightthickness=0, bd=0)
         t.reg(self.curve, bg="lcd")
         self.curve.pack(fill="x", pady=(10, 10))
@@ -239,6 +253,16 @@ class EqualizerWindow:
         self.win.minsize(700, 600)
         self.draw_curve()
         self._show_preset()
+        self.show_bypass()
+
+    def show_bypass(self) -> None:
+        """'Bypassed while bit-perfect playback is on.' while that setting is on."""
+        on = bool(self.app.cfg.bit_perfect)
+        self.bypass.configure(text=tr(bitperfect.EQ_BYPASSED) if on else "")
+        if on:
+            self.bypass.pack(anchor="w", pady=(4, 0), before=self.curve)
+        else:
+            self.bypass.pack_forget()
 
     # ---- graphic --------------------------------------------------------
     def _build_graphic(self) -> None:
@@ -537,15 +561,44 @@ class EqualizerWindow:
                 self.rename_preset(old, new)
 
     def _delete(self) -> None:
+        """Delete…: the preset the equalizer is set to; when it is set to none of the
+        user's presets (changed since, or never chosen), a menu of them to pick from."""
+        name = self.app.state.matching_eq_preset()
+        if name:
+            self.delete_preset(name)
+            return
+        if not self.app.state.eq_presets:
+            self.note.configure(text=tr("You have no presets of your own yet: Save as preset… keeps the current "
+                                        "settings as one."), fg=self.t.c("error"))
+            return
+        b = self.delete_btn
+        self.build_delete_menu().tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def build_delete_menu(self) -> tk.Menu:
+        m = tk.Menu(self.win, tearoff=False)
+        self.app.theme_menu(m)
+        m.add_command(label=tr("Delete which preset?"), state="disabled")
+        for p in self.app.state.eq_presets:
+            m.add_command(label=p["name"], command=lambda n=p["name"]: self.delete_preset(n))
+        self.delete_menu = m
+        return m
+
+    def delete_preset(self, name: str, confirm: bool = True) -> bool:
+        """Delete one of the user's presets (after asking); the equalizer keeps its settings."""
         from tkinter import messagebox
 
-        name = self._mine()
-        if name and messagebox.askyesno(tr("Delete preset"), tr("Delete your preset “{name}”?", name=name),
-                                        parent=self.win):
-            self.app.state.delete_eq_preset(name)
-            self.app.save_state()
-            self._show_preset()
-            self.note.configure(text=tr("Deleted “{name}”.", name=name), fg=self.t.c("text2"))
+        if self.app.state.eq_preset(name) is None:
+            return False
+        if confirm and not messagebox.askyesno(
+                tr("Delete preset"),
+                tr("Delete your preset “{name}”? The equalizer keeps its current settings.", name=name),
+                parent=self.win):
+            return False
+        self.app.state.delete_eq_preset(name)
+        self.app.save_state()
+        self._show_preset()
+        self.note.configure(text=tr("Deleted “{name}”.", name=name), fg=self.t.c("text2"))
+        return True
 
     def import_file(self, path: str) -> str:
         """Read a .json or Equalizer APO / AutoEQ .txt preset, apply it and save it under
@@ -645,15 +698,20 @@ class EqualizerWindow:
 
 
 class EditInfoWindow:
-    """Edit Info: title, artist, album, album artist, genre, release date, track, disc
-    and composer of one song or of an album's songs (tagedit.FIELDS).  The tags are
-    read with ffprobe in a thread first; where the songs differ a field starts empty
-    with a note and is kept unless something is typed into it.  Save checks the
-    changes (tagedit.check_changes()), writes them in a thread (tagedit.save_tags())
-    and refreshes the library; it closes when everything was saved without a note,
-    else it shows tagedit.save_summary().  Results reach Tk through `self.q`."""
+    """Properties (2.0 "Edit Info", renamed in 2.1): title, artist, album, album
+    artist, genre, release date, track, disc and composer of one song or of an
+    album's songs (tagedit.FIELDS).  The tags are read with ffprobe in a thread
+    first; where the songs differ a field starts empty with a note and is kept
+    unless something is typed into it.  Save checks the changes
+    (tagedit.check_changes()), writes them in a thread (tagedit.save_tags()) and
+    refreshes the library; it closes when everything was saved without a note, else
+    it shows tagedit.save_summary().  Results reach Tk through `self.q`.  The window
+    can be resized (never smaller than its contents), the fields grow with its
+    width, and a size the user chose is kept in `app.edit_size` for the session."""
 
+    TITLE = N_("Properties")   # shown as tr(TITLE)
     SEVERAL = N_("Several values: kept unless you type here")  # shown as tr(SEVERAL)
+    MIN_WIDTH = 560
 
     def __init__(self, app: "PlayerApp", tracks: list, heading: str = "", subheading: str = ""):
         from .settings import Settings
@@ -665,7 +723,7 @@ class EditInfoWindow:
         self.ready = self.saving = self.done = False
         self.initial: Dict[str, Optional[str]] = {}
         self.outcomes: list = []
-        self.win = _window(app, tr("Edit Info"))
+        self.win = _window(app, tr(self.TITLE))
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<<Close>>", lambda e: self.cancel())
         box = frame(self.win, t)
@@ -712,7 +770,9 @@ class EditInfoWindow:
         self.save_b.pack(side="right")
         self.cancel_b = PillButton(self.btns, t, tr("Cancel"), kind="plain", command=self.cancel)
         self.cancel_b.pack(side="right", padx=(0, 8))
-        self.win.minsize(560, 0)
+        if app.edit_size:
+            self.win.geometry("%dx%d" % app.edit_size)
+        self._fit()
         threading.Thread(target=self._read, daemon=True, name="realhires-edit-read").start()
         self.win.after(100, self._poll)
 
@@ -760,6 +820,15 @@ class EditInfoWindow:
         self.win.after(100, self._poll)
 
     # ---- the window ---------------------------------------------------------
+    def _fit(self) -> None:
+        """Never smaller than the contents, which change (notes, an error, the summary):
+        the minimum height follows them, so the buttons stay on the screen."""
+        try:
+            self.win.update_idletasks()
+            self.win.minsize(self.MIN_WIDTH, self.win.winfo_reqheight())
+        except tk.TclError:
+            pass
+
     def _fill(self, tags: List[dict]) -> None:
         self.initial = tagedit.common_values(tags)
         for f in tagedit.FIELDS:
@@ -773,6 +842,7 @@ class EditInfoWindow:
                 self.notes[f].grid()
         self.status.configure(text="")
         self.ready = True
+        self._fit()
         first = self.entries["title" if len(self.paths) == 1 else "album"]
         first.focus_set()
         first.select_range(0, "end")
@@ -798,6 +868,7 @@ class EditInfoWindow:
             changes = tagedit.check_changes(changes)
         except tagedit.TagError as exc:
             self.error.configure(text=tr_text(str(exc)))
+            self._fit()
             return
         self.error.configure(text="")
         if not changes:
@@ -823,6 +894,7 @@ class EditInfoWindow:
         self.status.configure(text="")
         self.summary.configure(text="\n\n".join([tr_text(head)] + [tr_text(x) for x in lines]))
         PillButton(self.btns, self.app.theme, tr("Close"), command=self.close).pack(side="right")
+        self._fit()
 
     def cancel(self) -> None:
         if not self.saving:
@@ -833,7 +905,520 @@ class EditInfoWindow:
             return
         if self.app.edit_window is self:
             self.app.edit_window = None
+        try:  # a size the user chose (it differs from what the contents ask for) is kept
+            size = (self.win.winfo_width(), self.win.winfo_height())
+            if size != (self.win.winfo_reqwidth(), self.win.winfo_reqheight()) and min(size) > 1:
+                self.app.edit_size = size
+        except tk.TclError:
+            pass
         close_window(self.win)
 
 
-__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "NameDialog", "ask_name"]
+# "Giving 3 songs the genre “Jazz”" (the heading of the TagJobWindow), whole sentences per grouping
+GIVING = {
+    "genres": (N_("Giving 1 song the genre “{name}”"), N_("Giving {n} songs the genre “{name}”")),
+    "composers": (N_("Giving 1 song the composer “{name}”"), N_("Giving {n} songs the composer “{name}”")),
+    "years": (N_("Giving 1 song the year “{name}”"), N_("Giving {n} songs the year “{name}”")),
+}
+
+
+class TagJobWindow:
+    """Renaming a genre, composer or year, or merging genres (player_pages.rename_group()
+    / merge_groups()): tagedit.rename_group() writes the new name into every file in a
+    thread, the window shows how far it is, then the outcome as Edit Info does
+    (tagedit.save_summary(), files that could not be changed included), and the library
+    is read again."""
+
+    def __init__(self, app: "PlayerApp", title: str, kind: str, paths: List[str], name: str):
+        from .settings import Settings
+
+        self.app, t = app, app.theme
+        self.kind, self.paths, self.name = kind, list(paths), name
+        self.cfg = Settings.from_dict(app.cfg.to_dict())  # the thread gets its own copy
+        self.q: "queue.Queue" = queue.Queue()
+        self.done = False
+        self.outcomes: list = []
+        self.headline, self.lines = "", []
+        self.win = _window(app, title)
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.bind("<<Close>>", lambda e: self.close())
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=24, pady=18)
+        n = len(self.paths)
+        one, many = GIVING[kind]
+        label(box, t, tr(one, name=name) if n == 1 else tr(many, n=f"{n:,}", name=name), "h2", wraplength=480,
+              justify="left").pack(anchor="w")
+        self.status = label(box, t, tr("Starting…"), "small", fg="text2")
+        self.status.pack(anchor="w", pady=(6, 0))
+        self.bar = ttk.Progressbar(box, maximum=max(n, 1), length=440, mode="determinate")
+        self.bar.pack(anchor="w", fill="x", pady=(8, 0))
+        self.summary = label(box, t, "", "body", wraplength=480, justify="left")
+        self.summary.pack(anchor="w", pady=(8, 0))
+        self.btns = frame(box, t)
+        self.btns.pack(fill="x", pady=(12, 0))
+        self.win.minsize(500, 0)
+        threading.Thread(target=self._work, daemon=True, name="realhires-rename").start()
+        self.win.after(100, self._poll)
+
+    def _work(self) -> None:
+        try:
+            out = tagedit.rename_group(self.kind, self.paths, self.name, self.cfg,
+                                       progress=lambda i, n, p: self.q.put(("progress", i, n)))
+        except Exception as exc:  # noqa: BLE001 (rename_group never raises; this is a last resort)
+            out = [tagedit.TagOutcome(p, False, tr("Could not save the information: {error}", error=exc))
+                   for p in self.paths]
+        self.q.put(("saved", out))
+
+    def _poll(self) -> None:
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            while True:
+                kind, *rest = self.q.get_nowait()
+                if kind == "progress":
+                    i, n = rest
+                    self.bar.configure(value=i)
+                    if i < n:
+                        self.status.configure(text=tr("Saving {i} of {n}…", i=f"{i + 1:,}", n=f"{n:,}"))
+                elif kind == "saved":
+                    self._saved(rest[0])
+                    return
+        except queue.Empty:
+            pass
+        self.win.after(100, self._poll)
+
+    def _saved(self, outcomes: list) -> None:
+        self.done = True
+        self.outcomes = outcomes
+        self.app.tags_saved([o.path for o in outcomes if o.ok])
+        self.headline, self.lines = tagedit.save_summary(outcomes)
+        self.status.configure(text="")
+        self.bar.pack_forget()
+        more = len(self.lines) - 12
+        self.summary.configure(text="\n\n".join([tr_text(self.headline)] + [tr_text(x) for x in self.lines[:12]] +
+                                                 ([tr("… and {n} more.", n=f"{more:,}")] if more > 0 else [])))
+        PillButton(self.btns, self.app.theme, tr("Close"), command=self.close).pack(side="right")
+
+    def close(self) -> None:
+        if not self.done:
+            return  # the files are being written; the window closes when that is done
+        close_window(self.win)
+
+
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "TagJobWindow", "NameDialog", "ask_name"]
+
+
+def forget_covers(app: "PlayerApp", keys) -> None:
+    """Drop these albums' (and songs') covers from the player's cover cache, so every
+    page draws them again from the changed files; the cache's listeners redraw."""
+    keys = set(keys)
+    cache = app.covers
+    if hasattr(cache, "forget"):  # a cache that knows how
+        cache.forget(keys)
+        return
+    gone = set()
+    for store_ in (getattr(cache, "images", {}), getattr(cache, "png", {})):
+        for k in [k for k in store_ if isinstance(k, tuple) and k and k[0] in keys]:
+            del store_[k]
+            gone.add(k)
+    for key, size in gone:
+        for fn in list(getattr(cache, "listeners", [])):
+            try:
+                fn(key, size)
+            except tk.TclError:
+                pass
+
+
+class CoverWindow:
+    """The Cover window (2.1, docs/player-spec.md "Inspecting and changing a cover"):
+    the cover of a song's album as large as the window allows (FFmpeg makes a PNG that
+    fits, covers.fit_png(), because Tk cannot decode JPEG), its size in pixels, format
+    and where it comes from (covers.cover_source()), and Change cover…, Save image as…,
+    Remove cover, Show album and Close.  Changing and removing run in a thread
+    (tagedit.set_cover()/remove_cover()) for all the album's songs or this song only,
+    with a progress line and tagedit.cover_summary() afterwards; the player's covers
+    are drawn again and the library reads the songs again.  Results reach Tk through
+    `self.q`."""
+
+    MIN_SHOW = 120
+
+    def __init__(self, app: "PlayerApp", path: str):
+        from .musiclib import Track
+        from .settings import Settings
+
+        self.app, t = app, app.theme
+        self.path = path
+        track = app.track(path) or Track(path)
+        self.album = None if getattr(track, "missing", False) else app.album_of(track)
+        songs = self.album["tracks"] if self.album else [track]
+        self.album_paths: List[str] = [x.path for x in songs if not getattr(x, "missing", False)]
+        if path not in self.album_paths:
+            self.album_paths.insert(0, path)
+        self.cfg = Settings.from_dict(app.cfg.to_dict())  # the threads get their own copy
+        self.q: "queue.Queue" = queue.Queue()
+        self.source = None              # covers.CoverSource, or None when there is no cover
+        self.reading = True
+        self.busy = False
+        self.outcomes: list = []
+        self.summary_text = ""
+        self.photo: Optional[tk.PhotoImage] = None
+        self.previews: Dict[int, Optional[bytes]] = {}
+        self._asked: set = set()
+        self._gen = 0
+        self._resize_job: Optional[str] = None
+        self.win = _window(app, tr("Cover"))
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.win.bind("<<Close>>", lambda e: self.close())
+        self.win.resizable(True, True)
+        box = frame(self.win, t)
+        box.pack(fill="both", expand=True, padx=24, pady=18)
+        if self.album:
+            n = len(self.album_paths)
+            heading = tr_name(self.album["title"])
+            songs_n = tr("1 song") if n == 1 else tr("{n} songs", n=f"{n:,}")
+            sub = " · ".join(x for x in (tr_name(self.album["artist"]), songs_n) if x)
+        else:
+            heading = track.display_title
+            sub = " · ".join(x for x in (track.artist, track.album) if x)
+        label(box, t, heading, "h2", wraplength=560, justify="left").pack(anchor="w")
+        if sub:
+            label(box, t, sub, "body", fg="text2", wraplength=560, justify="left").pack(anchor="w")
+        bottom = frame(box, t)  # packed before the picture, so a small window shrinks the picture, not this
+        bottom.pack(fill="x", side="bottom")
+        self.canvas = tk.Canvas(box, width=440, height=420, highlightthickness=0, bd=0)
+        t.reg(self.canvas, bg="bg")
+        self.canvas.pack(fill="both", expand=True, pady=(12, 10))
+        self.canvas.bind("<Configure>", self._resized)
+        t.on_change(self._draw, self.win)
+        self.details = label(bottom, t, "", "body")
+        self.details.pack(anchor="w")
+        self.where = label(bottom, t, "", "body", fg="text2")
+        self.where.pack(anchor="w")
+        opts = frame(bottom, t)
+        opts.pack(fill="x", pady=(10, 0))
+        n = len(self.album_paths)
+        self.scope = tk.StringVar(value="album" if n > 1 else "song")
+        if n > 1:
+            ttk.Radiobutton(opts, text=tr("All {n} songs of this album", n=f"{n:,}"), value="album",
+                            variable=self.scope, style="P.TRadiobutton").pack(anchor="w")
+            ttk.Radiobutton(opts, text=tr("This song only"), value="song", variable=self.scope,
+                            style="P.TRadiobutton").pack(anchor="w")
+        self.also_folder = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opts, text=tr("Also save it as cover.jpg in the album's folder"), variable=self.also_folder,
+                        style="P.TCheckbutton").pack(anchor="w", pady=(4, 0))
+        self.status = label(bottom, t, tr("Reading the cover…"), "small", fg="text2")
+        self.status.pack(anchor="w", pady=(8, 0))
+        self.summary = label(bottom, t, "", "body", wraplength=600, justify="left")
+        self.summary.pack(anchor="w")
+        btns = frame(bottom, t)
+        btns.pack(fill="x", pady=(12, 0))
+        self.close_b = PillButton(btns, t, tr("Close"), kind="plain", command=self.close)
+        self.close_b.pack(side="right")
+        self.album_b = PillButton(btns, t, tr("Show album"), kind="plain", command=self.show_album)
+        self.album_b.pack(side="right", padx=(0, 8))
+        self.change_b = PillButton(btns, t, tr("Change cover…"), command=self.change)
+        self.change_b.pack(side="left")
+        self.save_b = PillButton(btns, t, tr("Save image as…"), kind="plain", command=self.save_image)
+        self.save_b.pack(side="left", padx=(8, 0))
+        self.remove_b = PillButton(btns, t, tr("Remove cover"), kind="plain", command=self.remove)
+        self.remove_b.pack(side="left", padx=(8, 0))
+        self.win.minsize(700, 560)
+        self._buttons()
+        self._start_read()
+        self.win.after(100, self._poll)
+
+    # ---- which songs ----------------------------------------------------------
+    def shown_paths(self) -> List[str]:
+        """The songs whose cover is shown: this one first, then the album's."""
+        return [self.path] + [p for p in self.album_paths if p != self.path]
+
+    def target_paths(self) -> List[str]:
+        return list(self.album_paths) if self.scope.get() == "album" else [self.path]
+
+    def folder(self) -> str:
+        return os.path.dirname(os.path.abspath(self.path))
+
+    # ---- threads ------------------------------------------------------------
+    def _start_read(self) -> None:
+        self.reading = True
+        self._gen += 1
+        gen, paths = self._gen, self.shown_paths()
+
+        def work():
+            from . import covers
+
+            try:
+                src = covers.cover_source(paths)
+            except Exception:  # noqa: BLE001 (an unreadable cover is shown as none)
+                src = None
+            self.q.put(("source", gen, src))
+
+        threading.Thread(target=work, daemon=True, name="realhires-cover-read").start()
+
+    def _want_preview(self, size: int) -> None:
+        if self.source is None or size in self._asked:
+            return
+        self._asked.add(size)
+        gen, data = self._gen, self.source.data
+
+        def work():
+            from . import covers
+
+            try:
+                png = covers.fit_png(data, size, enlarge=True)
+            except Exception:  # noqa: BLE001
+                png = None
+            self.q.put(("preview", gen, size, png))
+
+        threading.Thread(target=work, daemon=True, name="realhires-cover-preview").start()
+
+    def _work(self, image: Optional[bytes], paths: List[str], also_folder: bool) -> None:
+        from . import covers
+
+        progress = lambda i, n, p: self.q.put(("progress", i, n))  # noqa: E731
+        notes: List[str] = []
+        try:
+            if image is None:
+                outcomes = tagedit.remove_cover(paths, self.cfg, progress)
+                kept = covers.folder_image(self.folder())
+                if kept:
+                    notes.append(tagedit.folder_kept_note(kept))
+            else:
+                outcomes = tagedit.set_cover(paths, image, "", self.cfg, progress)
+                if also_folder:
+                    try:
+                        notes.append(tagedit.folder_saved_note(covers.save_folder_cover(self.folder(), image)))
+                    except OSError as exc:
+                        notes.append(tagedit.folder_failed_note(covers.folder_cover_name(self.folder(), image), exc))
+        except Exception as exc:  # noqa: BLE001 (set_cover never raises; this is a last resort)
+            outcomes = [tagedit.TagOutcome(p, False, tr("Could not change the cover: {error}", error=exc))
+                        for p in paths]
+        self.q.put(("done", image is None, outcomes, notes))
+
+    def _poll(self) -> None:
+        try:
+            if not self.win.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            while True:
+                kind, *rest = self.q.get_nowait()
+                if kind == "source":
+                    gen, src = rest
+                    if gen == self._gen:
+                        self._got_source(src)
+                elif kind == "preview":
+                    gen, size, png = rest
+                    if gen == self._gen:
+                        self.previews[size] = png
+                        self._draw()
+                elif kind == "progress":
+                    i, n = rest
+                    if i < n:
+                        if n > 1:
+                            text = (tr("Removing the cover of {i} of {n}…", i=f"{i + 1:,}", n=f"{n:,}")
+                                    if self._removing else
+                                    tr("Changing the cover of {i} of {n}…", i=f"{i + 1:,}", n=f"{n:,}"))
+                        else:
+                            text = (tr("Removing the cover of the song…") if self._removing else
+                                    tr("Changing the cover of the song…"))
+                        self.status.configure(text=text)
+                elif kind == "done":
+                    self._done(*rest)
+        except queue.Empty:
+            pass
+        self.win.after(100, self._poll)
+
+    # ---- the window ---------------------------------------------------------
+    def _got_source(self, src) -> None:
+        self.reading = False
+        self.source = src
+        self.previews, self._asked = {}, set()
+        if src is None:
+            self.details.configure(text=tr("No cover"))
+            self.where.configure(text=tr("Neither the songs nor the album's folder hold a picture."))
+        else:
+            self.details.configure(text=tr_text(src.details))
+            self.where.configure(text=tr_text(src.where))
+        if not self.busy:
+            self.status.configure(text="")
+        self._buttons()
+        self._draw()
+
+    def _box(self) -> int:
+        try:
+            return max(self.MIN_SHOW, min(self.canvas.winfo_width(), self.canvas.winfo_height()) - 4)
+        except tk.TclError:
+            return self.MIN_SHOW
+
+    def _resized(self, event=None) -> None:
+        if self._resize_job is not None:
+            self.win.after_cancel(self._resize_job)
+        self._resize_job = self.win.after(150, self._draw)
+
+    def _draw(self) -> None:
+        self._resize_job = None
+        c = self.canvas
+        try:
+            c.delete("all")
+            w, h = c.winfo_width(), c.winfo_height()
+        except tk.TclError:
+            return
+        t = self.app.theme
+        if self.source is None:
+            text = tr("Reading the cover…") if self.reading else tr("No cover")
+            c.create_text(w / 2, h / 2, text=text, fill=t.c("text2"), font=t.f("h2"))
+            return
+        size = self._box()
+        step = size - size % 20  # a new picture every 20 pixels of window size
+        png = self.previews.get(step)
+        if png is None:
+            near = [s for s, p in self.previews.items() if p]
+            self._want_preview(step)
+            if not near:
+                c.create_text(w / 2, h / 2, text=tr("Drawing…"), fill=t.c("text2"), font=t.f("body"))
+                return
+            png = self.previews[min(near, key=lambda s: abs(s - step))]
+        try:
+            import base64
+
+            self.photo = tk.PhotoImage(master=c, data=base64.b64encode(png).decode("ascii"), format="png")
+        except tk.TclError:
+            c.create_text(w / 2, h / 2, text=tr("The picture cannot be shown."), fill=t.c("text2"),
+                          font=t.f("body"))
+            return
+        pw, ph = self.photo.width(), self.photo.height()
+        if pw > size or ph > size:  # a bigger picture made earlier: shrink by whole steps
+            f = max(-(-pw // size), -(-ph // size))
+            self.photo = self.photo.subsample(f, f)
+        c.create_image(w / 2, h / 2, image=self.photo, anchor="center")
+
+    def _buttons(self) -> None:
+        idle = not self.busy and not self.reading
+        self.change_b.set(enabled=idle)
+        self.remove_b.set(enabled=idle)
+        self.save_b.set(enabled=idle and self.source is not None)
+        self.album_b.set(enabled=not self.busy and self.album is not None)
+        self.close_b.set(enabled=not self.busy)
+
+    _removing = False
+
+    def _start(self, image: Optional[bytes]) -> None:
+        self.busy, self._removing = True, image is None
+        self.summary.configure(text="")
+        self.summary_text = ""
+        n = len(self.target_paths())
+        if image is None:
+            text = tr("Removing the cover of {n} songs…", n=f"{n:,}") if n > 1 else tr("Removing the cover…")
+        else:
+            text = tr("Changing the cover of {n} songs…", n=f"{n:,}") if n > 1 else tr("Changing the cover…")
+        self.status.configure(text=text)
+        self._buttons()
+        threading.Thread(target=self._work, args=(image, self.target_paths(), self.also_folder.get()), daemon=True,
+                         name="realhires-cover-save").start()
+
+    def _done(self, removing: bool, outcomes: list, notes: List[str]) -> None:
+        self.busy = False
+        self.outcomes = outcomes
+        head, lines = tagedit.cover_summary(outcomes, removing, notes)
+        self.summary_text = "\n".join([tr_text(head)] + [tr_text(x) for x in lines])
+        self.summary.configure(text=self.summary_text)
+        self.status.configure(text="")
+        changed = [o.path for o in outcomes if o.ok and not o.message]
+        keys = set(self.album_paths)
+        if self.album:
+            keys.add(self.album["key"])
+        forget_covers(self.app, keys)
+        if changed:
+            self.app.tags_saved(changed)
+        self._start_read()
+        self._buttons()
+
+    def change(self) -> None:
+        """Change cover…: choose a JPEG or PNG image."""
+        from tkinter import filedialog
+
+        if self.busy or self.reading:
+            return
+        name = filedialog.askopenfilename(parent=self.win, title=tr("Choose the new cover"),
+                                          filetypes=[(tr("JPEG or PNG images"),
+                                                      "*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG"),
+                                                     (tr("All files"), "*")])
+        if name:
+            self.change_to(name)
+
+    def change_to(self, image_path: str) -> bool:
+        """Make the picture in this file the cover (of the songs the choice names)."""
+        if self.busy:
+            return False
+        try:
+            with open(image_path, "rb") as fh:
+                data = fh.read()
+            tagedit.check_picture(data)
+        except (OSError, tagedit.TagError) as exc:
+            self.summary.configure(text=tr("{file} cannot be used: {error}", file=os.path.basename(image_path),
+                                           error=tr_text(str(exc))))
+            return False
+        self._start(data)
+        return True
+
+    def remove(self, confirm: bool = True) -> bool:
+        """Remove cover: after a confirmation, the covers inside the songs go."""
+        from tkinter import messagebox
+
+        if self.busy or self.reading:
+            return False
+        n = len(self.target_paths())
+        question = (tr("Remove the cover inside all {n} songs of this album? A picture in the album's folder is "
+                       "not deleted.", n=f"{n:,}") if n > 1 else
+                    tr("Remove the cover inside this song? A picture in the album's folder is not deleted."))
+        if confirm and not messagebox.askyesno(tr("Remove Cover"), question, parent=self.win):
+            return False
+        self._start(None)
+        return True
+
+    def save_image(self) -> None:
+        """Save image as…: the picture as it is stored."""
+        from tkinter import filedialog
+
+        if self.source is None:
+            return
+        kind = (tr("{format} image", format=self.source.format) if self.source.format else tr("Image"))
+        name = filedialog.asksaveasfilename(parent=self.win, title=tr("Save the cover as"), initialfile="cover"
+                                            + self.source.ext, defaultextension=self.source.ext,
+                                            filetypes=[(kind, "*" + self.source.ext), (tr("All files"), "*")])
+        if name:
+            self.save_image_to(name)
+
+    def save_image_to(self, path: str) -> bool:
+        if self.source is None:
+            return False
+        try:
+            with open(path, "wb") as fh:
+                fh.write(self.source.data)
+        except OSError as exc:
+            self.status.configure(text=tr("Could not save the picture: {error}", error=exc))
+            return False
+        self.status.configure(text=tr("Saved the picture as {file}.", file=os.path.basename(path)))
+        return True
+
+    def show_album(self) -> None:
+        if self.album is not None and not self.busy:
+            album = self.album
+            self.close()
+            self.app.open_album(album)
+
+    def close(self) -> None:
+        if self.busy:
+            return
+        if getattr(self.app, "cover_window", None) is self:
+            self.app.cover_window = None
+        close_window(self.win)
+
+
+__all__ = ["PlaybackInfoWindow", "EqualizerWindow", "EditInfoWindow", "CoverWindow", "NameDialog", "ask_name",
+           "forget_covers"]

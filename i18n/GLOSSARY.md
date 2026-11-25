@@ -64,4 +64,4 @@ translation yet.
 | Clear the play history… | 再生履歴を消去… |
 | Unknown Artist / Unknown Album / Unknown Genre / Unknown Composer / Unknown Year | 不明なアーティスト / 不明なアルバム / 不明なジャンル / 不明な作曲者 / 不明な年 |
 | Match the system | システムに合わせる |
-| Get info from MusicBrainz… | MusicBrainzから情報を取得… |
+| Acquire Metadata… (2.2; "Get info from MusicBrainz…" in 2.1) | メタデータを取得… (2.1: MusicBrainzから情報を取得…) |

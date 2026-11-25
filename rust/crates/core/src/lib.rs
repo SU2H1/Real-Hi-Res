@@ -17,6 +17,7 @@ pub const APP_NAME: &str = "Universal Music Player";
 pub const PROJECT_URL: &str = "https://github.com/SU2H1/Universal-Music-Player";
 
 pub mod analysis;
+pub mod bitperfect;
 pub mod covers;
 pub mod dsp;
 pub mod embed;

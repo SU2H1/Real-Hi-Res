@@ -309,7 +309,15 @@
   "Lyrics saved for {saved} of {n} songs": "{n}曲中{saved}曲の歌詞を保存しました",
   "{ok} fixed, {bad} failed.": "修正 {ok}件、失敗 {bad}件。",
   "{ok} fixed.": "{ok}件を修正しました。",
-  "Scan failed": "スキャンに失敗しました"
+  "Scan failed": "スキャンに失敗しました",
+  "Rings show": "リングの表示",
+  "Sort": "並べ替え",
+  "Find": "検索",
+  "Find in the list": "リスト内を検索",
+  "Previous (Shift+Enter)": "前へ（Shift+Enter）",
+  "Next (Enter)": "次へ（Enter）",
+  "Close (Esc)": "閉じる（Esc）",
+  "Select one or more songs in the Files view (Ctrl/Cmd+A selects all listed), or use More → Download synced lyrics for all songs.": "「ファイル」表示で曲を1つ以上選択するか（Ctrl/Cmd+Aで表示中のすべてを選択）、その他 → すべての曲の同期歌詞をダウンロード を使ってください。"
  },
  "patterns": {}
 }

@@ -259,7 +259,7 @@ class Theme:
                     ("Checkbutton.label", {"sticky": "nswe"})]})]})])
 
     def styles(self) -> None:
-        """The ttk styles of the player (the Quality check page keeps the standard ones)."""
+        """The ttk styles of the player, and the standard ones in the theme's colours (`_standard_styles`)."""
         c, s = self.colors, self.style
         body = self.fonts["body"]
         s.configure("P.TFrame", background=c["bg"])
@@ -324,6 +324,93 @@ class Theme:
         s.configure("P.TRadiobutton", background=c["bg"], foreground=c["text"], font=body,
                     indicatorbackground=c["field"], focuscolor=c["bg"])
         s.map("P.TRadiobutton", indicatorbackground=[("selected", c["accent"])])
+        self._standard_styles()
+
+    def _standard_styles(self) -> None:
+        """The standard ttk styles (TButton, Treeview, ...) in the theme's colours and fonts:
+        the Quality check page (the 1.x scanner, gui.App) and the windows it opens use
+        them, so they look like the rest of the player.  "Panel." styles are for widgets
+        on a rounded panel (the panel colour), "Muted."/"Small."/"Head." labels for
+        secondary text, small print and headings."""
+        c, s, f = self.colors, self.style, self.fonts
+        body, small = f["body"], f["small"]
+        bg, panel, field, sep = c["bg"], c["lcd"], c["field"], c["sep"]
+        warn = "#ffcc4d" if self.dark else "#9a6700"
+        good = "#5fd38a" if self.dark else "#2e7d32"
+        s.configure(".", background=bg, foreground=c["text"], font=body, bordercolor=sep, lightcolor=bg,
+                    darkcolor=bg, troughcolor=panel, selectbackground=c["accent"], selectforeground=c["on_accent"],
+                    fieldbackground=field, insertcolor=c["text"], focuscolor=bg, arrowcolor=c["text2"])
+        s.map(".", foreground=[("disabled", c["disabled"])])
+        for prefix, back in (("", bg), ("Panel.", panel)):
+            s.configure(f"{prefix}TFrame", background=back)
+            s.configure(f"{prefix}TLabel", background=back, foreground=c["text"], font=body)
+            s.configure(f"{prefix}Muted.TLabel", background=back, foreground=c["text2"], font=body)
+            s.configure(f"{prefix}Small.TLabel", background=back, foreground=c["text2"], font=small)
+            s.configure(f"{prefix}Head.TLabel", background=back, foreground=c["text"], font=f["h2"])
+            s.configure(f"{prefix}Bold.TLabel", background=back, foreground=c["text"], font=f["body_b"])
+            s.configure(f"{prefix}Warn.TLabel", background=back, foreground=warn, font=body)
+            s.configure(f"{prefix}Good.TLabel", background=back, foreground=good, font=f["h2"])
+            s.configure(f"{prefix}Bad.TLabel", background=back, foreground=c["error"], font=f["h2"])
+        s.configure("TLabelframe", background=bg, bordercolor=sep, lightcolor=bg, darkcolor=bg, relief="solid",
+                    borderwidth=1)
+        s.configure("TLabelframe.Label", background=bg, foreground=c["text2"], font=f["small_b"])
+        s.configure("TButton", background=panel, foreground=c["text"], bordercolor=panel, lightcolor=panel,
+                    darkcolor=panel, focuscolor=panel, padding=(12, 5), font=f["body_b"], relief="flat")
+        s.map("TButton", background=[("disabled", panel), ("active", c["hover"])],
+              bordercolor=[("active", c["hover"])], lightcolor=[("active", c["hover"])],
+              darkcolor=[("active", c["hover"])], foreground=[("disabled", c["disabled"])])
+        s.layout("TCheckbutton", s.layout("P.TCheckbutton"))
+        s.configure("TCheckbutton", background=bg, foreground=c["text"], font=body, focuscolor=bg, padding=(0, 2))
+        s.map("TCheckbutton", background=[("active", bg)], foreground=[("disabled", c["disabled"])])
+        s.configure("TRadiobutton", background=bg, foreground=c["text"], font=body, indicatorbackground=field,
+                    focuscolor=bg)
+        s.map("TRadiobutton", indicatorbackground=[("selected", c["accent"])], background=[("active", bg)])
+        for name in ("TEntry", "TSpinbox", "TCombobox"):
+            s.configure(name, fieldbackground=field, background=field, foreground=c["text"], bordercolor=field,
+                        lightcolor=field, darkcolor=field, insertcolor=c["text"], arrowcolor=c["text2"],
+                        padding=(6, 3), selectbackground=c["accent"], selectforeground=c["on_accent"])
+            s.map(name, bordercolor=[("focus", c["accent"])], lightcolor=[("focus", field)],
+                  fieldbackground=[("readonly", field), ("disabled", panel)],
+                  foreground=[("readonly", c["text"]), ("disabled", c["disabled"])])
+        s.map("TCombobox", selectbackground=[("readonly", field)], selectforeground=[("readonly", c["text"])])
+        s.configure("TNotebook", background=bg, borderwidth=1, tabmargins=(0, 4, 0, 0), bordercolor=sep,
+                    lightcolor=bg, darkcolor=bg)
+        s.configure("TNotebook.Tab", background=panel, foreground=c["text2"], padding=(14, 5), borderwidth=1,
+                    font=f["body_b"], lightcolor=panel, darkcolor=panel, bordercolor=sep)
+        s.map("TNotebook.Tab", background=[("selected", bg)], foreground=[("selected", c["text"])],
+              lightcolor=[("selected", bg)], darkcolor=[("selected", bg)])
+        # a notebook whose tabs are a Segmented control above it
+        s.layout("Tabless.TNotebook.Tab", [])
+        s.configure("Tabless.TNotebook", background=panel, borderwidth=0, tabmargins=0, bordercolor=panel,
+                    lightcolor=panel, darkcolor=panel)
+        for prefix, back in (("", bg), ("Panel.", panel)):
+            name = f"{prefix}Treeview"
+            s.configure(name, background=back, fieldbackground=back, foreground=c["text"], font=body,
+                        rowheight=32 if not prefix else 26, borderwidth=0, relief="flat", bordercolor=back,
+                        lightcolor=back, darkcolor=back)
+            s.map(name, background=[("selected", c["accent"])], foreground=[("selected", c["on_accent"])])
+            s.layout(name, [("Treeview.treearea", {"sticky": "nswe"})])
+            s.configure(f"{name}.Heading", background=back, foreground=c["text2"], font=f["small_b"],
+                        relief="flat", borderwidth=0, bordercolor=back, lightcolor=back, darkcolor=back,
+                        padding=(4, 4))
+            s.map(f"{name}.Heading", background=[("active", back)], foreground=[("active", c["text"])],
+                  lightcolor=[("active", back)], darkcolor=[("active", back)], bordercolor=[("active", back)])
+        for orient in ("Vertical", "Horizontal"):
+            for prefix, trough, thumb in (("", bg, sep), ("Hide.", bg, bg), ("Panel.", panel, sep),
+                                          ("PanelHide.", panel, panel)):
+                name = f"{prefix}{orient}.TScrollbar"
+                s.layout(name, [(f"{orient}.Scrollbar.trough", {"sticky": "nswe", "children": [
+                    (f"{orient}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+                s.configure(name, troughcolor=trough, background=thumb, bordercolor=trough, lightcolor=thumb,
+                            darkcolor=thumb, arrowsize=8, gripcount=0, relief="flat", borderwidth=0)
+                s.map(name, background=[("active", c["text2"] if "Hide" not in prefix else thumb)])
+        for name, trough in (("Horizontal.TProgressbar", panel), ("Panel.Horizontal.TProgressbar", field)):
+            s.configure(name, background=c["accent"], troughcolor=trough, bordercolor=trough,
+                        lightcolor=c["accent"], darkcolor=c["accent"], thickness=6, borderwidth=0)
+        for name, back in (("TPanedwindow", bg), ("Panel.TPanedwindow", panel)):
+            s.configure(name, background=back)
+        s.configure("Sash", sashthickness=10, gripcount=0, background=bg, bordercolor=bg, lightcolor=bg,
+                    darkcolor=bg, handlesize=0)
 
 
 # --------------------------------------------------------------- drawing ---
@@ -610,6 +697,10 @@ def draw_icon(c: tk.Canvas, name: str, cx: float, cy: float, s: float, color: st
     elif name == "chevron":
         c.create_line(cx - 0.14 * s, cy - 0.34 * s, cx + 0.18 * s, cy, cx - 0.14 * s, cy + 0.34 * s, width=w,
                       fill=color, capstyle="round", joinstyle="round", **kw)
+    elif name in ("up", "down"):  # chevrons pointing up or down (find: previous, next)
+        d = -1 if name == "up" else 1
+        c.create_line(cx - 0.34 * s, cy - d * 0.16 * s, cx, cy + d * 0.18 * s, cx + 0.34 * s, cy - d * 0.16 * s,
+                      width=w * 1.2, fill=color, capstyle="round", joinstyle="round", **kw)
 
 
 # ---------------------------------------------------------------- widgets ---
@@ -732,8 +823,9 @@ class Slider(tk.Canvas):
         self.bind("<ButtonRelease-1>", lambda e: self._drag(e, True))
         self.bind("<Double-Button-1>", self._reset)
         self.bind("<MouseWheel>", self._wheel)
-        self.bind("<Button-4>", lambda e: self._step(1))
-        self.bind("<Button-5>", lambda e: self._step(-1))
+        if self.tk.call("tk", "windowingsystem") == "x11":  # elsewhere 4 and 5 are the back and forward buttons
+            self.bind("<Button-4>", lambda e: self._step(1))
+            self.bind("<Button-5>", lambda e: self._step(-1))
 
     def _length(self) -> float:
         n = self.winfo_width() if self.orient == "horizontal" else self.winfo_height()
@@ -864,6 +956,313 @@ class PillButton(tk.Canvas):
             self.create_polygon(ax - 4, ay - 2, ax + 4, ay - 2, ax, ay + 3, fill=fg, outline=fg)
 
 
+class Button(PillButton):
+    """A PillButton that also takes ttk.Button's `text`, `command` and `state` through
+    configure() and cget(), so code written for ttk buttons (the Quality check page)
+    enables, disables and renames it unchanged.  `fill` is the colour role it is drawn
+    in when it is not the accent button: the panel colour on the page, the field colour
+    on a panel."""
+
+    def __init__(self, master, theme: Theme, text: str, command: Optional[Callable[[], None]] = None,
+                 kind: str = "plain", state: str = "normal", fill: str = "lcd", hover_fill: str = "hover",
+                 font: str = "body_b", **kw):
+        self.fill_role, self.hover_role, self.font_role = fill, hover_fill, font
+        super().__init__(master, theme, text, command=command, kind=kind, **kw)
+        if state == "disabled":
+            self.configure(state="disabled")
+
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            kw = {**cnf, **kw}
+        changed = False
+        for key in ("text", "command"):
+            if key in kw:
+                setattr(self, key, kw.pop(key))
+                changed = True
+        if "state" in kw:
+            self.enabled = str(kw["state"]) != "disabled"
+            kw["cursor"] = "hand2" if self.enabled else ""
+            changed = True
+        result = super().configure(**kw) if kw else None
+        if changed:
+            self.redraw()
+        return result
+
+    config = configure
+
+    def __setitem__(self, key, value) -> None:
+        self.configure(**{key: value})
+
+    def cget(self, key):
+        if key == "text":
+            return self.text
+        if key == "command":
+            return self.command
+        return super().cget(key)
+
+    __getitem__ = cget
+
+    def invoke(self) -> None:
+        if self.enabled and self.command:
+            self.command()
+
+    def redraw(self) -> None:
+        if not hasattr(self, "fill_role"):
+            return
+        t = self.theme
+        font = t.f(self.font_role)
+        iw = 20 if self.icon else 0
+        w = font.measure(self.text) + iw + 28 + (16 if self.arrow else 0)
+        super().configure(width=w)
+        self.delete("all")
+        if self.kind == "accent":
+            fill = t.c("disabled") if not self.enabled else (t.c("accent_dark") if self.hover else t.c("accent"))
+            fg = t.c("on_accent")
+        else:
+            fill = t.c(self.hover_role) if self.hover and self.enabled else t.c(self.fill_role)
+            fg = t.c("text") if self.enabled else t.c("disabled")
+        round_rect(self, 1, 1, w - 1, self.h - 1, 8, fill=fill, outline="")
+        x = 14
+        if self.icon:
+            draw_icon(self, self.icon, x + 7, self.h / 2, 13, fg)
+            x += iw
+        self.create_text(x, self.h / 2, text=self.text, anchor="w", fill=fg, font=font)
+        if self.arrow:
+            ax, ay = w - 18, self.h / 2
+            self.create_polygon(ax - 4, ay - 2, ax + 4, ay - 2, ax, ay + 3, fill=fg, outline=fg)
+
+
+class Segmented(tk.Canvas):
+    """A segmented control (one of a few options), drawn like the Equalizer window's
+    Graphic / Parametric tabs: the options in bold on a rounded track in the panel
+    colour, the chosen one raised in the page colour and the text colour, the others
+    grey.  `variable` (a StringVar) holds the chosen option; `command` is called after
+    a click changed it."""
+
+    def __init__(self, master, theme: Theme, options: List[str], variable: Optional[tk.StringVar] = None,
+                 command: Optional[Callable[[], None]] = None, bg_role: str = "bg", height: int = 30):
+        super().__init__(master, height=height, width=40, highlightthickness=0, bd=0, cursor="hand2")
+        self.theme, self.options, self.command, self.h, self.bg_role = theme, list(options), command, height, bg_role
+        self.var = variable if variable is not None else tk.StringVar(master, value=self.options[0])
+        self.hover: Optional[int] = None
+        self.spans: List[Tuple[float, float]] = []
+        theme.reg(self, bg=bg_role)
+        theme.on_change(self.redraw, self)
+        self.var.trace_add("write", lambda *a: self.redraw())
+        self.bind("<Motion>", lambda e: self._hov(self._at(e.x)))
+        self.bind("<Leave>", lambda e: self._hov(None))
+        self.bind("<ButtonRelease-1>", self._click)
+        self.bind("<Configure>", lambda e: self.redraw())  # squeezed: drawn smaller (see redraw)
+        self.redraw()
+
+    def _at(self, x: float) -> Optional[int]:
+        for i, (a, b) in enumerate(self.spans):
+            if a <= x < b:
+                return i
+        return None
+
+    def _hov(self, i: Optional[int]) -> None:
+        if i != self.hover:
+            self.hover = i
+            self.redraw()
+
+    def _click(self, e) -> None:
+        i = self._at(e.x)
+        if i is not None and 0 <= e.y <= self.h:
+            self.select(self.options[i], notify=True)
+
+    def get(self) -> str:
+        return self.var.get()
+
+    def select(self, option: str, notify: bool = False) -> None:
+        changed = option != self.var.get()
+        if changed:
+            self.var.set(option)
+        if notify and changed and self.command is not None:
+            self.command()
+
+    def redraw(self) -> None:
+        t = self.theme
+        font = t.f("body_b")
+        widths = [font.measure(o) + 28 for o in self.options]
+        natural = sum(widths) + 6
+        if int(self.cget("width")) != natural:
+            self.configure(width=natural)  # what it asks for; a narrow window may give it less
+        have = self.winfo_width()
+        w = natural
+        if 1 < have < natural:  # less room: less padding, then the small font
+            for name, pad in (("body_b", 16), ("small_b", 12), ("small_b", 6)):
+                font = t.f(name)
+                widths = [font.measure(o) + pad for o in self.options]
+                w = sum(widths) + 6
+                if w <= have:
+                    break
+        self.delete("all")
+        track = t.c("field") if self.bg_role == "lcd" else t.c("lcd")
+        round_rect(self, 0, 0, w, self.h, 9, fill=track, outline="")
+        x = 3.0
+        self.spans = []
+        chosen = self.var.get()
+        for opt, ow in zip(self.options, widths):
+            i = len(self.spans)
+            self.spans.append((x, x + ow))
+            if opt == chosen:
+                round_rect(self, x, 3, x + ow, self.h - 3, 7, fill=t.c("bg"), outline=t.c("sep"))
+                fg = t.c("text")
+            else:
+                fg = t.c("text") if self.hover == i else t.c("text2")
+            self.create_text(x + ow / 2, self.h / 2, text=opt, fill=fg, font=font)
+            x += ow
+
+
+class Chip(tk.Canvas):
+    """A pill-shaped toggle with a dot in `color` and an optional count ("Fake lossless 3"):
+    on, it is filled with the panel colour and drawn in the text colour; off, it is
+    outlined and grey.  It shows and toggles a BooleanVar; `command` runs after a click."""
+
+    def __init__(self, master, theme: Theme, text: str, color: str, variable: tk.BooleanVar,
+                 command: Optional[Callable[[], None]] = None, bg_role: str = "bg", height: int = 28):
+        super().__init__(master, height=height, width=40, highlightthickness=0, bd=0, cursor="hand2")
+        self.theme, self.text, self.color, self.var, self.command = theme, text, color, variable, command
+        self.h, self.count, self.hover, self.bg_role = height, None, False, bg_role
+        theme.reg(self, bg=bg_role)
+        theme.on_change(self.redraw, self)
+        self.var.trace_add("write", lambda *a: self.redraw())
+        self.bind("<Enter>", lambda e: self._hov(True))
+        self.bind("<Leave>", lambda e: self._hov(False))
+        self.bind("<ButtonRelease-1>", self._click)
+        self.redraw()
+
+    def _hov(self, h: bool) -> None:
+        self.hover = h
+        self.redraw()
+
+    def _click(self, e) -> None:
+        if 0 <= e.x <= int(self.cget("width")) and 0 <= e.y <= self.h:
+            self.var.set(not self.var.get())
+            if self.command is not None:
+                self.command()
+
+    def set_count(self, count: Optional[int]) -> None:
+        if count != self.count:
+            self.count = count
+            self.redraw()
+
+    def label(self) -> str:
+        return self.text if self.count is None else f"{self.text} {self.count:,}"
+
+    def redraw(self) -> None:
+        t = self.theme
+        font = t.f("body")
+        on = bool(self.var.get())
+        text = self.label()
+        w = font.measure(text) + 40
+        self.configure(width=w)
+        self.delete("all")
+        if on:
+            fill = t.c("hover") if self.hover else t.c("lcd")
+            round_rect(self, 1, 1, w - 1, self.h - 1, (self.h - 2) / 2, fill=fill, outline=fill)
+            fg, dot = t.c("text"), self.color
+        else:
+            fill = t.c("hover") if self.hover else t.c(self.bg_role)
+            round_rect(self, 1, 1, w - 1, self.h - 1, (self.h - 2) / 2, fill=fill, outline=t.c("sep"))
+            fg, dot = t.c("text2"), mix(self.color, t.c(self.bg_role), 0.45)
+        r = 4.5
+        self.create_oval(14 - r, self.h / 2 - r, 14 + r, self.h / 2 + r, fill=dot, outline=dot)
+        self.create_text(26, self.h / 2, text=text, anchor="w", fill=fg, font=font)
+
+
+class SearchBox(tk.Canvas):
+    """A rounded text field like the sidebar's Search box: a magnifier, a borderless
+    entry bound to `variable`, and a grey placeholder while it is empty.  Escape empties
+    it.  `entry` is the tk.Entry (for focus and key bindings)."""
+
+    def __init__(self, master, theme: Theme, variable: tk.StringVar, placeholder: str = "Search",
+                 width: int = 220, bg_role: str = "bg", height: int = 30):
+        super().__init__(master, width=width, height=height, highlightthickness=0, bd=0)
+        self.theme, self.var, self.h = theme, variable, height
+        theme.reg(self, bg=bg_role)
+        self.entry = tk.Entry(self, textvariable=variable, relief="flat", bd=0, highlightthickness=0,
+                              font=theme.f("body"))
+        theme.reg(self.entry, bg="field", fg="text", insertbackground="text", selectbackground="accent",
+                  selectforeground="on_accent")
+        self.ph = tk.Label(self, text=placeholder, font=theme.f("body"), bd=0, anchor="w", cursor="xterm")
+        theme.reg(self.ph, bg="field", fg="text2")
+        self.ph.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.entry.bind("<FocusIn>", lambda e: self._placeholder(), add="+")
+        self.entry.bind("<FocusOut>", lambda e: self._placeholder(), add="+")
+        self.entry.bind("<Escape>", lambda e: self.var.set(""), add="+")
+        variable.trace_add("write", lambda *a: self._placeholder())
+        self.bind("<Configure>", lambda e: self.redraw())
+        theme.on_change(self.redraw, self)
+
+    def _placeholder(self) -> None:
+        try:
+            focused = self.focus_get() is self.entry
+        except (KeyError, tk.TclError):
+            focused = False
+        if self.var.get() or focused:
+            self.ph.place_forget()
+        else:
+            self.ph.place(in_=self.entry, x=0, rely=0.5, anchor="w", relwidth=1.0)
+
+    def redraw(self) -> None:
+        t = self.theme
+        self.delete("all")
+        W = self.winfo_width() if self.winfo_width() > 1 else int(self.cget("width"))
+        round_rect(self, 0, 0, W, self.h, 8, fill=t.c("field"), outline="")
+        draw_icon(self, "search", 16, self.h / 2, 13, t.c("text2"))
+        self.create_window(30, self.h / 2, window=self.entry, anchor="w", width=max(20, W - 40),
+                           height=self.h - 8)
+        self._placeholder()
+
+
+class RoundFrame(tk.Frame):
+    """A frame with rounded corners in the `bg_role` colour on an `outer_role` background
+    (four small corner masks).  Give its children at least `radius` of padding."""
+
+    def __init__(self, master, theme: Theme, bg_role: str = "lcd", outer_role: str = "bg", radius: int = 10, **kw):
+        super().__init__(master, bd=0, highlightthickness=0, **kw)
+        self.theme, self.bg_role, self.outer_role, self.r = theme, bg_role, outer_role, radius
+        theme.reg(self, bg=bg_role)
+        self.corners = []
+        for relx, rely, anchor in ((0, 0, "nw"), (1, 0, "ne"), (0, 1, "sw"), (1, 1, "se")):
+            c = tk.Canvas(self, width=radius, height=radius, highlightthickness=0, bd=0)
+            c.place(relx=relx, rely=rely, anchor=anchor)
+            self.corners.append((anchor, c))
+        theme.on_change(self.paint, self)
+        self.bind("<Map>", lambda e: self._raise(), add="+")
+        self.paint()
+
+    def _raise(self) -> None:
+        for _, c in self.corners:
+            tk.Misc.tkraise(c)  # (Canvas.lift raises canvas items)
+
+    def paint(self) -> None:
+        t, r = self.theme, self.r
+        fill = t.c(self.bg_role)
+        for anchor, c in self.corners:
+            c.configure(bg=t.c(self.outer_role))
+            c.delete("all")
+            x0 = 0 if "w" in anchor else -r
+            y0 = 0 if "n" in anchor else -r
+            c.create_oval(x0, y0, x0 + 2 * r, y0 + 2 * r, fill=fill, outline=fill)
+        self._raise()
+
+
+def theme_menu(theme: Theme, menu: tk.Menu) -> None:
+    """A menu and its cascades in the theme's colours (X11 draws them itself; Windows and
+    macOS keep their own)."""
+    menu.configure(relief="flat", bd=0, activeborderwidth=0)
+    theme.reg(menu, bg="bg", fg="text", activebackground="accent", activeforeground="on_accent",
+              selectcolor="accent", disabledforeground="disabled")
+    last = menu.index("end")
+    for i in range(0 if last is None else last + 1):
+        if menu.type(i) == "cascade":
+            theme_menu(theme, menu.nametowidget(menu.entrycget(i, "menu")))
+
+
 def fit_text(font: tkfont.Font, text: str, width: int, cache: Optional[dict] = None) -> str:
     """`text` cut with an ellipsis so that it fits in `width` pixels."""
     if width <= 0:
@@ -888,7 +1287,7 @@ def fit_text(font: tkfont.Font, text: str, width: int, cache: Optional[dict] = N
     return out
 
 
-__all__ = ["Theme", "IconButton", "PillButton", "Slider", "Tooltip", "draw_icon", "round_rect", "fit_text",
-           "load_bundled_font",
+__all__ = ["Theme", "IconButton", "PillButton", "Button", "Segmented", "Chip", "SearchBox", "RoundFrame",
+           "Slider", "Tooltip", "draw_icon", "round_rect", "fit_text", "theme_menu", "load_bundled_font",
            "default_family", "font_families", "system_is_dark", "LIGHT", "DARK", "DEFAULT_FONT_LABEL", "mix",
            "palette"]

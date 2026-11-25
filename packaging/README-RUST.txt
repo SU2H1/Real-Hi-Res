@@ -44,8 +44,8 @@ Details shows the full numbers.  Settings > Appearance has the font, the
 theme (8 built-in themes, or your own: New theme... and the colour editor),
 Import theme..., Export... and "Open themes folder": theme .json files put
 into that folder appear in the theme menu as they are, and a theme file
-dropped onto the window is imported.  "Edit info..." in a
-song's menu and "Edit album info..." on an album page change the title,
+dropped onto the window is imported.  "Properties..." in a
+song's menu and "Album Properties..." on an album page change the title,
 artist, album, album artist, genre, release date, track, disc and composer
 (only the tags change, never the audio).  Every other function is in
 Settings too:
@@ -84,8 +84,8 @@ next to the songs; the dashboard's Lyrics tab shows them.
 display, fixing and lyrics options.
 Language (2.1): Settings > Appearance > Language switches the app between
 English and Japanese (日本語) at once; the command-line tool always writes
-English.  Song information (2.1): "Get info from MusicBrainz..." (a song's
-menu) and "Get album info from MusicBrainz..." (an album page) look songs up
+English.  Song information (2.1): "Acquire Metadata..." (in the right-click
+menu of songs and albums, and on an album page) looks songs up
 on MusicBrainz (musicbrainz.org) and show what would change before saving;
 Settings > Library > "Add song information from MusicBrainz automatically"
 (off by default) fills in missing information of new songs by itself.

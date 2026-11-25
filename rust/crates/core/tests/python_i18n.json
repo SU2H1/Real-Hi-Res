@@ -263,6 +263,234 @@
    "tr_text": "オフ",
    "tr": "オフ",
    "tr_name": "Off"
+  },
+  {
+   "text": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device could not be opened for this app alone (this system has no way to do that), so the sound is mixed by the system. The device has no 24-bit format, so the samples are converted.",
+   "tr_text": "いいえ：デバイスが96 kHzを再生できないため、曲を48 kHzにリサンプリングします。デバイスをこのアプリ専用で開けなかったため（このシステムにはその方法がありません）、音はシステムでミックスされます。デバイスに24ビットの形式がないため、サンプルを変換します。",
+   "tr": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device could not be opened for this app alone (this system has no way to do that), so the sound is mixed by the system. The device has no 24-bit format, so the samples are converted.",
+   "tr_name": "No: The device cannot play 96 kHz, so the song is resampled to 48 kHz. The device could not be opened for this app alone (this system has no way to do that), so the sound is mixed by the system. The device has no 24-bit format, so the samples are converted."
+  },
+  {
+   "text": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float.",
+   "tr_text": "いいえ：デバイスがほかのプログラムで使用中のため、音はシステムでミックスされます。64ビット浮動小数点のサンプルを32ビット浮動小数点として再生します。",
+   "tr": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float.",
+   "tr_name": "No: The device is in use by another program, so the sound is mixed by the system. The 64-bit float samples are played as 32-bit float."
+  },
+  {
+   "text": "No: This 6-channel song is mixed down to stereo.",
+   "tr_text": "いいえ：この6チャンネルの曲はステレオにダウンミックスされます。",
+   "tr": "No: This 6-channel song is mixed down to stereo.",
+   "tr_name": "No: This 6-channel song is mixed down to stereo."
+  },
+  {
+   "text": "On",
+   "tr_text": "オン",
+   "tr": "オン",
+   "tr_name": "On"
+  },
+  {
+   "text": "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)",
+   "tr_text": "はい：24ビット、96 kHz、排他モード（WASAPI）",
+   "tr": "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)",
+   "tr_name": "Yes: 24-bit, 96 kHz, exclusive mode (WASAPI)"
+  },
+  {
+   "text": "Yes (decoded lossy audio): 32-bit float, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+   "tr_text": "はい（デコードしたロッシー音声）：32ビット浮動小数点、48 kHz、デバイスは48 kHzで動作（CoreAudio）",
+   "tr": "Yes (decoded lossy audio): 32-bit float, 48 kHz, the device runs at 48 kHz (CoreAudio)",
+   "tr_name": "Yes (decoded lossy audio): 32-bit float, 48 kHz, the device runs at 48 kHz (CoreAudio)"
+  },
+  {
+   "text": "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1",
+   "tr_text": "はい：16ビット、44.1 kHz、ALSAハードウェアデバイス hw:1",
+   "tr": "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1",
+   "tr_name": "Yes: 16-bit, 44.1 kHz, ALSA hardware device hw:1"
+  },
+  {
+   "text": "96 kHz, 24-bit integer in 32-bit, stereo",
+   "tr_text": "96 kHz、24ビット整数（32ビットのコンテナ）、ステレオ",
+   "tr": "96 kHz, 24-bit integer in 32-bit, stereo",
+   "tr_name": "96 kHz, 24-bit integer in 32-bit, stereo"
+  },
+  {
+   "text": "24-bit/96 kHz",
+   "tr_text": "24ビット/96 kHz",
+   "tr": "24-bit/96 kHz",
+   "tr_name": "24-bit/96 kHz"
+  },
+  {
+   "text": "32-bit float/44.1 kHz",
+   "tr_text": "32ビット浮動小数点/44.1 kHz",
+   "tr": "32-bit float/44.1 kHz",
+   "tr_name": "32-bit float/44.1 kHz"
+  },
+  {
+   "text": "MP3 · 320 kbps · 44.1 kHz",
+   "tr_text": "MP3 · 320 kbps · 44.1 kHz",
+   "tr": "MP3 · 320 kbps · 44.1 kHz",
+   "tr_name": "MP3 · 320 kbps · 44.1 kHz"
+  },
+  {
+   "text": "Tuesday 24 November 2026",
+   "tr_text": "2026年11月24日 火曜日",
+   "tr": "Tuesday 24 November 2026",
+   "tr_name": "Tuesday 24 November 2026"
+  },
+  {
+   "text": "November 2026",
+   "tr_text": "2026年11月",
+   "tr": "November 2026",
+   "tr_name": "November 2026"
+  },
+  {
+   "text": "2 songs played, 42 minutes",
+   "tr_text": "2曲を再生、42分",
+   "tr": "2 songs played, 42 minutes",
+   "tr_name": "2 songs played, 42 minutes"
+  },
+  {
+   "text": "1 song played, 1 minute",
+   "tr_text": "1曲を再生、1分",
+   "tr": "1曲を再生、1分",
+   "tr_name": "1 song played, 1 minute"
+  },
+  {
+   "text": "<1 min",
+   "tr_text": "1分未満",
+   "tr": "1分未満",
+   "tr_name": "<1 min"
+  },
+  {
+   "text": "1,250 min",
+   "tr_text": "1,250分",
+   "tr": "1,250 min",
+   "tr_name": "1,250 min"
+  },
+  {
+   "text": "No music on this day.",
+   "tr_text": "この日に再生した音楽はありません。",
+   "tr": "この日に再生した音楽はありません。",
+   "tr_name": "No music on this day."
+  },
+  {
+   "text": "1,200 × 1,200 pixels · JPEG · 245.3 KB",
+   "tr_text": "1,200 × 1,200ピクセル・JPEG・245.3 KB",
+   "tr": "1,200 × 1,200 pixels · JPEG · 245.3 KB",
+   "tr_name": "1,200 × 1,200 pixels · JPEG · 245.3 KB"
+  },
+  {
+   "text": "Unknown format · 812 bytes",
+   "tr_text": "不明な形式・812バイト",
+   "tr": "Unknown format · 812 bytes",
+   "tr_name": "Unknown format · 812 bytes"
+  },
+  {
+   "text": "PNG · 4.8 MB",
+   "tr_text": "PNG・4.8 MB",
+   "tr": "PNG · 4.8 MB",
+   "tr_name": "PNG · 4.8 MB"
+  },
+  {
+   "text": "Inside 01 Song.flac",
+   "tr_text": "01 Song.flacの中",
+   "tr": "Inside 01 Song.flac",
+   "tr_name": "Inside 01 Song.flac"
+  },
+  {
+   "text": "cover.jpg in the album's folder",
+   "tr_text": "アルバムのフォルダのcover.jpg",
+   "tr": "cover.jpg in the album's folder",
+   "tr_name": "cover.jpg in the album's folder"
+  },
+  {
+   "text": "Changed the cover of 1 of 3 songs.",
+   "tr_text": "3曲中1曲のアートワークを変更しました。",
+   "tr": "Changed the cover of 1 of 3 songs.",
+   "tr_name": "Changed the cover of 1 of 3 songs."
+  },
+  {
+   "text": "2 of the songs had no cover inside.",
+   "tr_text": "2曲の中にはアートワークがありませんでした。",
+   "tr": "2 of the songs had no cover inside.",
+   "tr_name": "2 of the songs had no cover inside."
+  },
+  {
+   "text": "b.wav had no cover inside.",
+   "tr_text": "b.wavの中にアートワークはありませんでした。",
+   "tr": "b.wav had no cover inside.",
+   "tr_name": "b.wav had no cover inside."
+  },
+  {
+   "text": "Could not save cover.png in the album's folder: [Errno 13] Permission denied",
+   "tr_text": "アルバムのフォルダにcover.pngを保存できませんでした：[Errno 13] Permission denied",
+   "tr": "Could not save cover.png in the album's folder: [Errno 13] Permission denied",
+   "tr_name": "Could not save cover.png in the album's folder: [Errno 13] Permission denied"
+  },
+  {
+   "text": "cover.jpg in the album's folder was not deleted; it is shown for the songs that have no cover inside.",
+   "tr_text": "アルバムのフォルダのcover.jpgは削除していません。中にアートワークがない曲にはこの画像が表示されます。",
+   "tr": "cover.jpg in the album's folder was not deleted; it is shown for the songs that have no cover inside.",
+   "tr_name": "cover.jpg in the album's folder was not deleted; it is shown for the songs that have no cover inside."
+  },
+  {
+   "text": "Could not remove the cover of a.m4a: FFmpeg could not copy the file with the new cover: Invalid argument.",
+   "tr_text": "a.m4aのアートワークを削除できませんでした：新しいアートワークを入れたファイルのコピーをFFmpegで作れませんでした：Invalid argument。",
+   "tr": "Could not remove the cover of a.m4a: FFmpeg could not copy the file with the new cover: Invalid argument.",
+   "tr_name": "Could not remove the cover of a.m4a: FFmpeg could not copy the file with the new cover: Invalid argument."
+  },
+  {
+   "text": "Could not save the information of a.flac: FFmpeg's copy did not have exactly the same audio as the original, so the file was left unchanged.",
+   "tr_text": "a.flacの情報を保存できませんでした：FFmpegのコピーの音声が元のファイルとまったく同じではなかったため、ファイルは変更していません。",
+   "tr": "Could not save the information of a.flac: FFmpeg's copy did not have exactly the same audio as the original, so the file was left unchanged.",
+   "tr_name": "Could not save the information of a.flac: FFmpeg's copy did not have exactly the same audio as the original, so the file was left unchanged."
+  },
+  {
+   "text": "The genre is too long: at most 1,000 characters fit.",
+   "tr_text": "ジャンルが長すぎます：入るのは最大1,000文字です。",
+   "tr": "The genre is too long: at most 1,000 characters fit.",
+   "tr_name": "The genre is too long: at most 1,000 characters fit."
+  },
+  {
+   "text": "Write the year as four digits, such as 2004.",
+   "tr_text": "年を4桁の数字で入力してください（例：2004）。",
+   "tr": "年を4桁の数字で入力してください（例：2004）。",
+   "tr_name": "Write the year as four digits, such as 2004."
+  },
+  {
+   "text": "Already has lyrics (a.lrc).",
+   "tr_text": "すでに歌詞があります（a.lrc）。",
+   "tr": "Already has lyrics (a.lrc).",
+   "tr_name": "Already has lyrics (a.lrc)."
+  },
+  {
+   "text": "Saved synced lyrics as a.lrc and embedded them in a.flac.",
+   "tr_text": "同期歌詞をa.lrcとして保存し、a.flacに埋め込みました。",
+   "tr": "Saved synced lyrics as a.lrc and embedded them in a.flac.",
+   "tr_name": "Saved synced lyrics as a.lrc and embedded them in a.flac."
+  },
+  {
+   "text": "Lyrics (not synced)",
+   "tr_text": "歌詞（同期なし）",
+   "tr": "歌詞（同期なし）",
+   "tr_name": "Lyrics (not synced)"
+  },
+  {
+   "text": "inside the file",
+   "tr_text": "ファイル内",
+   "tr": "ファイル内",
+   "tr_name": "inside the file"
+  },
+  {
+   "text": "Could not change the cover of a.ogg: Only Ogg files with Vorbis or Opus audio can be changed directly.",
+   "tr_text": "a.oggのアートワークを変更できませんでした：直接変更できるのは、音声がVorbisまたはOpusのOggファイルだけです。",
+   "tr": "Could not change the cover of a.ogg: Only Ogg files with Vorbis or Opus audio can be changed directly.",
+   "tr_name": "Could not change the cover of a.ogg: Only Ogg files with Vorbis or Opus audio can be changed directly."
+  },
+  {
+   "text": "The MP3 file has an ID3v2.2 tag, which cannot be updated.",
+   "tr_text": "このMP3ファイルのタグはID3v2.2のため、更新できません。",
+   "tr": "The MP3 file has an ID3v2.2 tag, which cannot be updated.",
+   "tr_name": "The MP3 file has an ID3v2.2 tag, which cannot be updated."
   }
  ],
  "matches": [

@@ -1,6 +1,6 @@
 //! The Equalizer and Playback info windows of the player (2.0).
 
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, Rect, RichText, Sense, Shape, Stroke};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, RichText, Sense, Shape, Stroke};
 use realhires::eq::{self, Band, BAND_TYPES, GRAPHIC_LABELS, MAX_PARAMETRIC_BANDS, PRESETS};
 use realhires::i18n::{self, tr_text};
 use realhires::musiclib::Track;
@@ -9,7 +9,7 @@ use realhires::{n_, tr};
 
 use crate::audio::OutputInfo;
 use crate::look::{self, Palette};
-use crate::player::{gain_of, ConfirmAction, NameAction, Player};
+use crate::player::{engine_gain, NameAction, Player};
 
 /// "44.1 kHz", "96 kHz".
 pub fn khz(rate: i64) -> String {
@@ -111,6 +111,7 @@ pub fn info_sections(
     out: Option<&OutputInfo>,
     state: &PlayerState,
     gapless: bool,
+    bit_perfect: bool,
     verdict: Option<&(realhires::verdict::Verdict, String)>,
 ) -> Vec<(&'static str, Vec<(&'static str, String)>)> {
     let dash = |s: &str| if s.trim().is_empty() { "—".to_string() } else { s.to_string() };
@@ -168,7 +169,7 @@ pub fn info_sections(
             },
         ),
     ];
-    let gain = gain_of(state);
+    let gain = engine_gain(state, bit_perfect);
     let output = match out {
         Some(o) => vec![
             // the null and test outputs' names and the sample formats are the engine's English words
@@ -178,10 +179,12 @@ pub fn info_sections(
                 tr!(
                     "{rate}, {format}, {channels}",
                     rate = khz(o.rate as i64),
-                    format = i18n::tr(&o.format),
+                    format = tr_text(&o.format),
                     channels = channels_lower(o.channels as i64)
                 ),
             ),
+            // `bitperfect::status()`'s English text, translated when shown
+            (tr!("Bit-perfect"), tr_text(&o.bit_perfect)),
             (
                 tr!("Resampling"),
                 match o.resampled_from {
@@ -195,10 +198,16 @@ pub fn info_sections(
                 },
             ),
             (tr!("Volume"), if gain <= 0.0 { tr!("Muted").into() } else { db(20.0 * (gain as f64).log10()) }),
-            (tr!("Equalizer"), eq_summary(state)),
+            (tr!("Equalizer"), if bit_perfect { i18n::tr(realhires::bitperfect::EQ_BYPASSED).to_string() } else { eq_summary(state) }),
             (tr!("Gapless"), if gapless { tr!("On").into() } else { tr!("Off").into() }),
         ],
-        None => vec![(tr!("Device"), tr!("Not open yet").into())],
+        None => vec![
+            (tr!("Device"), tr!("Not open yet").into()),
+            (
+                tr!("Bit-perfect"),
+                tr_text(&realhires::bitperfect::status(None, None, realhires::bitperfect::Access::Direct, "", bit_perfect)),
+            ),
+        ],
     };
     // the summary is the core's English text
     let check = vec![match verdict {
@@ -216,7 +225,8 @@ pub fn info_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let t = p.lib.track(&path).cloned().unwrap_or_else(|| Track { path: path.clone(), ..Default::default() });
     let n_album = p.lib.album_of(&path).map(|a| a.tracks.len()).unwrap_or(0);
     let out = p.engine.info();
-    let sections = info_sections(&t, n_album, out.as_ref(), &p.state, p.scanner.cfg.gapless, info.verdict.as_ref());
+    let cfg = &p.scanner.cfg;
+    let sections = info_sections(&t, n_album, out.as_ref(), &p.state, cfg.gapless, cfg.bit_perfect, info.verdict.as_ref());
     let mut open = true;
     egui::Window::new(tr!("Playback info"))
         .id(egui::Id::unique("player-playback-info"))
@@ -303,6 +313,7 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let mine = p.state.matching_eq_preset();
     let presets: Vec<(String, eq::EqState)> = p.state.eq_presets.iter().map(|x| (x.name.clone(), x.eq.clone())).collect();
     let notes = p.eq_notes.clone();
+    let bypassed = p.scanner.cfg.bit_perfect;
     let mut action: Option<EqAction> = None;
     egui::Window::new(tr!("Equalizer"))
         .id(egui::Id::unique("player-equalizer"))
@@ -346,10 +357,27 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                     if ui.button(tr!("Rename…")).clicked() {
                         action = Some(EqAction::Rename(mine.clone()));
                     }
+                });
+                // Delete…: the preset the equalizer is set to, else a menu of the user's presets
+                // (before, it was greyed out unless the EQ matched one exactly, on/off switch included)
+                if !mine.is_empty() {
                     if ui.button(tr!("Delete…")).clicked() {
                         action = Some(EqAction::Delete(mine.clone()));
                     }
-                });
+                } else if presets.is_empty() {
+                    ui.add_enabled(false, egui::Button::new(tr!("Delete…")))
+                        .on_disabled_hover_text(tr!("You have no presets of your own yet."));
+                } else {
+                    ui.menu_button(tr!("Delete…"), |ui| {
+                        ui.label(RichText::new(tr!("Delete which preset?")).small().color(pal.secondary));
+                        for (name, _) in &presets {
+                            if ui.button(name).clicked() {
+                                action = Some(EqAction::Delete(name.clone()));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
                 if ui
                     .button(tr!("Import…"))
                     .on_hover_text(tr!("Presets of this app (.json) and Equalizer APO or AutoEQ files (.txt)"))
@@ -370,6 +398,11 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                 ui.label(RichText::new(tr_text(n)).small().color(pal.secondary));
             }
             ui.add_space(4.0);
+            if bypassed {
+                // bit-perfect playback: the equalizer's settings are kept, but it is not heard
+                ui.label(RichText::new(i18n::tr(realhires::bitperfect::EQ_BYPASSED).to_string()).strong().color(pal.accent));
+                ui.add_space(4.0);
+            }
             ui.horizontal(|ui| {
                 ui.checkbox(&mut state.enabled, RichText::new(tr!("Equalizer on")).strong());
                 ui.add_space(12.0);
@@ -400,7 +433,9 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     match action {
         Some(EqAction::SaveAs) => p.ask_name(tr!("Save Equalizer Preset"), tr!("My Preset"), NameAction::SaveEqPreset),
         Some(EqAction::Rename(n)) => p.ask_name(tr!("Rename Preset"), &n.clone(), NameAction::RenameEqPreset(n)),
-        Some(EqAction::Delete(n)) => p.confirm = Some(ConfirmAction::DeleteEqPreset(n)),
+        Some(EqAction::Delete(n)) => {
+            p.eq_delete(Some(n));
+        }
         Some(EqAction::Import) => {
             if let Some(path) = rfd::FileDialog::new().add_filter(tr!("Equalizer presets"), &["json", "txt"]).pick_file() {
                 let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());

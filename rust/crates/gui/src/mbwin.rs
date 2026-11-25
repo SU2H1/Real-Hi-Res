@@ -1,6 +1,7 @@
 //! The MusicBrainz window (2.1, `docs/player-spec.md` → "Song information from
-//! MusicBrainz"), the port of `realhires/player_mb.py`: "Get info from
-//! MusicBrainz…" for a song and "Get album info from MusicBrainz…" for an album.
+//! MusicBrainz"), the port of `realhires/player_mb.py`: "Acquire Metadata…" in a
+//! song's right-click menu for that song, and on the album page and in an album
+//! card's right-click menu for the whole album (2.2).
 //! The songs' tags are read in a thread, MusicBrainz is searched with them, the
 //! chosen release's track list is read and matched to the songs, the changes
 //! are shown song by song, and Save writes each song's own changes with
@@ -235,7 +236,8 @@ impl MbWindow {
         }
         let title = tagedit::clean_value(&self.query_title);
         if title.is_empty() {
-            self.error = if self.album { "Type the album to search for." } else { "Type the title to search for." }.into();
+            // English, shown with `tr_text()`
+            self.error = if self.album { n_!("Type the album to search for.") } else { n_!("Type the title to search for.") }.into();
             return;
         }
         self.error.clear();
@@ -316,7 +318,7 @@ impl MbWindow {
         }
         let plans = self.changes();
         if plans.is_empty() {
-            self.error = "Nothing to save: the songs already hold this information.".into();
+            self.error = n_!("Nothing to save: the songs already hold this information.").into();
             return false;
         }
         for (_, ch) in &plans {

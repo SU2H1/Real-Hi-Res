@@ -68,6 +68,47 @@ fn minutes_text(tracks: &[&Track]) -> String {
     }
 }
 
+/// The calendar at the top of Your Stats (2.1): the month shown and the day
+/// chosen (kept for the session), with the month's minutes per day and the
+/// day's plays, read again when the month, the day or the history changes.
+pub struct Calendar {
+    pub month: (i32, u32),
+    pub day: Option<(i32, u32, u32)>,
+    /// (month, day, history generation) of what was read
+    loaded: Option<((i32, u32), Option<(i32, u32, u32)>, u64)>,
+    pub minutes: Vec<f64>,
+    pub levels: Vec<u8>,
+    pub rows: Vec<stats::DayPlay>,
+}
+
+impl Default for Calendar {
+    fn default() -> Self {
+        Calendar { month: this_month(), day: None, loaded: None, minutes: vec![], levels: vec![], rows: vec![] }
+    }
+}
+
+fn now_parts() -> stats::LocalParts {
+    stats::local_parts(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
+}
+
+fn this_month() -> (i32, u32) {
+    let t = now_parts();
+    (t.year, t.month)
+}
+
+/// The share of the accent colour for `stats::month_levels()` 0..4.
+const TINTS: [f32; 5] = [0.0, 0.25, 0.45, 0.7, 1.0];
+
+/// A chevron pointing left or right.
+fn chevron(p: &egui::Painter, c: egui::Pos2, s: f32, right: bool, color: Color32) {
+    let (h, d) = (s * 0.3, if right { -1.0 } else { 1.0 });
+    let stroke = Stroke::new((s * 0.1).max(1.5), color);
+    p.add(egui::Shape::line(
+        vec![pos2(c.x + d * h * 0.3, c.y - h * 0.7), pos2(c.x - d * h * 0.4, c.y), pos2(c.x + d * h * 0.3, c.y + h * 0.7)],
+        stroke,
+    ));
+}
+
 /// The short weekday names under the bars (Monday first, as `stats::WEEKDAYS`).
 const WEEKDAYS_SHORT: [&str; 7] =
     [n_!("Mon"), n_!("Tue"), n_!("Wed"), n_!("Thu"), n_!("Fri"), n_!("Sat"), n_!("Sun")];
@@ -82,6 +123,173 @@ fn shown_card(label: &str, big: &str, detail: &str) -> (String, String, String) 
 }
 
 impl Player {
+    /// Read the calendar's month (and the chosen day) from the play history when
+    /// it changed; the plays come between local midnights.
+    pub fn load_calendar(&mut self) {
+        let cal = &mut self.calendar;
+        let key = (cal.month, cal.day, self.history_gen);
+        if cal.loaded == Some(key) {
+            return;
+        }
+        let (y, m) = cal.month;
+        let plays = |(since, until): (f64, f64)| self.history.as_ref().map(|h| h.plays(since, Some(until))).unwrap_or_default();
+        cal.minutes = stats::month_minutes(&plays(stats::month_bounds(y, m)), y, m, &stats::local_parts);
+        cal.levels = stats::month_levels(&cal.minutes);
+        cal.rows = match cal.day {
+            Some((y, m, d)) => stats::day_plays(&plays(stats::day_bounds(y, m, d)), y, m, d, &stats::local_parts),
+            None => vec![],
+        };
+        cal.loaded = Some(key);
+    }
+
+    /// Show the month `delta` months after the one shown.
+    pub fn calendar_step(&mut self, delta: i32) {
+        let (y, m) = self.calendar.month;
+        self.calendar.month = stats::shift_month(y, m, delta);
+    }
+
+    /// List the plays of this day of the month shown; the chosen day again hides the list.
+    pub fn calendar_choose(&mut self, day: u32) {
+        let (y, m) = self.calendar.month;
+        self.calendar.day = if self.calendar.day == Some((y, m, day)) { None } else { Some((y, m, day)) };
+    }
+
+    /// A click on a song of the day's list: play the day's songs (each once) from it.
+    pub fn calendar_play(&mut self, i: usize) {
+        let Some(row) = self.calendar.rows.get(i) else { return };
+        let start = row.path.clone();
+        let mut list: Vec<String> = vec![];
+        for r in &self.calendar.rows {
+            if !list.contains(&r.path) {
+                list.push(r.path.clone());
+            }
+        }
+        self.play_list(list, Some(&start), "Your Stats");
+    }
+
+    fn calendar_ui(&mut self, ui: &mut Ui, pal: &Palette) {
+        self.load_calendar();
+        let (year, month) = self.calendar.month;
+        let weeks = stats::month_grid(year, month);
+        let cw = (ui.available_width() / 7.0).clamp(30.0, 62.0);
+        let ch = 44.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(cw * 7.0, 64.0 + ch * weeks.len() as f32), Sense::hover());
+        let p = ui.painter().clone();
+        let (x0, top) = (rect.left(), rect.top());
+        // the core's month name, in the language in use
+        let title = p.text(pos2(x0, top + 16.0), Align2::LEFT_CENTER, tr_text(&stats::month_title(year, month)), look::title(18.0), pal.text);
+        let total = (self.calendar.minutes.iter().sum::<f64>() + 0.5) as usize;
+        if total > 0 {
+            p.text(pos2(title.right() + 10.0, top + 17.0), Align2::LEFT_CENTER, crate::player::plural(total, "minute"), look::text(13.0), pal.secondary);
+        }
+        let newest = (year, month) >= this_month();
+        let mut step = 0;
+        for (cx, delta, on) in [(rect.right() - 50.0, -1, true), (rect.right() - 16.0, 1, !newest)] {
+            let r = Rect::from_center_size(pos2(cx, top + 16.0), vec2(30.0, 30.0));
+            let resp = ui.interact(r, ui.scope_id().with(("calendar-month", delta)), if on { Sense::click() } else { Sense::hover() });
+            if on && resp.hovered() {
+                p.rect_filled(r, CornerRadius::same(8), pal.hover);
+            }
+            chevron(&p, r.center(), 18.0, delta > 0, if on { pal.accent } else { pal.secondary.gamma_multiply(0.5) });
+            if on && resp.on_hover_text(if delta < 0 { tr!("Previous month") } else { tr!("Next month") }).clicked() {
+                step = delta;
+            }
+        }
+        let mut y = top + 42.0;
+        for (k, name) in WEEKDAYS_SHORT.iter().enumerate() {
+            p.text(pos2(x0 + k as f32 * cw + cw / 2.0, y + 8.0), Align2::CENTER_CENTER, i18n::tr(name), look::title(11.0), pal.secondary);
+        }
+        y += 22.0;
+        let now = now_parts();
+        let today = (now.year, now.month, now.day);
+        let mut chosen_day = None;
+        for week in &weeks {
+            for (k, &d) in week.iter().enumerate() {
+                if d == 0 {
+                    continue;
+                }
+                let cell = Rect::from_min_max(pos2(x0 + k as f32 * cw + 2.0, y + 2.0), pos2(x0 + (k + 1) as f32 * cw - 2.0, y + ch - 2.0));
+                let resp = ui.interact(cell, ui.scope_id().with(("calendar-day", year, month, d)), Sense::click());
+                let level = self.calendar.levels.get(d as usize - 1).copied().unwrap_or(0);
+                let mut fill = look::mix(pal.lcd, pal.accent, TINTS[level as usize]);
+                if resp.hovered() {
+                    fill = look::mix(fill, pal.text, 0.1);
+                }
+                let chosen = self.calendar.day == Some((year, month, d));
+                let is_today = today == (year, month, d);
+                p.rect_filled(cell, CornerRadius::same(8), fill);
+                if chosen || is_today {
+                    let stroke = if chosen { Stroke::new(3.0, pal.text) } else { Stroke::new(2.0, pal.accent) };
+                    p.rect_stroke(cell, CornerRadius::same(8), stroke, egui::StrokeKind::Inside);
+                }
+                let color = if level >= 3 { Color32::WHITE } else { pal.text };
+                let font = if chosen || is_today { look::title(13.0) } else { look::text(13.0) };
+                p.text(cell.center(), Align2::CENTER_CENTER, d.to_string(), font, color);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    chosen_day = Some(d);
+                }
+            }
+            y += ch;
+        }
+        ui.add_space(12.0);
+        if step != 0 {
+            self.calendar_step(step);
+        }
+        if let Some(d) = chosen_day {
+            self.calendar_choose(d);
+        }
+        self.calendar_day_ui(ui, pal);
+    }
+
+    fn calendar_day_ui(&mut self, ui: &mut Ui, pal: &Palette) {
+        self.load_calendar();
+        let Some((y, m, d)) = self.calendar.day else {
+            ui.label(RichText::new(tr!("Click a day to see the songs you played on it.")).color(pal.secondary));
+            ui.add_space(14.0);
+            return;
+        };
+        // the core's texts, in the language in use
+        ui.label(RichText::new(tr_text(&stats::day_title(y, m, d))).font(look::title(17.0)).color(pal.text));
+        ui.label(RichText::new(tr_text(&stats::day_summary(&self.calendar.rows))).color(pal.secondary));
+        ui.add_space(8.0);
+        let width = ui.available_width();
+        let rest = width - 70.0 - 90.0;
+        let (tw, row_h) = (rest * 0.55, 30.0);
+        let aw = rest - tw - 16.0;
+        let now = self.now.as_ref().map(|n| n.path.clone());
+        let mut play = None;
+        for (i, r) in self.calendar.rows.iter().enumerate() {
+            let (rect, _) = ui.allocate_exact_size(vec2(width, row_h), Sense::hover());
+            let playable = self.lib.by_path.contains_key(&r.path);
+            let resp = ui.interact(rect, ui.scope_id().with(("calendar-play", i)), if playable { Sense::click() } else { Sense::hover() });
+            let p = ui.painter_at(rect);
+            if playable && resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(6), pal.hover);
+            } else if i % 2 == 1 {
+                p.rect_filled(rect, CornerRadius::same(6), look::mix(pal.bg, pal.hover, 0.5));
+            }
+            let mid = rect.center().y;
+            let playing = now.as_deref() == Some(r.path.as_str());
+            p.text(pos2(rect.left() + 12.0, mid), Align2::LEFT_CENTER, &r.time, look::text(13.0), pal.secondary);
+            let color = if playing { pal.accent } else if playable { pal.text } else { pal.secondary };
+            let font = if playing { look::title(13.0) } else { look::text(13.0) };
+            for (x, g) in [
+                (70.0, elided(ui, &r.title, font, color, tw)),
+                (70.0 + tw + 16.0, elided(ui, tr_name(&r.artist), look::text(13.0), pal.secondary, aw)),
+            ] {
+                let h = g.size().y;
+                p.galley(pos2(rect.left() + x, mid - h / 2.0), g, color);
+            }
+            p.text(pos2(rect.right() - 12.0, mid), Align2::RIGHT_CENTER, tr_text(&r.minutes), look::text(13.0), pal.secondary);
+            if playable && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                play = Some(i);
+            }
+        }
+        if let Some(i) = play {
+            self.calendar_play(i);
+        }
+        ui.add_space(18.0);
+    }
     /// Up to four album covers in a square (playlists).
     fn mosaic(&mut self, p: &egui::Painter, rect: Rect, paths: &[String], name: &str) {
         let mut keys: Vec<(String, Vec<String>)> = vec![];
@@ -310,7 +518,7 @@ impl Player {
         if !songs.is_empty() {
             let list: Vec<String> = songs.iter().map(|t| t.path.clone()).collect();
             let name = file_name(&folder);
-            self.song_table(ui, pal, &list, &name, false);
+            self.song_table_kind(ui, pal, &list, &name, "folders", false);
         }
     }
 
@@ -473,11 +681,12 @@ impl Player {
         ui.add_space(12.0);
         let st = self.stats();
         let cards: Vec<(String, String, String)> = stats::cards(&st).iter().map(|(l, b, d)| shown_card(l, b, d)).collect();
-        if cards.is_empty() {
-            ui.label(RichText::new(tr!("No listening yet in this period. Play some music and come back.")).color(pal.secondary));
-            return;
-        }
         egui::ScrollArea::vertical().id_salt("stats").auto_shrink([false, false]).show(ui, |ui| {
+            self.calendar_ui(ui, pal);
+            if cards.is_empty() {
+                ui.label(RichText::new(tr!("No listening yet in this period. Play some music and come back.")).color(pal.secondary));
+                return;
+            }
             let gap = 14.0;
             let width = ui.available_width();
             let cols = ((width + gap) / (300.0 + gap)).floor().clamp(1.0, 3.0) as usize;

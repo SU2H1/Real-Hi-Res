@@ -1,10 +1,11 @@
 //! The windows on top of the main one: scan summary (donut chart), Settings,
-//! Fix to real resolution, confirmations and messages.
+//! Fix to real resolution, confirmations and messages, drawn in the theme's
+//! colours and the player's fonts and buttons (2.1).
 
 use std::collections::HashSet;
 use std::time::Instant;
 
-use egui::{Align2, Color32, FontId, Pos2, RichText, Sense, Vec2};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, Pos2, RichText, Sense, Vec2};
 use realhires::fix::{done_summary, plan_fix, skip_summary, Backup, FixOutcome, FixPlan, FIXABLE_VERDICTS};
 use realhires::i18n::{self, tr_text};
 use realhires::paths::{abspath, file_name};
@@ -14,7 +15,11 @@ use realhires::verdict::{verdict_breakdown, FileResult, Verdict, PROBLEM_VERDICT
 use realhires::{n_, tr};
 
 use crate::app::{arc, App};
-use crate::style::{count, hex, reveal_in_file_manager, verdict_label, verdict_style};
+use crate::look::{self, Palette};
+use crate::style::{
+    count, error_color, flat_button, heading_text, hex, ok_color, on_page, pal, panel_button, primary_button,
+    progress, reveal_in_file_manager, secondary, verdict_label, verdict_style, verdict_text, warn_color, window_heading,
+};
 
 pub enum ConfirmAction {
     ForgetSaved,
@@ -60,16 +65,18 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
     if let Some(c) = app.confirm.take() {
         let mut answer = None;
         egui::Modal::new(egui::Id::unique("realhires-confirm")).show(ctx, |ui| {
+            let pal = pal(ui);
             ui.set_max_width(460.0);
-            ui.heading(&c.title);
+            ui.label(window_heading(&c.title, &pal));
             ui.add_space(6.0);
-            ui.label(&c.text);
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button(tr!("Yes")).clicked() {
+            ui.add(egui::Label::new(RichText::new(&c.text).color(pal.text)).wrap());
+            ui.add_space(12.0);
+            crate::style::buttons_right(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if primary_button(ui, tr!("Yes"), true).clicked() {
                     answer = Some(true);
                 }
-                if ui.button(tr!("No")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if flat_button(ui, tr!("No"), true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     answer = Some(false);
                 }
             });
@@ -99,16 +106,19 @@ pub fn show_all(app: &mut App, ctx: &egui::Context) {
     if let Some((title, text)) = app.info.take() {
         let mut close = false;
         egui::Modal::new(egui::Id::unique("realhires-info")).show(ctx, |ui| {
+            let pal = pal(ui);
             ui.set_max_width(460.0);
-            ui.heading(&title);
+            ui.label(window_heading(&title, &pal));
             ui.add_space(6.0);
-            ui.label(&text);
-            ui.add_space(10.0);
-            if ui.button(tr!("OK")).clicked()
-                || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
-            {
-                close = true;
-            }
+            ui.add(egui::Label::new(RichText::new(&text).color(pal.text)).wrap());
+            ui.add_space(12.0);
+            crate::style::buttons_right(ui, |ui| {
+                if primary_button(ui, tr!("OK"), true).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
+                {
+                    close = true;
+                }
+            });
         });
         if !close {
             app.info = Some((title, text));
@@ -148,6 +158,7 @@ impl SummaryWindow {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                let pal = pal(ui);
                 let n = self.total;
                 let head = match (self.elapsed, n == 1) {
                     (Some(e), true) => tr!("Scanned 1 file in {seconds} s", seconds = f(e, 1)),
@@ -155,7 +166,7 @@ impl SummaryWindow {
                     (None, true) => tr!("Scanned 1 file").to_string(),
                     (None, false) => tr!("Scanned {n} files", n = n),
                 };
-                ui.label(RichText::new(head).strong().size(16.0));
+                ui.label(window_heading(&head, &pal));
                 let pct_problems = if n > 0 { 100.0 * self.problems as f64 / n as f64 } else { 0.0 };
                 if self.problems > 0 {
                     ui.label(
@@ -168,14 +179,14 @@ impl SummaryWindow {
                                 pct = f(pct_problems, 1)
                             )
                         })
-                        .color(hex(0xa3122a)),
+                        .color(on_page(hex(0xa3122a), &pal)),
                     );
                 } else {
-                    ui.label(RichText::new(tr!("No fake or suspicious files found.")).color(hex(0x2e7d32)));
+                    ui.label(RichText::new(tr!("No fake or suspicious files found.")).color(ok_color(&pal)));
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if let Some(v) = self.donut(ui, pct_problems) {
+                    if let Some(v) = self.donut(ui, pct_problems, &pal) {
                         close = Some(Some(vec![v]));
                     }
                     ui.add_space(14.0);
@@ -184,40 +195,51 @@ impl SummaryWindow {
                             let (_, color, desc) = verdict_style(*v);
                             let (label, desc) = (verdict_label(*v), i18n::tr(desc));
                             let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                            ui.painter().rect_filled(r, 0.0, color);
+                            ui.painter().circle_filled(r.center(), 5.5, color);
                             let name = ui.add(
-                                egui::Label::new(RichText::new(label).color(color).strong()).sense(Sense::click()),
+                                egui::Label::new(
+                                    RichText::new(label).font(look::title(13.0)).color(verdict_text(*v, &pal)),
+                                )
+                                .sense(Sense::click()),
                             );
                             if name.clicked() {
                                 close = Some(Some(vec![*v]));
                             }
                             name.on_hover_cursor(egui::CursorIcon::PointingHand);
-                            ui.label(RichText::new(format!("{:>5} %", f(*p, 1))).strong());
-                            ui.label(RichText::new(count(*files, n_!("1 file"), n_!("{n} files"))).color(hex(0x555555)));
+                            ui.label(
+                                RichText::new(format!("{:>5} %", f(*p, 1))).font(look::title(13.0)).color(pal.text),
+                            );
+                            ui.label(secondary(count(*files, n_!("1 file"), n_!("{n} files")), &pal));
                             ui.end_row();
                             ui.label("");
-                            ui.label(RichText::new(desc).small().color(hex(0x777777)));
+                            ui.label(RichText::new(desc).font(look::text(11.5)).color(pal.secondary));
                             ui.end_row();
                         }
                     });
                 });
                 ui.label(
-                    RichText::new(tr!("Click a slice or a name to list only those files.")).small().color(hex(0x777777)),
+                    RichText::new(tr!("Click a slice or a name to list only those files."))
+                        .font(look::text(11.5))
+                        .color(pal.secondary),
                 );
                 ui.checkbox(&mut self.again, tr!("Show this summary after every scan"));
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(tr!("Show problem files")).clicked() {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if flat_button(ui, tr!("Show problem files"), true).clicked() {
                         close = Some(Some(PROBLEM_VERDICTS.to_vec()));
                     }
-                    if ui.button(tr!("Show all files")).clicked() {
+                    if flat_button(ui, tr!("Show all files"), true).clicked() {
                         close = Some(Some(VERDICT_ORDER.to_vec()));
                     }
-                    if ui.button(tr!("Export CSV…")).clicked() {
+                    if flat_button(ui, tr!("Export CSV…"), true).clicked() {
                         app.export(false, true);
                     }
-                    if ui.button(tr!("Close")).clicked() {
-                        close = Some(None);
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if primary_button(ui, tr!("Close"), true).clicked() {
+                            close = Some(None);
+                        }
+                    });
                 });
             });
         if !open && close.is_none() {
@@ -239,7 +261,7 @@ impl SummaryWindow {
     }
 
     /// The donut chart; returns the verdict of a clicked slice.
-    fn donut(&self, ui: &mut egui::Ui, pct_problems: f64) -> Option<Verdict> {
+    fn donut(&self, ui: &mut egui::Ui, pct_problems: f64, pal: &Palette) -> Option<Verdict> {
         let size = 260.0f32;
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
         let p = ui.painter_at(rect);
@@ -258,28 +280,22 @@ impl SummaryWindow {
                     Pos2::new(c.x + r * mid.sin(), c.y - r * mid.cos()),
                     Align2::CENTER_CENTER,
                     format!("{}%", f(*pc, 0)),
-                    FontId::proportional(12.0),
+                    look::title(12.0),
                     Color32::WHITE,
                 );
             }
             spans.push((*v, start, start + ext));
             start += ext;
         }
-        let color = if pct_problems > 0.0 { hex(0xa3122a) } else { hex(0x2e7d32) };
+        let color = if pct_problems > 0.0 { on_page(hex(0xa3122a), pal) } else { ok_color(pal) };
         p.text(
             c - Vec2::new(0.0, 12.0),
             Align2::CENTER_CENTER,
             format!("{}%", f(pct_problems, 0)),
-            FontId::proportional(26.0),
+            look::title(26.0),
             color,
         );
-        p.text(
-            c + Vec2::new(0.0, 16.0),
-            Align2::CENTER_CENTER,
-            tr!("fake or suspicious"),
-            FontId::proportional(11.0),
-            hex(0x555555),
-        );
+        p.text(c + Vec2::new(0.0, 16.0), Align2::CENTER_CENTER, tr!("fake or suspicious"), look::text(11.0), pal.secondary);
         let hit = |pos: Pos2| -> Option<Verdict> {
             let d = pos - c;
             let r = d.length();
@@ -322,65 +338,92 @@ impl SettingsWindow {
             .id(egui::Id::unique("scanner-settings"))
             .open(&mut open)
             .collapsible(false)
-            .default_width(640.0)
+            .default_width(780.0)
             .resizable(true)
             .pivot(Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for (i, g) in GROUPS.iter().enumerate() {
-                        if ui.add(egui::Button::selectable(self.tab == i, i18n::tr(g))).clicked() {
-                            self.tab = i;
-                        }
-                    }
-                });
-                ui.separator();
-                let group = GROUPS[self.tab];
-                egui::ScrollArea::vertical().max_height(430.0).show(ui, |ui| {
-                    egui::Grid::new("settings").num_columns(2).spacing([12.0, 6.0]).striped(true).show(ui, |ui| {
-                        for info in Settings::field_info().into_iter().filter(|i| i.group == group) {
-                            if let Some(e) = setting_row(ui, &info, &mut self.draft, &app.choices) {
-                                self.error = Some(e);
+                let pal = pal(ui);
+                ui.horizontal_top(|ui| {
+                    // the groups on the left, as on the player's Settings page
+                    ui.vertical(|ui| {
+                        ui.set_width(170.0);
+                        for (i, g) in GROUPS.iter().enumerate() {
+                            let (rect, resp) = ui.allocate_exact_size(vec2(170.0, 30.0), Sense::click());
+                            let sel = self.tab == i;
+                            if sel {
+                                ui.painter().rect_filled(rect, CornerRadius::same(6), pal.accent);
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+                            }
+                            let color = if sel { Color32::WHITE } else { pal.text };
+                            ui.painter().text(
+                                pos2(rect.left() + 10.0, rect.center().y),
+                                Align2::LEFT_CENTER,
+                                i18n::tr(g),
+                                look::text(13.0),
+                                color,
+                            );
+                            if resp.clicked() {
+                                self.tab = i;
                             }
                         }
                     });
-                    if group == "Saved results" {
-                        ui.add_space(8.0);
-                        match &app.store {
-                            Some(st) => {
-                                let s = st.stats();
-                                ui.label(tr!(
-                                    "{results} saved for {files} in {path} ({mb} MB, of which graphs {graphs} MB).",
-                                    results = count(s.results as usize, n_!("1 result"), n_!("{n} results")),
-                                    files = count(s.files as usize, n_!("1 file"), n_!("{n} files")),
-                                    path = s.path.display(),
-                                    mb = f(s.disk_bytes as f64 / 1e6, 1),
-                                    graphs = f(s.graph_bytes as f64 / 1e6, 1)
-                                ));
+                    ui.add_space(14.0);
+                    ui.vertical(|ui| {
+                        let group = GROUPS[self.tab];
+                        ui.label(RichText::new(i18n::tr(group)).font(look::title(18.0)).color(pal.text));
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical().max_height(430.0).show(ui, |ui| {
+                            egui::Grid::new("settings").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+                                for info in Settings::field_info().into_iter().filter(|i| i.group == group) {
+                                    if let Some(e) = setting_row(ui, &info, &mut self.draft, &app.choices) {
+                                        self.error = Some(e);
+                                    }
+                                }
+                            });
+                            if group == "Saved results" {
+                                ui.add_space(8.0);
+                                let text = match &app.store {
+                                    Some(st) => {
+                                        let s = st.stats();
+                                        tr!(
+                                            "{results} saved for {files} in {path} ({mb} MB, of which graphs {graphs} MB).",
+                                            results = count(s.results as usize, n_!("1 result"), n_!("{n} results")),
+                                            files = count(s.files as usize, n_!("1 file"), n_!("{n} files")),
+                                            path = s.path.display(),
+                                            mb = f(s.disk_bytes as f64 / 1e6, 1),
+                                            graphs = f(s.graph_bytes as f64 / 1e6, 1)
+                                        )
+                                    }
+                                    None => {
+                                        tr!("Saving results is turned off, or the saved results cannot be opened.").into()
+                                    }
+                                };
+                                ui.add(egui::Label::new(secondary(text, &pal)).wrap());
+                                ui.add_space(4.0);
+                                if flat_button(ui, tr!("Delete all saved results…"), true).clicked() {
+                                    app.forget_saved_ask();
+                                }
                             }
-                            None => {
-                                ui.label(tr!("Saving results is turned off, or the saved results cannot be opened."));
-                            }
-                        }
-                        if ui.button(tr!("Delete all saved results…")).clicked() {
-                            app.forget_saved_ask();
-                        }
-                    }
+                        });
+                    });
                 });
                 if let Some(e) = &self.error {
-                    ui.label(RichText::new(e).color(hex(0xc62828)));
+                    ui.label(RichText::new(e).color(error_color(&pal)));
                 }
-                ui.separator();
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(tr!("Restore defaults")).clicked() {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if flat_button(ui, tr!("Restore defaults"), true).clicked() {
                         self.draft = Settings::default();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(tr!("Cancel")).clicked() {
-                            result = Some(false);
-                        }
-                        if ui.button(RichText::new(tr!("Save")).strong()).clicked() {
+                        if primary_button(ui, tr!("Save"), true).clicked() {
                             result = Some(true);
+                        }
+                        if flat_button(ui, tr!("Cancel"), true).clicked() {
+                            result = Some(false);
                         }
                     });
                 });
@@ -859,23 +902,26 @@ impl FixWindow {
             self.bits.clone(),
         );
         egui::Window::new(tr!("Fix to real resolution")).id(egui::Id::unique("fix-window")).open(&mut open).collapsible(false).default_width(900.0).resizable(true).pivot(Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
-            ui.label(RichText::new(&self.head).strong().size(15.0));
-            ui.label(RichText::new(tr!(
-                "Each file is rewritten at the sample rate and bit depth it really contains, so its properties show the actual values (e.g. a fake 24/96 upsampled from a CD becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing audible is lost and it gets smaller. (Only editing the numbers in the file would make it play at the wrong speed, so the audio itself is converted.)"
-            )).color(hex(0x555555)));
-            ui.add_space(6.0);
+            let pal = pal(ui);
+            ui.label(window_heading(&self.head, &pal));
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(secondary(
+                tr!("Each file is rewritten at the sample rate and bit depth it really contains, so its properties show the actual values (e.g. a fake 24/96 upsampled from a CD becomes a genuine 16/44.1 file). It keeps its name, tags and cover art, nothing audible is lost and it gets smaller. (Only editing the numbers in the file would make it play at the wrong speed, so the audio itself is converted.)"),
+                &pal,
+            )).wrap());
+            ui.add_space(8.0);
             egui::ScrollArea::vertical().max_height(220.0).id_salt("fixrows").show(ui, |ui| {
-                egui::Grid::new("fixgrid").num_columns(4).striped(true).spacing([14.0, 3.0]).show(ui, |ui| {
+                egui::Grid::new("fixgrid").num_columns(4).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
                     for h in [tr!("File"), tr!("Claimed → real"), tr!("Status"), tr!("Result")] {
-                        ui.label(RichText::new(h).strong());
+                        ui.label(heading_text(h, &pal));
                     }
                     ui.end_row();
                     for r in &self.rows {
                         let color = match r.kind {
-                            RowKind::Skip => hex(0x888888),
-                            RowKind::Ok => hex(0x2e7d32),
-                            RowKind::Fail => hex(0xc62828),
-                            RowKind::Ready => ui.visuals().text_color(),
+                            RowKind::Skip => pal.secondary,
+                            RowKind::Ok => ok_color(&pal),
+                            RowKind::Fail => error_color(&pal),
+                            RowKind::Ready => pal.text,
                         };
                         ui.label(RichText::new(&r.name).color(color));
                         ui.label(RichText::new(&r.change).color(color));
@@ -888,75 +934,79 @@ impl FixWindow {
                     }
                 });
             });
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             let editable = !self.started;
             ui.add_enabled_ui(editable, |ui| {
-                egui::Grid::new("fixopts").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
-                    let combo = |ui: &mut egui::Ui, label: &str, id: &str, v: &mut String| {
-                        ui.label(label);
-                        // the values stay English; the menu shows them translated
-                        egui::ComboBox::from_id_salt(id).selected_text(i18n::tr(v)).width(330.0).show_ui(ui, |ui| {
-                            for c in choices(id) {
-                                ui.selectable_value(v, c.to_string(), i18n::tr(c));
-                            }
+                egui::Frame::new().fill(pal.lcd).corner_radius(10).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::Grid::new("fixopts").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        let combo = |ui: &mut egui::Ui, label: &str, id: &str, v: &mut String| {
+                            ui.label(label);
+                            // the values stay English; the menu shows them translated
+                            egui::ComboBox::from_id_salt(id).selected_text(i18n::tr(v)).width(330.0).show_ui(ui, |ui| {
+                                for c in choices(id) {
+                                    ui.selectable_value(v, c.to_string(), i18n::tr(c));
+                                }
+                            });
+                            ui.end_row();
+                        };
+                        combo(ui, tr!("Fix files by:"), "fix_output", &mut self.output);
+                        combo(ui, tr!("Original file:"), "fix_backup", &mut self.backup);
+                        let backup_folder = self.output.starts_with("Replace") && self.backup.starts_with("Move");
+                        ui.label(tr!("Backup folder:"));
+                        ui.add_enabled_ui(backup_folder, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut self.backup_dir).desired_width(300.0));
+                                if panel_button(ui, tr!("Browse…"), backup_folder).clicked() {
+                                    if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for backups of originals")).pick_folder() {
+                                        self.backup_dir = d.to_string_lossy().into_owned();
+                                    }
+                                }
+                            });
                         });
                         ui.end_row();
-                    };
-                    combo(ui, tr!("Fix files by:"), "fix_output", &mut self.output);
-                    combo(ui, tr!("Original file:"), "fix_backup", &mut self.backup);
-                    let backup_folder = self.output.starts_with("Replace") && self.backup.starts_with("Move");
-                    ui.label(tr!("Backup folder:"));
-                    ui.add_enabled_ui(backup_folder, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut self.backup_dir).desired_width(300.0));
-                            if ui.button(tr!("Browse…")).clicked() {
-                                if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for backups of originals")).pick_folder() {
-                                    self.backup_dir = d.to_string_lossy().into_owned();
+                        let into = self.output.ends_with("into a folder");
+                        ui.label(tr!("Copies folder:"));
+                        ui.add_enabled_ui(into, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut self.folder).desired_width(300.0));
+                                if panel_button(ui, tr!("Browse…"), into).clicked() {
+                                    if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for corrected copies")).pick_folder() {
+                                        self.folder = d.to_string_lossy().into_owned();
+                                    }
                                 }
-                            }
+                            });
                         });
+                        ui.end_row();
+                        combo(ui, tr!("Output format:"), "fix_format", &mut self.format);
+                        combo(ui, tr!("Target bit depth:"), "fix_bits", &mut self.bits);
+                        ui.label("");
+                        ui.checkbox(&mut self.verify, tr!("Re-check each fixed file"));
+                        ui.end_row();
+                        ui.label("");
+                        ui.label(RichText::new(tr!("Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never scanned).")).font(look::text(11.5)).color(pal.secondary));
+                        ui.end_row();
                     });
-                    ui.end_row();
-                    let into = self.output.ends_with("into a folder");
-                    ui.label(tr!("Copies folder:"));
-                    ui.add_enabled_ui(into, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut self.folder).desired_width(300.0));
-                            if ui.button(tr!("Browse…")).clicked() {
-                                if let Some(d) = rfd::FileDialog::new().set_title(tr!("Folder for corrected copies")).pick_folder() {
-                                    self.folder = d.to_string_lossy().into_owned();
-                                }
-                            }
-                        });
-                    });
-                    ui.end_row();
-                    combo(ui, tr!("Output format:"), "fix_format", &mut self.format);
-                    combo(ui, tr!("Target bit depth:"), "fix_bits", &mut self.bits);
-                    ui.label("");
-                    ui.checkbox(&mut self.verify, tr!("Re-check each fixed file"));
-                    ui.end_row();
-                    ui.label("");
-                    ui.label(RichText::new(tr!("Empty backup folder = a 'Real-Hi-Res backups' folder next to each file (never scanned).")).small().color(hex(0x777777)));
-                    ui.end_row();
                 });
             });
             if !self.note.is_empty() {
-                ui.add_space(6.0);
-                ui.label(RichText::new(&self.note).color(hex(0x9a6700)));
+                ui.add_space(8.0);
+                ui.add(egui::Label::new(RichText::new(&self.note).color(warn_color(&pal))).wrap());
             }
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let n = self.plans.len().max(1);
-                ui.add(egui::ProgressBar::new(self.done as f32 / n as f32).desired_width(200.0));
-                ui.label(&self.status);
+                progress(ui, self.done as f32 / n as f32, 200.0);
+                ui.label(RichText::new(&self.status).color(pal.text));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr!("Close")).clicked() {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if flat_button(ui, tr!("Close"), true).clicked() {
                         close = true;
                     }
-                    if ui.add_enabled(!self.plans.is_empty() && !self.started, egui::Button::new(RichText::new(tr!("Fix files")).strong())).clicked() {
+                    if primary_button(ui, tr!("Fix files"), !self.plans.is_empty() && !self.started).clicked() {
                         self.ask_start(app);
                     }
-                    if ui.add_enabled(!self.done_paths.is_empty(), egui::Button::new(tr!("Show in folder"))).clicked() {
+                    if flat_button(ui, tr!("Show in folder"), !self.done_paths.is_empty()).clicked() {
                         reveal_in_file_manager(&self.done_paths[0]);
                     }
                 });
@@ -1037,20 +1087,23 @@ impl FixDoneWindow {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::new(0.0, -60.0))
             .show(ctx, |ui| {
+                let pal = pal(ui);
                 ui.set_max_width(460.0);
-                let color = if self.failed || self.outputs.is_empty() { hex(0xa3122a) } else { hex(0x2e7d32) };
+                let color =
+                    if self.failed || self.outputs.is_empty() { on_page(hex(0xa3122a), &pal) } else { ok_color(&pal) };
                 // fix::done_summary()'s texts in the language in use
-                ui.label(RichText::new(tr_text(&self.headline)).strong().size(16.0).color(color));
+                ui.label(RichText::new(tr_text(&self.headline)).font(look::title(16.0)).color(color));
                 for (i, line) in self.lines.iter().enumerate() {
                     ui.add_space(if i == 0 { 8.0 } else { 4.0 });
-                    ui.add(egui::Label::new(tr_text(line)).wrap());
+                    ui.add(egui::Label::new(RichText::new(tr_text(line)).color(pal.text)).wrap());
                 }
-                ui.add_space(12.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr!("Close")).clicked() {
+                ui.add_space(14.0);
+                crate::style::buttons_right(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if primary_button(ui, tr!("Close"), true).clicked() {
                         close = true;
                     }
-                    if ui.add_enabled(!self.outputs.is_empty(), egui::Button::new(tr!("Show in folder"))).clicked() {
+                    if flat_button(ui, tr!("Show in folder"), !self.outputs.is_empty()).clicked() {
                         reveal_in_file_manager(&self.outputs[0]);
                     }
                 });

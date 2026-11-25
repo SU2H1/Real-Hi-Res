@@ -1787,6 +1787,1355 @@ null,
 ]
 }
 ],
+"user_ops": [
+"auto",
+"play_next:3,4",
+"add:7",
+"next",
+"play_next:9",
+"auto",
+"next",
+"prev",
+"next",
+"add:1,2,6",
+"jump:1",
+"next",
+"jump:3",
+"add:8",
+"set_shuffle:songs",
+"next",
+"next",
+"auto"
+],
+"user_runs": [
+{
+"shuffle": "off",
+"repeat": "off",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac"
+]
+]
+},
+{
+"shuffle": "off",
+"repeat": "song",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/1/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+]
+},
+{
+"shuffle": "off",
+"repeat": "album",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+[],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac"
+],
+null,
+[
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+]
+]
+},
+{
+"shuffle": "songs",
+"repeat": "off",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/1/04.flac",
+[
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+]
+},
+{
+"shuffle": "songs",
+"repeat": "song",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/1/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band A/1/02.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac"
+],
+"/m/Band A/1/02.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/02.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/03.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac"
+]
+]
+},
+{
+"shuffle": "songs",
+"repeat": "album",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+null,
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+]
+},
+{
+"shuffle": "album",
+"repeat": "off",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+null,
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+]
+]
+},
+{
+"shuffle": "album",
+"repeat": "song",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac"
+],
+"/m/Band A/1/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/02.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+]
+]
+},
+{
+"shuffle": "album",
+"repeat": "album",
+"seed": 11,
+"steps": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/04.flac",
+[
+"/m/Band B/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/02.flac",
+[
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/01.flac",
+[
+"/m/Band A/1/04.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+null,
+[
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/03.flac",
+[
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/1/03.flac",
+[
+"/m/Band B/0/01.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band B/0/01.flac",
+[
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+],
+"/m/Band A/0/02.flac",
+[
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+]
+}
+],
 "splitmix_2024": [
 "11487996472437173461",
 "1793612131670815442",

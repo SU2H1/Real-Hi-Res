@@ -16,6 +16,11 @@ pub const DEFAULT_PERIOD: &str = "This year";
 pub const TOP: usize = 100;
 pub const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 pub const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+pub const FULL_MONTHS: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
+];
+/// the calendar's tints: 1 (a little music) .. LEVELS (the month's busiest day)
+pub const LEVELS: u8 = 4;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Play {
@@ -37,13 +42,14 @@ pub fn counted(p: &Play) -> bool {
     p.seconds >= COUNTED_SECONDS.min(p.duration.max(2.0) / 2.0)
 }
 
-/// (year, month, day, hour, weekday with Monday = 0) of a Unix time.
+/// (year, month, day, hour, minute, weekday with Monday = 0) of a Unix time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocalParts {
     pub year: i32,
     pub month: u32,
     pub day: u32,
     pub hour: u32,
+    pub minute: u32,
     pub wday: u32,
 }
 
@@ -56,9 +62,10 @@ pub fn local_parts(ts: f64) -> LocalParts {
             month: t.month(),
             day: t.day(),
             hour: t.hour(),
+            minute: t.minute(),
             wday: t.weekday().num_days_from_monday(),
         },
-        None => LocalParts { year: 1970, month: 1, day: 1, hour: 0, wday: 3 },
+        None => LocalParts { year: 1970, month: 1, day: 1, hour: 0, minute: 0, wday: 3 },
     }
 }
 
@@ -300,6 +307,169 @@ pub fn cards(st: &Stats) -> Vec<(String, String, String)> {
     out
 }
 
+// ------------------------------------------------------------------ calendar ---
+
+/// The month `delta` months after (year, month).
+pub fn shift_month(year: i32, month: u32, delta: i32) -> (i32, u32) {
+    let n = year as i64 * 12 + (month as i64 - 1) + delta as i64;
+    (n.div_euclid(12) as i32, (n.rem_euclid(12) + 1) as u32)
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (ny, nm) = shift_month(year, month, 1);
+    match (chrono::NaiveDate::from_ymd_opt(year, month, 1), chrono::NaiveDate::from_ymd_opt(ny, nm, 1)) {
+        (Some(a), Some(b)) => (b - a).num_days() as u32,
+        _ => 0,
+    }
+}
+
+/// "November 2026".
+pub fn month_title(year: i32, month: u32) -> String {
+    format!("{} {year}", FULL_MONTHS[(month.clamp(1, 12) - 1) as usize])
+}
+
+/// "Tuesday 24 November 2026".
+pub fn day_title(year: i32, month: u32, day: u32) -> String {
+    let wday = chrono::NaiveDate::from_ymd_opt(year, month, day).map(|d| d.weekday().num_days_from_monday()).unwrap_or(0);
+    format!("{} {day} {} {year}", WEEKDAYS[wday as usize], FULL_MONTHS[(month.clamp(1, 12) - 1) as usize])
+}
+
+/// The weeks of a month as the calendar shows them, Monday first: the day
+/// numbers, 0 for the cells before the 1st and after the last day.
+pub fn month_grid(year: i32, month: u32) -> Vec<[u32; 7]> {
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1).map(|d| d.weekday().num_days_from_monday()).unwrap_or(0);
+    let mut cells: Vec<u32> = vec![0; first as usize];
+    cells.extend(1..=days_in_month(year, month));
+    while cells.len() % 7 != 0 {
+        cells.push(0);
+    }
+    cells.chunks(7).map(|w| [w[0], w[1], w[2], w[3], w[4], w[5], w[6]]).collect()
+}
+
+/// The Unix time of a day's local midnight (Python `time.mktime`; a midnight
+/// that a clock change skips is taken with the offset before the change).
+pub fn local_midnight(year: i32, month: u32, day: u32) -> f64 {
+    let Some(ndt) = chrono::NaiveDate::from_ymd_opt(year, month, day).and_then(|d| d.and_hms_opt(0, 0, 0)) else {
+        return 0.0;
+    };
+    if let Some(t) = Local.from_local_datetime(&ndt).earliest() {
+        return t.timestamp() as f64;
+    }
+    let before = ndt - chrono::Duration::hours(1);
+    Local.from_local_datetime(&before).earliest().map(|t| t.timestamp() as f64 + 3600.0).unwrap_or(0.0)
+}
+
+/// [start, end) of a month in Unix time: the local midnights of its 1st and of the next month's.
+pub fn month_bounds(year: i32, month: u32) -> (f64, f64) {
+    let (ny, nm) = shift_month(year, month, 1);
+    (local_midnight(year, month, 1), local_midnight(ny, nm, 1))
+}
+
+/// [start, end) of a day in Unix time: its local midnight and the next one.
+pub fn day_bounds(year: i32, month: u32, day: u32) -> (f64, f64) {
+    let next = chrono::NaiveDate::from_ymd_opt(year, month, day).and_then(|d| d.succ_opt());
+    let end = next.map(|n| local_midnight(n.year(), n.month(), n.day())).unwrap_or(0.0);
+    (local_midnight(year, month, day), end)
+}
+
+/// The minutes listened on each day of the month (index 0 is the 1st), by the
+/// local day each play started on; plays of other months are left out.
+pub fn month_minutes(plays: &[Play], year: i32, month: u32, local: &dyn Fn(f64) -> LocalParts) -> Vec<f64> {
+    let mut out = vec![0.0; days_in_month(year, month) as usize];
+    for p in plays {
+        let lp = local(p.started);
+        if (lp.year, lp.month) == (year, month) && (1..=out.len()).contains(&(lp.day as usize)) {
+            out[lp.day as usize - 1] += p.seconds / 60.0;
+        }
+    }
+    out
+}
+
+/// The calendar's tint of each day: 0 without music, else 1..LEVELS by its
+/// minutes against the month's busiest day.
+pub fn month_levels(minutes: &[f64]) -> Vec<u8> {
+    let top = minutes.iter().copied().fold(0.0f64, f64::max);
+    minutes
+        .iter()
+        .map(|&m| if m <= 0.0 || top <= 0.0 { 0 } else { (LEVELS as f64 * m / top).ceil().clamp(1.0, LEVELS as f64) as u8 })
+        .collect()
+}
+
+/// How long a play was heard, for the calendar's list: "<1 min", "1 min", "1,234 min".
+pub fn minutes_label(seconds: f64) -> String {
+    let m = whole(seconds / 60.0);
+    if m < 1 {
+        "<1 min".to_string()
+    } else {
+        format!("{} min", thousands(m))
+    }
+}
+
+/// One play in the calendar's list of a day.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DayPlay {
+    pub path: String,
+    pub started: f64,
+    /// the local time it started, "14:05"
+    pub time: String,
+    pub title: String,
+    pub artist: String,
+    pub seconds: f64,
+    /// `minutes_label(seconds)`
+    pub minutes: String,
+}
+
+impl DayPlay {
+    /// The same JSON as Python's `day_plays()` rows (for the comparison test).
+    pub fn to_json(&self) -> Value {
+        ObjectBuilder::new()
+            .put("path", self.path.as_str())
+            .put("started", self.started)
+            .put("time", self.time.as_str())
+            .put("title", self.title.as_str())
+            .put("artist", self.artist.as_str())
+            .put("seconds", self.seconds)
+            .put("minutes", self.minutes.as_str())
+            .build()
+    }
+}
+
+/// The plays that started on one local day, newest first, as the calendar
+/// lists them: the local time ("14:05"), title, artist and minutes heard.
+pub fn day_plays(plays: &[Play], year: i32, month: u32, day: u32, local: &dyn Fn(f64) -> LocalParts) -> Vec<DayPlay> {
+    let mut rows: Vec<DayPlay> = plays
+        .iter()
+        .filter_map(|p| {
+            let lp = local(p.started);
+            if (lp.year, lp.month, lp.day) != (year, month, day) {
+                return None;
+            }
+            let title = strip(&p.title);
+            let artist = [strip(&p.artist), strip(&p.album_artist)].into_iter().find(|a| !a.is_empty());
+            Some(DayPlay {
+                path: p.path.clone(),
+                started: p.started,
+                time: format!("{:02}:{:02}", lp.hour, lp.minute),
+                title: if title.is_empty() { crate::paths::stem(&p.path) } else { title.to_string() },
+                artist: artist.unwrap_or("Unknown Artist").to_string(),
+                seconds: p.seconds,
+                minutes: minutes_label(p.seconds),
+            })
+        })
+        .collect();
+    rows.reverse(); // the plays come oldest first
+    rows
+}
+
+/// "3 songs played, 42 minutes" under the day's title; "No music on this day." without plays.
+pub fn day_summary(rows: &[DayPlay]) -> String {
+    if rows.is_empty() {
+        return "No music on this day.".to_string();
+    }
+    let secs: f64 = rows.iter().map(|r| r.seconds).sum();
+    format!("{} played, {}", plural(rows.len() as i64, "song"), plural(whole(secs / 60.0), "minute"))
+}
+
 /// What the library holds (Python `library_stats`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LibraryStats {
@@ -420,5 +590,30 @@ impl Stats {
             .put("first", self.first.map(Value::Float).unwrap_or(Value::Null))
             .put("last", self.last.map(Value::Float).unwrap_or(Value::Null))
             .build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calendar_bounds_are_local_midnights() {
+        for (y, m, d) in [(2026, 11, 24), (2024, 2, 29), (2023, 12, 31), (2026, 3, 29), (2026, 10, 25)] {
+            let (start, end) = day_bounds(y, m, d);
+            let a = local_parts(start);
+            assert_eq!((a.year, a.month, a.day, a.minute), (y, m, d, 0), "{y}-{m}-{d}");
+            let b = local_parts(end - 1.0);
+            assert_eq!((b.year, b.month, b.day), (y, m, d), "the last second of {y}-{m}-{d}");
+            assert!((82_800.0..=90_000.0).contains(&(end - start)), "{y}-{m}-{d}: {}", end - start);
+        }
+        let (start, end) = month_bounds(2026, 12);
+        assert_eq!(start, day_bounds(2026, 12, 1).0);
+        assert_eq!(end, day_bounds(2027, 1, 1).0);
+        assert_eq!(month_grid(2026, 11).len(), 6);
+        assert_eq!(
+            month_grid(2021, 2),
+            vec![[1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20, 21], [22, 23, 24, 25, 26, 27, 28]]
+        );
     }
 }

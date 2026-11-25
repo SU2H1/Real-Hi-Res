@@ -20,6 +20,15 @@ through miniaudio (https://github.com/irmen/pyminiaudio), which plays them.
   as they are handed to the device, after the equalizer.
 * The position counts the frames handed to the device since the song started
   (not the frames decoded), so the seek bar and the lyrics follow what is heard.
+* Bit-perfect playback (``set_bit_perfect()``, 2.1): FFmpeg decodes without
+  ``-ar`` and without filters (only ``pan`` copies a mono song to both
+  channels), the gain is exactly 1 and the equalizer is bypassed, and the device
+  is opened at the song's rate in the format ``bitperfect.plan()`` picks from
+  what it offers, through WASAPI exclusive mode (Windows), the ALSA hardware
+  device (Linux) or with its nominal rate switched to the song's (macOS).  The
+  floats are turned into the device's integers exactly (``device_samples()``).
+  When the device cannot be had, the song plays through the normal path, and
+  ``output_info()["bit_perfect"]`` says why.
 
 Nothing here touches Tk: the desktop app polls ``poll()`` for events
 ("advanced", "finished", "error") and ``position()`` for the seek bar.  The
@@ -35,6 +44,7 @@ import collections
 import math
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -42,6 +52,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from . import bitperfect as bp
 from . import eq as eq_mod
 from .probe import _no_window, tool
 
@@ -108,6 +119,13 @@ class SongInfo:
     rate: int
     channels: int = 2
     duration: float = 0.0
+    bits: int = 0              # bits per sample of the file (0: unknown or lossy)
+    is_float: bool = False
+    is_lossy: bool = False
+
+    def song(self) -> bp.Song:
+        """What the bit-perfect decision needs."""
+        return bp.Song(self.rate, self.channels, self.bits, self.is_float, self.is_lossy)
 
 
 def song_info(path: str) -> SongInfo:
@@ -122,7 +140,8 @@ def song_info(path: str) -> SongInfo:
         raise PlayerError(f"The file {os.path.basename(path)} could not be read: {_first_line(str(exc))}") from exc
     if not info.sample_rate:
         raise PlayerError(f"The file {os.path.basename(path)} has no audio that can be played.")
-    return SongInfo(path, int(info.sample_rate), int(info.channels or 2), float(info.duration or 0.0))
+    return SongInfo(path, int(info.sample_rate), int(info.channels or 2), float(info.duration or 0.0),
+                    int(info.claimed_bits or 0), bool(info.is_float), bool(info.is_lossy))
 
 
 def _first_line(text: str) -> str:
@@ -147,9 +166,10 @@ def filter_chain(info: SongInfo, out_rate: int, eq_state: Optional[dict]) -> Opt
 
 
 def decode_command(path: str, start: float, out_rate: int, chain: Optional[str],
-                   slow_seek: bool = False) -> List[str]:
+                   slow_seek: bool = False, native: bool = False) -> List[str]:
     """`slow_seek` decodes from the beginning and drops the audio before `start`, for
-    files FFmpeg cannot seek in (short FLAC files without a seek table give nothing)."""
+    files FFmpeg cannot seek in (short FLAC files without a seek table give nothing).
+    `native` (bit-perfect at the song's own rate): no `-ar`, the samples as they are."""
     cmd = [tool("ffmpeg"), "-nostdin", "-v", "error"]
     if start > 0 and not slow_seek:
         cmd += ["-ss", f"{start:.6f}"]
@@ -159,19 +179,45 @@ def decode_command(path: str, start: float, out_rate: int, chain: Optional[str],
     cmd += ["-map", "0:a:0", "-vn"]
     if chain:
         cmd += ["-af", chain]
-    return cmd + ["-f", "f32le", "-ac", str(CHANNELS), "-ar", str(out_rate), "pipe:1"]
+    cmd += ["-f", "f32le", "-ac", str(CHANNELS)]
+    return cmd + (["pipe:1"] if native else ["-ar", str(out_rate), "pipe:1"])
+
+
+def device_samples(block: np.ndarray, fmt: str, channels: int = CHANNELS) -> np.ndarray:
+    """Float32 stereo frames as the device gets them: float32 for F32, else the integers
+    round(x * 2^(bits - 1)), clamped (int16 for I16, int32 for I24 and I32), with silent
+    extra channels when the device has more than two (as `bitperfect.int_sample()`)."""
+    if channels > block.shape[1]:
+        wide = np.zeros((len(block), channels), np.float32)
+        wide[:, :block.shape[1]] = block
+        block = wide
+    if fmt == bp.F32:
+        return np.ascontiguousarray(block, np.float32)
+    top = float(1 << (bp.CONTAINER_BITS[fmt] - 1))
+    v = np.clip(block.astype(np.float64) * top, -top, top - 1.0)
+    v = np.rint(np.nan_to_num(v, nan=0.0))           # rint rounds halves to even, as round()
+    return v.astype(np.int16 if fmt == bp.I16 else np.int32)
+
+
+def device_bytes(samples: np.ndarray, fmt: str) -> bytes:
+    """`device_samples()` as the little-endian bytes of the format (I24: 3 bytes each)."""
+    if fmt == bp.I24:
+        return samples.astype("<i4").reshape(-1).view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+    if fmt == bp.I16:
+        return samples.astype("<i2").tobytes()
+    return samples.astype("<i4" if fmt == bp.I32 else "<f4").tobytes()
 
 
 class _Decoder:
     """One FFmpeg process decoding one song from `start`."""
 
     def __init__(self, info: SongInfo, start: float, out_rate: int, chain: Optional[str],
-                 slow_seek: bool = False):
+                 slow_seek: bool = False, native: bool = False):
         self.info, self.start, self.rate, self.chain = info, start, out_rate, chain
-        self.slow_seek = slow_seek
+        self.slow_seek, self.native = slow_seek, native
         self.frames = 0
         self._rest = b""
-        self.proc = subprocess.Popen(decode_command(info.path, start, out_rate, chain, slow_seek),
+        self.proc = subprocess.Popen(decode_command(info.path, start, out_rate, chain, slow_seek, native),
                                      stdin=subprocess.DEVNULL,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_no_window())
         self._err: List[bytes] = []
@@ -243,9 +289,37 @@ class DeviceInfo:
     rates: List[int] = field(default_factory=list)  # sample rates it runs at natively; [] or 0 = any
 
 
+@dataclass
+class Exclusive:
+    """How bit-perfect playback reaches a device: `access` (bitperfect.WASAPI, ALSA,
+    COREAUDIO or DIRECT), `label` (the ALSA device "hw:0", else the device's name), what
+    it offers (`modes`, [] = anything) and `error` (why it cannot be had for this app
+    alone, a full sentence; the song then plays through the normal path)."""
+    access: str
+    label: str = ""
+    modes: List[bp.Mode] = field(default_factory=list)
+    error: str = ""
+    target: object = None      # what open() needs to reach it (backend specific)
+    note: str = ""             # added to the reasons when the song is not played as it is
+
+
+class OpenError(PlayerError):
+    """The device could not be opened; `busy`: another program holds it."""
+
+    def __init__(self, message: str, busy: bool = False, detail: str = ""):
+        super().__init__(message)
+        self.busy, self.detail = busy, detail
+
+    def reason(self) -> str:
+        return bp.BUSY if self.busy else bp.failure_reason(self.detail)
+
+
 class Output:
     """Where the frames go.  `open()` starts pulling: the device calls
-    `callback(n)` whenever it needs n frames (float32, shape (m, 2), m <= n)."""
+    `callback(n)` whenever it needs n frames (float32, shape (m, 2), m <= n).
+    `fmt`/`channels`: what the device is opened with (bit-perfect playback; the
+    output turns the floats into it with `device_samples()`); `exclusive`: the
+    `Exclusive` that `exclusive()` returned, for bit-perfect access, or None."""
 
     name = ""
     backend = ""
@@ -282,8 +356,13 @@ class Output:
             return song_rate
         return self.native_rate(dev)
 
+    def exclusive(self, device: str) -> Exclusive:
+        """How bit-perfect playback reaches `device` and what it offers there."""
+        return Exclusive(bp.DIRECT, self.device_for(device).name if device else (self.name or "System default"))
+
     def open(self, device: str, rate: int, callback: Callable[[int], np.ndarray],
-             ready: Optional[Callable[[int, float], None]] = None) -> None:
+             ready: Optional[Callable[[int, float], None]] = None, fmt: str = bp.F32, channels: int = CHANNELS,
+             exclusive: Optional[Exclusive] = None) -> None:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -299,6 +378,74 @@ def _miniaudio():
     return miniaudio
 
 
+# miniaudio's result codes that the bit-perfect fallback explains
+_MA_BUSY, _MA_FORMAT_NOT_SUPPORTED, _MA_SHARE_MODE_NOT_SUPPORTED = -19, -200, -202
+
+
+def _ma_formats(ma) -> Dict[str, object]:
+    return {bp.I16: ma.SampleFormat.SIGNED16, bp.I24: ma.SampleFormat.SIGNED24, bp.I32: ma.SampleFormat.SIGNED32,
+            bp.F32: ma.SampleFormat.FLOAT32}
+
+
+def _ma_code(exc: Exception) -> int:
+    for a in getattr(exc, "args", ())[1:]:
+        if isinstance(a, int):
+            return a
+    return 0
+
+
+def _ma_open_error(exc: Exception, what: str) -> OpenError:
+    code = _ma_code(exc)
+    detail = {_MA_SHARE_MODE_NOT_SUPPORTED: "the system does not allow exclusive use of it",
+              _MA_FORMAT_NOT_SUPPORTED: "it does not take that format"}.get(code, f"{exc}")
+    return OpenError(f"{what} ({exc}).", busy=code == _MA_BUSY, detail=detail)
+
+
+def _miniaudio_device(ma, fmt: str, channels: int, rate: int, device_id, backends, exclusive: bool,
+                      alsa_name: str = ""):
+    """A miniaudio playback device built like miniaudio.PlaybackDevice, but with the
+    settings bit-perfect playback needs: exclusive share mode, and an ALSA device name
+    used as it is ("hw:0,0", which miniaudio opens without dmix or plug).  Raises
+    MiniaudioError."""
+    ffi, lib = ma.ffi, ma.lib
+
+    class Device(ma.PlaybackDevice):
+        def __init__(self):  # noqa: D401 - pyminiaudio 1.73's PlaybackDevice.__init__, plus share mode
+            ma.AbstractDevice.__init__(self)
+            self.format = _ma_formats(ma)[fmt]
+            self.sample_width = ma.width_from_format(self.format)
+            self.nchannels, self.sample_rate, self.buffersize_msec = channels, rate, PERIOD_MS
+            self._ffi_handle = ffi.new_handle(self)
+            cfg = self._devconfig = lib.ma_device_config_init(lib.ma_device_type_playback)
+            cfg.sampleRate = rate
+            cfg.playback.channels = channels
+            cfg.playback.format = self.format.value
+            self._id = device_id
+            if alsa_name:
+                self._id = ffi.new("ma_device_id *")
+                name = alsa_name.encode("ascii")[:200] + b"\0"
+                ffi.memmove(self._id, name, len(name))  # the union's ALSA member: char[256] at offset 0
+            cfg.playback.pDeviceID = self._id or ffi.NULL
+            if exclusive:
+                cfg.playback.shareMode = lib.ma_share_mode_exclusive
+            cfg.noClip = 1
+            cfg.wasapi.noAutoConvertSRC = 1
+            cfg.alsa.noAutoFormat = cfg.alsa.noAutoChannels = cfg.alsa.noAutoResample = 1
+            cfg.periodSizeInMilliseconds = PERIOD_MS
+            cfg.pUserData = self._ffi_handle
+            cfg.dataCallback = lib._internal_data_callback
+            cfg.stopCallback = lib._internal_stop_callback
+            cfg.periods = 0
+            self.callback_generator = None
+            self._context = self._make_context(backends or [], ma.ThreadPriority.HIGHEST, "Real-Hi-Res")
+            result = lib.ma_device_init(self._context, ffi.addressof(cfg), self._device)
+            if result != lib.MA_SUCCESS:
+                raise ma.MiniaudioError("failed to init device", result)
+            self.backend = ffi.string(lib.ma_get_backend_name(self._device.pContext.backend)).decode()
+
+    return Device()
+
+
 class MiniaudioOutput(Output):
     """A sound device through miniaudio.  `backends` = None: the system's real sound
     systems in miniaudio's order of preference (never the silent NULL backend, unless
@@ -308,6 +455,8 @@ class MiniaudioOutput(Output):
         self._backends = backends
         self._device = None
         self._dev_cache: Optional[Tuple[float, List[DeviceInfo]]] = None
+        self._ex_cache: Optional[Tuple[str, Exclusive]] = None
+        self._ex_open = False
         self.name = ""
         self.backend = ""
 
@@ -347,16 +496,85 @@ class MiniaudioOutput(Output):
         self._dev_cache = (now, out)
         return out
 
-    def open(self, device, rate, callback, ready=None) -> None:
+    # ---- bit-perfect access ---------------------------------------------
+    def exclusive(self, device: str) -> Exclusive:
+        """What bit-perfect playback gets on this system: WASAPI exclusive mode, the ALSA
+        hardware device, or the device switched to the song's rate (CoreAudio).  The
+        answer for the device open now is reused (probing would find it busy)."""
+        if self._ex_open and self._ex_cache is not None and self._ex_cache[0] == device:
+            return self._ex_cache[1]
+        try:
+            ma = _miniaudio()
+            backends = self.backends()
+            if backends == [ma.Backend.NULL]:
+                ex = Exclusive(bp.DIRECT, "NULL Playback Device", [], target=("null", None))
+            elif sys.platform.startswith("win") and ma.Backend.WASAPI in backends:
+                ex = self._wasapi(ma, device)
+            elif sys.platform == "darwin":
+                ex = _coreaudio_exclusive(device)
+            elif sys.platform.startswith("linux") and ma.Backend.ALSA in ma.get_enabled_backends():
+                ex = _alsa_exclusive(device)
+            else:
+                ex = Exclusive(bp.DIRECT, device or "System default",
+                               error=bp.failure_reason("this system has no way to do that"))
+        except PlayerError as exc:
+            ex = Exclusive(bp.DIRECT, device or "System default", error=bp.failure_reason(str(exc)))
+        except Exception as exc:  # noqa: BLE001 - a backend that cannot be asked: play the normal way
+            ex = Exclusive(bp.DIRECT, device or "System default", error=bp.failure_reason(str(exc)))
+        self._ex_cache = (device, ex)
+        return ex
+
+    def _wasapi(self, ma, device: str) -> Exclusive:
+        """WASAPI exclusive mode: miniaudio 0.11 opens an exclusive stream in the format
+        Windows' Sound settings set for the device (its "Default Format"), which is the one
+        format it lists with the exclusive-mode flag."""
+        ffi, lib = ma.ffi, ma.lib
+        dev = self.device_for(device)
+        ctx = ma.Devices(backends=[ma.Backend.WASAPI])
+        info = ffi.new("ma_device_info *")
+        res = lib.ma_context_get_device_info(ctx._context, lib.ma_device_type_playback, dev.id or ffi.NULL, info)
+        del ctx
+        if res != lib.MA_SUCCESS:
+            raise PlayerError(f"Windows could not describe the device (miniaudio error {res})")
+        names = {int(lib.ma_format_s16): bp.I16, int(lib.ma_format_s24): bp.I24, int(lib.ma_format_s32): bp.I32,
+                 int(lib.ma_format_f32): bp.F32}
+        modes = []
+        for k in range(info.nativeDataFormatCount):
+            nd = info.nativeDataFormats[k]
+            if nd.flags & 2 and int(nd.format) in names and nd.sampleRate:  # MA_DATA_FORMAT_FLAG_EXCLUSIVE_MODE
+                modes.append(bp.Mode(names[int(nd.format)], int(nd.sampleRate), int(nd.sampleRate), int(nd.channels)))
+        name = dev.name if device or dev.default else "System default"
+        if not modes:
+            return Exclusive(bp.WASAPI, name, error=bp.failure_reason("Windows offers no exclusive-mode format for it"))
+        return Exclusive(bp.WASAPI, name, modes, target=("wasapi", dev.id if device else None),
+                         note=bp.WASAPI_FORMAT_NOTE)
+
+    # ---- playing -----------------------------------------------------------
+    def open(self, device, rate, callback, ready=None, fmt=bp.F32, channels=CHANNELS, exclusive=None) -> None:
         ma = _miniaudio()
         self.close()
         dev = self.device_for(device)
+        target = exclusive.target if exclusive is not None else None
         try:
-            d = ma.PlaybackDevice(output_format=ma.SampleFormat.FLOAT32, nchannels=CHANNELS, sample_rate=rate,
-                                  buffersize_msec=PERIOD_MS, device_id=dev.id if device else None,
-                                  backends=self.backends(), app_name="Real-Hi-Res")
+            if target is None:
+                d = ma.PlaybackDevice(output_format=_ma_formats(ma)[fmt], nchannels=channels, sample_rate=rate,
+                                      buffersize_msec=PERIOD_MS, device_id=dev.id if device else None,
+                                      backends=self.backends(), app_name="Real-Hi-Res")
+            elif target[0] == "wasapi":
+                d = _miniaudio_device(ma, fmt, channels, rate, target[1], [ma.Backend.WASAPI], True)
+            elif target[0] == "alsa":
+                d = _miniaudio_device(ma, fmt, channels, rate, None, [ma.Backend.ALSA], True, alsa_name=target[1])
+            elif target[0] == "coreaudio":
+                target[1].set_rate(rate)  # raises OpenError
+                d = _miniaudio_device(ma, fmt, channels, rate, dev.id if device else None, [ma.Backend.COREAUDIO],
+                                     False)
+            else:  # the NULL backend: nothing in between
+                d = _miniaudio_device(ma, fmt, channels, rate, None, self.backends(), False)
+        except OpenError:
+            raise
         except Exception as exc:  # noqa: BLE001 - MiniaudioError: no device, busy device...
-            raise PlayerError(f"No sound output device could be opened ({exc}).") from exc
+            raise _ma_open_error(exc, "No sound output device could be opened") from exc
+        width = channels
 
         def frames():
             n = yield b""
@@ -366,7 +584,7 @@ class MiniaudioOutput(Output):
                     pad = np.zeros((n, CHANNELS), np.float32)
                     pad[:len(block)] = block
                     block = pad
-                n = yield np.ascontiguousarray(block, np.float32).tobytes()
+                n = yield device_bytes(device_samples(block, fmt, width), fmt)
 
         gen = frames()
         next(gen)
@@ -374,13 +592,18 @@ class MiniaudioOutput(Output):
             d.start(gen)
         except Exception as exc:  # noqa: BLE001
             d.close()
-            raise PlayerError(f"The sound output device could not be started ({exc}).") from exc
+            raise _ma_open_error(exc, "The sound output device could not be started") from exc
         self._device = d
-        self.name = dev.name if device else (dev.name if dev.default else "System default")
+        self._ex_open = exclusive is not None
+        if exclusive is not None:
+            self.name = exclusive.label
+        else:
+            self.name = dev.name if device else (dev.name if dev.default else "System default")
         self.backend = d.backend
 
     def close(self) -> None:
         d, self._device = self._device, None
+        self._ex_open = False
         if d is not None:
             try:
                 d.close()
@@ -388,18 +611,194 @@ class MiniaudioOutput(Output):
                 pass
 
 
+# ---------------------------------------------- bit-perfect: ALSA and macOS ---
+_ALSA_FORMATS = ((bp.I16, 2), (bp.I24, 32), (bp.I32, 10), (bp.F32, 14))  # S16_LE, S24_3LE, S32_LE, FLOAT_LE
+_EBUSY = 16
+
+
+def _alsa_exclusive(device: str) -> Exclusive:
+    """The ALSA hardware device of the chosen output's card (or card 0), and the
+    formats and rates it takes in stereo (asked of libasound directly, because
+    miniaudio describes "hw:" devices only through dmix)."""
+    import ctypes
+    import ctypes.util
+
+    try:
+        with open("/proc/asound/cards", encoding="utf-8", errors="replace") as fh:
+            cards = bp.alsa_cards(fh.read())
+    except OSError:
+        cards = []
+    hw = bp.alsa_device(device, cards)
+    try:
+        lib = ctypes.CDLL(ctypes.util.find_library("asound") or "libasound.so.2")
+    except OSError:
+        return Exclusive(bp.ALSA, hw, error=bp.failure_reason("the ALSA library is missing"))
+    lib.snd_strerror.restype = ctypes.c_char_p
+    lib.snd_pcm_hw_params_sizeof.restype = ctypes.c_size_t
+    pcm = ctypes.c_void_p()
+    res = lib.snd_pcm_open(ctypes.byref(pcm), hw.encode("ascii"), 0, 1)  # PLAYBACK, NONBLOCK
+    if res < 0:
+        if -res == _EBUSY:
+            return Exclusive(bp.ALSA, hw, error=bp.BUSY)
+        return Exclusive(bp.ALSA, hw, error=bp.failure_reason(
+            f"ALSA: {(lib.snd_strerror(res) or b'error').decode('utf-8', 'replace')}"))
+    modes: List[bp.Mode] = []
+    try:
+        params = ctypes.create_string_buffer(int(lib.snd_pcm_hw_params_sizeof()) + 64)
+        lo, hi = ctypes.c_uint(), ctypes.c_uint()
+        for fmt, code in _ALSA_FORMATS:
+            if lib.snd_pcm_hw_params_any(pcm, params) < 0 or lib.snd_pcm_hw_params_test_format(pcm, params, code):
+                continue
+            lib.snd_pcm_hw_params_set_format(pcm, params, code)
+            channels = 2
+            if lib.snd_pcm_hw_params_test_channels(pcm, params, ctypes.c_uint(2)):
+                lib.snd_pcm_hw_params_get_channels_min(params, ctypes.byref(lo))
+                lib.snd_pcm_hw_params_get_channels_max(params, ctypes.byref(hi))
+                if hi.value < 2:
+                    continue
+                channels = max(lo.value, 2)
+            lib.snd_pcm_hw_params_set_channels(pcm, params, ctypes.c_uint(channels))
+            for r in bp.STANDARD_RATES:
+                if lib.snd_pcm_hw_params_test_rate(pcm, params, ctypes.c_uint(r), 0) == 0:
+                    modes.append(bp.Mode(fmt, r, r, channels))
+    finally:
+        lib.snd_pcm_close(pcm)
+    if not modes:
+        return Exclusive(bp.ALSA, hw, error=bp.failure_reason("it takes no stereo format this player writes"))
+    return Exclusive(bp.ALSA, hw, modes, target=("alsa", hw))
+
+
+class _CoreAudioDevice:
+    """A macOS output device through CoreAudio (ctypes): its available nominal sample
+    rates, and setting the nominal rate (what miniaudio leaves alone unless asked)."""
+
+    def __init__(self, name: str):
+        import ctypes
+        import ctypes.util
+
+        self.ct = ctypes
+        self.ca = ctypes.CDLL(ctypes.util.find_library("CoreAudio") or
+                              "/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+        self.cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation") or
+                              "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        self.ca.AudioObjectGetPropertyData.restype = ctypes.c_int32
+        self.ca.AudioObjectGetPropertyDataSize.restype = ctypes.c_int32
+        self.ca.AudioObjectSetPropertyData.restype = ctypes.c_int32
+        self.cf.CFStringGetCString.restype = ctypes.c_bool
+        self.cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+        self.cf.CFRelease.argtypes = [ctypes.c_void_p]
+        self.device = self._find(name)
+        if not self.device:
+            raise PlayerError(f"CoreAudio has no output device {name!r}" if name else "CoreAudio has no output device")
+
+    def _addr(self, selector: str, scope: str = "glob"):
+        ct = self.ct
+
+        class Address(ct.Structure):
+            _fields_ = [("mSelector", ct.c_uint32), ("mScope", ct.c_uint32), ("mElement", ct.c_uint32)]
+
+        def four(code: str) -> int:
+            return int.from_bytes(code.encode("ascii"), "big")
+        return Address(four(selector), four(scope), 0)  # kAudioObjectPropertyElementMain
+
+    def _get(self, obj: int, selector: str, ctype, count: int = 1, scope: str = "glob"):
+        ct = self.ct
+        addr = self._addr(selector, scope)
+        if count < 0:  # as many as there are
+            size = ct.c_uint32(0)
+            if self.ca.AudioObjectGetPropertyDataSize(ct.c_uint32(obj), ct.byref(addr), 0, None, ct.byref(size)):
+                return []
+            count = size.value // ct.sizeof(ctype)
+        buf = (ctype * max(count, 1))()
+        size = ct.c_uint32(ct.sizeof(ctype) * count)
+        if self.ca.AudioObjectGetPropertyData(ct.c_uint32(obj), ct.byref(addr), 0, None, ct.byref(size), buf):
+            return []
+        return list(buf)[:size.value // ct.sizeof(ctype)]
+
+    def _name(self, obj: int) -> str:
+        ct = self.ct
+        ref = self._get(obj, "lnam", ct.c_void_p)  # kAudioObjectPropertyName (a CFStringRef)
+        if not ref or not ref[0]:
+            return ""
+        buf = ct.create_string_buffer(1024)
+        ok = self.cf.CFStringGetCString(ref[0], buf, 1024, 0x08000100)  # kCFStringEncodingUTF8
+        self.cf.CFRelease(ref[0])
+        return buf.value.decode("utf-8", "replace") if ok else ""
+
+    def _find(self, name: str) -> int:
+        ct = self.ct
+        if name:
+            for obj in self._get(1, "dev#", ct.c_uint32, -1):  # kAudioObjectSystemObject, kAudioHardwarePropertyDevices
+                if self._name(obj) == name and self._get(obj, "stm#", ct.c_uint32, -1, "outp"):
+                    return int(obj)
+        dev = self._get(1, "dOut", ct.c_uint32)  # kAudioHardwarePropertyDefaultOutputDevice
+        return int(dev[0]) if dev else 0
+
+    def rates(self) -> List[Tuple[int, int]]:
+        ct = self.ct
+
+        class Range(ct.Structure):
+            _fields_ = [("mMinimum", ct.c_double), ("mMaximum", ct.c_double)]
+        ranges = self._get(self.device, "nsr#", Range, -1)  # kAudioDevicePropertyAvailableNominalSampleRates
+        return [(int(round(r.mMinimum)), int(round(r.mMaximum))) for r in ranges if r.mMaximum >= r.mMinimum > 0]
+
+    def rate(self) -> float:
+        got = self._get(self.device, "nsrt", self.ct.c_double)  # kAudioDevicePropertyNominalSampleRate
+        return float(got[0]) if got else 0.0
+
+    def set_rate(self, rate: int) -> None:
+        """Switch the device to `rate` and wait (up to 2 s) until it runs at it."""
+        ct = self.ct
+        if abs(self.rate() - rate) < 1:
+            return
+        value = ct.c_double(float(rate))
+        addr = self._addr("nsrt")
+        status = self.ca.AudioObjectSetPropertyData(ct.c_uint32(self.device), ct.byref(addr), 0, None,
+                                                    ct.sizeof(value), ct.byref(value))
+        if status:
+            raise OpenError(f"CoreAudio could not switch the device to {bp.fmt_khz(rate)} (error {status}).",
+                            detail=f"CoreAudio could not switch it to {bp.fmt_khz(rate)}")
+        end = time.monotonic() + 2.0
+        while time.monotonic() < end and abs(self.rate() - rate) >= 1:
+            time.sleep(0.02)
+        if abs(self.rate() - rate) >= 1:
+            raise OpenError(f"The device did not switch to {bp.fmt_khz(rate)}.",
+                            detail=f"it did not switch to {bp.fmt_khz(rate)}")
+
+
+def _coreaudio_exclusive(device: str) -> Exclusive:
+    """macOS: the device is switched to the song's rate (its nominal sample rate), so
+    CoreAudio does not resample; the samples go to it as 32-bit floats."""
+    dev = _CoreAudioDevice(device)
+    modes = [bp.Mode(bp.F32, lo, hi, 0) for lo, hi in dev.rates()]
+    label = device or dev._name(dev.device) or "System default"
+    if not modes:
+        return Exclusive(bp.COREAUDIO, label, error=bp.failure_reason("CoreAudio lists no sample rate for it"))
+    return Exclusive(bp.COREAUDIO, label, modes, target=("coreaudio", dev))
+
+
 class ManualOutput(Output):
     """A pretend device for tests: nothing plays until `pull(n)` asks for frames.
-    `rates` are the rates it accepts (empty: any), like a device's native formats."""
+    `rates` are the rates it accepts (empty: any), like a device's native formats;
+    `formats` the sample formats it takes for bit-perfect playback (empty: any);
+    `busy`: another program holds it, so bit-perfect playback cannot have it.  `pull()`
+    returns what the device gets: float32 frames, or the integers of `fmt`."""
 
     realtime = False
 
-    def __init__(self, rates: Optional[List[int]] = None, name: str = "Test output"):
+    def __init__(self, rates: Optional[List[int]] = None, name: str = "Test output",
+                 formats: Optional[List[str]] = None, busy: bool = False):
         self.name = name
         self.backend = "manual"
         self.rates = list(rates or [])
+        self.formats = list(formats or [])
+        self.busy = busy
         self.rate = 0
+        self.fmt = bp.F32
+        self.channels = CHANNELS
         self.opened: List[int] = []
+        self.opened_formats: List[str] = []
+        self.exclusive_opened: List[bool] = []
         self._callback: Optional[Callable[[int], np.ndarray]] = None
         self._ready: Optional[Callable[[int, float], None]] = None
 
@@ -409,9 +808,21 @@ class ManualOutput(Output):
     def native_rate(self, dev: DeviceInfo) -> int:
         return self.rates[0] if self.rates else 48000
 
-    def open(self, device, rate, callback, ready=None) -> None:
-        self.rate = rate
+    def exclusive(self, device: str) -> Exclusive:
+        if not self.rates and not self.formats:
+            modes: List[bp.Mode] = []
+        else:
+            rates = self.rates or list(bp.STANDARD_RATES)
+            modes = [bp.Mode(f, r, r, 2) for f in (self.formats or list(bp.FORMATS)) for r in rates]
+        return Exclusive(bp.DIRECT, self.name, modes, target=("manual", None))
+
+    def open(self, device, rate, callback, ready=None, fmt=bp.F32, channels=CHANNELS, exclusive=None) -> None:
+        if exclusive is not None and self.busy:
+            raise OpenError("The test output is in use.", busy=True)
+        self.rate, self.fmt, self.channels = rate, fmt, channels
         self.opened.append(rate)
+        self.opened_formats.append(fmt)
+        self.exclusive_opened.append(exclusive is not None)
         self._callback, self._ready = callback, ready
 
     def close(self) -> None:
@@ -428,7 +839,10 @@ class ManualOutput(Output):
         if self._ready is not None:
             self._ready(n, timeout)
         cb = self._callback
-        return cb(n) if cb is not None else np.zeros((0, CHANNELS), np.float32)
+        block = cb(n) if cb is not None else np.zeros((0, CHANNELS), np.float32)
+        if self.fmt == bp.F32 and self.channels == CHANNELS:
+            return block
+        return device_samples(block, self.fmt, self.channels)
 
 
 def default_output() -> Output:
@@ -450,13 +864,37 @@ class _Segment:
     base: float
     rate: int
     start: Optional[int] = None
+    out: Optional["_OutPlan"] = None
+
+
+@dataclass
+class _OutPlan:
+    """How the device is opened for a song.  `ex` is set when bit-perfect playback has
+    the device for itself; `plan` (the bit-perfect decision) whenever the setting is on."""
+    rate: int
+    fmt: str = bp.F32
+    channels: int = CHANNELS
+    ex: Optional[Exclusive] = None
+    plan: Optional[bp.Plan] = None
+    song: Optional[bp.Song] = None
+    access: str = bp.DIRECT
+    label: str = ""
+
+    def key(self) -> tuple:
+        """Songs with the same key play one after the other on the open device."""
+        return (self.rate, self.fmt, self.channels, self.ex is not None)
+
+    @property
+    def native(self) -> bool:
+        """Bit-perfect at the song's own rate: FFmpeg decodes without -ar."""
+        return self.plan is not None and self.song is not None and self.rate == self.song.rate
 
 
 @dataclass
 class _Prefetch:
     path: str
     info: Optional[SongInfo] = None
-    rate: int = 0
+    out: Optional[_OutPlan] = None
     chain: Optional[str] = None
     decoder: Optional[_Decoder] = None
     error: str = ""
@@ -490,6 +928,8 @@ class Player:
         self._out_device: Optional[str] = None
         self._volume, self._muted = 0.8, False
         self._gain = 0.64
+        self._bit_perfect = False
+        self._out_plan: Optional[_OutPlan] = None   # how the open device was opened
         self._eq = eq_mod.default_state()
         self._eq_timer: Optional[threading.Timer] = None
         self._next_path: Optional[str] = None
@@ -571,10 +1011,43 @@ class Player:
         return None
 
     def set_volume(self, volume: float, muted: bool = False) -> None:
+        """gain = volume squared, 0 when muted; exactly 1 while bit-perfect playback is on
+        (the volume is kept for when it is turned off)."""
         with self._lock:
             self._volume = min(max(float(volume), 0.0), 1.0)
             self._muted = bool(muted)
-            self._gain = 0.0 if self._muted else self._volume ** 2
+            self._update_gain()
+
+    def _update_gain(self) -> None:
+        self._gain = 0.0 if self._muted else 1.0 if self._bit_perfect else self._volume ** 2
+
+    def set_bit_perfect(self, on: bool) -> None:
+        """Bit-perfect playback on or off: from the next song, and at once for the song
+        playing, which restarts at its position (the device is opened again)."""
+        with self._lock:
+            if bool(on) == self._bit_perfect:
+                return
+            self._bit_perfect = bool(on)
+            self._update_gain()
+            playing = self._active
+            pos = self.position() if playing else 0.0
+        if playing:
+            self._close_output()
+            with self._lock:
+                seg = self._current_seg()
+                if seg is None or not self._active:
+                    return
+                path, info, paused = seg.path, seg.info if seg.info.rate else None, self._paused
+            self.play(path, pos, info, paused=paused)
+
+    @property
+    def bit_perfect(self) -> bool:
+        with self._lock:
+            return self._bit_perfect
+
+    def _eq_used(self) -> Optional[dict]:
+        """The equalizer FFmpeg runs: none while bit-perfect playback is on."""
+        return None if self._bit_perfect else self._eq
 
     def set_gapless(self, on: bool) -> None:
         with self._lock:
@@ -596,9 +1069,9 @@ class Player:
         state = eq_mod.normalize(state)
         with self._lock:
             seg = self._current_seg()
-            old = filter_chain(seg.info, seg.rate, self._eq) if seg is not None and seg.info.rate else None
+            old = filter_chain(seg.info, seg.rate, self._eq_used()) if seg is not None and seg.info.rate else None
             self._eq = state
-            new = filter_chain(seg.info, seg.rate, state) if seg is not None and seg.info.rate else None
+            new = filter_chain(seg.info, seg.rate, self._eq_used()) if seg is not None and seg.info.rate else None
             if seg is None or not self._active or old == new:
                 return
             if self._eq_timer is not None:
@@ -676,17 +1149,29 @@ class Player:
             return out
 
     def output_info(self) -> dict:
-        """For the Playback info window."""
+        """For the Playback info window: the device, what it gets ("rate", "channels",
+        "format" as a label), the song's rate, the resampler, the gain, and the
+        "Bit-perfect" line (`bitperfect.status()`)."""
         with self._lock:
             seg = self._current_seg()
             song_rate = seg.info.rate if seg is not None else 0
             out_rate = self._out_rate if self._out_device is not None else 0
+            out = seg.out if seg is not None and seg.out is not None else self._out_plan
+            fmt, channels, label = bp.F32, CHANNELS, SAMPLE_FORMAT_LABEL
+            if out is not None and out_rate:
+                bits = bp.song_bits(out.song) if out.song is not None else 0
+                fmt, channels, label = out.fmt, out.channels, bp.format_label(out.fmt, bits)
+            status = bp.OFF
+            if self._bit_perfect:
+                status = bp.ON_IDLE
+                if out is not None and out.plan is not None and out_rate and self._active:
+                    status = bp.status(out.song, out.plan, out.access, out.label)
             return {"device": self.output.name or "System default", "backend": self.output.backend,
-                    "rate": out_rate, "channels": CHANNELS, "format": SAMPLE_FORMAT_LABEL,
+                    "rate": out_rate, "channels": channels, "format": label, "sample_format": fmt,
                     "song_rate": song_rate,
                     "resampler": resampler_name() if out_rate and song_rate and out_rate != song_rate else "",
                     "gain": self._gain, "muted": self._muted, "gapless": self.gapless,
-                    "error": self._error}
+                    "bit_perfect_on": self._bit_perfect, "bit_perfect": status, "error": self._error}
 
     # ------------------------------------------------------------ internals ---
     def _new_generation(self) -> int:
@@ -772,29 +1257,69 @@ class Player:
             with self._lock:
                 self._out_device = None
                 self._out_rate = 0
+                self._out_plan = None
 
-    def _ensure_output(self, gen: int, rate: int) -> bool:
-        """Open the device at `rate` unless it already runs at it.  False if this
-        generation is no longer wanted.  Raises PlayerError."""
+    def _plan_output(self, device: str, info: SongInfo) -> _OutPlan:
+        """How the device is opened for `info`: the normal way (the song's rate when the
+        device runs at it, float32), or, with bit-perfect playback, as `bitperfect.plan()`
+        decides from what the device offers for this app alone."""
+        with self._lock:
+            on = self._bit_perfect
+        if not on:
+            return _OutPlan(self.output.pick_rate(device, info.rate))
+        song = info.song()
+        ex = self.output.exclusive(device)
+        if ex.error:
+            return self._shared_plan(device, song, ex.error, ex)
+        p = bp.plan(song, ex.modes)
+        if ex.note and p.reasons:
+            p.reasons.append(ex.note)
+        return _OutPlan(p.rate, p.format, p.channels, ex, p, song, ex.access, ex.label)
+
+    def _shared_plan(self, device: str, song: bp.Song, why: str, ex: Optional[Exclusive] = None) -> _OutPlan:
+        """Bit-perfect playback could not have the device: the normal path (no EQ, gain 1)."""
+        rate = self.output.pick_rate(device, song.rate)
+        p = bp.plan(song, [bp.Mode(bp.F32, rate, rate, CHANNELS)], failure=why)
+        return _OutPlan(rate, bp.F32, CHANNELS, None, p, song, ex.access if ex else bp.DIRECT, ex.label if ex else "")
+
+    def _open(self, device: str, out: _OutPlan) -> _OutPlan:
+        """Open the device as `out` says (with _out_lock held); when bit-perfect access
+        fails, the normal path instead.  Returns what was opened.  Raises PlayerError."""
+        try:
+            self.output.open(device, out.rate, self._pull, self._ready, fmt=out.fmt, channels=out.channels,
+                             exclusive=out.ex)
+            return out
+        except OpenError as exc:
+            if out.ex is None or out.song is None:
+                raise
+            shared = self._shared_plan(device, out.song, exc.reason(), out.ex)
+            self.output.open(device, shared.rate, self._pull, self._ready)
+            return shared
+
+    def _ensure_output(self, gen: int, out: _OutPlan) -> Optional[_OutPlan]:
+        """Open the device for `out` unless it already runs that way.  Returns the plan
+        the device runs with (None if this generation is no longer wanted).  Raises
+        PlayerError."""
         with self._out_lock:
             with self._lock:
                 if not self._alive(gen):
-                    return False
-                same = self._out_device == self.device and self._out_rate == rate
+                    return None
+                cur = self._out_plan
+                same = self._out_device == self.device and cur is not None and cur.key() == out.key()
                 device = self.device
             if same:
-                return True
+                return out
             self.output.close()
             with self._lock:
-                self._out_device, self._out_rate = None, 0
-            self.output.open(device, rate, self._pull, self._ready)
+                self._out_device, self._out_rate, self._out_plan = None, 0, None
+            used = self._open(device, out)
             with self._lock:
-                self._out_device, self._out_rate = device, rate
+                self._out_device, self._out_rate, self._out_plan = device, used.rate, used
                 self._played, self._blk_start, self._blk_len = 0, 0, 0
                 self._blk_time = time.monotonic()
                 for seg in self._segs:
                     seg.start = None
-            return True
+            return used
 
     def _post_error(self, gen: int, path: str, message: str) -> None:
         with self._lock:
@@ -849,17 +1374,17 @@ class Player:
         with self._lock:
             self._drop_prefetch()
             self._prefetch = pf
-            eq_state, device = self._eq, self.device
+            eq_state, device = self._eq_used(), self.device
 
         def work():
             try:
                 pf.info = song_info(path)
-                pf.rate = self.output.pick_rate(device, pf.info.rate)
-                pf.chain = filter_chain(pf.info, pf.rate, eq_state)
+                pf.out = self._plan_output(device, pf.info)
+                pf.chain = filter_chain(pf.info, pf.out.rate, eq_state)
                 with self._lock:
                     wanted = self._alive(gen) and self._prefetch is pf
                 if wanted:
-                    pf.decoder = _Decoder(pf.info, 0.0, pf.rate, pf.chain)
+                    pf.decoder = _Decoder(pf.info, 0.0, pf.out.rate, pf.chain, native=pf.out.native)
             except PlayerError as exc:
                 pf.error = str(exc)
             except OSError as exc:
@@ -876,7 +1401,7 @@ class Player:
             if nxt:
                 self._next_path = self._next_after = None  # used once
             pf = self._prefetch
-            eq_state, device = self._eq, self.device
+            eq_state, device = self._eq_used(), self.device
         if not nxt:
             return None
         if pf is None or pf.path != nxt:
@@ -894,13 +1419,14 @@ class Player:
             if pf.decoder is not None:
                 pf.decoder.close()
             return None
-        chain = filter_chain(pf.info, pf.rate, eq_state)
-        if pf.decoder is None or chain != pf.chain or self.output.pick_rate(device, pf.info.rate) != pf.rate:
+        out = self._plan_output(device, pf.info)
+        chain = filter_chain(pf.info, out.rate, eq_state)
+        if (pf.decoder is None or chain != pf.chain or pf.out is None or out.key() != pf.out.key()
+                or out.native != pf.out.native):
             if pf.decoder is not None:
                 pf.decoder.close()
-            pf.rate = self.output.pick_rate(device, pf.info.rate)
-            pf.chain = chain
-            pf.decoder = _Decoder(pf.info, 0.0, pf.rate, chain)
+            pf.out, pf.chain = out, chain
+            pf.decoder = _Decoder(pf.info, 0.0, out.rate, chain, native=out.native)
         return pf
 
     def _run(self, gen: int, path: str, start: float, info: Optional[SongInfo]) -> None:
@@ -911,10 +1437,11 @@ class Player:
             try:
                 info = info if info is not None and info.rate else song_info(path)
                 with self._lock:
-                    device, eq_state = self.device, self._eq
-                rate = self.output.pick_rate(device, info.rate)
-                if not self._ensure_output(gen, rate):
+                    device, eq_state = self.device, self._eq_used()
+                out = self._ensure_output(gen, self._plan_output(device, info))
+                if out is None:
                     return
+                rate = out.rate
             except PlayerError as exc:
                 self._post_error(gen, path, str(exc))
                 return
@@ -922,10 +1449,10 @@ class Player:
                 if not self._alive(gen):
                     return
                 seg = self._segs[0]
-                seg.info, seg.rate = info, rate
+                seg.info, seg.rate, seg.out = info, rate, out
                 chain = filter_chain(info, rate, eq_state)
             try:
-                decoder = _Decoder(info, start, rate, chain)
+                decoder = _Decoder(info, start, rate, chain, native=out.native)
             except OSError as exc:
                 self._post_error(gen, path, f"FFmpeg could not be started: {exc}.")
                 return
@@ -949,11 +1476,12 @@ class Player:
                 got = decoder.frames
                 retry = (decoder.info, decoder.start, decoder.rate, decoder.chain)
                 retry = retry if not got and decoder.start > 0 and not decoder.slow_seek else None
+                native = decoder.native
                 decoder.close()
                 decoder = None
                 if retry:  # FFmpeg could not seek in this file: decode from the start instead
                     try:
-                        decoder = _Decoder(*retry, slow_seek=True)
+                        decoder = _Decoder(*retry, slow_seek=True, native=native)
                     except OSError as exc:
                         self._post_error(gen, seg.path, f"FFmpeg could not be started: {exc}.")
                         return
@@ -982,9 +1510,10 @@ class Player:
                             self._active = False
                             self._paused = True
                     return
-                nseg = _Segment(pf.path, pf.info, 0.0, pf.rate)  # type: ignore[arg-type]
-                if pf.rate != rate:
-                    # the next song needs another rate: let this one be heard to the end, then reopen
+                nout: _OutPlan = pf.out  # type: ignore[assignment]
+                nseg = _Segment(pf.path, pf.info, 0.0, nout.rate, out=nout)  # type: ignore[arg-type]
+                if nout.key() != out.key():
+                    # the next song needs another rate or format: let this one be heard to the end, then reopen
                     if not self._wait_heard(gen):
                         pf.decoder.close()  # type: ignore[union-attr]
                         return
@@ -996,11 +1525,12 @@ class Player:
                     try:
                         with self._out_lock:
                             self.output.close()
-                            self.output.open(self.device, pf.rate, self._pull, self._ready)
+                            used = self._open(self.device, nout)
                             with self._lock:
-                                self._out_device, self._out_rate = self.device, pf.rate
+                                self._out_device, self._out_rate, self._out_plan = self.device, used.rate, used
                                 self._played, self._blk_start, self._blk_len = 0, 0, 0
                                 self._blk_time = time.monotonic()
+                                nseg.out, nseg.rate = used, used.rate
                     except PlayerError as exc:
                         pf.decoder.close()  # type: ignore[union-attr]
                         with self._lock:
@@ -1008,7 +1538,16 @@ class Player:
                                 self._segs.popleft()
                         self._post_error(gen, pf.path, str(exc))
                         return
-                    rate = pf.rate
+                    if used.rate != nout.rate or used.native != nout.native:  # fell back to the normal path
+                        pf.decoder.close()  # type: ignore[union-attr]
+                        try:
+                            pf.decoder = _Decoder(pf.info, 0.0, used.rate,  # type: ignore[arg-type]
+                                                  filter_chain(pf.info, used.rate, self._eq_used()),  # type: ignore
+                                                  native=used.native)
+                        except OSError as exc:
+                            self._post_error(gen, pf.path, f"FFmpeg could not be started: {exc}.")
+                            return
+                    out, rate = used, used.rate
                 else:
                     with self._lock:
                         if not self._alive(gen):
@@ -1079,11 +1618,14 @@ def resampling_label(song_rate: int, out_rate: int, resampler: str) -> str:
     return f"From {fmt_khz(song_rate)} to {fmt_khz(out_rate)} ({resampler})"
 
 
-def output_label(rate: int, channels: int = CHANNELS) -> str:
-    return f"{fmt_khz(rate)}, {SAMPLE_FORMAT_LABEL}, {channels_label(channels).lower()}" if rate else "Not playing"
+def output_label(rate: int, channels: int = CHANNELS, fmt_label: str = SAMPLE_FORMAT_LABEL) -> str:
+    """'96 kHz, 32-bit float, stereo'; `fmt_label` is `output_info()["format"]` (with bit-perfect
+    playback what the device really gets, '24-bit integer in 32-bit')."""
+    return f"{fmt_khz(rate)}, {fmt_label}, {channels_label(channels).lower()}" if rate else "Not playing"
 
 
 __all__ = ["Player", "PlayerError", "SongInfo", "song_info", "Output", "MiniaudioOutput", "ManualOutput",
            "DeviceInfo", "list_devices", "default_output", "has_soxr", "ffmpeg_version", "resampler_name",
            "filter_chain", "decode_command", "eq_summary", "fmt_gain", "fmt_khz", "fmt_db", "channels_label",
-           "bit_depth_label", "bit_rate_label", "resampling_label", "output_label"]
+           "bit_depth_label", "bit_rate_label", "resampling_label", "output_label", "Exclusive", "OpenError",
+           "device_samples", "device_bytes"]

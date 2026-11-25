@@ -251,7 +251,7 @@ pub fn start_covers(post: Post) -> Sender<(String, Vec<String>)> {
     let (tx, rx) = mpsc::channel::<(String, Vec<String>)>();
     std::thread::spawn(move || {
         while let Ok((key, tracks)) = rx.recv() {
-            let png = realhires::covers::cover_png(&tracks, 150);
+            let png = realhires::covers::cached_cover_png(&tracks, 150); // kept on disk: made only once
             post.send(Msg::Cover { key, png });
         }
     });

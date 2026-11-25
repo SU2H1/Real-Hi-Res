@@ -1,0 +1,641 @@
+{
+"tracks": [
+{
+"path": "/art/00.flac",
+"title": "T0",
+"artist": "Mariah Carey, Michael Bublé",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/01.flac",
+"title": "T1",
+"artist": "Michael Bublé",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/02.flac",
+"title": "T2",
+"artist": "Earth, Wind & Fire",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/03.flac",
+"title": "T3",
+"artist": "Simon & Garfunkel",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/04.flac",
+"title": "T4",
+"artist": "Drake (feat. Rihanna)",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/05.flac",
+"title": "T5",
+"artist": "One;Two",
+"album": "",
+"album_artist": "Two",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/06.flac",
+"title": "T6",
+"artist": "Michael Bublé & Someone x Other / More",
+"album": "",
+"album_artist": "Michael Bublé",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/07.flac",
+"title": "T7",
+"artist": "A FEAT. b, B",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/08.flac",
+"title": "T8",
+"artist": "  Mira Calloway ;  ",
+"album": "",
+"album_artist": "Mira Calloway, The Northern Quay",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/09.flac",
+"title": "T9",
+"artist": "The Northern Quay ft Ann",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/10.flac",
+"title": "T10",
+"artist": "",
+"album": "",
+"album_artist": "Various, Michael Bublé",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/11.flac",
+"title": "T11",
+"artist": "Ünïcode x ÉCLAIR",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+},
+{
+"path": "/art/12.flac",
+"title": "T12",
+"artist": "ÉCLAIR",
+"album": "",
+"album_artist": "",
+"genre": "",
+"composer": "",
+"disc": 0,
+"track": 0,
+"year": "",
+"duration": 0.0,
+"codec": "",
+"sample_rate": 0,
+"bits": 0,
+"is_float": false,
+"is_lossy": false,
+"channels": 0,
+"bit_rate": 0,
+"size": 0,
+"mtime_ns": 0
+}
+],
+"known": [
+"a",
+"ann",
+"b, b",
+"drake",
+"earth, wind & fire",
+"mariah carey, michael bublé",
+"michael bublé",
+"michael bublé & someone x other / more",
+"mira calloway",
+"mira calloway, the northern quay",
+"one",
+"rihanna",
+"simon & garfunkel",
+"the northern quay",
+"two",
+"various, michael bublé",
+"éclair",
+"ünïcode x éclair"
+],
+"split": [
+[
+"Mariah Carey, Michael Bublé",
+[
+"Mariah Carey",
+"Michael Bublé"
+]
+],
+[
+"Michael Bublé",
+[
+"Michael Bublé"
+]
+],
+[
+"Earth, Wind & Fire",
+[
+"Earth, Wind & Fire"
+]
+],
+[
+"Simon & Garfunkel",
+[
+"Simon & Garfunkel"
+]
+],
+[
+"Drake (feat. Rihanna)",
+[
+"Drake",
+"Rihanna"
+]
+],
+[
+"One;Two",
+[
+"One",
+"Two"
+]
+],
+[
+"Michael Bublé & Someone x Other / More",
+[
+"Michael Bublé",
+"Someone",
+"Other",
+"More"
+]
+],
+[
+"A FEAT. b, B",
+[
+"A",
+"b, B"
+]
+],
+[
+"  Mira Calloway ;  ",
+[
+"Mira Calloway"
+]
+],
+[
+"The Northern Quay ft Ann",
+[
+"The Northern Quay",
+"Ann"
+]
+],
+[
+"",
+[]
+],
+[
+"Ünïcode x ÉCLAIR",
+[
+"Ünïcode",
+"ÉCLAIR"
+]
+],
+[
+"ÉCLAIR",
+[
+"ÉCLAIR"
+]
+],
+[
+"Earth, Wind",
+[
+"Earth, Wind"
+]
+],
+[
+"X (ft. Y))",
+[
+"X",
+"Y)"
+]
+],
+[
+"a;;b",
+[
+"a",
+"b"
+]
+],
+[
+"ab FT. cd",
+[
+"ab",
+"cd"
+]
+]
+],
+"artists": [
+[
+"A",
+[
+"/art/07.flac"
+]
+],
+[
+"Ann",
+[
+"/art/09.flac"
+]
+],
+[
+"b, B",
+[
+"/art/07.flac"
+]
+],
+[
+"Drake",
+[
+"/art/04.flac"
+]
+],
+[
+"Earth, Wind & Fire",
+[
+"/art/02.flac"
+]
+],
+[
+"Mariah Carey",
+[
+"/art/00.flac"
+]
+],
+[
+"Michael Bublé",
+[
+"/art/00.flac",
+"/art/01.flac",
+"/art/10.flac",
+"/art/06.flac"
+]
+],
+[
+"Mira Calloway",
+[
+"/art/08.flac"
+]
+],
+[
+"More",
+[
+"/art/06.flac"
+]
+],
+[
+"One",
+[
+"/art/05.flac"
+]
+],
+[
+"Other",
+[
+"/art/06.flac"
+]
+],
+[
+"Rihanna",
+[
+"/art/04.flac"
+]
+],
+[
+"Simon & Garfunkel",
+[
+"/art/03.flac"
+]
+],
+[
+"Someone",
+[
+"/art/06.flac"
+]
+],
+[
+"The Northern Quay",
+[
+"/art/09.flac"
+]
+],
+[
+"Two",
+[
+"/art/05.flac"
+]
+],
+[
+"Various",
+[
+"/art/10.flac"
+]
+],
+[
+"ÉCLAIR",
+[
+"/art/11.flac",
+"/art/12.flac"
+]
+],
+[
+"Ünïcode",
+[
+"/art/11.flac"
+]
+]
+],
+"album_artists": [
+[
+"A",
+[
+"/art/07.flac"
+]
+],
+[
+"Ann",
+[
+"/art/09.flac"
+]
+],
+[
+"b, B",
+[
+"/art/07.flac"
+]
+],
+[
+"Drake",
+[
+"/art/04.flac"
+]
+],
+[
+"Earth, Wind & Fire",
+[
+"/art/02.flac"
+]
+],
+[
+"Mariah Carey",
+[
+"/art/00.flac"
+]
+],
+[
+"Michael Bublé",
+[
+"/art/00.flac",
+"/art/01.flac",
+"/art/10.flac",
+"/art/06.flac"
+]
+],
+[
+"Mira Calloway",
+[
+"/art/08.flac"
+]
+],
+[
+"Rihanna",
+[
+"/art/04.flac"
+]
+],
+[
+"Simon & Garfunkel",
+[
+"/art/03.flac"
+]
+],
+[
+"The Northern Quay",
+[
+"/art/08.flac",
+"/art/09.flac"
+]
+],
+[
+"Two",
+[
+"/art/05.flac"
+]
+],
+[
+"Various",
+[
+"/art/10.flac"
+]
+],
+[
+"ÉCLAIR",
+[
+"/art/11.flac",
+"/art/12.flac"
+]
+],
+[
+"Ünïcode",
+[
+"/art/11.flac"
+]
+]
+]
+}

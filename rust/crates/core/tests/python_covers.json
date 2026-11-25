@@ -1,0 +1,116 @@
+{
+"version": 1,
+"paths": 4,
+"names": [
+{
+"paths": [
+"/no/such/Music/Album/01 One.flac"
+],
+"size": 176,
+"key": "v1\t176\n/no/such/Music/Album/01 One.flac\t-1\t-1\n/no/such/Music/Album\t-1",
+"name": "04e96cb5563079efa0789fd988800380a236d941.png"
+},
+{
+"paths": [
+"/no/such/Music/Album/01 One.flac",
+"/no/such/Music/Album/02 Two.flac",
+"/no/such/Music/Album/CD2/03.flac",
+"/no/such/Music/Album/04 Four.flac",
+"/no/such/Music/Other/05.flac"
+],
+"size": 176,
+"key": "v1\t176\n/no/such/Music/Album/01 One.flac\t-1\t-1\n/no/such/Music/Album/02 Two.flac\t-1\t-1\n/no/such/Music/Album/CD2/03.flac\t-1\t-1\n/no/such/Music/Album/04 Four.flac\t-1\t-1\n/no/such/Music/Album\t-1\n/no/such/Music/Album/CD2\t-1",
+"name": "4244f300a768d8c88fd8336eb0ca69a1c0ab5f2a.png"
+},
+{
+"paths": [
+"/no/such/音楽/宇多田ヒカル/First Love/01 Automatic.flac",
+"/no/such/Música/Ça va/02 Été.mp3"
+],
+"size": 220,
+"key": "v1\t220\n/no/such/音楽/宇多田ヒカル/First Love/01 Automatic.flac\t-1\t-1\n/no/such/Música/Ça va/02 Été.mp3\t-1\t-1\n/no/such/音楽/宇多田ヒカル/First Love\t-1\n/no/such/Música/Ça va\t-1",
+"name": "09f8bed764366a11b6988998c82fed3fd2cbe5cf.png"
+},
+{
+"paths": [
+"/no/such/a b/cé.wav",
+"/no/such/a b/cé.wav",
+"/no/such/a b/cé.wav"
+],
+"size": 480,
+"key": "v1\t480\n/no/such/a b/cé.wav\t-1\t-1\n/no/such/a b/cé.wav\t-1\t-1\n/no/such/a b/cé.wav\t-1\t-1\n/no/such/a b\t-1",
+"name": "622d759f749599f220a699c69300d9bb5da6d652.png"
+},
+{
+"paths": [
+"/no/such/song.flac"
+],
+"size": 44,
+"key": "v1\t44\n/no/such/song.flac\t-1\t-1\n/no/such\t-1",
+"name": "12d1147cca4c0ef67dfc2ca97d5acf7badb8b351.png"
+},
+{
+"paths": [],
+"size": 150,
+"key": "v1\t150",
+"name": "c9e9fab3ed64a57c5493286adc8f9d1f6b0b7642.png"
+}
+],
+"layout": {
+"files": [
+{
+"path": "Album A/01.flac",
+"bytes": 1234,
+"mtime_ns": 1700000001234567800
+},
+{
+"path": "Album A/02.flac",
+"bytes": 0,
+"mtime_ns": 1700000002000000000
+},
+{
+"path": "Album B/Disc 1/01.wav",
+"bytes": 44,
+"mtime_ns": 999999999900
+},
+{
+"path": "Album B/Disc 2/02.wav",
+"bytes": 70000,
+"mtime_ns": 1800000000000000100
+}
+],
+"folders": [
+{
+"path": "Album A",
+"mtime_ns": 1700000100000000000
+},
+{
+"path": "Album B/Disc 1",
+"mtime_ns": 1700000200000000500
+},
+{
+"path": "Album B/Disc 2",
+"mtime_ns": 1700000300000000000
+}
+]
+},
+"files": [
+{
+"paths": [
+"Album A/01.flac",
+"Album A/02.flac"
+],
+"size": 176,
+"key": "v1\t176\n{root}/Album A/01.flac\t1234\t1700000001234567800\n{root}/Album A/02.flac\t0\t1700000002000000000\n{root}/Album A\t1700000100000000000"
+},
+{
+"paths": [
+"Album B/Disc 1/01.wav",
+"Album B/Disc 2/02.wav",
+"Album A/missing.flac"
+],
+"size": 480,
+"key": "v1\t480\n{root}/Album B/Disc 1/01.wav\t44\t999999999900\n{root}/Album B/Disc 2/02.wav\t70000\t1800000000000000100\n{root}/Album A/missing.flac\t-1\t-1\n{root}/Album B/Disc 1\t1700000200000000500\n{root}/Album B/Disc 2\t1700000300000000000\n{root}/Album A\t1700000100000000000"
+}
+]
+}

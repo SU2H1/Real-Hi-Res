@@ -293,9 +293,10 @@ def _gui_ok():
 
 @pytest.mark.skipif(not _gui_ok(), reason="needs Tkinter, miniaudio and a display")
 def test_musicbrainz_window_in_the_player(tmp_path, fake_mb):
-    """Get album info from MusicBrainz… lists the releases, previews the changes and saves
-    them; Get info from MusicBrainz… does the same for one song; Settings → Library's
-    button runs the automatic lookup."""
+    """Acquire Metadata… (2.2; 2.1 "Get album info from MusicBrainz…") in an album card's
+    right-click menu and on the album page lists the releases, previews the changes and
+    saves them; Acquire Metadata… in a song's menu does the same for one song; Settings →
+    Library's button runs the automatic lookup."""
     import json
 
     from test_player_gui import run_script
@@ -322,7 +323,7 @@ def test_musicbrainz_window_in_the_player(tmp_path, fake_mb):
 ROAD = {road!r}
 ALBUM = {str(album)!r}
 import tkinter as tk
-from realhires import player_gui, player_mb
+from realhires import player_gui, player_mb, player_pages
 from realhires.probe import probe
 
 def fail(exc, val, tb):
@@ -342,12 +343,40 @@ root.geometry("1280x800")
 root.report_callback_exception = fail
 app = player_gui.PlayerApp(root)
 
+def entries(m):
+    return [m.entrycget(i, "label") if m.type(i) != "separator" else "-" for i in range(m.index("end") + 1)]
+
+def label_texts(w):
+    out = []
+    for c in w.winfo_children():
+        if c.winfo_class() == "Label":
+            out.append(str(c.cget("text")))
+        out += label_texts(c)
+    return out
+
 def loaded():
     alb = next(a for a in app.albums if a["title"] == "Night Drive")
+    paths = [t.path for t in alb["tracks"]]
+    # the album card's right-click menu (Albums): Acquire Metadata… opens the window in album
+    # mode for the album's songs, as the album page's button (one window at a time)
+    app.show_page("albums")
+    root.update()
+    grid = app.page("albums").grid_w
+    assert grid.on_context is not None
+    m = player_pages.album_menu(app, alb)
+    assert entries(m) == ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Acquire Metadata…",
+                          "Album Properties…"], entries(m)
+    assert app.last_menu is m
+    m.invoke(entries(m).index("Acquire Metadata…"))
+    w = app.mb_window
+    assert w is not None and w.album and w.paths == paths, (w and w.paths, paths)
+    shown = label_texts(w.win)
+    assert "Night Drive" in shown and "The Example Band · 4 songs" in shown, shown  # the album page's heading
     app.open_album(alb)
     root.update()
-    w = app.page("album").musicbrainz()
-    assert w is app.mb_window and w.album
+    page = app.page("album")
+    assert page.mb_b.text == "Acquire Metadata…" and page.edit_b.text == "Album Properties…"
+    assert page.musicbrainz() is w  # the window already open is brought to the front
     wait(lambda: w.detail is not None and not w.busy, lambda: album_ready(w), what="album release")
 
 def album_ready(w):
@@ -371,9 +400,12 @@ def album_saved():
     song = app.track(ROAD)
     m = app.song_menu(song)
     labels = [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"]
-    assert "Get info from MusicBrainz…" in labels, labels
-    w = app.musicbrainz([song])
-    assert not w.album
+    assert "Acquire Metadata…" in labels and not any("MusicBrainz" in x for x in labels), labels
+    assert labels.index("Acquire Metadata…") == labels.index("Properties…") + 1, labels
+    m.invoke(next(i for i in range(m.index("end") + 1)
+                  if m.type(i) == "command" and m.entrycget(i, "label") == "Acquire Metadata…"))
+    w = app.mb_window
+    assert w is not None and not w.album and w.paths == [ROAD], w and w.paths
     wait(lambda: w.detail is not None and not w.busy, lambda: song_ready(w), what="song release")
 
 def song_ready(w):
