@@ -1120,6 +1120,11 @@ class PlayerApp:
             self._settings_page_again()
         if old.language != new.language:  # the restart note under Settings → Appearance → Language
             self._settings_page_again()
+        if old.library_layout != new.library_layout:  # 2.3: tiles or a list
+            page = self.pages.get("library")
+            if page is not None:
+                page.area.redraw()
+            self._settings_page_again()
         if old.output_device != new.output_device:
             self.engine.set_device(new.output_device)
         if old.gapless != new.gapless:
@@ -1540,6 +1545,14 @@ class PlayerApp:
     def select_theme(self, name: str) -> None:
         new = settings_mod.Settings.from_dict(self.cfg.to_dict())
         new.theme = name
+        self.apply_settings(new)
+
+    def set_library_layout(self, layout: str) -> None:
+        """The Library page's tiles and list buttons (2.3): Settings → Appearance → Library page."""
+        if layout not in settings_mod.LIBRARY_LAYOUTS or layout == self.cfg.library_layout:
+            return
+        new = settings_mod.Settings.from_dict(self.cfg.to_dict())
+        new.library_layout = layout
         self.apply_settings(new)
 
     def new_theme(self, name: Optional[str] = None) -> Optional[str]:

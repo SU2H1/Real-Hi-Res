@@ -290,6 +290,10 @@ pub struct LibView {
 static LIB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// The groupings of the pages: (page kind, title, noun).
+/// The key that selects with a click, as the Genres page's hint names it (Ctrl-click
+/// is a right-click on macOS).
+pub const MOD_NAME: &str = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+
 pub const GROUPINGS: [(&str, &str, &str); 5] = [
     ("artists", n_!("Artists"), "artist"),
     ("album_artists", n_!("Album Artists"), "album artist"),
@@ -633,8 +637,10 @@ pub struct Player {
     pub selected_song: Option<String>,
     /// "Check new songs when the app starts": scan once the library is read
     check_after_update: bool,
-    /// the genres selected (Ctrl/Cmd-click) on the Genres page, to be merged
+    /// the genres selected (Select, or Ctrl/Cmd-click) on the Genres page, to be merged or renamed
     pub group_selected: Vec<String>,
+    /// the Genres page's select mode (2.3): a click on a card selects it
+    pub group_select_mode: bool,
     /// the sort of album pages (None: track order) and the album it is for
     pub album_sort: Option<(SongCol, bool)>,
     album_sort_for: String,
@@ -778,6 +784,7 @@ impl Player {
             selected_song: None,
             check_after_update: false,
             group_selected: vec![],
+            group_select_mode: false,
             album_sort: None,
             album_sort_for: String::new(),
             list_cache: HashMap::new(),
@@ -1454,6 +1461,28 @@ impl Player {
         self.ask_name_with(i18n::tr(texts.title), &prompt, initial, NameAction::RenameGroup(kind, name.to_string()), vec![]);
     }
 
+    /// Done (or Esc) on the Genres page: out of select mode, nothing selected (2.3).
+    pub fn done_selecting(&mut self) {
+        self.group_select_mode = false;
+        self.group_selected.clear();
+    }
+
+    /// Merge… with two or more genres selected: their name is asked for in one dialog
+    /// (the selected genres, the biggest first, or a new name), then the files are confirmed.
+    pub fn merge_selected(&mut self) {
+        if self.group_selected.len() >= 2 {
+            self.ask_merge_groups("genres", self.group_selected.clone());
+        }
+    }
+
+    /// Rename… with exactly one genre selected.
+    pub fn rename_selected(&mut self) {
+        if let [name] = self.group_selected.as_slice() {
+            let name = name.clone();
+            self.ask_rename_group("genres", &name);
+        }
+    }
+
     /// Merge into… (one genre) or Merge N genres… (several): asks for the genre they become.
     pub fn ask_merge_groups(&mut self, kind: &'static str, names: Vec<String>) {
         let groups: Vec<&Group> = names.iter().filter_map(|n| self.lib.find_group(kind, n)).map(|i| &self.lib.groups(kind)[i]).collect();
@@ -2005,7 +2034,7 @@ impl Player {
                             self.page = Page::Group(kind, name.clone());
                         }
                     }
-                    self.group_selected.clear();
+                    self.done_selecting();
                     let cfg = self.scanner.cfg.clone();
                     self.tag_job = Some(crate::editinfo::RenameJob::new(&self.ctx, title, kind, paths, name, cfg));
                 }
@@ -2060,6 +2089,13 @@ impl Player {
             self.settings_draft = Some(self.scanner.cfg.clone());
         }
         self.settings_draft.as_mut().unwrap()
+    }
+
+    /// A Settings page being edited follows the Library page's layout buttons (2.3).
+    pub fn set_draft_library_layout(&mut self, layout: &str) {
+        if let Some(draft) = self.settings_draft.as_mut() {
+            draft.library_layout = layout.to_string();
+        }
     }
 
     pub fn settings_changed(&mut self) {
@@ -2168,6 +2204,7 @@ impl Player {
     /// the Quality check or Settings).
     fn enter(&mut self, page: Page) {
         let old = std::mem::replace(&mut self.page, page);
+        self.page_shown(&old);
         if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
             self.back.push(old);
             if self.back.len() > 20 {
@@ -2183,7 +2220,15 @@ impl Player {
     pub fn go_back(&mut self) {
         if let Some(p) = self.back.pop() {
             let left = std::mem::replace(&mut self.page, p);
+            self.page_shown(&left);
             self.forward.push(left);
+        }
+    }
+
+    /// Another page is shown: the Genres page starts again without a selection (2.3).
+    fn page_shown(&mut self, old: &Page) {
+        if self.page == Page::Genres && *old != Page::Genres {
+            self.done_selecting();
         }
     }
 
@@ -2778,6 +2823,12 @@ impl Player {
                 self.save_state();
             } else if self.info.is_some() {
                 self.info = None;
+            } else if self.page == Page::Genres
+                && (self.group_select_mode || !self.group_selected.is_empty())
+                && self.name_dialog.is_none()
+                && self.confirm.is_none()
+            {
+                self.done_selecting(); // as Done (2.3)
             }
         }
         if self.info.is_some() {
@@ -4132,9 +4183,9 @@ mod tests {
         assert_eq!(tag_of(&b1, "genre"), "Smooth Jazz");
         assert_eq!(p.page, Page::Group("genres", "Smooth Jazz".into()));
         // merge two genres: only the songs that do not have the name yet are written
-        p.group_selected = vec!["Pop".into(), "Folk".into()];
         p.go(Page::Genres);
         frame(&ctx, &mut p);
+        p.group_selected = vec!["Pop".into(), "Folk".into()];
         p.ask_merge_groups("genres", p.group_selected.clone());
         assert_eq!(p.name_dialog.as_ref().unwrap().choices, vec!["Pop".to_string(), "Folk".to_string()], "the biggest first");
         p.name_dialog = None;
@@ -4181,6 +4232,241 @@ mod tests {
         assert!(playerstate::load(None).eq_presets.is_empty());
         p.eq_open = false;
         let _ = a2;
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A click with Ctrl (Cmd on macOS) held: selects a genre card without select mode.
+    fn command_click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        let m = egui::Modifiers::COMMAND;
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        frame_with(ctx, p, vec![egui::Event::ModifiersChanged(m)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: m };
+            frame_with(ctx, p, vec![egui::Event::ModifiersChanged(m), e]);
+        }
+        frame_with(ctx, p, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), egui::Event::PointerMoved(pos2(5.0, 835.0))]);
+    }
+
+    /// Every text drawn and where, after a few frames of a window `width` wide.
+    fn placed_texts_at(ctx: &egui::Context, p: &mut Player, width: f32, events: Vec<egui::Event>) -> Vec<(String, Rect)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.visual_bounding_rect())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let screen = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 840.0)));
+        let mut events = Some(events);
+        let mut out = vec![];
+        for i in 0..4 {
+            let input = egui::RawInput { screen_rect: screen, events: if i == 0 { events.take().unwrap() } else { vec![] }, ..Default::default() };
+            let output = ctx.run_ui(input, |ui| p.ui(ui));
+            if i == 3 {
+                output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+            }
+            output.drop_without_applying_deltas();
+        }
+        out
+    }
+
+    /// The texts equal to `text`, where they were drawn.
+    fn all_texts(texts: &[(String, Rect)], text: &str) -> Vec<Rect> {
+        texts.iter().filter(|(t, _)| t == text).map(|(_, r)| *r).collect()
+    }
+
+    /// 2.3: the Library page as a list (the setting, the buttons by the title), choosing
+    /// genres to merge or rename (Select, "N selected", Merge…, Rename…, Done, Esc,
+    /// Ctrl/Cmd-click), and Your Stats with the day's plays beside the calendar.
+    #[test]
+    fn library_list_choosing_genres_and_the_day_beside_the_calendar() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        realhires::i18n::set_thread_language("English");
+        let tmp = std::env::temp_dir().join(format!("rhr-player-23-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let a1 = tagged(&music, "Paper Lanterns", "Lanterns Over Water", "Mira Calloway", "Pop", "Ann", "2001", 1);
+        let a2 = tagged(&music, "Paper Lanterns", "Paper in the Rain", "Mira Calloway", "Pop", "Ann", "2001", 2);
+        let b1 = tagged(&music, "Harbour Lights", "Tidewater", "The Northern Quay", "Jazz", "", "1999", 1);
+        let c1 = tagged(&music, "Two Rivers", "Where the Rivers Meet", "Mira Calloway", "Folk", "Ann", "2005", 1);
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg.clone(), vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+
+        // ---- the Library page: tiles by default, the entries in their order
+        assert_eq!(p.library_layout(), "Tiles");
+        let pages: Vec<Page> = p.library_entries().into_iter().map(|e| e.page).collect();
+        assert_eq!(
+            pages,
+            [
+                Page::AllSongs, Page::Folders(None), Page::Albums, Page::Artists, Page::AlbumArtists, Page::Genres,
+                Page::Years, Page::Composers, Page::Playlists, Page::Liked, Page::Disliked, Page::RecentlyPlayed,
+                Page::Recent, Page::Stats,
+            ]
+        );
+        p.go(Page::Library);
+        let t = placed_texts(&ctx, &mut p);
+        let (songs, folders) = (last_text(&t, "All Songs"), last_text(&t, "Folders"));
+        assert!(folders.x > songs.x + 100.0 && (folders.y - songs.y).abs() < 4.0, "tiles side by side: {songs:?} {folders:?}");
+        // the list button: one row per entry, 44 px each, saved at once
+        let list = ctx.read_response(crate::library_pages::layout_button_id("List")).expect("the list button").rect;
+        let tiles = ctx.read_response(crate::library_pages::layout_button_id("Tiles")).expect("the tiles button").rect;
+        assert!(tiles.right() <= list.left() && list.right() > 1100.0, "{tiles:?} {list:?}");
+        click(&ctx, &mut p, list.center());
+        assert_eq!(p.scanner.cfg.library_layout, "List");
+        assert_eq!(realhires::settings::load(None).library_layout, "List", "saved at once");
+        let t = placed_texts(&ctx, &mut p);
+        let names = ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"];
+        // the row (the page's first such text: "Recently Added" is also the albums' heading under the list)
+        let rows: Vec<egui::Pos2> = names
+            .iter()
+            .map(|n| all_texts(&t, n).into_iter().filter(|r| r.left() > 240.0).map(|r| r.center()).min_by(|a, b| a.y.total_cmp(&b.y)).unwrap())
+            .collect();
+        for w in rows.windows(2) {
+            assert!((w[1].y - w[0].y - crate::library_pages::LIST_ROW_H).abs() < 4.0 && w[1].x < w[0].x + 60.0, "{rows:?}");
+        }
+        assert!(t.iter().any(|(s, r)| s == "4 songs" && r.right() > 1100.0), "the count on the right");
+        // a row opens its page
+        click(&ctx, &mut p, last_text(&t, "Genres"));
+        assert_eq!(p.page, Page::Genres);
+        // a Settings page being edited follows the buttons
+        p.go(Page::Settings);
+        frame(&ctx, &mut p);
+        let _ = p.settings_draft();
+        p.set_library_layout("Tiles");
+        assert_eq!(p.settings_draft().library_layout, "Tiles");
+        assert_eq!(p.scanner.cfg.library_layout, "Tiles");
+        assert_eq!(realhires::settings::load(None).library_layout, "Tiles");
+        p.set_library_layout("Grid");
+        assert_eq!(p.scanner.cfg.library_layout, "Tiles", "not a layout");
+
+        // ---- Genres: Select, then a click selects instead of opening
+        p.go(Page::Genres);
+        let t = placed_texts(&ctx, &mut p);
+        assert!(t.iter().any(|(s, _)| s.contains("Press Select or Ctrl-click genres to merge or rename them") || s.contains("Cmd-click")));
+        click(&ctx, &mut p, last_text(&t, "Select"));
+        assert!(p.group_select_mode && p.group_selected.is_empty());
+        let t = placed_texts(&ctx, &mut p);
+        assert!(t.iter().any(|(s, _)| s == "0 selected") && t.iter().any(|(s, _)| s.contains("Click genres to select them")));
+        let card = |t: &[(String, Rect)], name: &str| last_text(t, name) - vec2(0.0, 80.0); // on the cover above the name
+        click(&ctx, &mut p, card(&t, "Jazz"));
+        assert_eq!((p.page.clone(), p.group_selected.clone()), (Page::Genres, vec!["Jazz".to_string()]));
+        let t = placed_texts(&ctx, &mut p);
+        assert!(t.iter().any(|(s, _)| s == "1 selected"));
+        click(&ctx, &mut p, last_text(&t, "Merge…")); // one genre: Merge… is off
+        assert!(p.name_dialog.is_none());
+        click(&ctx, &mut p, card(&t, "Pop"));
+        click(&ctx, &mut p, card(&t, "Folk"));
+        click(&ctx, &mut p, card(&t, "Folk")); // again: unselected
+        assert_eq!(p.group_selected, vec!["Jazz".to_string(), "Pop".to_string()]);
+        let t = placed_texts(&ctx, &mut p);
+        assert!(t.iter().any(|(s, _)| s == "2 selected"));
+        click(&ctx, &mut p, last_text(&t, "Rename…")); // two genres: Rename… is off
+        assert!(p.name_dialog.is_none());
+        // Merge…: the name in one dialog, the selected genres to choose from (the biggest first)
+        click(&ctx, &mut p, last_text(&t, "Merge…"));
+        let d = p.name_dialog.as_ref().expect("the name dialog");
+        assert_eq!((d.choices.clone(), d.text.as_str()), (vec!["Pop".to_string(), "Jazz".to_string()], "Pop"));
+        p.name_dialog = None;
+        // Done: out of select mode, nothing selected
+        let t = placed_texts(&ctx, &mut p);
+        click(&ctx, &mut p, last_text(&t, "Done"));
+        assert!(!p.group_select_mode && p.group_selected.is_empty());
+        // Esc leaves select mode as Done does
+        p.group_select_mode = true;
+        p.group_selected = vec!["Jazz".into()];
+        frame_with(&ctx, &mut p, vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }]);
+        assert!(!p.group_select_mode && p.group_selected.is_empty());
+        // Ctrl/Cmd-click selects without select mode, and the title row shows the selection's buttons
+        let t = placed_texts(&ctx, &mut p);
+        command_click(&ctx, &mut p, card(&t, "Folk"));
+        command_click(&ctx, &mut p, card(&t, "Jazz"));
+        assert!(!p.group_select_mode && p.page == Page::Genres);
+        assert_eq!(p.group_selected, vec!["Folk".to_string(), "Jazz".to_string()]);
+        let t = placed_texts(&ctx, &mut p);
+        assert!(t.iter().any(|(s, _)| s == "2 selected") && !t.iter().any(|(s, _)| s == "Select"));
+        // the merge itself: the files change, the selection goes
+        click(&ctx, &mut p, last_text(&t, "Merge…"));
+        assert!(p.name_dialog.is_some());
+        p.name_dialog = None;
+        p.apply_name(NameAction::MergeGroups("genres", p.group_selected.clone()), "Jazz").unwrap();
+        rename(&ctx, &mut p, "the genres merged", |p| p.lib.genres.len() == 2);
+        assert_eq!(tag_of(&c1, "genre"), "Jazz");
+        assert!(p.group_selected.is_empty() && !p.group_select_mode);
+        p.tag_job = None;
+        // Rename… with one genre
+        let t = placed_texts(&ctx, &mut p);
+        click(&ctx, &mut p, last_text(&t, "Select"));
+        let t = placed_texts(&ctx, &mut p);
+        click(&ctx, &mut p, card(&t, "Pop"));
+        let t = placed_texts(&ctx, &mut p);
+        click(&ctx, &mut p, last_text(&t, "Rename…"));
+        let d = p.name_dialog.as_ref().expect("the rename dialog");
+        assert_eq!((d.title.as_str(), d.text.as_str()), ("Rename genre", "Pop"));
+        p.name_dialog = None;
+        // the page shown again starts without a selection
+        p.go(Page::Library);
+        p.go(Page::Genres);
+        assert!(!p.group_select_mode && p.group_selected.is_empty());
+
+        // ---- Your Stats: the day's plays to the right of the calendar, scrolling inside it
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+        let today = realhires::stats::local_parts(now);
+        let (day_start, _) = realhires::stats::day_bounds(today.year, today.month, today.day);
+        for i in 0..30 {
+            let path = [&a1, &a2, &b1, &c1][i % 4];
+            let track = p.lib.track(path).unwrap().clone();
+            // between midnight and now: today, and in this year's stats
+            let started = day_start + (now - day_start) * (i as f64 + 1.0) / 32.0;
+            assert!(p.history.as_ref().unwrap().add_play(&track, started, 30.0 + i as f64));
+        }
+        p.history_gen += 1;
+        p.calendar.month = (today.year, today.month);
+        p.calendar.day = None;
+        p.go(Page::Stats);
+        let t = placed_texts(&ctx, &mut p);
+        let month = last_text(&t, &realhires::stats::month_title(today.year, today.month));
+        let hint = last_text(&t, "Click a day to see the songs you played on it.");
+        assert!(hint.x > month.x + 7.0 * 62.0 && (hint.y - month.y).abs() < 20.0, "the hint beside the calendar: {month:?} {hint:?}");
+        p.calendar_choose(today.day);
+        let t = placed_texts(&ctx, &mut p);
+        let title = last_text(&t, &realhires::stats::day_title(today.year, today.month, today.day));
+        assert!(title.x > month.x + 7.0 * 62.0 && (title.y - month.y).abs() < 20.0, "{month:?} {title:?}");
+        assert_eq!(p.calendar.rows.len(), 30);
+        // the cards start under the calendar, not under the 30 plays
+        let weeks = realhires::stats::month_grid(today.year, today.month).len() as f32;
+        let cards = last_text(&t, "Minutes listened");
+        assert!(cards.y < month.y + 64.0 + 44.0 * weeks + 80.0, "{month:?} {cards:?}");
+        // the newest play is the first row; a wheel step over the list moves it, not the calendar
+        let first = &p.calendar.rows[0].title.clone();
+        let row = all_texts(&t, first).into_iter().filter(|r| r.left() > month.x + 7.0 * 62.0).map(|r| r.center()).next().unwrap();
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -200.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let t = placed_texts_at(&ctx, &mut p, 1280.0, vec![egui::Event::PointerMoved(row), wheel]);
+        let month2 = last_text(&t, &realhires::stats::month_title(today.year, today.month));
+        let row2 = all_texts(&t, first).into_iter().filter(|r| r.left() > month.x + 7.0 * 62.0).map(|r| r.center()).next().unwrap();
+        assert!((month2.y - month.y).abs() < 0.5 && row2.y < row.y - 50.0, "{month:?} {month2:?} {row:?} {row2:?}");
+        // a page narrower than the calendar plus 360 px: the list goes under the calendar
+        let t = placed_texts_at(&ctx, &mut p, 900.0, vec![]);
+        let month = all_texts(&t, &realhires::stats::month_title(today.year, today.month))[0];
+        let title = all_texts(&t, &realhires::stats::day_title(today.year, today.month, today.day))[0];
+        assert!(title.top() > month.top() + 64.0 + 44.0 * (weeks - 1.0) && (title.left() - month.left()).abs() < 10.0, "{month:?} {title:?}");
+        assert!(crate::library_pages::calendar_side_by_side(7.0 * 62.0 + 360.0) && !crate::library_pages::calendar_side_by_side(7.0 * 62.0 + 359.0));
         drop(p);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -4520,7 +4806,7 @@ mod tests {
         p.set_np_tab(NpTab::Lyrics);
         p.go(Page::Genres);
         let t = texts(&ctx, &mut p);
-        has(&t, &["ジャンル", "2ジャンル", "+クリックでジャンルを複数選択", "アルバム1枚 · 2曲"], "Genres");
+        has(&t, &["ジャンル", "2ジャンル", "+クリックでジャンルを選ぶと", "選択", "アルバム1枚 · 2曲"], "Genres");
         p.open_cover_window(&b1);
         let t = texts(&ctx, &mut p);
         has(&t, &["アートワーク", "アートワークを変更…", "アルバムを表示", "閉じる"], "the Cover window");

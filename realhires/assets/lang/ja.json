@@ -1287,7 +1287,15 @@
   "Searches the file and folder names and the reasons": "ファイル名、フォルダ名、理由を検索します。",
   "Verdict, reason, file name or tag": "判定、理由、ファイル名またはタグ",
   "Sort by this column (again: the other way round)": "この列で並べ替え（もう一度で逆順）",
-  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。"
+  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。",
+  "Select": "選択",
+  "Merge…": "統合…",
+  "Click genres to select them": "ジャンルをクリックして選択します",
+  "Press Select or {mod}-click genres to merge or rename them": "「選択」を押すか{mod}+クリックでジャンルを選ぶと、統合したり名前を変更したりできます",
+  "Library page": "ライブラリのページ",
+  "How the Library page shows All Songs, Folders, Albums and its other entries: as tiles, several side by side, or as a list with one entry per row. The two buttons at the right of the Library page's title switch it too.": "ライブラリのページで「すべての曲」「フォルダ」「アルバム」などの項目をどう表示するかです。タイル（横に並べて表示）か、リスト（1行に1項目）を選べます。ライブラリのページのタイトルの右にある2つのボタンでも切り替えられます。",
+  "Tiles": "タイル",
+  "List": "リスト"
  },
  "patterns": {
   "How many files are analysed at the same time. 0 uses one job per CPU core ({n} on this computer), which is the fastest setting: more jobs than cores do not scan faster, they only use more memory. Up to 512 are allowed. (Python on Windows limits one process pool to 61 workers; Real-Hi-Res uses several pools to go beyond that.)": "同時に解析するファイルの数です。0はCPUコア1つにつき1ジョブ（このコンピュータでは{n}）で、最も速い設定です。コアより多いジョブにしても速くはならず、メモリを多く使うだけです。最大512まで設定できます。（WindowsのPythonは1つのプロセスプールを61ワーカーに制限しますが、Real-Hi-Resは複数のプールを使ってそれを超えます。）",

@@ -569,8 +569,10 @@ class GroupPage(Page):
     """Artists, Album Artists, Genres, Years, Composers: a card each (a mosaic of up to
     four of its album covers, the name in bold, "N albums · M songs" in grey), in the
     grouping's order; a click opens its page ("group").  A card's menu (right click)
-    plays it, and on Genres, Composers and Years renames it; on Genres several cards can
-    be selected with Ctrl/Cmd-click and merged ("Merge N genres…")."""
+    plays it, and on Genres, Composers and Years renames it.  On Genres (2.3) the title
+    row has Select: in select mode a click selects a card, and the row shows "N
+    selected", Merge… (two or more), Rename… (one) and Done; Ctrl-click (Cmd-click on
+    macOS) selects without select mode."""
 
     def __init__(self, app, kind: str):
         super().__init__(app)
@@ -581,36 +583,64 @@ class GroupPage(Page):
         self.list_name = self.title
         head, self.title_l, self.sub = self.heading(self, self.title, buttons=False)
         head.pack(fill="x", padx=28, pady=(22, 6))
-        self.merge_b = PillButton(head, t, tr("Merge genres…"), command=lambda: self.merge_selected())
-        self.clear_b = PillButton(head, t, tr("Clear selection"), kind="plain",
-                                  command=lambda: self.grid_w.clear_selection())
+        # the title row's buttons of Genres (2.3)
+        self.select_b = PillButton(head, t, tr("Select"), icon="check", kind="plain", command=self.start_selecting)
+        self.done_b = PillButton(head, t, tr("Done"), command=self.done_selecting)
+        self.rename_b = PillButton(head, t, tr("Rename…"), kind="plain", command=lambda: self.rename_selected())
+        self.merge_b = PillButton(head, t, tr("Merge…"), kind="plain", command=lambda: self.merge_selected())
+        self.count_l = label(head, t, "", "body", fg="text2")
         self.items: List[dict] = []
         self.grid_w = AlbumGrid(self, t, app.covers, self._open, on_context=self._context,
                                 multi=kind == "genres", on_selection=self._selection,
                                 empty_text=tr(GROUP_TEXTS[kind][0]))
         self.grid_w.pack(fill="both", expand=True)
+        self.grid_w.canvas.bind("<Escape>", lambda e: self.done_selecting())
         self.refresh()
+
+    def show(self, **kw) -> None:
+        if self.grid_w.select_mode or self.grid_w.selected:  # a page shown again starts without a selection
+            self.done_selecting()
 
     def refresh(self) -> None:
         self.items = library_groups(self.app, self.kind)
         self.grid_w.set_albums([group_card(self.app, self.kind, g) for g in self.items], keep=True)
         self._selection()
 
+    def selecting(self) -> bool:
+        """The title row shows the selection's buttons: in select mode, or with cards
+        selected by Ctrl/Cmd-click."""
+        return self.grid_w.multi and (self.grid_w.select_mode or bool(self.grid_w.selected))
+
     def _selection(self) -> None:
         n = len(self.grid_w.selected)
         text = plural(len(self.items), self.noun) if self.items else ""
-        if self.kind == "genres" and self.items:
-            text += " · " + (tr("{n} selected", n=n) if n else
-                             tr("{mod}-click genres to select several and merge them", mod=MOD_NAME))
+        if self.grid_w.multi and self.items:
+            text += " · " + (tr("Click genres to select them") if self.grid_w.select_mode else
+                             tr("Press Select or {mod}-click genres to merge or rename them", mod=MOD_NAME))
         self.sub.configure(text=text)
-        if n >= 2:
-            self.merge_b.set(text=tr("Merge {n} genres…", n=n))
-            if not self.merge_b.winfo_ismapped():
-                self.clear_b.pack(side="right")
-                self.merge_b.pack(side="right", padx=(0, 10))
-        else:
-            self.merge_b.pack_forget()
-            self.clear_b.pack_forget()
+        for w in (self.select_b, self.done_b, self.rename_b, self.merge_b, self.count_l):
+            w.pack_forget()
+        if self.selecting():
+            self.count_l.configure(text=tr("{n} selected", n=n))
+            self.merge_b.set(enabled=n >= 2)
+            self.rename_b.set(enabled=n == 1)
+            self.done_b.pack(side="right")
+            self.rename_b.pack(side="right", padx=(0, 10))
+            self.merge_b.pack(side="right", padx=(0, 10))
+            self.count_l.pack(side="right", padx=(0, 14))
+        elif self.grid_w.multi and self.items:
+            self.select_b.pack(side="right")
+
+    def start_selecting(self) -> None:
+        """Select: a click on a card now selects it."""
+        self.grid_w.set_select_mode(True)
+        self._selection()
+
+    def done_selecting(self) -> None:
+        """Done (or Esc): out of select mode, nothing selected."""
+        self.grid_w.set_select_mode(False)
+        self.grid_w.clear_selection()
+        self._selection()
 
     def _open(self, card: dict) -> None:
         self.app.show_page("group", kind=self.kind, group=card["name"])
@@ -640,12 +670,25 @@ class GroupPage(Page):
         return m
 
     def merge_selected(self, target: Optional[str] = None, confirm: bool = True):
+        """Merge… (or Merge N genres…): the selected genres become one; its name is asked
+        for in one dialog (the selected genres to choose from, the biggest first, or a new
+        name), then the number of files is confirmed."""
         names = [c["name"] for c in self.grid_w.selected_items()]
         if len(names) < 2:
             return None
         job = merge_groups(self.app, self.kind, names, target, confirm)
         if job is not None:
-            self.grid_w.clear_selection()
+            self.done_selecting()
+        return job
+
+    def rename_selected(self, new: Optional[str] = None, confirm: bool = True):
+        """Rename… with exactly one genre selected."""
+        names = [c["name"] for c in self.grid_w.selected_items()]
+        if len(names) != 1:
+            return None
+        job = rename_group(self.app, self.kind, names[0], new, confirm)
+        if job is not None:
+            self.done_selecting()
         return job
 
 

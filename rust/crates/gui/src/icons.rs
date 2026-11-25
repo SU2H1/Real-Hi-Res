@@ -41,6 +41,10 @@ pub enum Icon {
     ChevronUp,
     ChevronDown,
     Close,
+    /// the Library page as tiles (2.3)
+    Tiles,
+    /// the Library page as a list (2.3)
+    ListView,
 }
 
 fn heart_points(c: Pos2, s: f32) -> Vec<Pos2> {
@@ -398,6 +402,21 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             let h = s * 0.22;
             p.line_segment([pos2(c.x - h, c.y - h), pos2(c.x + h, c.y + h)], stroke);
             p.line_segment([pos2(c.x - h, c.y + h), pos2(c.x + h, c.y - h)], stroke);
+        }
+        Icon::Tiles => {
+            let (q, g) = (s * 0.38, s * 0.07);
+            let radius = egui::CornerRadius::same((s * 0.07).round() as u8);
+            for (x0, y0) in [(-q, -q), (g, -q), (-q, g), (g, g)] {
+                p.rect_filled(Rect::from_min_size(pos2(c.x + x0, c.y + y0), Vec2::splat(q - g)), radius, color);
+            }
+        }
+        Icon::ListView => {
+            let q = s * 0.07;
+            for dy in [-0.3f32, 0.0, 0.3] {
+                let y = c.y + dy * s;
+                p.rect_filled(Rect::from_min_max(pos2(c.x - 0.42 * s, y - q), pos2(c.x - 0.28 * s, y + q)), 0.0, color);
+                p.line_segment([pos2(c.x - 0.14 * s, y), pos2(c.x + 0.42 * s, y)], stroke);
+            }
         }
     }
 }

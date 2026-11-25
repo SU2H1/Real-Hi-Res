@@ -41,6 +41,35 @@ fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str) -> egui::Response {
     resp
 }
 
+/// A rounded button without the minimum width of `pill()` (2.3: the Genres page's
+/// Select, Merge…, Rename… and Done): filled with the accent colour, or the LCD grey
+/// when `accent` is false; greyed out and not clickable when `enabled` is false.
+fn pill_button(ui: &mut Ui, pal: &Palette, icon: Option<Icon>, label: &str, accent: bool, enabled: bool) -> egui::Response {
+    let font = look::title(13.0);
+    let iw = if icon.is_some() { 20.0 } else { 0.0 };
+    let w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x) + iw + 34.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), if enabled { Sense::click() } else { Sense::hover() });
+    let hovered = enabled && resp.hovered();
+    let disabled = pal.secondary.gamma_multiply(0.5);
+    let (fill, fg) = if accent {
+        (if !enabled { disabled } else if hovered { pal.accent.gamma_multiply(0.85) } else { pal.accent }, Color32::WHITE)
+    } else {
+        (if hovered { pal.hover } else { pal.lcd }, if enabled { pal.text } else { disabled })
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    let mut x = rect.left() + 17.0;
+    if let Some(icon) = icon {
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 7.0, rect.center().y), vec2(14.0, 14.0)), icon, fg);
+        x += iw;
+    }
+    ui.painter().text(pos2(x, rect.center().y), Align2::LEFT_CENTER, label, font, fg);
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
 fn minutes(tracks: &[&Track]) -> String {
     let total: f64 = tracks.iter().map(|t| t.duration.max(0.0)).sum();
     let m = (total / 60.0).round() as i64;
@@ -881,34 +910,45 @@ impl Player {
 
     /// Artists, Album Artists, Genres, Years and Composers: a card each, like the albums
     /// (a mosaic of up to four of its album covers, the name, "N albums · M songs"); a
-    /// click opens its page.  On Genres, Ctrl/Cmd-click selects several to merge.
+    /// click opens its page.  On Genres (2.3) the title row has Select: in select mode a
+    /// click selects a card, and the row shows "N selected", Merge… (two or more),
+    /// Rename… (one) and Done; Ctrl-click (Cmd-click on macOS) selects without it.
     fn group_grid(&mut self, ui: &mut Ui, pal: &Palette, kind: &'static str) {
         let (_, title, noun) = crate::player::GROUPINGS.iter().copied().find(|g| g.0 == kind).unwrap_or(crate::player::GROUPINGS[0]);
         let n = self.lib.groups(kind).len();
-        let selected = if kind == "genres" { self.group_selected.len() } else { 0 };
+        let multi = kind == "genres";
+        let selected = if multi { self.group_selected.len() } else { 0 };
+        let selecting = multi && (self.group_select_mode || selected > 0);
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label(RichText::new(i18n::tr(title)).font(look::title(28.0)).color(pal.text));
                 let mut sub = crate::player::plural(n, noun);
-                if kind == "genres" {
-                    let m = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+                if multi && n > 0 {
                     sub += " · ";
-                    sub += &if selected > 0 {
-                        tr!("{n} selected", n = selected)
+                    sub += &if self.group_select_mode {
+                        tr!("Click genres to select them").to_string()
                     } else {
-                        tr!("{mod}-click genres to select several and merge them", mod = m)
+                        tr!("Press Select or {mod}-click genres to merge or rename them", mod = crate::player::MOD_NAME)
                     };
                 }
                 ui.label(RichText::new(sub).color(pal.secondary));
             });
-            if selected >= 2 {
+            if selecting || (multi && n > 0) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button(tr!("Clear selection")).clicked() {
-                        self.group_selected.clear();
-                    }
-                    if pill(ui, pal, Icon::Genres, &tr!("Merge {n} genres…", n = selected)).clicked() {
-                        let names = self.group_selected.clone();
-                        self.ask_merge_groups(kind, names);
+                    if selecting {
+                        if pill_button(ui, pal, None, tr!("Done"), true, true).clicked() {
+                            self.done_selecting();
+                        }
+                        if pill_button(ui, pal, None, tr!("Rename…"), false, selected == 1).clicked() {
+                            self.rename_selected();
+                        }
+                        if pill_button(ui, pal, None, tr!("Merge…"), false, selected >= 2).clicked() {
+                            self.merge_selected();
+                        }
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(tr!("{n} selected", n = selected)).color(pal.secondary));
+                    } else if pill_button(ui, pal, Some(Icon::Check), tr!("Select"), false, true).clicked() {
+                        self.group_select_mode = true;
                     }
                 });
             }
@@ -988,8 +1028,11 @@ impl Player {
         let g = elided(ui, &sub, look::text(12.0), pal.secondary, size);
         ui.painter().galley(pos2(rect.left(), crect.bottom() + 24.0), g, pal.secondary);
         let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-        if resp.clicked() {
-            let toggle = kind == "genres" && ui.input(|i| i.modifiers.command);
+        // macOS: Ctrl-click is a right-click there (Cmd-click selects)
+        let mac_menu = cfg!(target_os = "macos") && resp.clicked() && ui.input(|i| i.modifiers.ctrl && !i.modifiers.mac_cmd);
+        if resp.clicked() && !mac_menu {
+            // select mode, or Ctrl-click (Cmd-click on macOS): select or unselect the card
+            let toggle = kind == "genres" && (self.group_select_mode || ui.input(|i| i.modifiers.command));
             if toggle {
                 if is_sel {
                     self.group_selected.retain(|s| *s != name);
@@ -1001,7 +1044,9 @@ impl Player {
                 self.go(Page::Group(kind, name.clone()));
             }
         }
-        resp.context_menu(|ui| {
+        let menu = egui::Popup::context_menu(&resp);
+        let menu = if mac_menu { menu.open_memory(Some(egui::SetOpenCommand::Bool(true))) } else { menu };
+        menu.show(|ui| {
             if is_sel && self.group_selected.len() > 1 {
                 let k = self.group_selected.len();
                 if ui.button(tr!("Merge {n} genres…", n = k)).clicked() {
