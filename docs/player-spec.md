@@ -1105,6 +1105,25 @@ tests that also hold at 1024 × 768. New settings are not Detection settings (th
   description, "N songs, M minutes", Play, Shuffle and **Save as Playlist** (an ordinary playlist with the mix's
   name, a taken name gets " 2"; the page says what it made), then the song table in the mix's order, with the usual
   song menu. The mixes are computed when the page opens and again after a song is logged, liked or disliked.
+- **Settled while building** (the constants and rules are in `recommend.py`'s docstring, which the Rust module
+  follows step by step). *Time* is `Σ w·seconds·r`, not `Σ w·seconds`: with every second counting, a song skipped
+  after ten seconds a hundred times collected enough "listening" to score +0.8 and enter the favourites; counted by
+  the part heard it scores −1.5, and a song heard to the end counts in full. A dislike takes `LIKE_POINTS` off (it
+  only matters for New For You, where one disliked song speaks against its artist). On Repeat and Rediscover take
+  only songs with a score above 0 (Rediscover: the score without the recency weight, at least one play, and the
+  *plain* retention ≥ 0.6, because the weighted one fades to 0.5 for exactly the songs it is about). New For You
+  leaves out liked songs (they are favourites) and songs skipped more than once (`DISCOVER_SKIPS`), ranks by
+  `(2·artist + album + genre) / 4` over the songs the user knows (a counted play, a like or a dislike) plus the
+  song's own score, a missing tag counting 0. The Daily Mix draws each part from the best three times as many
+  candidates (24, 24, 72) in the day's order, so its songs change with the day, not only their order. The artist of
+  a song is the first name of its artist field (else of the album artist), any case; songs without one are not
+  limited; when the limit leaves a mix under `MIN_FILL` (12) songs it rises one song at a time, or a library of one
+  or two artists would get no mix at all. Scores are ordered as whole millionths with the path as the tie-break, so
+  a last-bit difference of `pow` or `log2` between platforms cannot change an order. Pages: the Library entry says
+  "N mixes" or "No mixes yet"; Save as Playlist stays on the mix and names the playlist in the language in use; a
+  mix that has gone (too few songs after a dislike or a cleared history) shows its page without songs; the Tk mix
+  page numbers its songs as its playlist page does, the egui one does not (as its playlist page). The Japanese
+  names are おすすめ, お気に入りミックス, ヘビーローテーション, 再発見, 新しい発見 and デイリーミックス.
 
 ### 2. The cover turns over like a record sleeve
 
