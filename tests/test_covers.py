@@ -223,8 +223,27 @@ def pump(cond, what, timeout=60):
     t0 = time.time()
     while not cond():
         assert time.time() - t0 < timeout, "timed out: " + (what() if callable(what) else what)
+        u0 = time.time()
         root.update()
+        if time.time() - u0 > 2:  # (to find where a hang on a macOS runner sits)
+            print("root.update() took %.1f s" % (time.time() - u0), file=sys.stderr, flush=True)
         time.sleep(0.01)
+
+def watchdog():
+    # every 30 s: the progress of the covers made ahead and every thread's stack, so a
+    # hang shows where it sits (the CI's Apple Silicon runners hung here twice)
+    import threading, traceback
+    start = time.time()
+    while True:
+        time.sleep(30)
+        print("--- %.0f s: %d FFmpeg runs, %d queued" % (time.time() - start, len(runs), cache.prefetching()
+                                                       if "cache" in globals() else -1), file=sys.stderr, flush=True)
+        for tid, frame in sys._current_frames().items():
+            name = next((t.name for t in threading.enumerate() if t.ident == tid), "?")
+            print("thread %s:\n%s" % (name, "".join(traceback.format_stack(frame)[-6:])), file=sys.stderr, flush=True)
+
+import threading as _threading
+_threading.Thread(target=watchdog, daemon=True, name="watchdog").start()
 
 def scroll_through(grid, cache):
     """Scroll from the top to the end; return the albums shown."""
