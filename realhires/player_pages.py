@@ -290,9 +290,10 @@ def track_tip(t: Track, key: str) -> str:
 
 # --------------------------------------------------------------- albums ---
 def album_menu(app, album: dict) -> tk.Menu:
-    """The menu of an album card (right click, 2.2): Play, Shuffle, Play Next, Add to
-    Queue, then Acquire Metadata… (the MusicBrainz window for the album, as the album
-    page's button) and Album Properties… (the Properties window for its songs)."""
+    """The menu of an album card (right click, 2.2) and of the album page's "…" button
+    (2.3): Play, Shuffle, Play Next, Add to Queue, then Album Properties… (the Properties
+    window for its songs), Acquire Metadata… (the MusicBrainz window for the album, as the
+    album page's button) and Change Cover… (the Cover window of the album, 2.3)."""
     m = tk.Menu(app.root, tearoff=False)
     name = tr_name(album["title"])  # "Playing from …", as the album page
     paths = [t.path for t in album["tracks"]]  # in track order
@@ -301,8 +302,10 @@ def album_menu(app, album: dict) -> tk.Menu:
     m.add_command(label=tr("Play Next"), command=lambda: app.queue_songs(paths, first=True))
     m.add_command(label=tr("Add to Queue"), command=lambda: app.queue_songs(paths, first=False))
     m.add_separator()
-    m.add_command(label=tr("Acquire Metadata…"), command=lambda: app.album_musicbrainz(album))
     m.add_command(label=tr("Album Properties…"), command=lambda: app.edit_album_info(album))
+    m.add_command(label=tr("Acquire Metadata…"), command=lambda: app.album_musicbrainz(album))
+    first = next((t.path for t in album["tracks"] if not getattr(t, "missing", False)), "")
+    m.add_command(label=tr("Change Cover…"), command=lambda: app.open_cover_window(first))
     app.theme_menu(m)
     app.last_menu = m
     return m
@@ -404,6 +407,10 @@ class AlbumPage(Page):
         self.mb_b = PillButton(btns, t, tr("Acquire Metadata…"), kind="plain",
                                command=self.musicbrainz)
         self.mb_b.pack(side="left", padx=(10, 0))
+        # 2.3: the album's menu (as an album card's right-click menu, with Change Cover…)
+        self.more_b = IconButton(btns, t, "dots", command=self.show_menu, size=32, icon_size=18,
+                                 tooltip=lambda: tr("More"))
+        self.more_b.pack(side="left", padx=(6, 0))
         # the columns the user chose for album pages (the track number first by default),
         # sortable; in track order at first
         self.table = song_table(self, self, kind="album",
@@ -439,6 +446,16 @@ class AlbumPage(Page):
         if self.album is not None:
             return self.app.album_musicbrainz(self.album)
         return None
+
+    def menu(self) -> Optional[tk.Menu]:
+        """The "…" button's menu: the album card's menu (album_menu())."""
+        return album_menu(self.app, self.album) if self.album is not None else None
+
+    def show_menu(self) -> None:
+        m = self.menu()
+        if m is not None:
+            b = self.more_b
+            m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
 
     def _fill(self) -> None:
         a = self.album

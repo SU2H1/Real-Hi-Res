@@ -3149,6 +3149,7 @@ dependencies = [
 name = "realhires-gui"
 version = "2.2.0"
 dependencies = [
+ "arboard",
  "chrono",
  "cpal",
  "eframe",
@@ -3158,6 +3159,7 @@ dependencies = [
  "image",
  "realhires-core",
  "rfd",
+ "webbrowser",
  "windows",
  "winit",
  "winresource",

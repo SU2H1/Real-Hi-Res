@@ -286,6 +286,10 @@ class Theme:
             s.configure(name, fieldbackground=bg, foreground=c["text"], insertcolor=c["text"], bordercolor=bg,
                         lightcolor=bg, darkcolor=bg, padding=(6, 3), font=body)
             s.map(name, bordercolor=[("focus", c["accent"])], lightcolor=[("focus", bg)])
+        # 2.3: a field the Properties window just filled in from the clipboard flashes in the accent colour
+        flash = mix(c["accent"], c["field"], 0.7)
+        s.configure("Flash.P.TEntry", fieldbackground=flash, foreground=c["text"], insertcolor=c["text"],
+                    bordercolor=c["accent"], lightcolor=c["accent"], darkcolor=c["accent"], padding=(6, 3), font=body)
         s.configure("P.TCombobox", fieldbackground=c["field"], background=c["field"], foreground=c["text"],
                     arrowcolor=c["text2"], bordercolor=c["field"], lightcolor=c["field"], darkcolor=c["field"],
                     padding=(6, 3), selectbackground=c["field"], selectforeground=c["text"])

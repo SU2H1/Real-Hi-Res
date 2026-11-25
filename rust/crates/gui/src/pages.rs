@@ -465,9 +465,10 @@ impl Player {
         resp.context_menu(|ui| self.album_menu(ui, album));
     }
 
-    /// The right-click menu of an album card (every album grid): Play, Shuffle,
-    /// Play Next, Add to Queue, Acquire Metadata… (the MusicBrainz window for the
-    /// album) and Album Properties…, as the album page's buttons do.
+    /// The right-click menu of an album card (every album grid) and the album
+    /// page's "…" menu (2.3): Play, Shuffle, Play Next, Add to Queue, Album
+    /// Properties…, Acquire Metadata… (the MusicBrainz window for the album), as
+    /// the album page's buttons do, and Change Cover… (the album's Cover window).
     pub fn album_menu(&mut self, ui: &mut Ui, album: usize) {
         let Some(a) = self.lib.albums.get(album) else {
             ui.close();
@@ -494,14 +495,20 @@ impl Player {
             ui.close();
         }
         ui.separator();
+        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Album Properties…"))).clicked() {
+            let a = self.lib.albums[album].clone();
+            self.edit_album_info(&a);
+            ui.close();
+        }
         if ui.add_enabled(self.mb_win.is_none(), egui::Button::new(tr!("Acquire Metadata…"))).clicked() {
             let a = self.lib.albums[album].clone();
             self.musicbrainz_album(&a);
             ui.close();
         }
-        if ui.add_enabled(self.edit_info.is_none(), egui::Button::new(tr!("Album Properties…"))).clicked() {
-            let a = self.lib.albums[album].clone();
-            self.edit_album_info(&a);
+        if ui.button(tr!("Change Cover…")).clicked() {
+            if let Some(first) = paths.first() {
+                self.open_cover_window(first);
+            }
             ui.close();
         }
     }
@@ -600,6 +607,9 @@ impl Player {
                     {
                         self.musicbrainz_album(&a);
                     }
+                    // 2.3: the album's menu (as an album card's right-click menu, with Change Cover…)
+                    let r = icons::button(ui, Icon::More, 28.0, false, true, tr!("More"));
+                    egui::Popup::menu(&r).show(|ui| self.album_menu(ui, idx));
                 });
             });
         });
@@ -689,7 +699,8 @@ impl Player {
             self.musicbrainz_song(path);
             ui.close();
         }
-        if ui.button(tr!("Cover…")).clicked() {
+        // 2.3: the Cover window of the song's album (it was "Cover…")
+        if ui.button(tr!("Change Cover…")).clicked() {
             self.open_cover_window(path);
             ui.close();
         }

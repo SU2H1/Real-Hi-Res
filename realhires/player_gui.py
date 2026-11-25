@@ -664,6 +664,8 @@ class PlayerApp:
         self._quitting = False
         self.argv: List[str] = list(initial or [])  # the command line, for restart()
         self.start_process: Callable = subprocess.Popen  # how restart() starts the app again (tests replace it)
+        self.url_opener: Callable[[str], None] = gui.open_url  # how web pages are opened (tests record them, 2.3)
+        self.clipboard_reader: Optional[Callable[[], str]] = None  # the clipboard's text (tests set a fake)
         self._build()
         self.qc = QualityCheck(root, self, parent=self.pages["quality"], initial=initial, cfg=cfg)
         self.qc.pack(fill="both", expand=True)
@@ -1216,7 +1218,8 @@ class PlayerApp:
             # 2.2: "Acquire Metadata…" (was "Get info from MusicBrainz…"): the MusicBrainz window
             # for this song (song lists select one song at a time)
             m.add_command(label=tr("Acquire Metadata…"), command=lambda: self.musicbrainz([track]))
-            m.add_command(label=tr("Cover…"), command=lambda: self.open_cover_window(path))
+            # 2.3: the Cover window of the song's album (it was "Cover…")
+            m.add_command(label=tr("Change Cover…"), command=lambda: self.open_cover_window(path))
             m.add_command(label=tr("Show in folder"), command=lambda: gui.reveal_in_file_manager(path))
         if path == self.current:
             m.add_command(label=tr("Playback Info…"), command=self.open_info)
@@ -1225,9 +1228,10 @@ class PlayerApp:
         return m
 
     # ---- song information ------------------------------------------------------
-    def edit_info(self, tracks: List[Track], heading: str = "", subheading: str = "") -> Optional[EditInfoWindow]:
-        """The Properties window (2.0 "Edit Info") for these songs; while one is open it
-        is brought to the front instead (one at a time)."""
+    def edit_info(self, tracks: List[Track], heading: str = "", subheading: str = "",
+                  album: bool = False) -> Optional[EditInfoWindow]:
+        """The Properties window (2.0 "Edit Info") for these songs (`album`: Album
+        Properties); while one is open it is brought to the front instead (one at a time)."""
         w = self.edit_window
         if w is not None:
             try:
@@ -1241,7 +1245,7 @@ class PlayerApp:
         tracks = [t for t in tracks if not getattr(t, "missing", False)]
         if not tracks:
             return None
-        self.edit_window = EditInfoWindow(self, tracks, heading, subheading)
+        self.edit_window = EditInfoWindow(self, tracks, heading, subheading, album=album)
         return self.edit_window
 
     def musicbrainz(self, tracks: List[Track], album: bool = False, heading: str = "",
@@ -1313,11 +1317,12 @@ class PlayerApp:
     def edit_album_info(self, album: dict) -> Optional[EditInfoWindow]:
         n = len(album["tracks"])
         return self.edit_info(album["tracks"], tr_name(album["title"]),
-                              " · ".join(x for x in (tr_name(album["artist"]), plural(n, "song")) if x))
+                              " · ".join(x for x in (tr_name(album["artist"]), plural(n, "song")) if x), album=True)
 
     def open_cover_window(self, path: str) -> Optional[CoverWindow]:
-        """The Cover window of this song's cover (a click on Now Playing's cover, Cover…
-        in the song menus): one at a time; while it is busy it is brought to the front."""
+        """The Cover window of this song's cover (a click on Now Playing's cover, Change
+        Cover… in the song and album menus): one at a time; while it is busy it is brought
+        to the front."""
         w = getattr(self, "cover_window", None)
         if w is not None:
             try:
@@ -1338,9 +1343,33 @@ class PlayerApp:
 
     def tags_saved(self, paths: List[str]) -> None:
         """Edit Info saved new information into these files (the library index already
-        holds it): read the library again, so every page and the LCD show it."""
+        holds it): read the library again, so every page and the LCD show it.  An open
+        Properties window reads the files again too (2.3: after Acquire Metadata…)."""
         if paths:
             self.refresh_library()
+            w = self.edit_window
+            if w is not None:
+                w.files_changed(paths)
+
+    # ---- the browser and the clipboard (2.3) -------------------------------------------
+    def open_url(self, url: str) -> str:
+        """Open a web page in the system's browser (Search Cover Online, the Properties
+        window's Search buttons); "" when it was opened, else what went wrong, for the
+        window to show."""
+        try:
+            self.url_opener(url)
+        except Exception as exc:  # noqa: BLE001 - no browser: the window says so instead of failing
+            return tr("The browser could not be opened: {error}", error=exc)
+        return ""
+
+    def clipboard_text(self) -> str:
+        """The text on the clipboard, or "" when it holds none."""
+        if self.clipboard_reader is not None:
+            return self.clipboard_reader() or ""
+        try:
+            return str(self.root.clipboard_get())
+        except tk.TclError:
+            return ""
 
     def more_menu(self) -> None:
         if not self.current:

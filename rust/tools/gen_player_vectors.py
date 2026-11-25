@@ -857,3 +857,45 @@ with open(os.path.join(OUT, "python_covers_embed.json"), "w", encoding="utf-8") 
                "types": types, "commands": cover_commands, "cannot": cannot_cover, "summaries": cover_summaries,
                "texts": texts}, fh, indent=0, ensure_ascii=False)
 print(len(cover_cases), "cover cases")
+
+# ------------------------------------------- searching the web (2.3) ---
+# python_search.json: Search Cover Online (covers.cover_search_url()), the Properties
+# window's Search buttons (tagedit.web_search_url()) and what a copied text fills in
+# (tagedit.clipboard_value())
+cover_search = [{"args": list(a), "query": covers.cover_search_query(*a), "url": covers.cover_search_url(*a)}
+                for a in (("The Paper Boats", "Mira Calloway", "City Rain", "Taxi Lights"),
+                          ("", "Mira Calloway", "City Rain", "Taxi Lights"),
+                          ("  ", " The  Paper\tBoats ", " Small Hours ", ""),
+                          ("", "Mira Calloway", "", "Taxi Lights"),
+                          ("The Paper Boats", "", "", "Taxi Lights"),
+                          ("", "", "", "Taxi Lights"), ("", "", "", ""), ("", "", "City Rain", ""),
+                          ("宇多田ヒカル", "", "初恋", ""), ("AC/DC", "", "Back in Black (Remastered) & More + 100% #1", ""),
+                          ("Sigur Rós", "", "Ágætis byrjun", "x"), ("", "Björk", "", "Jóga \"Live\""),
+                          ("a　b", "", "c d", ""), ("~-_.", "", "!*'();:@=$,?[]", ""))]
+song = {"title": "Taxi Lights", "artist": "Mira Calloway", "album": "City Rain", "album_artist": "The Paper Boats"}
+value_sets = [song, dict(song, artist=""), dict(song, artist=None, album_artist="The  Paper Boats"),
+              {"title": None, "artist": None, "album": "Small Hours", "album_artist": "The Paper Boats"},
+              {"title": "", "artist": "Mira Calloway", "album": "Small Hours", "album_artist": ""},
+              {"title": None, "album": None, "album_artist": "The Paper Boats"}, {"album": "Small Hours"},
+              {}, {"title": 'Say "Hello" (Live)', "artist": "Björk & Friends"},
+              {"title": "\"\"", "album": "\"Heroes\"", "artist": "David Bowie"},
+              {"title": "初恋", "artist": "宇多田ヒカル"}, {"title": "  ", "album": " Ágætis  byrjun ", "artist": "Sigur Rós"}]
+web_search = []
+for values in value_sets:
+    for language in ("en", "ja", "日本語", "English", "fr"):
+        for field in tagedit.FIELDS + ("unknown_field",):
+            if language in ("English", "fr") and field not in ("composer", "date"):
+                continue
+            web_search.append({"field": field, "values": {k: (v or "") for k, v in values.items()},
+                               "language": language, "query": tagedit.web_search_query(field, values, language),
+                               "url": tagedit.web_search_url(field, values, language)})
+names = {lang: {f: tagedit.search_name(f, lang) for f in tagedit.FIELDS + ("album_artist", "other_thing")}
+         for lang in ("en", "ja", "日本語", "")}
+clipboard = [[t, tagedit.clipboard_value(t)] for t in (
+    "John Williams", "  John   Williams \n", "\n\n  \nHans Zimmer\nLisa Gerrard", "a\rb", "\r\n x \r\n",
+    "  Ryuichi Sakamoto\x85more", "\x0b\x0c\x1c\x1d\x1eFirst", "tab\tinside　wide", "", "   ",
+    "x" * 999 + " y", "x" * 1000 + "y", "x" * 1500, "é" * 1001, " " + "z" * 999 + "  more", "作曲：坂本龍一\n編曲")]
+with open(os.path.join(OUT, "python_search.json"), "w", encoding="utf-8") as fh:
+    json.dump({"cover": cover_search, "web": web_search, "names": names, "clipboard": clipboard,
+               "watch": [tagedit.WATCH_SECONDS, tagedit.WATCH_POLL_MS]}, fh, indent=0, ensure_ascii=False)
+print(len(cover_search), "cover searches,", len(web_search), "web searches")

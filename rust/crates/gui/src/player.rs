@@ -1791,6 +1791,9 @@ impl Player {
         let count = count(n, n_!("1 song"), n_!("{n} songs"));
         let sub = [tr_name(&album.artist), count.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
         self.edit_info(album.tracks.iter().map(|t| t.path.clone()).collect(), tr_name(&album.title).to_string(), sub);
+        if let Some(e) = self.edit_info.as_mut() {
+            e.album = true; // Acquire Metadata… looks the album up
+        }
     }
 
     /// Open the Edit Info window for these songs; while one is open nothing happens.
@@ -1799,11 +1802,12 @@ impl Player {
         if self.edit_info.is_some() || paths.is_empty() {
             return;
         }
-        self.edit_info = Some(crate::editinfo::EditInfo::new(&self.ctx, paths, heading, subheading));
+        self.edit_info = Some(crate::editinfo::EditInfo::new(&self.ctx, paths, heading, subheading, false));
     }
 
     /// Open the Cover window of this song's cover (a click on Now Playing's
-    /// cover, Cover… in the song menus); one at a time, and not while it works.
+    /// cover, Change Cover… in the song and album menus); one at a time, and not
+    /// while it works.
     pub fn open_cover_window(&mut self, path: &str) {
         if self.cover_win.as_ref().is_some_and(|w| w.busy || w.path == path) {
             return;
@@ -2778,7 +2782,12 @@ impl Player {
         let cover_open = crate::coverwin::cover_window(self, ctx, pal);
         if let Some(mut w) = self.edit_info.take() {
             let cfg = self.scanner.cfg.clone();
-            match w.show(ctx, pal, &cfg) {
+            // Esc and Enter belong to the MusicBrainz window when Acquire Metadata… opened it over this one
+            let keys = self.mb_win.is_none();
+            let outcome = w.show(ctx, pal, &cfg, keys);
+            // 2.3: Acquire Metadata… at the bottom left: the MusicBrainz window for the same songs
+            let acquire = std::mem::take(&mut w.acquire).then(|| (w.paths.clone(), w.album, w.heading.clone(), w.subheading.clone()));
+            match outcome {
                 crate::editinfo::Outcome::Open => self.edit_info = Some(w),
                 crate::editinfo::Outcome::Closed => {}
                 crate::editinfo::Outcome::Saved { close } => {
@@ -2788,7 +2797,10 @@ impl Player {
                     }
                 }
             }
-            if self.edit_info.is_some() {
+            if let Some((paths, album, heading, sub)) = acquire {
+                self.open_musicbrainz(paths, album, heading, sub);
+            }
+            if self.edit_info.is_some() && self.mb_win.is_none() {
                 return; // Esc belongs to the Edit Info window while it is open
             }
         }
@@ -2796,6 +2808,10 @@ impl Player {
             let (open, finished) = job.show(ctx, pal);
             if finished {
                 self.update_library();
+                // an open Properties window shows the new genre, composer or year (as in Python)
+                if let Some(e) = self.edit_info.as_mut() {
+                    e.files_changed(&job.paths);
+                }
             }
             if open {
                 self.tag_job = Some(job);
@@ -2807,6 +2823,10 @@ impl Player {
                 crate::mbwin::Outcome::Closed => {}
                 crate::mbwin::Outcome::Saved { close } => {
                     self.update_library();
+                    // an open Properties window shows what was written (2.3: Acquire Metadata… there)
+                    if let Some(e) = self.edit_info.as_mut() {
+                        e.files_changed(&w.paths);
+                    }
                     if !close {
                         self.mb_win = Some(w);
                     }
@@ -4617,7 +4637,7 @@ mod tests {
         // 2.2: an album card's right-click menu, as the user asked ("right click songs/album
         // and press acquire metadata")
         let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
-        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Acquire Metadata…", "Album Properties…"]);
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
         click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
         p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
         {
@@ -4706,6 +4726,196 @@ mod tests {
         p.on_exit();
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// 2.3: Change Cover… in a song's menu, an album card's menu and the album page's
+    /// "…" menu, Search Cover Online in the Cover window, and the Properties window's
+    /// Acquire Metadata… and Search buttons with the clipboard watch (the browser and the
+    /// clipboard are `crate::web`'s fakes: nothing is opened, nothing real is read).
+    #[test]
+    fn change_cover_search_online_and_properties_search() {
+        use crate::web::fake;
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-web-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var("REALHIRES_COVERS", tmp.join("covers"));
+        let paths: Vec<String> = [("Neon Streets", 2.0), ("Midnight Signal", 2.0)]
+            .iter()
+            .enumerate()
+            .map(|(i, (t, secs))| song(&music, "Night Drive", t, "The Example Band", "Pop", i as u32 + 1, 8_000, *secs))
+            .collect();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 2 && p.lib_rx.is_none());
+        p.scanner.cfg.musicbrainz_server = "http://127.0.0.1:9".into(); // never musicbrainz.org
+        let album = p.lib.albums.iter().find(|a| a.title == "Night Drive").cloned().unwrap();
+        fake::copy("what was copied before");
+
+        // 1. a song's menu: Properties…, Acquire Metadata…, Change Cover… (the Cover window of
+        // the song's album)
+        p.go(Page::Album(album.key.clone()));
+        let before = placed_texts(&ctx, &mut p);
+        let row = before.iter().find(|(t, _)| t == "Midnight Signal").expect("the song's row").1.center();
+        right_click(&ctx, &mut p, row);
+        let after = placed_texts(&ctx, &mut p);
+        let items = new_texts(&before, &after);
+        let i = items.iter().position(|t| t == "Properties…").unwrap_or_else(|| panic!("{items:?}"));
+        assert_eq!(items[i..i + 3], ["Properties…", "Acquire Metadata…", "Change Cover…"], "{items:?}");
+        assert!(!items.iter().any(|t| t == "Cover…"), "{items:?}");
+        click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
+        {
+            let w = p.cover_win.as_ref().expect("Change Cover… opens the Cover window");
+            assert_eq!((w.path.as_str(), w.target_paths()), (paths[1].as_str(), paths.clone()));
+        }
+        // Search Cover Online, right after Change cover…: Google Images for the album
+        let shown = placed_texts(&ctx, &mut p);
+        let (change, search) = (last_text(&shown, "Change cover…"), last_text(&shown, "Search Cover Online"));
+        assert!(search.x > change.x && (search.y - change.y).abs() < 2.0, "right after Change cover…");
+        assert!(!shown.iter().any(|(t, r)| t == "Save image as…" && r.center().x < search.x), "before Save image as…");
+        click_only(&ctx, &mut p, search);
+        assert_eq!(fake::opened(), ["https://www.google.com/search?tbm=isch&q=The+Example+Band+Night+Drive"]);
+        p.cover_win = None;
+        frame(&ctx, &mut p);
+        // an album card's menu and the album page's "…" menu
+        let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
+        click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
+        assert_eq!(p.cover_win.as_ref().map(|w| w.target_paths()), Some(paths.clone()));
+        p.cover_win = None;
+        p.go(Page::Album(album.key.clone()));
+        let before = placed_texts(&ctx, &mut p);
+        let props = before.iter().rev().find(|(t, _)| t == "Acquire Metadata…").expect("the page's button").1;
+        // the "…" button right after the page's buttons
+        let mut after = vec![];
+        for dx in (8..90).step_by(6) {
+            click_only(&ctx, &mut p, pos2(props.right() + dx as f32, props.center().y));
+            after = placed_texts(&ctx, &mut p);
+            if new_texts(&before, &after).iter().any(|t| t == "Change Cover…") {
+                break;
+            }
+            // still on the Acquire Metadata… button (its padding): that opened MusicBrainz
+            p.mb_win = None;
+            frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
+        }
+        assert_eq!(new_texts(&before, &after), ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…"]);
+        click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
+        assert!(p.cover_win.is_some(), "the page's menu opens the Cover window");
+        p.cover_win = None;
+        frame(&ctx, &mut p);
+
+        // 12. Properties of one song: the Search buttons and Acquire Metadata…
+        p.edit_song_info(&paths[1]);
+        run_until(&ctx, &mut p, "the tags", |p| p.edit_info.as_ref().is_some_and(|e| e.editing()));
+        let e = p.edit_info.as_ref().unwrap();
+        assert_eq!(e.search_url("composer"), "https://www.google.com/search?q=%22Midnight+Signal%22+The+Example+Band+composer");
+        assert_eq!(e.search_url("date"), "https://www.google.com/search?q=%22Midnight+Signal%22+The+Example+Band+release+date");
+        // the composer's Search button, at the right end of its field
+        let shown = placed_texts(&ctx, &mut p);
+        let composer = last_text(&shown, "Composer");
+        let button = p.edit_info.as_ref().unwrap().search_rects[FIELDS_COMPOSER];
+        assert!((button.center().y - composer.y).abs() < 12.0, "on the composer's row");
+        click_only(&ctx, &mut p, button.center());
+        assert_eq!(fake::opened().last().unwrap(), "https://www.google.com/search?q=%22Midnight+Signal%22+The+Example+Band+composer");
+        {
+            let e = p.edit_info.as_mut().unwrap();
+            assert_eq!(e.watch.as_ref().map(|w| (w.field, w.start.as_str())), Some((FIELDS_COMPOSER, "what was copied before")));
+            assert_eq!(e.note, crate::editinfo::WATCHING);
+            assert_eq!(e.watch_step(Instant::now()), None, "nothing new copied yet");
+        }
+        assert!(texts(&ctx, &mut p).contains("Copy the answer in your browser and it will be filled in here."));
+        fake::copy("  \n ");
+        assert_eq!(p.edit_info.as_mut().unwrap().watch_step(Instant::now()), None, "an empty copy is not an answer");
+        fake::copy("  John   Williams \nfilm composer");
+        run_until(&ctx, &mut p, "the copied text filled in", |p| p.edit_info.as_ref().unwrap().watch.is_none());
+        {
+            let e = p.edit_info.as_ref().unwrap();
+            assert_eq!(e.text[FIELDS_COMPOSER], "John Williams");
+            assert_eq!(e.filled.map(|(f, _)| f), Some(FIELDS_COMPOSER));
+            assert_eq!(e.changes(), vec![("composer".to_string(), "John Williams".to_string())]);
+        }
+        assert!(texts(&ctx, &mut p).contains("Filled in from the clipboard."));
+        let tags = realhires::probe::probe(&paths[1]).unwrap().tags;
+        assert_eq!(realhires::probe::tag(&tags, "composer"), None, "not saved before Save");
+        // another field's Search replaces the watch, which ends by itself after two minutes
+        {
+            let e = p.edit_info.as_mut().unwrap();
+            e.search(5);
+            assert_eq!(e.watch.as_ref().map(|w| w.field), Some(5));
+            e.search(4);
+            assert_eq!(e.watch.as_ref().map(|w| w.field), Some(4));
+            fake::copy("Jazz");
+            let later = Instant::now() + Duration::from_secs(realhires::tagedit::WATCH_SECONDS + 1);
+            assert_eq!(e.watch_step(later), None);
+            assert!(e.watch.is_none() && e.note.is_empty() && e.text[4] == "Pop", "nothing after two minutes");
+        }
+        // in Japanese the tooltips and the searches name the field in Japanese
+        realhires::i18n::set_thread_language("ja");
+        assert!(p.edit_info.as_ref().unwrap().search_url("composer").ends_with("+%E4%BD%9C%E6%9B%B2%E8%80%85"));
+        realhires::i18n::set_thread_language("");
+        // MusicBrainz (or anyone) writes into the song: the fields nothing was typed into follow
+        p.edit_info.as_mut().unwrap().text[0] = "Midnight Signal (typed)".into();
+        let changes = vec![("genre".to_string(), "Synthwave".to_string())];
+        let out = realhires::tagedit::save_tags(&paths[1..], &changes, None, |_, _, _| {});
+        assert!(out.iter().all(|o| o.ok));
+        p.edit_info.as_mut().unwrap().files_changed(&paths[1..]);
+        run_until(&ctx, &mut p, "the fields read again", |p| p.edit_info.as_ref().unwrap().text[4] == "Synthwave");
+        {
+            let e = p.edit_info.as_ref().unwrap();
+            assert_eq!((e.text[0].as_str(), e.text[8].as_str()), ("Midnight Signal (typed)", "John Williams"));
+            assert_eq!(e.changes().len(), 2, "{:?}", e.changes());
+        }
+        // Acquire Metadata… at the bottom left: the MusicBrainz window for the same song, over this one
+        p.edit_info.as_mut().unwrap().search(1);
+        let shown = placed_texts(&ctx, &mut p);
+        let acquire = last_text(&shown, "Acquire Metadata…");
+        let save = last_text(&shown, "Save");
+        assert!(acquire.x < save.x - 200.0 && acquire.y > composer.y, "at the bottom left");
+        click_only(&ctx, &mut p, acquire);
+        p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
+        {
+            let w = p.mb_win.as_ref().unwrap();
+            assert!(!w.album && w.paths == paths[1..], "{:?}", w.paths);
+        }
+        assert!(p.edit_info.is_some(), "Properties stays open");
+        // Esc closes the MusicBrainz window only, then Properties (which ends the watch)
+        let esc = || egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
+        frame_with(&ctx, &mut p, vec![esc()]);
+        assert!(p.mb_win.is_none() && p.edit_info.is_some());
+        frame_with(&ctx, &mut p, vec![esc()]);
+        assert!(p.edit_info.is_none());
+        let tags = realhires::probe::probe(&paths[1]).unwrap().tags;
+        assert_eq!(realhires::probe::tag(&tags, "composer"), None, "Cancel wrote nothing");
+
+        // Album Properties…: the album is searched for, Acquire Metadata… looks the album up
+        p.edit_album_info(&album);
+        run_until(&ctx, &mut p, "the album's tags", |p| p.edit_info.as_ref().is_some_and(|e| e.editing()));
+        assert_eq!(
+            p.edit_info.as_ref().unwrap().search_url("date"),
+            "https://www.google.com/search?q=%22Night+Drive%22+The+Example+Band+release+date"
+        );
+        let shown = placed_texts(&ctx, &mut p);
+        click_only(&ctx, &mut p, last_text(&shown, "Acquire Metadata…"));
+        p.mb_win.as_mut().expect("the album's MusicBrainz window").set_client(crate::mbwin::test_client());
+        assert!(p.mb_win.as_ref().unwrap().album && p.mb_win.as_ref().unwrap().paths == paths);
+        p.mb_win = None;
+        p.edit_info = None;
+        p.engine.stop();
+        frame(&ctx, &mut p);
+        p.on_exit();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The composer's index in `tagedit::FIELDS`.
+    const FIELDS_COMPOSER: usize = 8;
 
     /// The player in Japanese (2.1): every page, every Settings group and the
     /// windows draw Japanese texts.  Only this thread uses Japanese, so the
