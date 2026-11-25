@@ -444,9 +444,13 @@ def test_bit_perfect_resamples_when_the_device_lacks_the_rate(tmp_path):
 
 
 def test_bit_perfect_joins_songs_gaplessly_only_at_the_same_rate_and_format(tmp_path):
+    # b and c last longer than the 0.35 s buffer, so each is still being decoded when its
+    # "advanced" event is read and the test names the song after it (a song that fits in
+    # the buffer is decoded to its end before it is heard, and on a slow runner its end
+    # came before the test's set_next())
     a = int_song(tmp_path / "a.flac", 0.4, 44100, 16, seed=1)
-    b = int_song(tmp_path / "b.flac", 0.3, 44100, 16, seed=2)
-    c = int_song(tmp_path / "c.flac", 0.3, 48000, 16, seed=3)
+    b = int_song(tmp_path / "b.flac", 1.0, 44100, 16, seed=2)
+    c = int_song(tmp_path / "c.flac", 1.0, 48000, 16, seed=3)
     d = int_song(tmp_path / "d.flac", 0.3, 48000, 24, seed=4)
     out = ManualOutput()
     p = Player(out)
