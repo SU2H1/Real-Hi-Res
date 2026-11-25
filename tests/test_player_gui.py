@@ -223,6 +223,13 @@ def playing():
     wait(lambda: np.lyrics.current == 0, lyrics_ok, what="current lyrics line")
 
 def lyrics_ok():
+    # paused from here on, while Now Playing, the windows and the menus are checked: the
+    # songs last 3 s, and a slow runner (macOS Intel, with the 2.4 mood analysis busy in
+    # the background) took longer than that, so the next song (without lyrics) had
+    # started before the lyrics checks below; the checks drive the lyrics' position
+    # themselves (update_position)
+    app.play_pause()
+    assert not app.engine.playing
     np = app.page("nowplaying")
     item = np.lyrics.items[0]
     assert np.lyrics.itemcget(item, "text") == "Blue ice under a silver sky"
@@ -336,10 +343,7 @@ def lyrics_ok():
     assert app.page_name != "nowplaying"
     app.cover_clicked(); root.update()
     assert app.page_name == "nowplaying" and np.lyrics.winfo_ismapped()
-    # paused while the windows and menus are checked: the songs last 3 s, and a slow runner
-    # (macOS) took longer than that, so the next song had started before Up Next was read
-    app.play_pause()
-    assert not app.engine.playing
+    assert not app.engine.playing  # paused in lyrics_ok()
     # Playback info
     app.open_info()
     info = app.info_window.text()
