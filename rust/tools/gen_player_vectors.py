@@ -310,11 +310,36 @@ for n in ("dark", "My theme", " New  one ", "", "Match the system"):
         checks.append([n, themes.check_name(n, custom), None])
     except themes.ThemeError as exc:
         checks.append([n, None, str(exc)])
+# 2.3: every colour of every built-in theme and of custom themes, set and unset extra colours,
+# and exported/imported files with and without them
+extra_custom = themes.normalize({"name": "Gold", "dark": False, "colors": {
+    "accent": "#ffd60a", "hover": "#123456", "row_hover": "#ABCDEF", "quality_hires": " #00ff00 ",
+    "verdict_cd": "#0000ff", "calendar": "nope", "zebra": 5, "unknown_key": "#ffffff"}})
+pale = themes.normalize({"name": "Pale accent", "dark": True, "colors": {"accent": "#f0f0f0", "secondary": "#808080"}})
+all_colors = {name: themes.colors(dict(t, name=name)) for name, t in themes.BUILTIN.items()}
+for t in custom + [extra_custom, pale]:
+    all_colors[t["name"]] = themes.colors(t)
+extra_imports = []
+for text in (themes.export_theme(extra_custom), themes.export_theme(custom[1]),
+             json.dumps({"name": "Old file", "dark": True, "colors": {"accent": "#112233"}}),
+             json.dumps({"name": "Only extras", "colors": {"field": "#010203", "verdict_error": "#FFFFFF"}})):
+    t = themes.import_theme(text, custom)
+    extra_imports.append({"text": text, "theme": t, "colors": themes.colors(t), "export": themes.export_theme(t)})
+mixes = [[a, b, t, themes.mix(a, b, t)] for a, b, t in (
+    ("#ffffff", "#e8e8ed", 0.7), ("#000000", "#ffffff", 0.5), ("#010101", "#020202", 0.5), ("#030303", "#040404", 0.5),
+    ("#1e1e1e", "#333336", 0.3), ("#fa2d48", "#000000", 0.12), ("#00ff80", "#ff0080", 0.45))]
+lums = [[c, themes.luminance(c)] for c in ("#ffffff", "#ffd60a", "#fa2d48", "#9e9e9e", "#a0a0a0", "#c8c8c8")]
 with open(os.path.join(OUT, "python_themes.json"), "w", encoding="utf-8") as fh:
     json.dump({"builtin": themes.BUILTIN, "custom": custom, "names": themes.names(custom), "cases": cases_t,
                "imports": imports_t, "checks": checks, "copy": [themes.copy_name("Midnight", custom),
                                                                themes.copy_name("My Theme", custom)],
-               "export": themes.export_theme(custom[0])}, fh, indent=0, ensure_ascii=False)
+               "export": themes.export_theme(custom[0]),
+               "extra_keys": themes.EXTRA_COLOR_KEYS,
+               "extra_labels": [themes.color_label(k) for k in themes.ALL_COLOR_KEYS],
+               "extra_custom": extra_custom, "extra_export": themes.export_theme(extra_custom),
+               "all_colors": all_colors, "extra_imports": extra_imports, "mixes": mixes, "luminances": lums,
+               "verdict_keys": themes.VERDICT_COLOR_KEYS},
+              fh, indent=0, ensure_ascii=False)
 
 # ---------------------------------------------------------- player state ---
 messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume": "0.4",
@@ -322,7 +347,11 @@ messy = {"liked": ["/a", "/b", 5], "disliked": ["/b", "/c", "/c", ""], "volume":
          "playlists": [{"id": "a1", "name": "  Road ", "created": "12.5", "songs": ["/a", "/a", 3, "/b"]},
                        {"id": "a1", "name": "dupe"}, {"name": "no id"}, {"id": "b2", "name": "", "songs": "x"}],
          "lyrics_size": "31.5",
-         "columns": {"songs": ["nope", "year", "artist", 3], "album": [], "folders": "x", "other": ["title"]}}
+         "columns": {"songs": ["nope", "year", "artist", 3], "album": [], "folders": "x", "other": ["title"]},
+         "labels": {"song": {"/a": "#FF0000", "/b": "red", "/c": 5, "": "#00ff00"},
+                    "genre": {"Rock": "#00ff00", "rock": " #0000FF "}, "artist": {"Ann": "#123456"},
+                    "album": {"x\u0000ann": "#abcdef"}, "year": {"2001": "#000000"}, "nope": {"a": "#111111"},
+                    "playlist": [], "tab": {"Hi-Res": "#c9a227"}, "composer": {"": "#222222"}}}
 ps = playerstate.PlayerState.from_json(messy)
 # Now Playing's lyrics size (A− / A+): what player.json may hold, and the steps
 sizes = [[v, playerstate.PlayerState.from_json({"lyrics_size": v}).lyrics_size]
@@ -353,6 +382,18 @@ ops.toggle_column("songs", "title")
 ops.toggle_column("album", "file")
 ops.set_columns("folders", ["bit_rate", "format"])
 ops.toggle_column("folders", "format")
+# 2.3: colour labels
+label_ops = [("song", "/m/a", "#FF3B30"), ("album", "city\u0000june", "#34c759"), ("artist", "June Harbor", "#007aff"),
+             ("album_artist", "ÉMILE", "#af52de"), ("genre", "Indie Pop", "#ff9500"), ("year", "2021", "#ffcc00"),
+             ("composer", "Straße", "#8e8e93"), ("playlist", pid, "#123abc"), ("tab", "Hi-Res", "#c9a227"),
+             ("song", "/m/b", "#ffffff"), ("song", "/m/b", None), ("genre", "indie pop", "#00ffaa"),
+             ("nope", "x", "#ffffff"), ("song", "", "#ffffff"), ("year", "1999", "not a colour"),
+             ("tab", "Old", "#000000"), ("tab", "Old", "")]
+label_results = [[k, key, c, ops.set_label(k, key, c)] for k, key, c in label_ops]
+label_lookups = [[k, key, ops.label_of(k, key)] for k, key in (
+    ("song", "/m/a"), ("song", "/m/b"), ("genre", "INDIE POP"), ("artist", "june harbor"), ("album_artist", "émile"),
+    ("composer", "STRASSE"), ("composer", "strasse"), ("year", "2021"), ("tab", "hi-res"), ("tab", "Hi-Res"),
+    ("nope", "x"), ("playlist", pid))]
 errors = []
 for name in ("rock", "my jazz", "", "  "):
     try:
@@ -364,7 +405,9 @@ with open(os.path.join(OUT, "python_playerstate.json"), "w", encoding="utf-8") a
     json.dump({"messy": messy, "messy_out": ps.to_json(), "ops_out": ops.to_json(), "name_errors": errors,
                "lyrics_sizes": sizes, "lyrics_size_steps": size_steps,
                "lyrics_size_limits": [playerstate.LYRICS_SIZE_MIN, playerstate.LYRICS_SIZE_DEFAULT,
-                                      playerstate.LYRICS_SIZE_MAX, playerstate.LYRICS_SIZE_STEP]},
+                                      playerstate.LYRICS_SIZE_MAX, playerstate.LYRICS_SIZE_STEP],
+               "label_results": label_results, "label_lookups": label_lookups,
+               "label_kinds": list(playerstate.LABEL_KINDS), "label_colors": playerstate.LABEL_COLORS},
               fh, indent=0, ensure_ascii=False)
 print(len(cases), "biquads,", len(states), "states,", len(runs), "queue runs,", len(plays), "plays,",
       len(imports), "EQ files")
