@@ -23,6 +23,16 @@ use crate::player::{plural, ConfirmAction, Page, Player};
 const RULE_ROWS: f32 = 7.0;
 const RULE_ROW_H: f32 = 34.0;
 
+/// Where the sidebar drew the tabs and New Tab…, and the tab page's "…" (for the tests).
+#[derive(Default)]
+pub struct TabHits {
+    pub sidebar: Vec<(String, egui::Rect)>,
+    pub new_tab: Option<egui::Rect>,
+    pub more: Option<egui::Rect>,
+    /// the tab window as drawn last
+    pub window: Option<egui::Rect>,
+}
+
 /// One rule of the tab window: the rule, and the text typed for a value that is an entry.
 #[derive(Clone, Debug)]
 pub struct RuleRow {
@@ -346,6 +356,7 @@ impl Player {
                 }
             }
             let r = icons::button(ui, Icon::More, 28.0, false, true, tr!("More"));
+            self.tab_hits.more = Some(r.rect);
             egui::Popup::menu(&r).show(|ui| self.tab_menu(ui, name));
         });
         ui.add_space(10.0);
@@ -397,7 +408,7 @@ pub fn tab_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) -> bool {
     let mut save = false;
     let mut cancel = false;
     let title = if w.old.is_some() { tr!("Edit Tab") } else { tr!("New Tab") };
-    egui::Window::new(title)
+    let shown = egui::Window::new(title)
         .id(egui::Id::new("player-tab-window"))
         .open(&mut open)
         .collapsible(false)
@@ -546,6 +557,7 @@ pub fn tab_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) -> bool {
                 }
             });
         });
+    p.tab_hits.window = shown.map(|s| s.response.rect);
     let others = p.name_dialog.is_some() || p.confirm.is_some();
     let popup = egui::Popup::is_any_open(ctx);
     if !others && !popup && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
