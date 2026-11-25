@@ -761,8 +761,10 @@ class AlbumGrid(tk.Frame):
     Only the cards near the visible part are drawn, and the rest as they scroll into
     view, so showing and resizing a grid of thousands of albums stays quick; a mosaic
     uses the album covers of the grid's size, halved (no extra covers are made).
-    With `multi`, Ctrl/Cmd-click selects several cards (`selected` holds their keys,
-    `on_selection()` is told); `on_context(index, event)` makes a right-click menu."""
+    With `multi`, Ctrl-click (Cmd-click on macOS, where Ctrl-click is a right-click)
+    selects several cards, and so does a plain click in select mode (`select_mode`,
+    2.3); `selected` holds their keys and `on_selection()` is told.
+    `on_context(index, event)` makes a right-click menu."""
 
     COVER = CoverCache.GRID
     GAP = 24
@@ -777,6 +779,7 @@ class AlbumGrid(tk.Frame):
         self.albums: List[dict] = []
         self.positions: Dict[str, Tuple[float, float, int]] = {}
         self.selected: set = set()          # keys of the selected cards (multi)
+        self.select_mode = False            # (multi) a click selects instead of opening (2.3)
         self.hover: Optional[int] = None
         self._fit: Dict[tuple, str] = {}
         self._drawn: set = set()            # indices of the cards on the canvas
@@ -794,11 +797,11 @@ class AlbumGrid(tk.Frame):
         c = self.canvas
         c.bind("<Configure>", lambda e: self.relayout())
         c.bind("<Button-1>", self._click)
-        c.bind("<Control-Button-1>", self._toggle_click)
-        try:
-            c.bind("<Command-Button-1>", self._toggle_click)  # macOS
-        except tk.TclError:
-            pass
+        if c.tk.call("tk", "windowingsystem") == "aqua":  # macOS: Cmd-click selects, Ctrl-click is a right-click
+            c.bind("<Command-Button-1>", self._toggle_click)
+            c.bind("<Control-Button-1>", self._context)
+        else:
+            c.bind("<Control-Button-1>", self._toggle_click)
         c.bind("<Button-3>", self._context)
         c.bind("<Button-2>", self._context)  # macOS right click
         c.bind("<Escape>", lambda e: self.clear_selection())
@@ -976,10 +979,21 @@ class AlbumGrid(tk.Frame):
     def _click(self, e) -> None:
         self.canvas.focus_set()
         i = self._index_at(e)
+        if self.multi and self.select_mode:  # select mode: a click selects or unselects the card
+            if i is not None:
+                self.toggle(i)
+            return
         if self.selected:
             self.clear_selection()
         if i is not None:
             self.on_open(self.albums[i])
+
+    def set_select_mode(self, on: bool) -> None:
+        """Select mode (2.3): a click toggles a card instead of opening it.  Leaving it
+        clears the selection."""
+        self.select_mode = bool(on) and self.multi
+        if not self.select_mode:
+            self.clear_selection()
 
     def _toggle_click(self, e) -> str:
         i = self._index_at(e)

@@ -826,14 +826,17 @@ def second_heard():
     assert st.day == (first.tm_year, first.tm_mon, first.tm_mday), st.day
     want = [p for p in reversed(plays) if time.localtime(p.started)[:3] == first[:3]]
     assert [r["path"] for r in st.day_rows] == [p.path for p in want], st.day_rows
-    shown = texts(c)
+    # 2.3: on this wide page the day's plays are to the right of the calendar, in a canvas of their own
+    assert st.side_by_side() and st.day_c.winfo_ismapped()
+    dc = st.day_c
+    shown = texts(dc)
     assert stats.day_title(*st.day) in shown and stats.day_summary(st.day_rows) in shown
     row = st.day_rows[-1]
     assert row["time"] == time.strftime("%H:%M", time.localtime(row["started"])) and row["time"] in shown
     assert row["title"] == "First Light" and row["artist"] == "Aurora Fields" and row["minutes"] == "<1 min"
-    item = next(i for i in c.find_all() if c.type(i) == "text" and c.itemcget(i, "text") == "First Light")
-    x, y = c.coords(item)
-    c.event_generate("<Button-1>", x=int(x), y=int(y))
+    item = next(i for i in dc.find_all() if dc.type(i) == "text" and dc.itemcget(i, "text") == "First Light")
+    x, y = dc.coords(item)
+    dc.event_generate("<Button-1>", x=int(x), y=int(y))
     root.update()
     assert app.current == S["First Light"] and app.context_name == "Your Stats"
     app.engine.pause()

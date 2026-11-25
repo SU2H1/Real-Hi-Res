@@ -8,6 +8,7 @@ use egui::{pos2, vec2, Align, Align2, Color32, CornerRadius, Layout, Rect, RichT
 use realhires::i18n::{self, tr_name, tr_text};
 use realhires::musiclib::{self, Track};
 use realhires::paths::{abspath, file_name};
+use realhires::settings::LIBRARY_LAYOUTS;
 use realhires::stats::{self, PERIODS};
 use realhires::{n_, tr};
 
@@ -15,6 +16,24 @@ use crate::icons::{self, Icon};
 use crate::look::{self, Palette};
 use crate::pages::elided;
 use crate::player::{count, cover, NameAction, Page, Player};
+
+/// An entry of the Library page (2.3: tiles or a list): its icon, name and count
+/// in the language in use, and the page it opens.
+#[derive(Clone, Debug)]
+pub struct LibraryEntry {
+    pub icon: Icon,
+    pub name: String,
+    pub count: String,
+    pub page: Page,
+}
+
+/// The height of a row of the Library page as a list (2.3).
+pub const LIST_ROW_H: f32 = 44.0;
+
+/// The id of the Library page's tiles or list button (2.3).
+pub fn layout_button_id(layout: &str) -> egui::Id {
+    egui::Id::unique(("library-layout", layout))
+}
 
 /// The colours of the summary cards, one after the other.
 const CARD_COLORS: [u32; 10] =
@@ -96,6 +115,21 @@ fn this_month() -> (i32, u32) {
     (t.year, t.month)
 }
 
+/// The room the day's plays need to the right of the calendar, and the gap
+/// between them (2.3); with less room they go under it.
+pub const CALENDAR_SIDE_MIN: f32 = 360.0;
+pub const CALENDAR_SIDE_GAP: f32 = 24.0;
+
+/// The width of a day of the calendar on a page `width` wide.
+pub fn calendar_cell_width(width: f32) -> f32 {
+    (width / 7.0).clamp(30.0, 62.0)
+}
+
+/// Whether the day's plays go to the right of the calendar (2.3).
+pub fn calendar_side_by_side(width: f32) -> bool {
+    width >= 7.0 * calendar_cell_width(width) + CALENDAR_SIDE_MIN
+}
+
 /// The share of the accent colour for `stats::month_levels()` 0..4.
 const TINTS: [f32; 5] = [0.0, 0.25, 0.45, 0.7, 1.0];
 
@@ -167,11 +201,45 @@ impl Player {
         self.play_list(list, Some(&start), "Your Stats");
     }
 
+    /// The calendar, then the chosen day's plays (or the hint): to the right of the
+    /// calendar, as tall as it and scrolling inside it, when the page has room for the
+    /// calendar and `CALENDAR_SIDE_MIN` more (2.3); under it otherwise.
     fn calendar_ui(&mut self, ui: &mut Ui, pal: &Palette) {
+        let width = ui.available_width();
+        let cw = calendar_cell_width(width);
+        if !calendar_side_by_side(width) {
+            self.calendar_grid(ui, pal, cw);
+            ui.add_space(12.0);
+            self.calendar_day_ui(ui, pal);
+            return;
+        }
+        let height = self.calendar_height();
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            self.calendar_grid(ui, pal, cw);
+            ui.add_space(CALENDAR_SIDE_GAP);
+            let rest = ui.available_width();
+            ui.allocate_ui_with_layout(vec2(rest, height), Layout::top_down(Align::Min), |ui| {
+                ui.set_min_size(vec2(rest, height));
+                egui::ScrollArea::vertical().id_salt("calendar-day").max_height(height).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    self.calendar_day_ui(ui, pal);
+                });
+            });
+        });
+        ui.add_space(12.0);
+    }
+
+    /// The calendar's height: the month's title, the weekdays and the weeks.
+    fn calendar_height(&self) -> f32 {
+        let (year, month) = self.calendar.month;
+        64.0 + 44.0 * stats::month_grid(year, month).len() as f32
+    }
+
+    fn calendar_grid(&mut self, ui: &mut Ui, pal: &Palette, cw: f32) {
         self.load_calendar();
         let (year, month) = self.calendar.month;
         let weeks = stats::month_grid(year, month);
-        let cw = (ui.available_width() / 7.0).clamp(30.0, 62.0);
         let ch = 44.0;
         let (rect, _) = ui.allocate_exact_size(vec2(cw * 7.0, 64.0 + ch * weeks.len() as f32), Sense::hover());
         let p = ui.painter().clone();
@@ -231,19 +299,18 @@ impl Player {
             }
             y += ch;
         }
-        ui.add_space(12.0);
         if step != 0 {
             self.calendar_step(step);
         }
         if let Some(d) = chosen_day {
             self.calendar_choose(d);
         }
-        self.calendar_day_ui(ui, pal);
     }
 
     fn calendar_day_ui(&mut self, ui: &mut Ui, pal: &Palette) {
         self.load_calendar();
         let Some((y, m, d)) = self.calendar.day else {
+            ui.add_space(2.0);
             ui.label(RichText::new(tr!("Click a day to see the songs you played on it.")).color(pal.secondary));
             ui.add_space(14.0);
             return;
@@ -319,59 +386,157 @@ impl Player {
 
     // -------------------------------------------------------------- library ---
 
-    pub fn library_home(&mut self, ui: &mut Ui, pal: &Palette) {
+    /// The Library page's entries in their order (2.3): the fourteen, then the
+    /// entries that come after them (`more_library_entries()`), each with its count
+    /// and the page it opens.
+    pub fn library_entries(&mut self) -> Vec<LibraryEntry> {
         let recent_n = self.recently_played().len();
-        let year = {
-            let saved = self.stats_period.clone();
-            self.stats_period = "This year".into(); // a period key (`stats::PERIODS`)
-            let st = self.stats();
-            self.stats_period = saved;
-            st
-        };
+        let year = self.year_stats();
         let l = &self.lib;
-        let tiles: Vec<(Icon, &str, String, Page)> = vec![
-            (Icon::Note, tr!("All Songs"), songs(l.tracks.len()), Page::AllSongs),
-            (
-                Icon::Folder,
-                tr!("Folders"),
-                count(self.scanner.cfg.library_folders.len(), n_!("1 folder"), n_!("{n} folders")),
-                Page::Folders(None),
-            ),
-            (Icon::Albums, tr!("Albums"), albums(l.albums.len()), Page::Albums),
-            (Icon::Person, tr!("Artists"), artists(l.artists.len()), Page::Artists),
-            (
-                Icon::People,
-                tr!("Album Artists"),
-                count(l.album_artists.len(), n_!("1 album artist"), n_!("{n} album artists")),
-                Page::AlbumArtists,
-            ),
-            (Icon::Genres, tr!("Genres"), count(l.genres.len(), n_!("1 genre"), n_!("{n} genres")), Page::Genres),
-            (Icon::Calendar, tr!("Years"), count(l.years.len(), n_!("1 year"), n_!("{n} years")), Page::Years),
-            (
-                Icon::Composer,
-                tr!("Composers"),
-                count(l.composers.len(), n_!("1 composer"), n_!("{n} composers")),
-                Page::Composers,
-            ),
-            (
-                Icon::Playlist,
-                tr!("Playlists"),
-                count(self.state.playlists.len(), n_!("1 playlist"), n_!("{n} playlists")),
-                Page::Playlists,
-            ),
-            (Icon::Heart, tr!("Liked Songs"), songs(self.state.liked.len()), Page::Liked),
-            (Icon::ThumbDown, tr!("Disliked Songs"), songs(self.state.disliked.len()), Page::Disliked),
-            (Icon::Clock, tr!("Recently Played"), songs(recent_n), Page::RecentlyPlayed),
-            (Icon::Albums, tr!("Recently Added"), albums(l.albums.len().min(50)), Page::Recent),
-            (
+        let entry = |icon, name: &str, count: String, page| LibraryEntry { icon, name: name.to_string(), count, page };
+        let mut out = vec![
+            entry(Icon::Note, tr!("All Songs"), songs(l.tracks.len()), Page::AllSongs),
+            entry(Icon::Folder, tr!("Folders"), count(self.scanner.cfg.library_folders.len(), n_!("1 folder"), n_!("{n} folders")), Page::Folders(None)),
+            entry(Icon::Albums, tr!("Albums"), albums(l.albums.len()), Page::Albums),
+            entry(Icon::Person, tr!("Artists"), artists(l.artists.len()), Page::Artists),
+            entry(Icon::People, tr!("Album Artists"), count(l.album_artists.len(), n_!("1 album artist"), n_!("{n} album artists")), Page::AlbumArtists),
+            entry(Icon::Genres, tr!("Genres"), count(l.genres.len(), n_!("1 genre"), n_!("{n} genres")), Page::Genres),
+            entry(Icon::Calendar, tr!("Years"), count(l.years.len(), n_!("1 year"), n_!("{n} years")), Page::Years),
+            entry(Icon::Composer, tr!("Composers"), count(l.composers.len(), n_!("1 composer"), n_!("{n} composers")), Page::Composers),
+            entry(Icon::Playlist, tr!("Playlists"), count(self.state.playlists.len(), n_!("1 playlist"), n_!("{n} playlists")), Page::Playlists),
+            entry(Icon::Heart, tr!("Liked Songs"), songs(self.state.liked.len()), Page::Liked),
+            entry(Icon::ThumbDown, tr!("Disliked Songs"), songs(self.state.disliked.len()), Page::Disliked),
+            entry(Icon::Clock, tr!("Recently Played"), songs(recent_n), Page::RecentlyPlayed),
+            entry(Icon::Albums, tr!("Recently Added"), albums(l.albums.len().min(50)), Page::Recent),
+            entry(
                 Icon::Chart,
                 tr!("Your Stats"),
                 tr!("{n} minutes this year", n = stats::thousands((year.seconds / 60.0).round() as i64)),
                 Page::Stats,
             ),
         ];
+        out.extend(self.more_library_entries());
+        out
+    }
+
+    /// Entries after the fourteen (none yet).
+    fn more_library_entries(&mut self) -> Vec<LibraryEntry> {
+        vec![]
+    }
+
+    fn year_stats(&mut self) -> stats::Stats {
+        let saved = self.stats_period.clone();
+        self.stats_period = "This year".into(); // a period key (`stats::PERIODS`)
+        let st = self.stats();
+        self.stats_period = saved;
+        st
+    }
+
+    /// Settings → Appearance → Library page, from the buttons at the right of the
+    /// Library page's title (2.3): saved at once.
+    pub fn set_library_layout(&mut self, layout: &str) {
+        if !LIBRARY_LAYOUTS.contains(&layout) || self.scanner.cfg.library_layout == layout {
+            return;
+        }
+        let mut new = self.scanner.cfg.clone();
+        new.library_layout = layout.to_string();
+        self.scanner.apply_settings(new);
+        self.set_draft_library_layout(layout);
+    }
+
+    pub fn library_layout(&self) -> &'static str {
+        LIBRARY_LAYOUTS.iter().copied().find(|l| *l == self.scanner.cfg.library_layout).unwrap_or(LIBRARY_LAYOUTS[0])
+    }
+
+    /// The tiles and list buttons at the right of the title; the one in use is drawn on.
+    fn layout_buttons(&mut self, ui: &mut Ui, pal: &Palette) {
+        let current = self.library_layout();
+        let mut chosen = None;
+        ui.spacing_mut().item_spacing.x = 6.0;
+        // right to left: List, then Tiles
+        for (layout, icon) in [("List", Icon::ListView), ("Tiles", Icon::Tiles)] {
+            let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
+            let resp = ui.interact(rect, layout_button_id(layout), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let on = current == layout;
+            if resp.hovered() {
+                ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+            } else if on {
+                ui.painter().rect_filled(rect, CornerRadius::same(8), pal.lcd);
+            }
+            icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, if on { pal.accent } else { pal.secondary });
+            if resp.clicked() {
+                chosen = Some(layout);
+            }
+        }
+        if let Some(layout) = chosen {
+            self.set_library_layout(layout);
+        }
+    }
+
+    fn library_tiles(&mut self, ui: &mut Ui, pal: &Palette, entries: &[LibraryEntry]) {
+        let gap = 12.0;
+        let width = ui.available_width();
+        let cols = ((width + gap) / (210.0 + gap)).floor().max(1.0) as usize;
+        let tw = (width + gap) / cols as f32 - gap;
+        for row in entries.chunks(cols) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for e in row {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(tw, 74.0), Sense::click());
+                    let fill = if resp.hovered() { pal.hover } else { pal.lcd };
+                    ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
+                    icons::paint(ui.painter(), Rect::from_center_size(rect.left_top() + vec2(26.0, 26.0), vec2(22.0, 22.0)), e.icon, pal.accent);
+                    let g = elided(ui, &e.name, look::title(14.0), pal.text, tw - 56.0);
+                    ui.painter().galley(rect.left_top() + vec2(46.0, 16.0), g, pal.text);
+                    let g = elided(ui, &e.count, look::text(12.0), pal.secondary, tw - 56.0);
+                    ui.painter().galley(rect.left_top() + vec2(46.0, 38.0), g, pal.secondary);
+                    if resp.clicked() {
+                        self.go(e.page.clone());
+                    }
+                }
+            });
+            ui.add_space(gap - ui.spacing().item_spacing.y);
+        }
+    }
+
+    /// One row per entry, the width of the page (2.3): the icon in the accent colour,
+    /// the name in bold, its count on the right in grey, a line between rows.
+    fn library_list(&mut self, ui: &mut Ui, pal: &Palette, entries: &[LibraryEntry]) {
+        let width = ui.available_width();
+        let saved = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (i, e) in entries.iter().enumerate() {
+            let (rect, resp) = ui.allocate_exact_size(vec2(width, LIST_ROW_H), Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let p = ui.painter();
+            if resp.hovered() {
+                p.rect_filled(rect, CornerRadius::same(8), pal.hover);
+            }
+            icons::paint(p, Rect::from_center_size(pos2(rect.left() + 24.0, rect.center().y), vec2(20.0, 20.0)), e.icon, pal.accent);
+            let count = p.text(pos2(rect.right() - 14.0, rect.center().y), Align2::RIGHT_CENTER, &e.count, look::text(13.0), pal.secondary);
+            let g = elided(ui, &e.name, look::title(14.0), pal.text, (count.left() - rect.left() - 66.0).max(20.0));
+            let h = g.size().y;
+            ui.painter().galley(pos2(rect.left() + 50.0, rect.center().y - h / 2.0), g, pal.text);
+            if i + 1 < entries.len() {
+                ui.painter().hline(rect.left() + 50.0..=rect.right(), rect.bottom(), Stroke::new(1.0, pal.separator));
+            }
+            if resp.clicked() {
+                self.go(e.page.clone());
+            }
+        }
+        ui.spacing_mut().item_spacing.y = saved;
+        ui.add_space(12.0);
+    }
+
+    pub fn library_home(&mut self, ui: &mut Ui, pal: &Palette) {
+        let year = self.year_stats();
+        let entries = self.library_entries();
         egui::ScrollArea::vertical().id_salt("library-home").auto_shrink([false, false]).show(ui, |ui| {
-            page_title(ui, pal, tr!("Library"));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr!("Library")).font(look::title(28.0)).color(pal.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| self.layout_buttons(ui, pal));
+            });
+            ui.add_space(12.0);
             if self.lib.tracks.is_empty() {
                 ui.label(RichText::new(self.library_status().unwrap_or_else(|| {
                     tr!("Add your music folder in Settings → Library to fill your library.").into()
@@ -382,28 +547,10 @@ impl Player {
                 }
                 ui.add_space(14.0);
             }
-            let gap = 12.0;
-            let width = ui.available_width();
-            let cols = ((width + gap) / (210.0 + gap)).floor().max(1.0) as usize;
-            let tw = (width + gap) / cols as f32 - gap;
-            for row in tiles.chunks(cols) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = gap;
-                    for (icon, name, count, page) in row {
-                        let (rect, resp) = ui.allocate_exact_size(vec2(tw, 74.0), Sense::click());
-                        let fill = if resp.hovered() { pal.hover } else { pal.lcd };
-                        ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
-                        icons::paint(ui.painter(), Rect::from_center_size(rect.left_top() + vec2(26.0, 26.0), vec2(22.0, 22.0)), *icon, pal.accent);
-                        let g = elided(ui, name, look::title(14.0), pal.text, tw - 56.0);
-                        ui.painter().galley(rect.left_top() + vec2(46.0, 16.0), g, pal.text);
-                        let g = elided(ui, count, look::text(12.0), pal.secondary, tw - 56.0);
-                        ui.painter().galley(rect.left_top() + vec2(46.0, 38.0), g, pal.secondary);
-                        if resp.clicked() {
-                            self.go(page.clone());
-                        }
-                    }
-                });
-                ui.add_space(gap - ui.spacing().item_spacing.y);
+            if self.library_layout() == "List" {
+                self.library_list(ui, pal, &entries);
+            } else {
+                self.library_tiles(ui, pal, &entries);
             }
             if year.logged > 0 {
                 ui.add_space(14.0);

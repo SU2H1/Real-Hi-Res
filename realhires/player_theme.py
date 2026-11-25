@@ -697,6 +697,17 @@ def draw_icon(c: tk.Canvas, name: str, cx: float, cy: float, s: float, color: st
     elif name == "chevron":
         c.create_line(cx - 0.14 * s, cy - 0.34 * s, cx + 0.18 * s, cy, cx - 0.14 * s, cy + 0.34 * s, width=w,
                       fill=color, capstyle="round", joinstyle="round", **kw)
+    elif name == "tiles":  # 2.3: the Library page as tiles
+        q, g = 0.38 * s, 0.07 * s
+        for x0, y0 in ((-q, -q), (g, -q), (-q, g), (g, g)):
+            round_rect(c, cx + x0, cy + y0, cx + x0 + q - g, cy + y0 + q - g, 0.07 * s, fill=color, outline="",
+                       **kw)
+    elif name == "list":  # 2.3: the Library page as a list
+        for dy in (-0.3, 0.0, 0.3):
+            y = cy + dy * s
+            q = 0.07 * s
+            c.create_rectangle(cx - 0.42 * s, y - q, cx - 0.28 * s, y + q, fill=color, outline="", **kw)
+            c.create_line(cx - 0.14 * s, y, cx + 0.42 * s, y, width=w, fill=color, capstyle="round", **kw)
     elif name in ("up", "down"):  # chevrons pointing up or down (find: previous, next)
         d = -1 if name == "up" else 1
         c.create_line(cx - 0.34 * s, cy - d * 0.16 * s, cx, cy + d * 0.18 * s, cx + 0.34 * s, cy - d * 0.16 * s,
