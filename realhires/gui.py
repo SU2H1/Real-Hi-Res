@@ -54,6 +54,13 @@ def musicbrainz_credit() -> str:
     from .musicbrainz import ABOUT_CREDIT
 
     return ABOUT_CREDIT
+
+
+def coverart_credit() -> str:
+    """The Cover Art Archive's line of About (2.5: Search Cover Online → MusicBrainz…)."""
+    from .coverart import ABOUT_CREDIT
+
+    return ABOUT_CREDIT
 from . import settings as settings_mod
 from .eta import ScanEta, file_sizes, fmt_about
 from .fix import FIXABLE_VERDICTS, fix_advice, fix_outlook
@@ -3544,7 +3551,8 @@ class App(ttk.Frame):
             tr("{name} {version}: the Real-Hi-Res quality checker", name=APP_NAME, version=__version__) + "\n\n"
             + tr("Finds fake hi-res audio (upsampled or 16-bit padded) and fake lossless files (FLAC/WAV/ALAC "
                  "made from MP3/AAC) by analysing the audio itself.") + "\n\n"
-            + f"{tr_text(lyrics_mod.ABOUT_CREDIT)}\n{tr_text(musicbrainz_credit())}\n\n" + PROJECT_URL)
+            + f"{tr_text(lyrics_mod.ABOUT_CREDIT)}\n{tr_text(musicbrainz_credit())}\n{tr_text(coverart_credit())}\n\n"
+            + PROJECT_URL)
 
     def quit_app(self) -> None:
         if self.embedded and self.quit_callback is not None:

@@ -2451,7 +2451,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin, JacketMixin):
             f"{APP_NAME} {__version__}\n\n"
             + tr("A music player (formerly Real-Hi-Res) that also finds fake hi-res audio (upsampled or 16-bit "
                  "padded) and fake lossless files (FLAC/WAV/ALAC made from MP3/AAC) by analysing the audio itself.")
-            + f"\n\n{tr_text(lyrics_mod.ABOUT_CREDIT)}\n{tr_text(musicbrainz.ABOUT_CREDIT)}\n\n"
+            + f"\n\n{tr_text(lyrics_mod.ABOUT_CREDIT)}\n{tr_text(musicbrainz.ABOUT_CREDIT)}\n"
+            + f"{tr_text(gui.coverart_credit())}\n\n"
             + tr("On Windows and Linux the app uses the Inter typeface by Rasmus Andersson, under the SIL Open Font "
                  "License.") + "\n\n" + PROJECT_URL, parent=self.root)
 

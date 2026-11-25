@@ -672,6 +672,8 @@ pub struct Player {
     pub(crate) np_songs_album: String,
     /// Now Playing's cover as a record sleeve (2.5): the turn and the backs of the covers
     pub jacket: crate::jacket::Jacket,
+    /// where the album page drew its cover (2.5: a click opens the Cover window; for the tests)
+    pub album_cover_rect: Option<Rect>,
     /// Details: per song its comment tag (None while ffprobe reads it) and saved verdict
     details_extra: HashMap<String, (Option<String>, Option<(String, String)>)>,
     details_song: String,
@@ -857,6 +859,7 @@ impl Player {
             np_hscroll: 0.0,
             np_songs_album: String::new(),
             jacket: Default::default(),
+            album_cover_rect: None,
             details_extra: HashMap::new(),
             details_song: String::new(),
             details_tx,
@@ -4252,6 +4255,9 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("rhr-player-np23-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let music = tmp.join("Music");
+        // 2.5: the cover turns over to the album's songs; here the turn takes no time
+        // (`jacket::tests` has the turn itself)
+        std::env::set_var(realhires::jacket::NO_ANIMATION_ENV, "1");
         std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
         std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
         std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
@@ -4421,13 +4427,25 @@ mod tests {
         assert!(p.np_mode() == NpMode::Halves && p.np_hits.cover.unwrap().center().x < 640.0);
         p.set_np_tab(NpTab::Lyrics);
 
-        // 11. a sideways drag turns the left half to the album's songs; a click is still a click
+        // 11. a sideways drag turns the cover to the album's songs; a click is still a click
+        // (2.5: it opens the album, and the Cover window is Cover… of the cover's right-click menu)
         play(&ctx, &mut p, album_songs.clone(), &glacier, "Northern Lights");
         let cover = p.np_hits.cover.expect("the cover");
         click(&ctx, &mut p, cover.center());
-        assert!(p.cover_win.is_some(), "a click opens the Cover window");
-        p.cover_win = None;
+        assert!(matches!(p.page, Page::Album(_)) && p.cover_win.is_none(), "a click opens the album: {:?}", p.page);
+        p.go(Page::NowPlaying);
         frame(&ctx, &mut p);
+        let before = placed_texts(&ctx, &mut p);
+        right_click(&ctx, &mut p, cover.center());
+        let after = placed_texts(&ctx, &mut p);
+        assert_eq!(new_texts(&before, &after), ["Cover…", "Change Cover…", "Search Cover Online", "Go to Album"]);
+        click_only(&ctx, &mut p, last_text(&after, "Cover…"));
+        assert!(p.cover_win.is_some(), "Cover… opens the Cover window");
+        p.cover_win = None;
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
+        for _ in 0..30 {
+            frame(&ctx, &mut p); // (a pause, or egui counts the next press with these clicks)
+        }
         frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(cover.center())]);
         press(&ctx, &mut p, cover.center(), true);
         frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(cover.center() - vec2(30.0, 0.0))]);
@@ -4493,6 +4511,7 @@ mod tests {
         assert!((block.center().x - view.center().x).abs() < 14.0, "centred across: {block:?} in {view:?}");
         assert!((block.center().y - view.center().y).abs() < 14.0, "centred down: {block:?} in {view:?}");
         assert!(view.contains_rect(block), "a long path wraps within it");
+        std::env::remove_var(realhires::jacket::NO_ANIMATION_ENV);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -4587,7 +4606,7 @@ mod tests {
         p.lyrics_button(); // the Lyrics button chooses Lyrics again
         assert!(p.np_tab == NpTab::Lyrics && !p.lyrics_hidden);
         frame(&ctx, &mut p);
-        // the album name opens the album, the artist the artist, the cover the Cover window hook
+        // the album name opens the album, the artist the artist, and (2.5) the cover the album too
         let links = p.np_hits.links.clone();
         click(&ctx, &mut p, link_at(&links, &Link::Album));
         assert!(matches!(p.page, Page::Album(_)), "{:?}", p.page);
@@ -4598,8 +4617,11 @@ mod tests {
         p.go(Page::NowPlaying);
         frame(&ctx, &mut p);
         click(&ctx, &mut p, cover.center());
-        assert_eq!(p.page, Page::NowPlaying);
-        assert!(p.cover_win.is_some(), "the Now Playing cover opens the Cover window");
+        assert!(matches!(p.page, Page::Album(_)) && p.cover_win.is_none(), "the Now Playing cover opens the album: {:?}", p.page);
+        p.go(Page::NowPlaying);
+        frame(&ctx, &mut p);
+        p.open_cover_window(&glacier); // (Cover… of the cover's right-click menu, 2.5)
+        assert!(p.cover_win.is_some());
         p.cover_win = None;
         frame(&ctx, &mut p);
         // the LCD: the title and the album name open the album, the artist the artist
@@ -5228,7 +5250,7 @@ mod tests {
         // 2.2: an album card's right-click menu, as the user asked ("right click songs/album
         // and press acquire metadata")
         let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
-        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Search Cover Online", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Acquire Metadata…"));
         p.mb_win.as_mut().expect("Acquire Metadata… opens the MusicBrainz window").set_client(crate::mbwin::test_client());
         {
@@ -5373,13 +5395,17 @@ mod tests {
         let (change, search) = (last_text(&shown, "Change cover…"), last_text(&shown, "Search Cover Online"));
         assert!(search.x > change.x && (search.y - change.y).abs() < 2.0, "right after Change cover…");
         assert!(!shown.iter().any(|(t, r)| t == "Save image as…" && r.center().x < search.x), "before Save image as…");
+        // 2.5: a menu button: MusicBrainz… and Google Images
         click_only(&ctx, &mut p, search);
+        let menu = placed_texts(&ctx, &mut p);
+        assert_eq!(new_texts(&shown, &menu), ["MusicBrainz…", "Google Images"]);
+        click_only(&ctx, &mut p, last_text(&menu, "Google Images"));
         assert_eq!(fake::opened(), ["https://www.google.com/search?tbm=isch&q=The+Example+Band+Night+Drive"]);
         p.cover_win = None;
         frame(&ctx, &mut p);
         // an album card's menu and the album page's "…" menu
         let (items, after) = album_card_menu(&ctx, &mut p, "Night Drive");
-        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
+        assert_eq!(items, ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Search Cover Online", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
         assert_eq!(p.cover_win.as_ref().map(|w| w.target_paths()), Some(paths.clone()));
         p.cover_win = None;
@@ -5398,7 +5424,7 @@ mod tests {
             p.mb_win = None;
             frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(5.0, 835.0))]);
         }
-        assert_eq!(new_texts(&before, &after), ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Colour Label"]);
+        assert_eq!(new_texts(&before, &after), ["Play", "Shuffle", "Play Next", "Add to Queue", "Album Properties…", "Acquire Metadata…", "Change Cover…", "Search Cover Online", "Colour Label"]);
         click_only(&ctx, &mut p, last_text(&after, "Change Cover…"));
         assert!(p.cover_win.is_some(), "the page's menu opens the Cover window");
         p.cover_win = None;

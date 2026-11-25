@@ -572,9 +572,21 @@ impl Player {
             self.set_album_sort_for(key);
         }
         ui.horizontal(|ui| {
-            let (crect, _) = ui.allocate_exact_size(vec2(220.0, 220.0), Sense::hover());
+            // 2.5: a click opens the Cover window (the page is the album already), a right click
+            // the cover's menu (Cover…, Change Cover…, Search Cover Online ▸)
+            let (crect, cresp) = ui.allocate_exact_size(vec2(220.0, 220.0), Sense::click());
             let tex = self.covers.get(&a.key, &self.lib.album_paths[idx]);
             cover(ui.painter(), crect, tex.as_ref(), &a.title, 10);
+            self.album_cover_rect = Some(crect);
+            if let Some(first) = paths.iter().find(|p| std::path::Path::new(p).is_file()).cloned() {
+                if cresp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if cresp.clicked() {
+                    self.open_cover_window(&first);
+                }
+                cresp.context_menu(|ui| self.cover_menu(ui, &first, false));
+            }
             ui.add_space(22.0);
             ui.vertical(|ui| {
                 ui.add_space(70.0);
