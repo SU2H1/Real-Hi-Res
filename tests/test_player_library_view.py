@@ -202,7 +202,8 @@ def genres():
     assert names == ["Ambient", "Electronic", "Indie Pop", "Jazz"], names
     # the title row: Select, and a hint naming the key of this system
     assert page.select_b.winfo_ismapped() and not page.done_b.winfo_ismapped()
-    assert "Press Select or Ctrl-click genres to merge or rename them" in page.sub.cget("text"), page.sub.cget("text")
+    key = "Cmd" if sys.platform == "darwin" else "Ctrl"  # on macOS Ctrl-click is a right-click
+    assert f"Press Select or {key}-click genres to merge or rename them" in page.sub.cget("text"), page.sub.cget("text")
     press(page.select_b)
     assert page.grid_w.select_mode and page.done_b.winfo_ismapped() and not page.select_b.winfo_ismapped()
     assert page.count_l.cget("text") == "0 selected" and "Click genres to select them" in page.sub.cget("text")
@@ -228,9 +229,10 @@ def genres():
     g.canvas.event_generate("<Escape>")
     root.update()
     assert not g.select_mode and not g.selected
-    # Ctrl-click selects without select mode; the title row shows the selection's buttons
-    click(g.canvas, card("Electronic"), state=0x4)
-    click(g.canvas, card("Indie Pop"), state=0x4)
+    # Ctrl-click (Cmd-click on macOS: Tk's Mod1) selects without select mode; the title row shows the buttons
+    mod = 0x8 if sys.platform == "darwin" else 0x4
+    click(g.canvas, card("Electronic"), state=mod)
+    click(g.canvas, card("Indie Pop"), state=mod)
     assert not g.select_mode and app.page_name == "genres"
     assert [c["title"] for c in g.selected_items()] == ["Electronic", "Indie Pop"]
     assert page.done_b.winfo_ismapped() and page.merge_b.enabled and page.count_l.cget("text") == "2 selected"
@@ -317,7 +319,13 @@ def loaded():
     st.refresh()
     root.update()
     W = st.area.c.winfo_width()
-    assert st.side_by_side(W) and st.cell_width(W) == st.CELL_W, W
+    if not st.side_by_side(W):
+        # the CI runners' 1024 x 768 screens leave the page narrower than the calendar plus 360 px:
+        # then only the layout under the calendar can be checked here
+        assert W - 2 * st.MARGIN < 7 * st.cell_width(W) + st.SIDE_MIN, W
+        print("narrow screen: the day's plays go under the calendar")
+        return narrow_from_start()
+    assert st.cell_width(W) == st.CELL_W, W
     # no day chosen: the hint, beside the calendar
     assert st.day_c.winfo_ismapped() and "Click a day to see the songs you played on it." in texts(st.day_c)
     assert "Click a day to see the songs you played on it." not in texts(st.area.c)
@@ -359,6 +367,14 @@ def loaded():
     # narrower than the calendar plus 360 px: the list goes under the calendar, in the page
     root.geometry("900x800")
     wait(lambda: st.area.c.winfo_width() < 7 * st.CELL_W + st.SIDE_MIN + 2 * st.MARGIN, narrow, what="narrow")
+
+def narrow_from_start():
+    st = app.page("stats")
+    today = time.localtime()
+    st.show_month(today.tm_year, today.tm_mon)
+    st.choose_day(today.tm_mday)
+    root.update()
+    narrow()
 
 def narrow():
     st = app.page("stats")

@@ -826,9 +826,14 @@ def second_heard():
     assert st.day == (first.tm_year, first.tm_mon, first.tm_mday), st.day
     want = [p for p in reversed(plays) if time.localtime(p.started)[:3] == first[:3]]
     assert [r["path"] for r in st.day_rows] == [p.path for p in want], st.day_rows
-    # 2.3: on this wide page the day's plays are to the right of the calendar, in a canvas of their own
-    assert st.side_by_side() and st.day_c.winfo_ismapped()
-    dc = st.day_c
+    # 2.3: on a wide page the day's plays are to the right of the calendar, in a canvas of their own;
+    # the CI runners' 1024 x 768 screens leave the page too narrow, and then they are under the calendar
+    if st.side_by_side():
+        assert st.day_c.winfo_ismapped()
+        dc = st.day_c
+    else:
+        assert not st.day_c.winfo_ismapped() and st.day_box is None
+        dc = c
     shown = texts(dc)
     assert stats.day_title(*st.day) in shown and stats.day_summary(st.day_rows) in shown
     row = st.day_rows[-1]
