@@ -198,7 +198,8 @@ pub fn info_sections(
                 },
             ),
             (tr!("Volume"), if gain <= 0.0 { tr!("Muted").into() } else { db(20.0 * (gain as f64).log10()) }),
-            (tr!("Equalizer"), if bit_perfect { i18n::tr(realhires::bitperfect::EQ_BYPASSED).to_string() } else { eq_summary(state) }),
+            // 2.3: the equalizer is heard with bit-perfect playback too
+            (tr!("Equalizer"), eq_summary(state)),
             (tr!("Gapless"), if gapless { tr!("On").into() } else { tr!("Off").into() }),
         ],
         None => vec![
@@ -313,7 +314,7 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
     let mine = p.state.matching_eq_preset();
     let presets: Vec<(String, eq::EqState)> = p.state.eq_presets.iter().map(|x| (x.name.clone(), x.eq.clone())).collect();
     let notes = p.eq_notes.clone();
-    let bypassed = p.scanner.cfg.bit_perfect;
+    let bit_perfect = p.scanner.cfg.bit_perfect;
     let mut action: Option<EqAction> = None;
     egui::Window::new(tr!("Equalizer"))
         .id(egui::Id::unique("player-equalizer"))
@@ -398,9 +399,9 @@ pub fn eq_window(p: &mut Player, ctx: &egui::Context, pal: &Palette) {
                 ui.label(RichText::new(tr_text(n)).small().color(pal.secondary));
             }
             ui.add_space(4.0);
-            if bypassed {
-                // bit-perfect playback: the equalizer's settings are kept, but it is not heard
-                ui.label(RichText::new(i18n::tr(realhires::bitperfect::EQ_BYPASSED).to_string()).strong().color(pal.accent));
+            if bit_perfect {
+                // 2.3: the equalizer works with bit-perfect playback, but the sound is then not bit-perfect
+                ui.add(egui::Label::new(RichText::new(i18n::tr(realhires::bitperfect::EQ_NOTE)).strong().color(pal.accent)).wrap());
                 ui.add_space(4.0);
             }
             ui.horizontal(|ui| {

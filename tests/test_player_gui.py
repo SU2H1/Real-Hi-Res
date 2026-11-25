@@ -386,6 +386,49 @@ def lyrics_ok():
     # Up Next lists the rest of the album
     app.toggle_up_next(); root.update()
     assert [t.display_title for t in app.up_next.list.rows] == ["Midnight Sun", "Polar Drift"]
+    # 2.3: Up Next can be edited: drag a song to another place, right-click to remove one.  Playback
+    # is paused here, and the song to follow gaplessly is checked by what the app tells the engine
+    # (the engine forgets it once it has started decoding that song)
+    assert not app.engine.playing
+    nexts = []
+    set_next = app.engine.set_next
+    app.engine.set_next = lambda path, after=None: (nexts.append(path), set_next(path, after))
+    midnight, polar = LIB["songs"]["Midnight Sun"], LIB["songs"]["Polar Drift"]
+    ul = app.up_next.list
+    if root.grab_current() is not None:  # the pop-up menus unposted above may still hold X11's grab
+        root.grab_current().grab_release()
+    def drag(lst, y0, y1):
+        lst.canvas.event_generate("<ButtonPress-1>", x=60, y=y0)
+        lst.canvas.event_generate("<B1-Motion>", x=60, y=y0 + 2)  # under 5 px: still a click
+        assert lst.drag_from is None
+        lst.canvas.event_generate("<B1-Motion>", x=60, y=(y0 + y1) // 2)
+        lst.canvas.event_generate("<B1-Motion>", x=60, y=y1)
+        dragging = lst.drag_from is not None and lst.drop_at is not None
+        assert not dragging or lst.canvas.find_withtag("drop"), "no drop line"
+        lst.canvas.event_generate("<ButtonRelease-1>", x=60, y=y1)
+        root.update()
+        return dragging
+    assert drag(ul, ul.rh + ul.rh // 2, 4)  # Polar Drift above Midnight Sun
+    assert [t.display_title for t in ul.rows] == ["Polar Drift", "Midnight Sun"] and ul.selected == 0
+    assert app.queue.up_next(5) == [polar, midnight] and nexts[-1] == polar, (app.queue.up_next(5), nexts)
+    assert not ul.canvas.find_withtag("drop") and ul.drag_from is None
+    assert drag(ul, ul.rh // 2, 2 * ul.rh - 2)  # and back below it
+    assert app.queue.up_next(5) == [midnight, polar] and nexts[-1] == midnight, (app.queue.up_next(5), nexts)
+    # Now Playing's Up Next view shows the same and is wired the same way
+    npq = app.page("nowplaying").queue_list
+    assert [t.path for t in npq.rows] == [midnight, polar]
+    assert npq.on_move == app.move_in_up_next and npq.on_context is not None
+    m = app.up_next_menu(1)
+    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["Remove from Up Next"]
+    m.invoke(0); root.update()
+    assert [t.display_title for t in ul.rows] == ["Midnight Sun"] and app.queue.up_next(5) == [midnight]
+    assert [t.path for t in npq.rows] == [midnight] and nexts[-1] == midnight
+    app.set_shuffle("off")  # the order is built again: the removed song stays out
+    assert app.queue.up_next(5) == [midnight] and app.queue.removed == {{polar}}
+    app.queue.order.append(polar); app.queue.removed.clear()  # put it back for the rest of the test
+    app.engine.set_next = set_next
+    app._update_next(); app.up_next.refresh()
+    assert [t.display_title for t in app.up_next.list.rows] == ["Midnight Sun", "Polar Drift"]
     # 2.1: Play Next from a song's menu comes first; the gapless look-ahead leaves the queue alone
     menu = app.song_menu(app.by_path[umbrella])
     labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) == "command"]
@@ -1430,7 +1473,8 @@ root.mainloop()
 def test_bit_perfect_playback_controls(tmp_path):
     """Settings → Playback → Bit-perfect playback (2.1): the song restarts where it was in
     the song's own format, the volume slider shows full volume and cannot move, the
-    Equalizer window says it is bypassed, and the Playback info has the Bit-perfect line."""
+    Equalizer window has its note, and the Playback info has the Bit-perfect line; 2.3: the
+    equalizer is heard, and the Bit-perfect line then says why it is not bit-perfect."""
     lib = make_library(tmp_path, seconds=4, mp3=False)
     from realhires import settings
 
@@ -1489,16 +1533,38 @@ def switched():
     assert not app.bar.volume.enabled and app.bar.volume.value == 1.0 and app.state.volume == 0.5
     assert settings.load().bit_perfect  # saved at once, as every setting
     app.open_eq()
-    assert app.eq_window.bypass.cget("text") == "Bypassed while bit-perfect playback is on."
+    assert app.eq_window.bypass.cget("text") == ("Bit-perfect playback is on: with the equalizer on, the sound is "
+                                                 "not bit-perfect. The device still gets the song's own sample rate.")
     assert app.eq_window.bypass.winfo_manager() == "pack"
     app.eq_window.close()
     app.open_info()
     info = app.info_window.text()
     for needed in ("Output: 96 kHz, 24-bit integer in 32-bit, stereo",
                    "Bit-perfect: Yes: 24-bit, 96 kHz, NULL Playback Device",
-                   "Volume: 0.0 dB", "Equalizer: Bypassed while bit-perfect playback is on."):
+                   "Volume: 0.0 dB", "Equalizer: Off"):
         assert needed in info, (needed, info)
     app.info_window.close()
+    # the equalizer on: heard (the song restarts where it is), the device keeps the song's rate
+    app.open_eq()
+    w = app.eq_window
+    w.v_on.set(True); w._toggles(); w._preset("Rock")
+    assert app.bar.eq.on
+    w.close()
+    state["gen"] = app.engine._gen
+    wait(lambda: app.engine._gen > state["gen"] and app.engine.position() > 0, eq_heard, what="the equalizer heard")
+
+def eq_heard():
+    app.open_info()
+    info = app.info_window.text()
+    for needed in ("Output: 96 kHz, 24-bit integer in 32-bit, stereo",
+                   "Bit-perfect: No: The equalizer is on, so the samples are changed. The device still runs at 96 kHz.",
+                   "Equalizer: Graphic: Rock"):
+        assert needed in info, (needed, info)
+    app.info_window.close()
+    app.open_eq()
+    w = app.eq_window
+    w.v_on.set(False); w._toggles()
+    w.close()
     app.volume_step(-0.05)  # the keys leave the saved volume alone too
     assert app.state.volume == 0.5
     setting(False)

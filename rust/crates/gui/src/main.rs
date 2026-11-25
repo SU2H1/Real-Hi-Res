@@ -21,6 +21,7 @@ mod pages;
 mod player;
 mod plots;
 mod style;
+mod upnext;
 mod work;
 
 /// The headless app tests set process-wide variables (where results, settings,

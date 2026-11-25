@@ -1287,7 +1287,11 @@
   "Searches the file and folder names and the reasons": "ファイル名、フォルダ名、理由を検索します。",
   "Verdict, reason, file name or tag": "判定、理由、ファイル名またはタグ",
   "Sort by this column (again: the other way round)": "この列で並べ替え（もう一度で逆順）",
-  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。"
+  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。",
+  "Remove from Up Next": "「次に再生」から削除",
+  "The equalizer is on, so the samples are changed.": "イコライザがオンのため、サンプルが変更されます。",
+  "No: The equalizer is on, so the samples are changed.": "いいえ：イコライザがオンのため、サンプルが変更されます。",
+  "Bit-perfect playback is on: with the equalizer on, the sound is not bit-perfect. The device still gets the song's own sample rate.": "ビットパーフェクト再生がオンです：イコライザがオンのときは、音はビットパーフェクトになりません。デバイスには引き続き曲自身のサンプリング周波数で送られます。"
  },
  "patterns": {
   "How many files are analysed at the same time. 0 uses one job per CPU core ({n} on this computer), which is the fastest setting: more jobs than cores do not scan faster, they only use more memory. Up to 512 are allowed. (Python on Windows limits one process pool to 61 workers; Real-Hi-Res uses several pools to go beyond that.)": "同時に解析するファイルの数です。0はCPUコア1つにつき1ジョブ（このコンピュータでは{n}）で、最も速い設定です。コアより多いジョブにしても速くはならず、メモリを多く使うだけです。最大512まで設定できます。（WindowsのPythonは1つのプロセスプールを61ワーカーに制限しますが、Real-Hi-Resは複数のプールを使ってそれを超えます。）",
@@ -1481,6 +1485,11 @@
   "The artist is too long: at most {n:num} characters fit.": "アーティストが長すぎます：入るのは最大{n}文字です。",
   "The album is too long: at most {n:num} characters fit.": "アルバムが長すぎます：入るのは最大{n}文字です。",
   "The album artist is too long: at most {n:num} characters fit.": "アルバムアーティストが長すぎます：入るのは最大{n}文字です。",
-  "The release date is too long: at most {n:num} characters fit.": "リリース日が長すぎます：入るのは最大{n}文字です。"
+  "The release date is too long: at most {n:num} characters fit.": "リリース日が長すぎます：入るのは最大{n}文字です。",
+  "The device still runs at {rate:num} kHz in exclusive mode.": "デバイスは引き続き排他モードの{rate} kHzで動作します。",
+  "The ALSA hardware device still runs at {rate:num} kHz.": "ALSAのハードウェアデバイスは引き続き{rate} kHzで動作します。",
+  "The ALSA hardware device {device} still runs at {rate:num} kHz.": "ALSAのハードウェアデバイス{device}は引き続き{rate} kHzで動作します。",
+  "The device still runs at {rate:num} kHz (CoreAudio).": "デバイスは引き続き{rate} kHzで動作します（CoreAudio）。",
+  "The device still runs at {rate:num} kHz.": "デバイスは引き続き{rate} kHzで動作します。"
  }
 }

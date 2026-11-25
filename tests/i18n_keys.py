@@ -144,7 +144,7 @@ def core_keys() -> Dict[str, List[str]]:
     for label in stats.FULL_MONTHS:  # 2.2: the calendar's month names
         add(label, "stats.FULL_MONTHS")
     # 2.2: bit-perfect playback's texts that the apps show as they are
-    for text in (bitperfect.OFF, bitperfect.ON_IDLE, bitperfect.EQ_BYPASSED, bitperfect.WASAPI_FORMAT_NOTE,
+    for text in (bitperfect.OFF, bitperfect.ON_IDLE, bitperfect.EQ_NOTE, bitperfect.WASAPI_FORMAT_NOTE,
                  bitperfect.BUSY, bitperfect.LOSSY_NOTE, bitperfect.failure_reason(),
                  bitperfect.access_label(bitperfect.WASAPI, 0), bitperfect.access_label(bitperfect.ALSA, 0),
                  bitperfect.access_label(bitperfect.DIRECT, 0)):

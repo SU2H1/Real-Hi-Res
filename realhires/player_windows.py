@@ -228,8 +228,8 @@ class EqualizerWindow:
                 self.delete_btn = b
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
-        # bit-perfect playback bypasses the equalizer (its settings are kept); shown only then,
-        # so it leaves no empty line above the curve (show_bypass())
+        # with bit-perfect playback on, a note that the equalizer changes the samples (2.3; before,
+        # it was bypassed then); shown only then, so it leaves no empty line above the curve
         self.bypass = label(box, t, "", "body", fg="accent", wraplength=640, justify="left")
         self.preset_menu: Optional[tk.Menu] = None
         self.delete_menu: Optional[tk.Menu] = None
@@ -256,9 +256,10 @@ class EqualizerWindow:
         self.show_bypass()
 
     def show_bypass(self) -> None:
-        """'Bypassed while bit-perfect playback is on.' while that setting is on."""
+        """While bit-perfect playback is on: the equalizer works, but the sound is then not
+        bit-perfect (`bitperfect.EQ_NOTE`)."""
         on = bool(self.app.cfg.bit_perfect)
-        self.bypass.configure(text=tr(bitperfect.EQ_BYPASSED) if on else "")
+        self.bypass.configure(text=tr(bitperfect.EQ_NOTE) if on else "")
         if on:
             self.bypass.pack(anchor="w", pady=(4, 0), before=self.curve)
         else:

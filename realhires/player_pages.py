@@ -1511,7 +1511,8 @@ class NowPlayingPage(Page):
         self.queue_list = SongList(self.upnext_pane, t, [Column("title", "", 200, True, kind="two", key2="artist")],
                                    lambda r, k: r.display_title if k == "title" else tr_name(r.display_artist),
                                    header=False, zebra=False, row_height=48, on_activate=app.jump_to,
-                                   empty_text=tr("Nothing comes after this song."))
+                                   empty_text=tr("Nothing comes after this song."), on_move=app.move_in_up_next,
+                                   on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root))
         self.queue_list.pack(side="top", fill="both", expand=True, padx=(12, 8))
         self.queue_paths: Optional[list] = None
         # Details
@@ -1615,13 +1616,14 @@ class NowPlayingPage(Page):
             self.refresh_details()
 
     # ---- Up Next and Details -----------------------------------------------------
-    def refresh_queue(self) -> None:
+    def refresh_queue(self, keep: bool = False) -> None:
+        """`keep`: the scroll position and the selected song stay (Up Next was edited)."""
         app = self.app
         q = app.queue
-        paths = [p for p in (q.up_next(50) if q is not None else []) if p in app.by_path]
+        paths = app._shown_up_next()
         if paths != self.queue_paths:
             self.queue_paths = paths
-            self.queue_list.set_rows([app.by_path[p] for p in paths])
+            self.queue_list.set_rows([app.by_path[p] for p in paths], keep=keep)
         self.source.configure(text=tr("Playing from {name}", name=app.context_name)
                               if q is not None and app.context_name else "")
 
