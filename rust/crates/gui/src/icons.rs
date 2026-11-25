@@ -18,6 +18,8 @@ pub enum Icon {
     Speaker,
     SpeakerMuted,
     Lyrics,
+    /// two corners pointing outwards (Now Playing's Lyrics only, 2.3)
+    Expand,
     UpNext,
     Equalizer,
     Clock,
@@ -216,6 +218,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             ));
             for dx in [-0.3f32, 0.3] {
                 p.circle_filled(pos2(r.center().x + dx * h, r.center().y), w * 0.9, color);
+            }
+        }
+        Icon::Expand => {
+            let (q, k) = (s * 0.32, s * 0.15);
+            for d in [-1.0f32, 1.0] {
+                let corner = pos2(c.x + d * q, c.y + d * q);
+                poly(p, &[pos2(corner.x - d * k, corner.y), corner, pos2(corner.x, corner.y - d * k)], stroke, false);
+                p.line_segment([corner, pos2(c.x + d * s * 0.08, c.y + d * s * 0.08)], stroke);
             }
         }
         Icon::UpNext => {

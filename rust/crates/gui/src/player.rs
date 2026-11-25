@@ -389,6 +389,21 @@ impl LibView {
 #[derive(Default)]
 pub struct NpHits {
     pub cover: Option<Rect>,
+    /// the back link at the top left and the name of the page it returns to (2.3)
+    pub back_page: Option<(Rect, String)>,
+    /// Lyrics only (2.3)
+    pub wide_button: Option<Rect>,
+    /// where the lyrics are drawn
+    pub lyrics_rect: Option<Rect>,
+    /// the album's songs in the left half (2.3): (row, path, drawn bold as the song playing)
+    pub album_songs: Vec<(Rect, String, bool)>,
+    /// the two dots under the left half: the cover, the album's songs (2.3)
+    pub dots: Vec<Rect>,
+    /// "Instrumental" under the centred block (2.3)
+    pub instrumental: Option<Rect>,
+    /// the Details block (2.3), and the view it is centred in
+    pub details_block: Option<Rect>,
+    pub details_view: Option<Rect>,
     /// the artist and album name links under the cover
     pub links: Vec<(Rect, crate::pages::Link)>,
     pub get_lyrics: Option<Rect>,
@@ -413,6 +428,18 @@ pub enum NpTab {
 impl NpTab {
     pub const ALL: [(NpTab, &'static str); 3] =
         [(NpTab::Lyrics, n_!("Lyrics")), (NpTab::UpNext, n_!("Up Next")), (NpTab::Details, n_!("Details"))];
+}
+
+/// How Now Playing is laid out (2.3): nothing plays; only the block in the middle (the
+/// lyrics hidden); an instrumental song's Lyrics (the block in the middle, the switch above
+/// it); Lyrics only (the lyrics fill the page); or the two halves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NpMode {
+    Nothing,
+    Centred,
+    Instrumental,
+    Wide,
+    Halves,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -605,6 +632,16 @@ pub struct Player {
     pub lyrics_hidden: bool,
     /// Now Playing's right half: Lyrics, Up Next or Details (for the session)
     pub np_tab: NpTab,
+    /// Now Playing's Lyrics only (2.3): no cover, the lyrics fill the page (for the session)
+    pub lyrics_wide: bool,
+    /// Now Playing's left half shows the album's songs instead of the cover (2.3, for the session)
+    pub np_songs: bool,
+    /// the press that turned the left half already (one turn per drag)
+    pub(crate) np_swiped: bool,
+    /// sideways scrolling over the left half since it last turned
+    pub(crate) np_hscroll: f32,
+    /// the album whose songs the left half showed last (scrolled to the song playing when it changes)
+    pub(crate) np_songs_album: String,
     /// Details: per song its comment tag (None while ffprobe reads it) and saved verdict
     details_extra: HashMap<String, (Option<String>, Option<(String, String)>)>,
     details_song: String,
@@ -761,6 +798,11 @@ impl Player {
             show_up_next: false,
             lyrics_hidden: false,
             np_tab: NpTab::Lyrics,
+            lyrics_wide: false,
+            np_songs: false,
+            np_swiped: false,
+            np_hscroll: 0.0,
+            np_songs_album: String::new(),
             details_extra: HashMap::new(),
             details_song: String::new(),
             details_tx,
@@ -2209,7 +2251,14 @@ impl Player {
     fn enter(&mut self, page: Page) {
         let old = std::mem::replace(&mut self.page, page);
         self.page_shown(&old);
-        if !matches!(old, Page::NowPlaying | Page::Search | Page::Quality | Page::Settings) {
+        // a search page is remembered while it has a query (2.3: Now Playing's back link
+        // returns to the results)
+        let remember = match old {
+            Page::NowPlaying | Page::Quality | Page::Settings => false,
+            Page::Search => !self.search_query.is_empty(),
+            _ => true,
+        };
+        if remember {
             self.back.push(old);
             if self.back.len() > 20 {
                 self.back.remove(0);
@@ -2282,6 +2331,9 @@ impl Player {
                 self.search_due = None;
                 self.search_query = self.search.trim().to_string();
                 if self.search_query.is_empty() {
+                    // the results are gone: Back no longer returns to them (2.3)
+                    self.back.retain(|p| *p != Page::Search);
+                    self.forward.retain(|p| *p != Page::Search);
                     if self.page == Page::Search {
                         let back = self.search_from.take().unwrap_or(Page::Albums);
                         self.page = back;
@@ -2615,6 +2667,70 @@ impl Player {
         self.lyrics_hidden = false;
     }
 
+    /// How Now Playing is laid out now (2.3).
+    pub fn np_mode(&mut self) -> NpMode {
+        if self.now.is_none() {
+            return NpMode::Nothing;
+        }
+        if self.lyrics_hidden {
+            return NpMode::Centred;
+        }
+        if self.np_tab == NpTab::Lyrics {
+            match self.lyrics_of_now() {
+                Some(ShownLyrics::Instrumental) => return NpMode::Instrumental,
+                Some(_) if self.lyrics_wide => return NpMode::Wide,
+                _ => {}
+            }
+        }
+        NpMode::Halves
+    }
+
+    /// Now Playing's Lyrics only (2.3): the cover goes and the lyrics fill the page, one step
+    /// larger; pressed again (or Esc) the cover comes back.  Kept for the session.
+    pub fn toggle_lyrics_wide(&mut self) {
+        self.lyrics_wide = !self.lyrics_wide;
+    }
+
+    /// Now Playing's left half (2.3): the cover (false) or the album's songs (true), from a
+    /// swipe or the dots; kept for the session.
+    pub fn set_np_side(&mut self, songs: bool) {
+        self.np_songs = songs;
+    }
+
+    /// A page's name as Now Playing's back link shows it (2.3): an album's, playlist's,
+    /// folder's, artist's (genre's…) own name, else the page's title.
+    pub fn page_label(&self, page: &Page) -> String {
+        match page {
+            Page::Album(key) => {
+                if let Some(&i) = self.lib.album_index.get(key) {
+                    return tr_name(&self.lib.albums[i].title).to_string();
+                }
+            }
+            Page::Playlist(id) => {
+                if let Some(p) = self.state.playlist(id) {
+                    return p.name.clone();
+                }
+            }
+            Page::Group(_, name) => return tr_name(name).to_string(),
+            Page::Folders(folder) => {
+                // with one library folder, Folders shows that folder (as Python's page does)
+                let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| realhires::paths::abspath(f)).collect();
+                let shown = folder.clone().or_else(|| (roots.len() == 1).then(|| roots[0].clone()));
+                if let Some(f) = shown {
+                    let name = realhires::paths::file_name(&f);
+                    return if name.is_empty() { f } else { name };
+                }
+            }
+            _ => {}
+        }
+        page.shown_title().to_string()
+    }
+
+    /// The name of the page Back returns to, when there is one (2.3).
+    pub fn back_label(&self) -> Option<String> {
+        self.back.last().map(|p| self.page_label(p))
+    }
+
     /// The album page of a song's album.
     pub fn open_album_of(&mut self, path: &str) {
         if let Some(key) = self.lib.album_of(path).map(|a| a.key.clone()) {
@@ -2778,6 +2894,7 @@ impl Player {
     }
 
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
+        let had_dialog = self.name_dialog.is_some() || self.confirm.is_some() || self.tag_job.is_some();
         self.dialogs(ctx, pal);
         let cover_open = crate::coverwin::cover_window(self, ctx, pal);
         if let Some(mut w) = self.edit_info.take() {
@@ -2849,6 +2966,8 @@ impl Player {
                 && self.confirm.is_none()
             {
                 self.done_selecting(); // as Done (2.3)
+            } else if !had_dialog && self.page == Page::NowPlaying && self.lyrics_wide && self.np_mode() == NpMode::Wide {
+                self.lyrics_wide = false; // Lyrics only: Esc brings the cover back (2.3)
             }
         }
         if self.info.is_some() {
@@ -3908,6 +4027,259 @@ mod tests {
             }
         });
         url
+    }
+
+    /// Now Playing's 2.3 requests (docs/player-spec.md, "2.3"): the back link at the top left
+    /// naming the page it returns to (5), Lyrics only and Esc (10), an instrumental song's
+    /// cover in the centre (4), swiping the cover to the album's songs (11) and Details in the
+    /// centre (14).
+    #[test]
+    fn now_playing_back_wide_instrumental_swipe_and_details() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-player-np23-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let first = song(&music, "Northern Lights", "First Light", "Aurora Fields", "Ambient", 1, 44_100, 20.0);
+        let glacier = song(&music, "Northern Lights", "Glacier Song", "Aurora Fields", "Ambient", 2, 44_100, 20.0);
+        let sun = song(&music, "Northern Lights", "Midnight Sun", "Aurora Fields", "Ambient", 3, 44_100, 20.0);
+        let drift = song(&music, "Northern Lights", "Polar Drift", "Aurora Fields", "Ambient", 4, 44_100, 20.0);
+        let taxi = song(&music, "City Rain", "Taxi Lights", "The Paper Boats", "Indie Pop", 1, 44_100, 20.0);
+        let lines: Vec<String> = (0..12).map(|i| format!("[00:{:02}.00]Line number {i}", 1 + i)).collect();
+        std::fs::write(realhires::lyrics::sidecar(&glacier, ".lrc"), lines.join("\n") + "\n").unwrap();
+        // LRCGET's mark for an instrumental song
+        std::fs::write(realhires::lyrics::sidecar(&sun, ".lrc"), "[au: instrumental]\n").unwrap();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 5 && p.lib_rx.is_none());
+        let album_songs = vec![first.clone(), glacier.clone(), sun.clone(), drift.clone()];
+        let play = |ctx: &egui::Context, p: &mut Player, list: Vec<String>, at: &str, name: &str| {
+            p.play_list(list, Some(at), name);
+            run_until(ctx, p, "playback", |p| p.engine.position().is_some());
+            if p.is_playing() {
+                p.toggle_play(); // paused: the songs must not end during the checks
+            }
+            for _ in 0..3 {
+                frame(ctx, p);
+            }
+        };
+        let press = |ctx: &egui::Context, p: &mut Player, at: egui::Pos2, pressed: bool| {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        };
+        // a press, a move in two steps, and the release
+        let drag = |ctx: &egui::Context, p: &mut Player, from: egui::Pos2, dx: f32| {
+            frame_with(ctx, p, vec![egui::Event::PointerMoved(from)]);
+            press(ctx, p, from, true);
+            frame_with(ctx, p, vec![egui::Event::PointerMoved(from + vec2(dx / 2.0, 2.0))]);
+            frame_with(ctx, p, vec![egui::Event::PointerMoved(from + vec2(dx, 3.0))]);
+            press(ctx, p, from + vec2(dx, 3.0), false);
+            for _ in 0..2 {
+                frame(ctx, p);
+            }
+        };
+        let sideways = |ctx: &egui::Context, p: &mut Player, at: egui::Pos2, dx: f32| {
+            frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+            let e = egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(dx, 0.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Default::default(),
+            };
+            frame_with(ctx, p, vec![e]);
+            for _ in 0..20 {
+                frame_with(ctx, p, vec![]);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // every text the last frame drew, with its rectangle and font
+        fn fonts(ctx: &egui::Context, p: &mut Player) -> Vec<(String, Rect, egui::FontId)> {
+            fn walk(shape: &egui::Shape, out: &mut Vec<(String, Rect, egui::FontId)>) {
+                match shape {
+                    egui::Shape::Text(t) => {
+                        let font = t.galley.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default();
+                        out.push((t.galley.text().to_string(), t.visual_bounding_rect(), font));
+                    }
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                    _ => {}
+                }
+            }
+            for _ in 0..2 {
+                frame(ctx, p);
+            }
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| p.ui(ui));
+            let mut out = vec![];
+            output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+            output.drop_without_applying_deltas();
+            out
+        }
+
+        // 5. the back link names the page Now Playing returns to, and goes there
+        p.go(Page::AllSongs);
+        play(&ctx, &mut p, album_songs.clone(), &glacier, "Northern Lights");
+        p.cover_clicked();
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::NowPlaying);
+        let (back, label) = p.np_hits.back_page.clone().expect("the back link");
+        assert_eq!(label, "All Songs");
+        assert!(back.left() < 260.0 && back.top() < 110.0, "at the top left: {back:?}");
+        click(&ctx, &mut p, back.center());
+        assert_eq!(p.page, Page::AllSongs);
+        assert_eq!(p.forward.last(), Some(&Page::NowPlaying));
+        p.go_forward();
+        let city = p.lib.album_of(&taxi).unwrap().key.clone();
+        p.go(Page::Album(city));
+        p.lyrics_button();
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_hits.back_page.as_ref().map(|b| b.1.as_str()), Some("City Rain"));
+        // a search page comes back with its results
+        p.search = "glacier".into();
+        p.search_due = Some(Instant::now());
+        frame(&ctx, &mut p);
+        assert_eq!(p.page, Page::Search);
+        p.cover_clicked();
+        frame(&ctx, &mut p);
+        let (back, label) = p.np_hits.back_page.clone().expect("the back link");
+        assert_eq!(label, "Search");
+        click(&ctx, &mut p, back.center());
+        assert_eq!((p.page.clone(), p.search_query.as_str()), (Page::Search, "glacier"));
+        p.cover_clicked();
+        p.back.clear();
+        frame(&ctx, &mut p);
+        assert!(p.np_hits.back_page.is_none(), "no page to go back to: no link");
+
+        // 10. Lyrics only: no cover, the lyrics fill the page, centred and 4 px larger; Esc
+        assert_eq!(p.np_mode(), NpMode::Halves);
+        let half = p.np_hits.lyrics_rect.expect("the lyrics");
+        assert!(half.left() > 700.0, "{half:?}");
+        let wide = p.np_hits.wide_button.expect("the Lyrics only button");
+        click(&ctx, &mut p, wide.center());
+        assert!(p.lyrics_wide && p.np_mode() == NpMode::Wide);
+        let texts = fonts(&ctx, &mut p);
+        assert!(p.np_hits.cover.is_none() && p.np_hits.dots.is_empty(), "no cover");
+        let lrect = p.np_hits.lyrics_rect.expect("the lyrics");
+        assert!(lrect.left() < 300.0 && lrect.width() > 900.0, "the lyrics use the whole page: {lrect:?}");
+        let line = texts.iter().find(|t| t.0 == "Line number 0").expect("a lyrics line");
+        assert_eq!(line.2.size, (p.state.lyrics_size + crate::pages::LYRICS_WIDE_EXTRA) as f32);
+        assert!((line.1.center().x - lrect.center().x).abs() < 12.0, "centred: {:?} in {lrect:?}", line.1);
+        assert!(texts.iter().any(|t| t.0 == "Up Next"), "the switch stays");
+        p.set_np_tab(NpTab::UpNext); // Up Next keeps the two halves
+        frame(&ctx, &mut p);
+        assert!(p.np_mode() == NpMode::Halves && p.np_hits.cover.is_some());
+        p.set_np_tab(NpTab::Lyrics);
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_mode(), NpMode::Wide);
+        let esc = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame_with(&ctx, &mut p, vec![esc]);
+        frame(&ctx, &mut p);
+        assert!(!p.lyrics_wide && p.np_mode() == NpMode::Halves && p.np_hits.cover.is_some(), "Esc brings the cover back");
+        let line = fonts(&ctx, &mut p).into_iter().find(|t| t.0 == "Line number 0").expect("a lyrics line");
+        assert_eq!(line.2.size, p.state.lyrics_size as f32);
+        p.toggle_lyrics_wide();
+        p.toggle_lyrics_wide(); // pressed again: the cover is back
+        assert_eq!(p.np_mode(), NpMode::Halves);
+
+        // 4. an instrumental song: the cover in the centre with "Instrumental", the switch above
+        play(&ctx, &mut p, album_songs.clone(), &sun, "Northern Lights");
+        assert_eq!(p.np_mode(), NpMode::Instrumental);
+        let texts = fonts(&ctx, &mut p);
+        assert!(p.np_hits.instrumental.is_some() && texts.iter().any(|t| t.0 == "Instrumental"));
+        assert!(texts.iter().any(|t| t.0 == "Up Next"), "the switch stays");
+        assert!(p.np_hits.lyrics_rect.is_none() && p.np_hits.get_lyrics.is_none() && p.np_hits.wide_button.is_none());
+        let cover = p.np_hits.cover.expect("the cover");
+        assert!((cover.center().x - (224.0 + 1280.0) / 2.0).abs() < 2.0, "in the middle of the page: {cover:?}");
+        p.toggle_lyrics_wide(); // Lyrics only does not apply to an instrumental song
+        assert_eq!(p.np_mode(), NpMode::Instrumental);
+        p.toggle_lyrics_wide();
+        p.set_np_tab(NpTab::Details); // Details keeps the two halves
+        frame(&ctx, &mut p);
+        assert!(p.np_mode() == NpMode::Halves && p.np_hits.cover.unwrap().center().x < 640.0);
+        p.set_np_tab(NpTab::Lyrics);
+
+        // 11. a sideways drag turns the left half to the album's songs; a click is still a click
+        play(&ctx, &mut p, album_songs.clone(), &glacier, "Northern Lights");
+        let cover = p.np_hits.cover.expect("the cover");
+        click(&ctx, &mut p, cover.center());
+        assert!(p.cover_win.is_some(), "a click opens the Cover window");
+        p.cover_win = None;
+        frame(&ctx, &mut p);
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(cover.center())]);
+        press(&ctx, &mut p, cover.center(), true);
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(cover.center() - vec2(30.0, 0.0))]);
+        assert!(!p.np_songs, "30 px is not a swipe yet");
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(cover.center() - vec2(90.0, -3.0))]);
+        press(&ctx, &mut p, cover.center() - vec2(90.0, -3.0), false);
+        frame(&ctx, &mut p);
+        assert!(p.np_songs, "the swipe turned the left half");
+        assert!(p.cover_win.is_none(), "a drag is not a click");
+        let texts = fonts(&ctx, &mut p);
+        let rows = p.np_hits.album_songs.clone();
+        assert_eq!(rows.iter().map(|r| r.1.clone()).collect::<Vec<_>>(), album_songs);
+        assert_eq!(rows.iter().map(|r| r.2).collect::<Vec<_>>(), vec![false, true, false, false]);
+        let shown = |title: &str| texts.iter().find(|t| t.0 == title && t.1.center().x < 752.0).cloned().unwrap_or_else(|| panic!("{title} is not listed"));
+        assert_eq!(shown("Glacier Song").2.family, look::title(13.0).family, "the song playing in bold");
+        assert_eq!(shown("Polar Drift").2.family, look::text(13.0).family);
+        assert_eq!(p.np_hits.dots.len(), 2);
+        // a double-click plays a song with the album as the list (after a pause, or egui counts
+        // it with the click on the cover as a triple click)
+        for _ in 0..30 {
+            frame(&ctx, &mut p);
+        }
+        let row = rows[3].0.center();
+        frame_with(&ctx, &mut p, vec![egui::Event::PointerMoved(row)]);
+        for pressed in [true, false, true, false] {
+            press(&ctx, &mut p, row, pressed);
+        }
+        run_until(&ctx, &mut p, "Polar Drift", |p| p.now.as_ref().is_some_and(|n| n.path == drift));
+        assert_eq!(p.queue_name, "Northern Lights");
+        if p.is_playing() {
+            p.toggle_play();
+        }
+        frame(&ctx, &mut p);
+        assert_eq!(p.np_hits.album_songs.iter().filter(|r| r.2).map(|r| r.1.clone()).collect::<Vec<_>>(), vec![drift.clone()]);
+        // it follows the song: another album's songs
+        play(&ctx, &mut p, vec![taxi.clone()], &taxi, "City Rain");
+        assert_eq!(p.np_hits.album_songs.iter().map(|r| r.1.clone()).collect::<Vec<_>>(), vec![taxi.clone()]);
+        // the dots switch, and a drag either way turns the half again
+        let dot = p.np_hits.dots[0].center();
+        click(&ctx, &mut p, dot);
+        assert!(!p.np_songs && p.np_hits.album_songs.is_empty());
+        let cover = p.np_hits.cover.expect("the cover");
+        drag(&ctx, &mut p, cover.center(), 80.0);
+        assert!(p.np_songs);
+        drag(&ctx, &mut p, cover.center(), 80.0);
+        assert!(!p.np_songs);
+        // a sideways scroll: the content moving left shows the songs, to the right the cover
+        sideways(&ctx, &mut p, cover.center(), -120.0);
+        assert!(p.np_songs);
+        sideways(&ctx, &mut p, cover.center(), 120.0);
+        assert!(!p.np_songs);
+        assert!(p.cover_win.is_none());
+
+        // 14. Details: one block in the middle of the right half
+        play(&ctx, &mut p, album_songs.clone(), &glacier, "Northern Lights");
+        p.set_np_tab(NpTab::Details);
+        for _ in 0..4 {
+            frame(&ctx, &mut p);
+        }
+        let block = p.np_hits.details_block.expect("the Details block");
+        let view = p.np_hits.details_view.expect("the Details view");
+        assert!(block.width() > 100.0 && block.height() > 100.0, "{block:?}");
+        assert!((block.center().x - view.center().x).abs() < 14.0, "centred across: {block:?} in {view:?}");
+        assert!((block.center().y - view.center().y).abs() < 14.0, "centred down: {block:?} in {view:?}");
+        assert!(view.contains_rect(block), "a long path wraps within it");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Now Playing (2.1): the label above the lyrics, A− / A+ saved in player.json, "Back to

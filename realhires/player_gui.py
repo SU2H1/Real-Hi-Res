@@ -74,6 +74,20 @@ def nav_button(num: int, windowing: str, tk_version: float) -> str:
     return ""
 
 
+from .player_pages import LYRICS_WIDE_EXTRA  # noqa: E402  (Now Playing, 2.3)
+
+# the pages' names as Now Playing's back link shows them (2.3; shown with tr())
+PAGE_TITLES = {
+    "library": N_("Library"), "songs": N_("All Songs"), "folders": N_("Folders"), "albums": N_("Albums"),
+    "album": N_("Albums"), "artists": N_("Artists"), "album_artists": N_("Album Artists"), "genres": N_("Genres"),
+    "years": N_("Years"), "composers": N_("Composers"), "group": N_("Artists"), "playlists": N_("Playlists"),
+    "playlist": N_("Playlists"), "liked": N_("Liked Songs"), "disliked": N_("Disliked Songs"),
+    "played": N_("Recently Played"), "recent": N_("Recently Added"), "stats": N_("Your Stats"),
+    "stats_details": N_("Your Stats"), "search": N_("Search"), "nowplaying": N_("Now Playing"),
+    "settings": N_("Settings"), "quality": N_("Quality Check"),
+}
+
+
 # ------------------------------------------------------ the 1.x scanner ---
 class QualityCheck(gui.App):
     """The 1.x app as the Quality check page: it lives in the player's window, in the
@@ -636,6 +650,8 @@ class PlayerApp:
         self.up_next_shown = False
         self.lyrics_hidden = False  # Now Playing without its lyrics column (the Lyrics button, 2.1)
         self.np_tab = "lyrics"      # Now Playing's right half: lyrics, upnext or details (for the session)
+        self.lyrics_wide = False    # Now Playing's Lyrics only: the lyrics fill the page (2.3, for the session)
+        self.np_side = "cover"      # Now Playing's left half: the cover or the album's "songs" (2.3)
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
         self.edit_window: Optional[EditInfoWindow] = None  # one Properties window at a time
@@ -800,6 +816,7 @@ class PlayerApp:
         for seq, fn in zip(NAV_KEYS, (self.go_back, self.go_forward)):
             r.bind(seq, lambda e, fn=fn: None if self._typing(e) else (fn(), "break")[1])
         r.bind("<ButtonPress>", self._nav_button, add="+")
+        r.bind("<Escape>", self._escape, add="+")
 
     def _typing(self, e) -> bool:
         w = e.widget
@@ -939,11 +956,63 @@ class PlayerApp:
 
     def apply_lyrics_size(self) -> None:
         """The lyrics fonts at the size of A− / A+ (`PlayerState.lyrics_size`); plain lyrics
-        a little smaller."""
+        a little smaller; with Lyrics only (2.3) LYRICS_WIDE_EXTRA pixels larger."""
         size = playerstate.clean_lyrics_size(self.state.lyrics_size)
-        self.theme.f("lyrics").configure(size=-size)
-        self.theme.f("lyrics_b").configure(size=-size)
-        self.theme.f("plain").configure(size=-playerstate.plain_lyrics_size(size))
+        extra = LYRICS_WIDE_EXTRA if getattr(self, "lyrics_wide", False) else 0
+        self.theme.f("lyrics").configure(size=-(size + extra))
+        self.theme.f("lyrics_b").configure(size=-(size + extra))
+        self.theme.f("plain").configure(size=-(playerstate.plain_lyrics_size(size) + extra))
+
+    def toggle_lyrics_wide(self) -> None:
+        """Now Playing's Lyrics only (2.3): the cover goes and the lyrics fill the page, one
+        step larger; pressed again (or Esc) the cover comes back.  Kept for the session."""
+        self.lyrics_wide = not self.lyrics_wide
+        self.apply_lyrics_size()
+        p = self.pages.get("nowplaying")
+        if isinstance(p, NowPlayingPage):
+            p.size_changed()
+            p.tab_changed()
+
+    def set_np_side(self, side: str) -> None:
+        """Now Playing's left half (2.3): the "cover" or the album's "songs" (a swipe, the
+        dots); kept for the session."""
+        if side in ("cover", "songs") and side != self.np_side:
+            self.np_side = side
+            p = self.pages.get("nowplaying")
+            if isinstance(p, NowPlayingPage):
+                p.draw_art()
+
+    def _escape(self, e) -> Optional[str]:
+        """Esc on Now Playing with Lyrics only on brings the cover back (2.3)."""
+        if self.qc.active or self._typing(e) or self.page_name != "nowplaying" or not self.lyrics_wide:
+            return None
+        p = self.pages.get("nowplaying")
+        if isinstance(p, NowPlayingPage) and p.mode() == "wide":
+            self.toggle_lyrics_wide()
+            return "break"
+        return None
+
+    def page_label(self, name: str, args: dict) -> str:
+        """A page's name as Now Playing's back link shows it (2.3): an album's, playlist's,
+        folder's, artist's (genre's…) own name, else the page's title."""
+        if name == "album" and args.get("album"):
+            return tr_name(args["album"]["title"])
+        if name == "playlist":
+            pl = self.state.playlist(args.get("pid") or "")
+            if pl is not None:
+                return pl["name"]
+        if name == "group" and args.get("group"):
+            return tr_name(args["group"])
+        if name == "folders" and args.get("folder"):
+            return os.path.basename(args["folder"].rstrip(os.sep)) or args["folder"]
+        return tr(PAGE_TITLES.get(name, "Library"))
+
+    def back_label(self) -> str:
+        """The name of the page Back returns to ("" when there is none)."""
+        if not self.history:
+            return ""
+        name, args = self.history[-1]
+        return self.page_label(name, args)
 
     def lyrics_size_step(self, steps: int) -> None:
         """A+ (+1) / A− (-1) on Now Playing: the lyrics larger or smaller, saved at once."""

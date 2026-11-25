@@ -1288,6 +1288,7 @@
   "Verdict, reason, file name or tag": "判定、理由、ファイル名またはタグ",
   "Sort by this column (again: the other way round)": "この列で並べ替え（もう一度で逆順）",
   "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。",
+  "Lyrics only": "歌詞のみ",
   "Change Cover…": "アートワークを変更…",
   "Search Cover Online": "オンラインでアートワークを検索",
   "The browser could not be opened: {error}": "ブラウザを開けませんでした：{error}",

@@ -534,6 +534,13 @@ def draw_icon(c: tk.Canvas, name: str, cx: float, cy: float, s: float, color: st
         for dy, ln in ((-0.18, 0.26), (0.0, 0.18)):
             c.create_line(cx - 0.26 * s, cy + dy * s, cx + ln * s, cy + dy * s, width=w, fill=color,
                           capstyle="round", **kw)
+    elif name == "expand":  # two corners pointing outwards (Now Playing's Lyrics only, 2.3)
+        q, k = 0.42 * s, 0.2 * s
+        for sx, sy in ((-1, -1), (1, 1)):
+            x, y = cx + sx * q, cy + sy * q
+            c.create_line(x - sx * k, y, x, y, x, y - sy * k, width=w, fill=color, capstyle="round",
+                          joinstyle="round", **kw)
+            c.create_line(x, y, cx + sx * 0.1 * s, cy + sy * 0.1 * s, width=w, fill=color, capstyle="round", **kw)
     elif name == "queue":
         for i in (-1, 0, 1):
             y = cy + i * 0.3 * s
