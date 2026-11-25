@@ -246,6 +246,12 @@ class Library:
             args.append(float(until))
         return [Play(*row[:11], place=_place_of(row[11:])) for row in self.db.execute(q + " ORDER BY started, id", args)]
 
+    def first_play(self) -> Optional[float]:
+        """When the oldest logged play started (None without plays): Most Played's period
+        control goes back no further (2.5)."""
+        row = self.db.execute("SELECT MIN(started) FROM plays").fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
     def forget_places(self) -> int:
         """Clear the place of every play (2.4, Settings → Forget play locations…); the
         plays stay.  Returns how many plays had one."""

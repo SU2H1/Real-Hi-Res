@@ -381,6 +381,12 @@ impl Library {
         rows.map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default()
     }
 
+    /// When the oldest logged play started (None without plays): Most Played's
+    /// period control goes back no further (2.5; Python `first_play`).
+    pub fn first_play(&self) -> Option<f64> {
+        self.db.query_row("SELECT MIN(started) FROM plays", [], |r| r.get::<_, Option<f64>>(0)).ok().flatten()
+    }
+
     /// Clear the place of every play (2.4, Settings → Forget play locations…);
     /// the plays stay.  Returns how many plays had one.
     pub fn forget_places(&self) -> usize {

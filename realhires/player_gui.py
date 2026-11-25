@@ -379,6 +379,9 @@ class Lcd(tk.Canvas):
         self.artists: Dict[str, str] = {}  # "artist:0"... -> the name of that link
         t.on_change(lambda: (self._fit.clear(), self.redraw()))
         app.covers.listeners.append(lambda key, size: size == self.COVER and self.redraw())
+        from .player_quality import badge_tip  # 2.5: hovering the quality badge shows the bit rate and sample rate
+
+        self.badge_tip = badge_tip(self)
 
     def set_song(self, track: Optional[Track], error: str = "") -> None:
         self.track, self.error = track, error
@@ -724,6 +727,8 @@ class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
         self.repeat_var = tk.StringVar(value=self.state.repeat)
         self.stats_period = stats.DEFAULT_PERIOD
         self.leaderboard_kind = "songs"             # 2.4: the leaderboard's switch (songs, artists, albums)
+        self.leaderboard_by = "plays"               # 2.5: its "Sort by" (plays, time)
+        self.leaderboard_span = ("all", 0)          # 2.5: Most Played's period (a stats.SPAN_UNITS unit, offset)
         self.listen: Optional[dict] = None          # the song being listened to, for the play history
         self.name_dialog = None                     # an open NameDialog (tests fill it in)
         self.last_menu: Optional[tk.Menu] = None    # the song menu shown last

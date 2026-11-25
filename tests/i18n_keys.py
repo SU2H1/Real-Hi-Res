@@ -42,6 +42,7 @@ PY_FILES = ["realhires/gui.py", "realhires/player_gui.py", "realhires/player_pag
             "realhires/player_theme.py", "realhires/player_mb.py", "realhires/player_tabs.py",
             "realhires/player_places.py"]
 PY_FILES += ["realhires/player_moods.py"]  # 2.4
+PY_FILES += ["realhires/player_stats.py"]  # 2.5: the leaderboard's controls
 RUST_DIR = "rust/crates/gui/src"
 TR_NAMES = {"tr", "N_"}
 CATALOG = os.path.join(ROOT, "realhires", "assets", "lang", "ja.json")

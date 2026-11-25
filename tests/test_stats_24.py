@@ -193,10 +193,10 @@ app = player_gui.PlayerApp(root)
 def test_folders_scroll_as_one_list_and_stats_links_and_leaderboard(tmp_path):
     """The Folders page: the subfolders and the songs in one list that scrolls with the
     wheel (MouseWheel on Windows and macOS, Button-4/5 on X11) and the scroll bar, a click
-    opening a subfolder; Your Stats: the cards' names, the leaderboard (switch, ranks,
-    See All), Details' top lists and the day beside the calendar as links with the hand
-    pointer and the song menu; the Most Played page with Play and its name for Now
-    Playing's back link."""
+    opening a subfolder; Your Stats: the cards (since 2.5 each one link, to Most Played),
+    the leaderboard (switch, ranks, See All), Details' top lists and the day beside the
+    calendar as links with the hand pointer and the song menu; the Most Played page with
+    Play and its name for Now Playing's back link."""
     lib = make_library(tmp_path, seconds=2, mp3=False)
     many = _many_folders(lib)
     env = _env(tmp_path, lib)
@@ -292,7 +292,8 @@ def stats_page():
     assert [(r["rank"], r["key"]) for r in rows] == [(1, S["First Light"]), (2, S["Porch Lamp"]), (3, S["Taxi Lights"])]
     texts = {c.itemcget(i, "text") for i in c.find_all() if c.type(i) == "text"}
     assert {"Leaderboard", "See All", "Songs", "Artists", "Albums"} <= texts, texts
-    # the top song's card: the hand pointer, a click plays it with the period's ranking as the queue
+    # the top song's card: the hand pointer.  Since 2.5 the whole card is one link that opens
+    # Most Played with Songs (tests/test_stats_25.py); the song's name is not a link of its own
     big = str(st.theme.f("stat_big"))
     card = [b for i, b in items(c, "First Light") if c.itemcget(i, "font") == big]
     assert card, items(c, "First Light")
@@ -303,18 +304,20 @@ def stats_page():
     root.update()
     assert str(c.cget("cursor")) == "hand2"
     press_at(c, card[0])
-    assert app.current == S["First Light"] and app.context_name == "Your Stats", (app.current, app.context_name)
-    assert app.queue.context == [S["First Light"], S["Porch Lamp"], S["Taxi Lights"]]
-    app.engine.pause()
-    # the top artist's and album's cards open their pages
+    assert app.current is None and (app.page_name, app.leaderboard_kind) == ("most_played", "songs")
+    app.go_back()
+    root.update()
+    # the top artist's and album's cards open Most Played with Artists and Albums
     click_text(c, "Aurora Fields", lambda b: b[3] - b[1] > 28, area=True)
-    assert (app.page_name, app.page("group").kind, app.page("group").name) == ("group", "artists", "Aurora Fields")
+    assert (app.page_name, app.leaderboard_kind) == ("most_played", "artists")
     app.go_back()
     root.update()
     click_text(c, "Northern Lights", lambda b: b[3] - b[1] > 28, area=True)
-    assert app.page_name == "album" and app.page("album").album["title"] == "Northern Lights"
+    assert (app.page_name, app.leaderboard_kind) == ("most_played", "albums")
     app.go_back()
     root.update()
+    click_text(c, "Songs", area=True)
+    assert app.leaderboard_kind == "songs"
     # the leaderboard: a right click on a song opens its menu
     if sys.platform.startswith("linux"):
         app.last_menu = None
@@ -420,6 +423,12 @@ def loaded():
     mp.rows = []
     mp.area.redraw()
     texts = {mp.area.c.itemcget(i, "text") for i in mp.area.c.find_all() if mp.area.c.type(i) == "text"}
+    assert "この期間には何も再生されていません。" in texts, texts  # 2.5: Most Played's own period
+    st = app.page("stats")
+    app.show_page("stats")
+    st.boards = {}
+    st.area.redraw()
+    texts = {st.area.c.itemcget(i, "text") for i in st.area.c.find_all() if st.area.c.type(i) == "text"}
     assert "この期間にはまだ再生がありません。" in texts, texts
     print("OK")
     app.quit()

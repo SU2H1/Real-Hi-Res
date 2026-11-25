@@ -702,6 +702,7 @@ class StatsPage(Page):
 
     list_name = N_("Your Stats")
     CELL_W, CELL_H, ROW_H = 62, 44, 30
+    CARD_LIFT = 3  # 2.5: how far a card rises under the pointer
     SIDE_MIN, SIDE_GAP = 360, 24  # 2.3: the room the day's plays need beside the calendar, and the gap
     MARGIN = 28
     TINTS = (0.0, 0.25, 0.45, 0.7, 1.0)  # the share of the accent colour for stats.month_levels() 0..4
@@ -772,7 +773,7 @@ class StatsPage(Page):
 
     def refresh(self) -> None:
         self.st = self.app.compute_stats()
-        self.boards = player_stats.boards(player_stats.period_plays(self.app))
+        self.boards = player_stats.boards(player_stats.period_plays(self.app), player_stats.sort_by(self.app))
         st = self.st
         period = tr(self.app.stats_period)
         self.sub.configure(text=tr("{period}: {minutes}, {plays}", period=period,
@@ -808,6 +809,14 @@ class StatsPage(Page):
         self.day = None if chosen == self.day else chosen
         self._load_calendar()
         self.day_c.yview_moveto(0)
+        self.area.redraw()
+
+    def show_day(self, year: int, month: int, day: int) -> None:
+        """Choose this day in the calendar and scroll to it (2.5: the busiest day's card)."""
+        self.month, self.day = (year, month), (year, month, day)
+        self._load_calendar()
+        self.day_c.yview_moveto(0)
+        self.area.c.yview_moveto(0)
         self.area.redraw()
 
     def _day_paths(self) -> List[str]:
@@ -1037,47 +1046,40 @@ class StatsPage(Page):
             r, k = divmod(i, cols)
             x, y = m + k * (cw + gap), y0 + r * (ch + gap)
             color = CARD_COLORS[i % len(CARD_COLORS)]
+            # 2.5: the whole card is one click target (player_stats.card_target()); under the
+            # pointer it lifts a little above its shadow
+            box = (x, y, x + cw, y + ch)
+            self.hits.append((box, player_stats.card_target(self, cards[i][0])))
+            menu = player_stats.card_menu(self, cards[i][0])
+            if menu is not None:
+                self.menu_hits.append((box, menu))
+            if self.hover == box:
+                round_rect(c, x + 1, y + 2, x + cw + 1, y + ch + 2, 16, fill=mix(t.c("bg"), t.c("text"), 0.22),
+                           outline="")
+                y -= self.CARD_LIFT
             round_rect(c, x, y, x + cw, y + ch, 16, fill=color, outline="")
             c.create_text(x + 20, y + 26, text=lab.upper(), anchor="w", fill=mix(color, "#ffffff", 0.78),
                           font=t.f("stat_label"))
-            bid = c.create_text(x + 20, y + 72, text=fit_text(t.f("stat_big"), big, int(cw - 40), self._fit),
-                                anchor="w", fill="#ffffff", font=t.f("stat_big"))
-            did = c.create_text(x + 20, y + 118, text=fit_text(t.f("stat_detail"), detail, int(cw - 40), self._fit),
-                                anchor="w", fill=mix(color, "#ffffff", 0.85), font=t.f("stat_detail"))
-            self._card_links(cards[i][0], bid, did)
+            c.create_text(x + 20, y + 72, text=fit_text(t.f("stat_big"), big, int(cw - 40), self._fit),
+                          anchor="w", fill="#ffffff", font=t.f("stat_big"))
+            c.create_text(x + 20, y + 118, text=fit_text(t.f("stat_detail"), detail, int(cw - 40), self._fit),
+                          anchor="w", fill=mix(color, "#ffffff", 0.85), font=t.f("stat_detail"))
         rows = (len(cards) + cols - 1) // cols
         # 2.4: the leaderboard, then the period's places
         return draw_places(self, self._draw_leaderboard(y0 + rows * (ch + gap) + 20) - 16)
 
-    # ---- 2.4: links and the leaderboard ------------------------------------
-    def _card_links(self, label: str, big: int, detail: int) -> None:
-        """The cards' names as links: the top song plays (the period's most played songs
-        as the queue), its artist, the top artist, album (and its artist) and genre open
-        their pages."""
-        app, st, c = self.app, self.st or {}, self.area.c
-        add = player_stats.add_link
-        if label == "Your top song" and st.get("top_songs"):
-            s = st["top_songs"][0]
-            queue = stats.ranked_songs(self.boards.get("songs", []))
-            add(c, big, self.hits, player_stats.song_link(app, queue, s["key"], self.list_name), self.menu_hits,
-                player_stats.song_menu_link(app, queue, s["key"], self.list_name))
-            add(c, detail, self.hits, player_stats.artist_link(app, s["artist"]))
-        elif label == "Your top artist" and st.get("top_artists"):
-            add(c, big, self.hits, player_stats.artist_link(app, st["top_artists"][0]["name"]))
-        elif label == "Your top album" and st.get("top_albums"):
-            a = st["top_albums"][0]
-            paths = next((r["paths"] for r in self.boards.get("albums", []) if r["key"] == a["key"]), [])
-            add(c, big, self.hits, player_stats.album_link(app, a["name"], a["artist"], paths))
-            add(c, detail, self.hits, player_stats.artist_link(app, a["artist"]))
-        elif label == "Your top genre" and st.get("top_genres"):
-            add(c, big, self.hits, player_stats.genre_link(app, st["top_genres"][0]["name"]))
+    # ---- 2.4: the leaderboard ------------------------------------------------
+    def _reboard(self) -> None:
+        """The leaderboard's switch or Sort by changed (2.5): rank the period's plays again."""
+        self.boards = player_stats.boards(player_stats.period_plays(self.app), player_stats.sort_by(self.app))
+        self.area.redraw()
 
     def _draw_leaderboard(self, y: float) -> float:
         """The leaderboard (2.4): the switch, See All (the Most Played page) and the top
         rows of the period."""
         c, W, m = self.area.c, self.area.c.winfo_width(), self.MARGIN
         kind = self.app.leaderboard_kind
-        y = player_stats.section_heading(self, c, m, y, W - 2 * m, self.hits, self.area.redraw, see_all=True)
+        y = player_stats.section_heading(self, c, m, y, W - 2 * m, self.hits, self._reboard, see_all=True)
         return player_stats.draw_board(self, c, m, y, W - 2 * m, kind, self.boards.get(kind, []),
                                        player_stats.SECTION_ROWS, self.hits, self.menu_hits, self.list_name,
                                        self._fit) + 20
@@ -1108,9 +1110,20 @@ class StatsDetailsPage(Page):
         self.lib: Optional[dict] = None
         self.boards: Dict[str, List[dict]] = {}
         self._fit: dict = {}
+        self.anchors: Dict[str, float] = {}  # 2.5: where the sections a card leads to start
+        self._goto: Optional[str] = None
 
-    def show(self, **kw) -> None:
+    def show(self, section: Optional[str] = None, **kw) -> None:
+        """`section` (2.5, a card of Your Stats): "top", "hour" or "weekday" scrolls there."""
+        self._goto = section
         self.refresh()
+
+    def _go(self) -> None:
+        """Scroll to the section asked for, once the page is drawn."""
+        section, self._goto = self._goto, None
+        region = str(self.area.c.cget("scrollregion")).split()
+        if section and len(region) == 4 and float(region[3]) > 0:
+            self.area.c.yview_moveto(max(0.0, self.anchors.get(section, 0.0) - 8) / float(region[3]))
 
     def refresh(self) -> None:
         self.st = self.app.compute_stats()
@@ -1213,6 +1226,9 @@ class StatsDetailsPage(Page):
         y = 8.0
         if st is None or lib is None:
             return 100
+        self.anchors = {"top": 0.0}
+        if self._goto:
+            self.after_idle(self._go)
         if not st["logged"]:
             c.create_text(28, y + 14, text=tr("No listening yet in this period. Play some music and come back."),
                           anchor="w", fill=t.c("text2"), font=t.f("body"))
@@ -1233,8 +1249,10 @@ class StatsDetailsPage(Page):
                 c.create_text(x + 16, yy + 54, text=lab, anchor="w", fill=t.c("text2"), font=t.f("small"))
             y += 2 * 84 + 14
             hours = [s / 60 for s in st["by_hour"]]
+            self.anchors["hour"] = y
             y = self._heading(y, tr("Listening by hour of the day (minutes)"))
             y = self._bars(y, hours, [tr_text(stats.hour_label(h)) for h in range(24)], every=3)
+            self.anchors["weekday"] = y
             y = self._heading(y, tr("By weekday"))
             y = self._bars(y, [s / 60 for s in st["by_weekday"]], [tr(d) for d in WEEKDAYS_SHORT])
             months = st["by_month"]
