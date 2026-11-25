@@ -66,6 +66,8 @@ pub struct Jacket {
     backs: HashMap<String, Back>,
     order: VecDeque<String>,
     pending: HashSet<String>,
+    /// covers whose back could not be made (not asked for again): the album and the cover's texture
+    failed: HashSet<(String, egui::TextureId)>,
     tx: Sender<Made>,
     rx: Receiver<Made>,
     /// frames of turns painted (the tests count them)
@@ -90,6 +92,7 @@ impl Default for Jacket {
             backs: HashMap::new(),
             order: VecDeque::new(),
             pending: HashSet::new(),
+            failed: HashSet::new(),
             tx,
             rx,
             frames: 0,
@@ -224,7 +227,10 @@ impl Player {
     fn jacket_backs(&mut self, ctx: &egui::Context, key: &str, paths: &[String], tex: Option<&egui::TextureHandle>) {
         while let Ok((k, source, image)) = self.jacket.rx.try_recv() {
             self.jacket.pending.remove(&k);
-            let Some(image) = image else { continue };
+            let Some(image) = image else {
+                self.jacket.failed.insert((k, source)); // a plain back; never made again and again
+                continue;
+            };
             let tex = ctx.load_texture(format!("jacket back {k}"), image, egui::TextureOptions::LINEAR);
             self.jacket.order.retain(|o| *o != k);
             self.jacket.order.push_back(k.clone());
@@ -239,7 +245,7 @@ impl Player {
             self.jacket.backs.remove(key); // no cover (any more): a plain back
             return;
         };
-        let fresh = self.jacket.backs.get(key).is_some_and(|b| b.source == tex.id());
+        let fresh = self.jacket.backs.get(key).is_some_and(|b| b.source == tex.id()) || self.jacket.failed.contains(&(key.to_string(), tex.id()));
         if !fresh && !self.jacket.pending.contains(key) {
             self.jacket.pending.insert(key.to_string());
             let (tx, k, paths, source, ctx) = (self.jacket.tx.clone(), key.to_string(), paths.to_vec(), tex.id(), ctx.clone());
