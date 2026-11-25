@@ -2701,8 +2701,10 @@ impl Player {
                 }
             });
             // right part is laid out from the right edge
-            let right_w = 360.0;
-            let lcd_w = (ui.available_width() - right_w - 16.0).clamp(280.0, 720.0);
+            // (2.5: the LCD gets narrower in a 1024-pixel window instead of running under the
+            // buttons at its right, where its quality badge could not be seen or hovered)
+            let right_w = 336.0;
+            let lcd_w = (ui.available_width() - right_w - 16.0).clamp(200.0, 720.0);
             let gap = ((ui.available_width() - right_w - lcd_w) / 2.0).max(8.0);
             ui.add_space(gap);
             self.lcd(ui, pal, lcd_w);

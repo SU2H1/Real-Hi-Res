@@ -1185,7 +1185,8 @@ mod tests {
         };
         let d = narrow(&ctx, &mut p);
         let ys = lines(&d, 760.0, &title);
-        assert!(ys[0] + 20.0 < ys[1] && ys[1] + 20.0 < ys[2] && ys[2] + 20.0 < ys[3], "one group a line: {ys:?}");
+        // the switch, Sort by and the period each on a line of their own (the short ‹ year › beside the units)
+        assert!(ys[0] + 20.0 < ys[1] && ys[1] + 20.0 < ys[2] && ys[3] > ys[2] - 5.0, "the groups wrap: {ys:?}");
         assert!(d.texts.iter().any(|(t, _)| t == "Milestone"), "the rows under the controls");
         frames(&ctx, &mut p);
 
@@ -1215,14 +1216,16 @@ mod tests {
     fn tooltip(ctx: &egui::Context, p: &mut Player, pos: Pos2, needle: &str) -> String {
         run(ctx, p, vec![Event::PointerMoved(pos2(pos.x - 30.0, pos.y))]);
         run(ctx, p, vec![Event::PointerMoved(pos)]);
+        let mut seen = vec![];
         for _ in 0..240 {
             let d = run(ctx, p, vec![]);
             // a tooltip is drawn near the pointer, apart from the cell's own text
             if let Some((t, _)) = d.texts.iter().find(|(t, r)| t.contains(needle) && r.top() > pos.y - 60.0 && r.top() < pos.y + 80.0 && !r.contains(pos)) {
                 return t.clone();
             }
+            seen = d.texts.iter().filter(|(t, r)| t.contains(needle) || (r.center().y - pos.y).abs() < 60.0).map(|(t, r)| (t.clone(), *r)).collect();
         }
-        panic!("no tooltip with {needle:?} at {pos:?}");
+        panic!("no tooltip with {needle:?} at {pos:?}; near it: {seen:?}");
     }
 
     #[test]
