@@ -316,5 +316,35 @@ def test_the_rust_vectors_are_current(tmp_path):
     subprocess.run([sys.executable, os.path.join(ROOT, "rust", "tools", "gen_mood_vectors.py"), str(out)],
                    check=True, capture_output=True)
     committed = os.path.join(ROOT, "rust", "crates", "core", "tests", "python_moods.json")
-    assert json.loads(out.read_text(encoding="utf-8")) == json.load(open(committed, encoding="utf-8")), (
-        "run rust/tools/gen_mood_vectors.py")
+    # floats within rounding: another CPU or NumPy build gives other last digits (the Rust
+    # test compares the features within a tolerance too); BPM, labels and texts exactly
+    diff = _first_difference(json.loads(out.read_text(encoding="utf-8")), json.load(open(committed, encoding="utf-8")))
+    assert diff is None, f"run rust/tools/gen_mood_vectors.py: {diff}"
+
+
+def _first_difference(a, b, path="$"):
+    """Where two JSON values differ (floats within 1e-6 relative), or None."""
+    import math
+    if isinstance(a, bool) or isinstance(b, bool):
+        return None if a is b else f"{path}: {a!r} != {b!r}"
+    if isinstance(a, float) or isinstance(b, float):
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)) and math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-9):
+            return None
+        return f"{path}: {a!r} != {b!r}"
+    if isinstance(a, dict) and isinstance(b, dict):
+        if a.keys() != b.keys():
+            return f"{path}: keys {sorted(set(a) ^ set(b))} differ"
+        for k in a:
+            d = _first_difference(a[k], b[k], f"{path}.{k}")
+            if d:
+                return d
+        return None
+    if isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            return f"{path}: {len(a)} items != {len(b)}"
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = _first_difference(x, y, f"{path}[{i}]")
+            if d:
+                return d
+        return None
+    return None if a == b else f"{path}: {a!r} != {b!r}"
