@@ -48,6 +48,7 @@ from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_
 from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
 from .player_windows import CoverWindow, EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .player_mb import MusicBrainzWindow
+from .player_tabs import TabPage, TabsMixin
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
@@ -84,7 +85,7 @@ PAGE_TITLES = {
     "playlist": N_("Playlists"), "liked": N_("Liked Songs"), "disliked": N_("Disliked Songs"),
     "played": N_("Recently Played"), "recent": N_("Recently Added"), "stats": N_("Your Stats"),
     "stats_details": N_("Your Stats"), "search": N_("Search"), "nowplaying": N_("Now Playing"),
-    "settings": N_("Settings"), "quality": N_("Quality Check"),
+    "settings": N_("Settings"), "quality": N_("Quality Check"), "tab": N_("Tabs"),
 }
 
 
@@ -128,6 +129,7 @@ class QualityCheck(gui.App):
 class Sidebar(tk.Frame):
     """Search; Library (the start page); "Library": All Songs ... Composers;
     "Playlists": Liked Songs, Disliked Songs, the playlists and New Playlist…;
+    "Tabs" (2.3): the custom tabs and New Tab… (a right click on a tab: its menu);
     "History": Recently Played, Recently Added, Your Stats; at the bottom Quality
     Check and Settings (FOOT)."""
 
@@ -183,6 +185,8 @@ class Sidebar(tk.Frame):
         t.reg(self.nav, bg="sidebar")
         self.nav.pack(fill="both", expand=True, padx=8)
         self.nav.bind("<Button-1>", self._click)
+        self.nav.bind("<Button-3>", self._context)
+        self.nav.bind("<Button-2>", self._context)  # macOS right click
         self.nav.bind("<Motion>", lambda e: self._hover(self._key_at(self.nav.canvasy(e.y))))
         self.nav.bind("<Leave>", lambda e: self._hover(None))
         bind_wheel(self.nav, lambda n: self.nav.yview_scroll(n, "units"))
@@ -226,12 +230,14 @@ class Sidebar(tk.Frame):
     # ---- items ----------------------------------------------------------
     def items(self) -> List[tuple]:
         lists = [(f"playlist:{p['id']}", p["name"], "playlist") for p in self.app.state.playlists]
+        tabs = [(f"tab:{t['name']}", t["name"], "filter") for t in self.app.tabs]
         library = [(k, tr(text), icon) for k, text, icon in self.LIBRARY]
         history = [(k, tr(text), icon) for k, text, icon in self.HISTORY]
         return ([("library", tr("Library"), "library"), ("head", tr("Library"), "")] + library
                 + [("head", tr("Playlists"), ""), ("liked", tr("Liked Songs"), "heart"),
                    ("disliked", tr("Disliked Songs"), "thumbs_down")] + lists
-                + [("new_playlist", tr("New Playlist…"), "plus"), ("head", tr("History"), "")] + history)
+                + [("new_playlist", tr("New Playlist…"), "plus"), ("head", tr("Tabs"), "")] + tabs
+                + [("new_tab", tr("New Tab…"), "plus"), ("head", tr("History"), "")] + history)
 
     def _rows(self):
         rows, y = [], 2
@@ -258,10 +264,20 @@ class Sidebar(tk.Frame):
         key = self._key_at(self.nav.canvasy(e.y))
         if key == "new_playlist":
             self.app.new_playlist()
+        elif key == "new_tab":
+            self.app.new_tab()
+        elif key and key.startswith("tab:"):
+            self.app.open_tab(key[4:])
         elif key and key.startswith("playlist:"):
             self.app.open_playlist(key.split(":", 1)[1])
         elif key:
             self.app.show_page(key)
+
+    def _context(self, e) -> None:
+        """Right click on a tab: Edit Tab…, Export Tab…, Delete Tab… (2.3)."""
+        key = self._key_at(self.nav.canvasy(e.y))
+        if key and key.startswith("tab:"):
+            self.app.tab_menu(key[4:]).tk_popup(e.x_root, e.y_root)
 
     def _foot_key(self, y: float) -> Optional[str]:
         i = int((y - 2) // self.ROW)
@@ -283,7 +299,7 @@ class Sidebar(tk.Frame):
             round_rect(c, 4, y + 1, W - 4, y + h - 1, 7, fill=t.c("side_sel") if sel else t.c("hover"), outline="")
         draw_icon(c, icon, 24, y + h / 2, 15, t.c("accent"), filled=icon == "heart")
         c.create_text(44, y + h / 2, text=fit_text(t.f("side"), text, W - 52, self.app.fit_cache), anchor="w",
-                      fill=t.c("text2") if key == "new_playlist" else t.c("text"), font=t.f("side"))
+                      fill=t.c("text2") if key in ("new_playlist", "new_tab") else t.c("text"), font=t.f("side"))
 
     def redraw(self) -> None:
         t, c = self.app.theme, self.nav
@@ -614,8 +630,8 @@ class UpNextPanel(tk.Frame):
 
 
 # ------------------------------------------------------------ the app ---
-class PlayerApp:
-    """The main window."""
+class PlayerApp(TabsMixin):
+    """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py)."""
 
     def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None):
         self.root = root
@@ -688,6 +704,7 @@ class PlayerApp:
         self.start_process: Callable = subprocess.Popen  # how restart() starts the app again (tests replace it)
         self.url_opener: Callable[[str], None] = gui.open_url  # how web pages are opened (tests record them, 2.3)
         self.clipboard_reader: Optional[Callable[[], str]] = None  # the clipboard's text (tests set a fake)
+        self._init_tabs()  # 2.3: the tabs folder, read before the sidebar is drawn
         self._build()
         self.qc = QualityCheck(root, self, parent=self.pages["quality"], initial=initial, cfg=cfg)
         self.qc.pack(fill="both", expand=True)
@@ -753,6 +770,7 @@ class PlayerApp:
             "search": lambda: SearchPage(self),
             "nowplaying": lambda: NowPlayingPage(self),
             "settings": lambda: SettingsPage(self),
+            "tab": lambda: TabPage(self),
         }
 
     def _build_popups(self) -> None:
@@ -865,9 +883,13 @@ class PlayerApp:
                 self.dirty.discard(name)
                 page.refresh()
             page.show(**kw)
+            if name in ("library", "tab", "settings"):  # 2.3: tab files copied into the folder appear
+                self.reload_tabs()
         if name == "playlist":
             pid = self.pages["playlist"].pid
             self.sidebar.select(f"playlist:{pid}" if pid else None)
+        elif name == "tab":
+            self.sidebar.select(f"tab:{self.pages['tab'].name}")
         else:
             self.sidebar.select(name if name in Sidebar.PAGES else None)
         self.bar.update_controls()
@@ -886,6 +908,8 @@ class PlayerApp:
             return {"text": p.text}
         if self.page_name == "group" and isinstance(p, GroupItemPage):
             return {"kind": p.kind, "group": p.name}
+        if self.page_name == "tab" and isinstance(p, TabPage):
+            return {"tab": p.name}
         return {}
 
     def go_back(self) -> None:
@@ -1021,6 +1045,8 @@ class PlayerApp:
             return tr_name(args["group"])
         if name == "folders" and args.get("folder"):
             return os.path.basename(args["folder"].rstrip(os.sep)) or args["folder"]
+        if name == "tab" and args.get("tab"):  # a tab's own name (2.3)
+            return args["tab"]
         return tr(PAGE_TITLES.get(name, "Library"))
 
     def back_label(self) -> str:
@@ -1084,6 +1110,7 @@ class PlayerApp:
         self.album_by_key = {a["key"]: a for a in self.albums}
         self._album_key = {t.path: a["key"] for a in self.albums for t in a["tracks"]}
         self.covers.library_changed(self.albums)  # covers are kept unless an album's songs changed
+        self.tab_cache_clear()
         self.dirty = set(self.pages) - {"quality"}
         if self.page_name in self.dirty:
             self.dirty.discard(self.page_name)
@@ -2089,6 +2116,7 @@ class PlayerApp:
 
     def _likes_changed(self) -> None:
         self.save_state()
+        self.tab_cache_clear()  # tabs may have rules on likes (2.3)
         for p in self.pages.values():
             if isinstance(p, Page):
                 p.likes_changed()

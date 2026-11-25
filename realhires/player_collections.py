@@ -166,8 +166,8 @@ class LibraryPage(Page):
         return out + self.more_entries()
 
     def more_entries(self) -> List[Tuple[str, str, str, str, Callable[[], None]]]:
-        """Entries after the fourteen (none yet)."""
-        return []
+        """Entries after the fourteen: the custom tabs (2.3), with their songs."""
+        return self.app.tab_entries()
 
     def layout(self) -> str:
         return self.app.cfg.library_layout if self.app.cfg.library_layout in LAYOUTS else LAYOUTS[0]

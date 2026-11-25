@@ -581,6 +581,7 @@ mod tests {
         std::env::set_var(realhires::playerstate::PLAYER_ENV, tmp.join("player.json"));
         std::env::set_var(crate::audio::BACKEND_ENV, "null");
         std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::smarttabs::TABS_ENV, tmp.join("tabs"));
         let mut songs = vec![];
         for (n, title) in [(1, "Lanterns Over Water"), (2, "Paper in the Rain")] {
             let f = realhires::paths::abspath(&album.join(format!("0{n} {title}.flac")).to_string_lossy());

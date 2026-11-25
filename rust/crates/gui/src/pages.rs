@@ -409,6 +409,7 @@ impl Player {
             Page::NowPlaying => self.now_playing(ui, pal),
             Page::Settings => self.settings_page(ui, pal),
             Page::Quality => {}
+            Page::Tab(name) => self.tab_page(ui, pal, &name),
         }
     }
 
@@ -1836,7 +1837,26 @@ impl Player {
                     if ui.button(tr!("Clear the play history…")).clicked() {
                         self.confirm = Some(crate::player::ConfirmAction::ClearHistory);
                     }
+                    // 2.3: custom tabs
+                    if ui.button(tr!("Import tab…")).clicked() {
+                        self.import_tab_dialog();
+                    }
+                    if ui
+                        .button(tr!("Open tabs folder"))
+                        .on_hover_text(realhires::smarttabs::tabs_folder().to_string_lossy())
+                        .clicked()
+                    {
+                        self.open_tabs_folder();
+                    }
                 });
+                ui.label(
+                    RichText::new(tr!("Tab files (.json) put into the tabs folder appear in the sidebar and on the Library page."))
+                        .color(pal.secondary),
+                );
+                let problems = self.tab_problems_text();
+                if !problems.is_empty() {
+                    ui.label(RichText::new(problems).color(crate::style::error_color(pal)));
+                }
                 let n = self.lib.tracks.len();
                 let text = match self.status_line() {
                     Some(s) => s,

@@ -419,9 +419,9 @@ impl Player {
         out
     }
 
-    /// Entries after the fourteen (none yet).
+    /// Entries after the fourteen: the custom tabs (2.3), with their songs.
     fn more_library_entries(&mut self) -> Vec<LibraryEntry> {
-        vec![]
+        self.tab_library_entries()
     }
 
     fn year_stats(&mut self) -> stats::Stats {
