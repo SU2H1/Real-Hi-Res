@@ -4763,7 +4763,10 @@ mod tests {
         assert_eq!(p.album_sort, None, "another album starts in track order");
         // the Quality column: quality() in the cell, the resolution as its tooltip; sorted by bits, then rate
         let t = p.lib.track(&a1).unwrap();
-        assert_eq!((cell_text(t, SongCol::Quality), musiclib::quality_detail(t)), ("Lossless".to_string(), "16-bit/44.1 kHz".to_string()));
+        // (2.5: the tooltip also names the bit rate, "16-bit/44.1 kHz · 123 kbps")
+        let detail = musiclib::quality_detail(t);
+        assert_eq!(cell_text(t, SongCol::Quality), "Lossless");
+        assert!(detail.starts_with("16-bit/44.1 kHz · ") && detail.ends_with(" kbps"), "{detail}");
         p.song_sort = (SongCol::Quality, false);
         p.go(Page::AllSongs);
         frame(&ctx, &mut p);
