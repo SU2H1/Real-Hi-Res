@@ -480,6 +480,9 @@ class PlaybackBar(tk.Frame):
 
 
 class UpNextPanel(tk.Frame):
+    """The queue: double-click a song to play it now, drag it to another place,
+    or right-click it to take it out ("Remove from Up Next")."""
+
     WIDTH = 300
 
     def __init__(self, master, app: "PlayerApp"):
@@ -494,16 +497,27 @@ class UpNextPanel(tk.Frame):
         self.list = SongList(self, t, [Column("title", "", 200, True, kind="two", key2="artist")],
                              lambda r, k: r.display_title if k == "title" else r.display_artist, header=False,
                              zebra=False, row_height=48, bg_role="sidebar", on_activate=app.jump_to,
-                             empty_text="Nothing is queued.")
+                             empty_text="Nothing is queued.", on_move=app.move_in_up_next,
+                             on_context=lambda i, e: self.menu(i).tk_popup(e.x_root, e.y_root))
         self.list.pack(fill="both", expand=True, padx=(4, 0))
 
-    def refresh(self) -> None:
+    def menu(self, index: int) -> tk.Menu:
+        """The right-click menu of Up Next's song number `index`."""
+        m = tk.Menu(self.app.root, tearoff=False)
+        m.add_command(label="Remove from Up Next", command=lambda: self.app.remove_from_up_next(index))
+        self.app._theme_menu(m)
+        self.app.last_menu = m
+        return m
+
+    def refresh(self, keep: bool = False) -> None:
+        """Show the queue again; `keep` keeps the scroll position and the selected
+        song (after the user moved or removed one)."""
         app = self.app
         q = app.queue
         self.source.configure(text=f"Playing from {app.context_name}" if q is not None and app.context_name
                               else "")
         rows = [app.by_path[p] for p in (q.up_next(50) if q is not None else []) if p in app.by_path]
-        self.list.set_rows(rows)
+        self.list.set_rows(rows, keep=keep)
 
 
 # ------------------------------------------------------------ the app ---
@@ -1426,6 +1440,36 @@ class PlayerApp:
         if 0 <= index < len(upcoming):
             q.pos += 1 + index
             self._play_path(q.current)  # type: ignore[arg-type]
+
+    def _shown_up_next(self) -> List[str]:
+        """The paths Up Next shows (songs no longer in the index are left out there)."""
+        q = self.queue
+        return [p for p in (q.up_next(50) if q is not None else []) if p in self.by_path]
+
+    def _queue_index(self, index: int) -> Optional[int]:
+        """Up Next's row `index` as a place in the queue's own Up Next."""
+        shown, q = self._shown_up_next(), self.queue
+        if q is None or not 0 <= index < len(shown):
+            return None
+        upcoming = q.up_next(50)
+        return [i for i, p in enumerate(upcoming) if p in self.by_path][index]
+
+    def move_in_up_next(self, src: int, dst: int) -> None:
+        """Up Next: the song in row `src` was dragged to row `dst`."""
+        a, b = self._queue_index(src), self._queue_index(dst)
+        if a is None or b is None or not self.queue.move_upcoming(a, b):  # type: ignore[union-attr]
+            return
+        self._update_next()
+        self.up_next.refresh(keep=True)  # the selection follows the dragged song
+
+    def remove_from_up_next(self, index: int) -> None:
+        """Up Next: take the song in row `index` out of the queue."""
+        i = self._queue_index(index)
+        if i is None or self.queue.remove_upcoming(i) is None:  # type: ignore[union-attr]
+            return
+        self.up_next.list.selected = None
+        self._update_next()
+        self.up_next.refresh(keep=True)
 
     def _stopped(self) -> None:
         """The queue has ended: the last song stays in the LCD, at its start."""

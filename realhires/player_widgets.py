@@ -65,9 +65,12 @@ class Column:
 
 class SongList(tk.Frame):
     """A table of songs drawn on a Canvas.  `value(row, key)` gives a cell's text;
-    `sort_value(row, key)` what a click on the column heading sorts by."""
+    `sort_value(row, key)` what a click on the column heading sorts by.  With
+    `on_move(src, dst)` its rows can be dragged to another place (Up Next): a
+    line shows where the row will go, and `dst` is its index after the move."""
 
     HEADER = 30
+    DRAG_START = 5        # pixels the pointer must move before a press becomes a drag
 
     def __init__(self, master, theme: Theme, columns: Sequence[Column], value: Callable[[Any, str], str],
                  sort_value: Optional[Callable[[Any, str], Any]] = None, row_height: int = 32,
@@ -76,9 +79,13 @@ class SongList(tk.Frame):
                  is_liked: Optional[Callable[[Any], bool]] = None, is_current: Optional[Callable[[Any], bool]] = None,
                  bg_role: str = "bg", sortable: bool = True, empty_text: str = "",
                  on_context: Optional[Callable[[int, Any], None]] = None,
-                 is_dim: Optional[Callable[[Any], bool]] = None):
+                 is_dim: Optional[Callable[[Any], bool]] = None,
+                 on_move: Optional[Callable[[int, int], None]] = None):
         super().__init__(master, bd=0, highlightthickness=0)
-        self.on_context, self.is_dim = on_context, is_dim
+        self.on_context, self.is_dim, self.on_move = on_context, is_dim, on_move
+        self._press: Optional[Tuple[int, int]] = None   # (row, y) of a press that may become a drag
+        self.drag_from: Optional[int] = None            # the row being dragged
+        self.drop_at: Optional[int] = None              # the gap it would go to (0 = above the first row)
         self.theme, self.columns, self.value, self.sort_value = theme, list(columns), value, sort_value
         self.rh, self.has_header, self.zebra = row_height, header, zebra
         self.on_activate, self.on_heart, self.on_select = on_activate, on_heart, on_select
@@ -105,6 +112,8 @@ class SongList(tk.Frame):
         c.bind("<Leave>", lambda e: self._set_hover(None))
         c.bind("<Button-1>", self._click)
         c.bind("<Double-Button-1>", self._double)
+        c.bind("<B1-Motion>", self._drag_motion)
+        c.bind("<ButtonRelease-1>", self._drag_end)
         c.bind("<Return>", lambda e: self._activate(self.selected))
         c.bind("<KP_Enter>", lambda e: self._activate(self.selected))
         c.bind("<Up>", lambda e: self._move(-1))
@@ -120,6 +129,9 @@ class SongList(tk.Frame):
     def set_rows(self, rows: Sequence[Any], keep: bool = False) -> None:
         sel = self.rows[self.selected] if keep and self.selected is not None and self.selected < len(self.rows) \
             else None
+        if self.drag_from is not None:  # the rows changed under a drag: it ends here
+            self.canvas.configure(cursor="")
+        self._press = self.drag_from = self.drop_at = None
         self.rows = list(rows)
         if self.sort_key is not None and self.sort_value is not None:
             self._sort()
@@ -232,6 +244,43 @@ class SongList(tk.Frame):
             self.redraw()
             return
         self.select(i)
+        if self.on_move is not None:
+            self._press = (i, e.y)
+
+    def _gap_at(self, y: int) -> int:
+        """The gap between rows nearest to `y` (0 = above the first row)."""
+        y -= self.HEADER if self.has_header else 0
+        return min(max(int(round((y + self.top) / self.rh)), 0), len(self.rows))
+
+    def _drag_motion(self, e) -> None:
+        if self._press is None:
+            return
+        row, y0 = self._press
+        if self.drag_from is None:
+            if abs(e.y - y0) < self.DRAG_START or row >= len(self.rows):
+                return
+            self.drag_from = row
+            self.canvas.configure(cursor="fleur")
+        head = self.HEADER if self.has_header else 0
+        if e.y < head + 16:              # near an edge: scroll the list along
+            self.top = max(0.0, self.top - self.rh / 2)
+        elif e.y > self.canvas.winfo_height() - 16:
+            self.top = min(self._max_top(), self.top + self.rh / 2)
+        self.drop_at = self._gap_at(e.y)
+        self.redraw()
+
+    def _drag_end(self, e) -> None:
+        src = self.drag_from
+        self._press = self.drag_from = self.drop_at = None
+        if src is None:
+            return
+        self.canvas.configure(cursor="")
+        gap = self._gap_at(e.y)
+        dst = gap if gap <= src else gap - 1
+        if dst != src and self.on_move is not None and 0 <= dst < len(self.rows):
+            self.on_move(src, dst)
+        else:
+            self.redraw()
 
     def select(self, i: Optional[int]) -> None:
         self.selected = i
@@ -322,6 +371,10 @@ class SongList(tk.Frame):
                     c.create_text(x + w / 2, mid, text=text, anchor="center", fill=color, font=body)
                 else:
                     c.create_text(x, mid, text=text, anchor="w", fill=color, font=body)
+        if self.drag_from is not None and self.drop_at is not None:  # where the dragged row will go
+            y = head + self.drop_at * self.rh - self.top
+            c.create_line(14, y, W - 8, y, fill=t.c("accent"), width=2)
+            c.create_oval(6, y - 4, 14, y + 4, outline=t.c("accent"), width=2)
         if not self.rows and self.empty_text:
             c.create_text(W / 2, head + 40, text=self.empty_text, fill=t.c("text2"), font=body, width=W - 40)
         if self.rows and self.footer:

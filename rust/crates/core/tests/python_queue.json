@@ -1787,6 +1787,3172 @@ null,
 ]
 }
 ],
+"edit_ops": [
+"move:0:3",
+"remove:1",
+"next",
+"move:4:0",
+"move:9:0",
+"remove:0",
+"remove:99",
+"auto",
+"set_shuffle:songs",
+"next",
+"remove:2",
+"set_shuffle:off",
+"set_repeat:album",
+"remove:0",
+"auto",
+"auto",
+"auto",
+"auto",
+"auto",
+"prev",
+"move:0:1",
+"next"
+],
+"edit_runs": [
+{
+"shuffle": "off",
+"repeat": "off",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band B/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/03.flac",
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/03.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+}
+],
+"removed": [
+"/m/Band A/1/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/03.flac"
+]
+},
+{
+"shuffle": "off",
+"repeat": "off",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band B/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"shuffle": "off",
+"repeat": "album",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"shuffle": "off",
+"repeat": "album",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"shuffle": "songs",
+"repeat": "off",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"shuffle": "songs",
+"repeat": "off",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band B/0/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/0/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/04.flac",
+"up_next": []
+}
+],
+"removed": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"shuffle": "songs",
+"repeat": "album",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"shuffle": "songs",
+"repeat": "album",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"shuffle": "library",
+"repeat": "off",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band C/1/03.flac",
+"/m/Band A/0/03.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band C/1/03.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": "/m/Band C/1/03.flac",
+"current": "/m/Band C/1/03.flac",
+"up_next": [
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band C/1/03.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band C/1/03.flac",
+"up_next": [
+"/m/Band C/0/04.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": "/m/Band C/0/04.flac",
+"current": "/m/Band C/1/03.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band C/1/03.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/1/02.flac",
+"/m/Band C/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band B/1/04.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/01.flac",
+"/m/Band B/0/03.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band B/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band C/0/02.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": []
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band C/0/04.flac"
+]
+},
+{
+"shuffle": "library",
+"repeat": "off",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": true,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band C/0/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band C/0/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band C/0/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band C/1/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band C/0/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band C/0/03.flac",
+"/m/Band C/1/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": "/m/Band C/0/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band C/1/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": null,
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band C/1/01.flac",
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": "/m/Band C/1/01.flac",
+"current": "/m/Band C/1/01.flac",
+"up_next": [
+"/m/Band B/1/03.flac",
+"/m/Band C/0/04.flac",
+"/m/Band C/0/01.flac",
+"/m/Band C/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band B/1/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band C/1/03.flac",
+"/m/Band B/0/03.flac",
+"/m/Band C/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/02.flac",
+"/m/Band C/1/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/04.flac",
+"/m/Band B/1/02.flac",
+"/m/Band B/1/04.flac"
+]
+},
+{
+"result": "/m/Band C/1/01.flac",
+"current": "/m/Band C/1/01.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/0/01.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band C/0/03.flac"
+]
+},
+{
+"shuffle": "library",
+"repeat": "album",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"shuffle": "library",
+"repeat": "album",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"shuffle": "album",
+"repeat": "off",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band B/0/02.flac",
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band B/0/01.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/1/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/03.flac",
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/03.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band B/0/02.flac",
+"up_next": [
+"/m/Band B/0/04.flac"
+]
+},
+{
+"result": "/m/Band B/0/04.flac",
+"current": "/m/Band B/0/04.flac",
+"up_next": []
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/03.flac"
+]
+},
+{
+"shuffle": "album",
+"repeat": "off",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band B/0/02.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+]
+},
+{
+"result": "/m/Band B/0/02.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band B/0/01.flac",
+"/m/Band A/1/02.flac",
+"/m/Band A/1/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac",
+"/m/Band B/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/04.flac"
+]
+},
+{
+"result": "/m/Band A/1/04.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/02.flac",
+"current": "/m/Band A/1/02.flac",
+"up_next": [
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": "/m/Band A/1/01.flac",
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/02.flac",
+"/m/Band A/1/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/1/01.flac",
+"up_next": [
+"/m/Band A/1/03.flac",
+"/m/Band A/1/02.flac"
+]
+},
+{
+"result": "/m/Band A/1/03.flac",
+"current": "/m/Band A/1/03.flac",
+"up_next": [
+"/m/Band A/1/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/1/04.flac",
+"/m/Band B/0/02.flac"
+]
+},
+{
+"shuffle": "album",
+"repeat": "album",
+"seed": 3,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/04.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/04.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/04.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"shuffle": "album",
+"repeat": "album",
+"seed": 41,
+"disliked": [
+"/m/Band A/1/04.flac"
+],
+"start": "/m/Band A/0/02.flac",
+"steps": [
+{
+"result": false,
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/04.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/04.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": false,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/01.flac"
+]
+},
+{
+"result": "/m/Band A/0/01.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": null,
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": []
+},
+{
+"result": "/m/Band A/0/02.flac",
+"current": "/m/Band A/0/02.flac",
+"up_next": [
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac",
+"/m/Band A/0/03.flac"
+]
+},
+{
+"result": true,
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/03.flac",
+"/m/Band A/0/02.flac"
+]
+},
+{
+"result": "/m/Band A/0/03.flac",
+"current": "/m/Band A/0/03.flac",
+"up_next": [
+"/m/Band A/0/02.flac"
+]
+}
+],
+"removed": [
+"/m/Band A/0/01.flac",
+"/m/Band A/0/04.flac"
+]
+}
+],
 "splitmix_2024": [
 "11487996472437173461",
 "1793612131670815442",

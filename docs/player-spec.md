@@ -64,7 +64,13 @@ inside the audio file, both, or as plain lyrics inside the file (`lyrics_save_as
     are found with `lyrics.read_lyrics_file()` (an .lrc/.txt next to the song, else the lyrics inside the file).
   - Settings (see below) and Quality check (the 1.x scanner UI, unchanged, with all its functions).
 - **Up Next panel** (right, about 300 px, toggled): "Playing from <list name>", then `PlayQueue.up_next(50)` with
-  title and artist; double-click jumps to that song.
+  title and artist; double-click jumps to that song. A song can be dragged to another place (once the pointer has
+  moved a few pixels; a line in the accent colour with a small circle at its left end shows the gap it will drop
+  into, and the list scrolls when the pointer is near its top or bottom edge): `PlayQueue.move_upcoming(src, dst)`,
+  where `dst` is its place after the move. A right click opens a menu with one entry, "Remove from Up Next":
+  `PlayQueue.remove_upcoming(index)`. After either, the song that follows gaplessly is set again. A removed song is
+  kept in `PlayQueue.removed` and stays out when the order is built again (another shuffle mode, repeat album) until
+  a new list is played (`start()` empties it); moves are only kept until the order is built again.
 - **Playback info window** (a click on the quality badge): three sections, each a two-column list, and Copy.
   "Track": Title, Artist, Album, Album artist, Genre, Year, Track ("3 of 12" when known), Disc, Duration, File (full
   path), Size. "Decoder": Format (codec upper-case, e.g. FLAC, with "lossless"/"lossy"), Sample rate ("96 kHz"),
@@ -266,6 +272,8 @@ quality checker; Clear the play history….
 - Choosing one of your own EQ presets keeps the equalizer on if it was on.
 - When nothing plays, Previous, Next, the heart, the dislike button and "…" are disabled; Shuffle, Repeat, the
   volume, EQ, Lyrics and Up Next stay usable.
+- Up Next can be edited (asked for on 2026-11-25): drag a song to reorder it, right-click → "Remove from Up Next"
+  to take it out (see the Up Next panel above).
 - A song counts in the play history from one second of listening; the seconds are the forward steps of the position
   while playing (the Python app ignores steps over 1.5 s, the Rust app over 2 s, between screen updates), so seeking
   never counts.

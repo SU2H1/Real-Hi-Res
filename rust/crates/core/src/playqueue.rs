@@ -3,6 +3,8 @@
 //! artist, same album) and the repeat modes (off, song, album, stop after this
 //! song).  The shuffled order comes from SplitMix64 and a Fisher-Yates shuffle,
 //! so the same seed gives Python's order; `tests/python_queue.json` holds it.
+//! Up Next can be edited (`move_upcoming()`, `remove_upcoming()`); removed songs
+//! stay out when the order is built again, until the next `start()`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -120,6 +122,8 @@ pub struct PlayQueue {
     pub pos: usize,
     /// left out whenever the order is shuffled (unless chosen)
     pub disliked: HashSet<String>,
+    /// taken out of Up Next by the user; left out until the next `start()`
+    pub removed: HashSet<String>,
 }
 
 impl PlayQueue {
@@ -135,6 +139,7 @@ impl PlayQueue {
             order: vec![],
             pos: 0,
             disliked: HashSet::new(),
+            removed: HashSet::new(),
         }
     }
 
@@ -143,6 +148,7 @@ impl PlayQueue {
     }
 
     pub fn start(&mut self, path: &str) -> String {
+        self.removed.clear();
         let up = self.upcoming(path);
         self.order = std::iter::once(path.to_string()).chain(up).collect();
         self.pos = 0;
@@ -190,12 +196,13 @@ impl PlayQueue {
     fn upcoming(&mut self, path: &str) -> Vec<String> {
         let pool = self.pool(path);
         if self.shuffle == "off" {
-            return match pool.iter().position(|p| p == path) {
-                Some(i) => pool[i + 1..].to_vec(),
-                None => pool,
-            };
+            let from = pool.iter().position(|p| p == path).map_or(0, |i| i + 1);
+            return pool[from..].iter().filter(|p| !self.removed.contains(*p)).cloned().collect();
         }
-        let rest: Vec<String> = pool.into_iter().filter(|p| p != path && !self.disliked.contains(p)).collect();
+        let rest: Vec<String> = pool
+            .into_iter()
+            .filter(|p| p != path && !self.disliked.contains(p) && !self.removed.contains(p))
+            .collect();
         shuffled(&rest, &mut self.rng)
     }
 
@@ -249,7 +256,8 @@ impl PlayQueue {
 
     fn restart_album(&mut self, cur: &str) -> Option<String> {
         let key = self.song(cur)?.album_key();
-        let mut tracks = self.album_paths(&key);
+        let mut tracks: Vec<String> =
+            self.album_paths(&key).into_iter().filter(|p| p == cur || !self.removed.contains(p)).collect();
         if self.shuffle != "off" {
             tracks = shuffled(&tracks, &mut self.rng);
         }
@@ -269,6 +277,32 @@ impl PlayQueue {
 
     pub fn up_next(&self, count: usize) -> Vec<String> {
         self.order.iter().skip(self.pos + 1).take(count).cloned().collect()
+    }
+
+    /// Move Up Next's song number `src` (0 = the next song) to place `dst`
+    /// (counted in the list after the move). False when either is outside it.
+    pub fn move_upcoming(&mut self, src: usize, dst: usize) -> bool {
+        let (base, n) = (self.pos + 1, self.order.len().saturating_sub(self.pos + 1));
+        if src >= n || dst >= n || src == dst {
+            return false;
+        }
+        let song = self.order.remove(base + src);
+        self.order.insert(base + dst, song);
+        true
+    }
+
+    /// Take Up Next's song number `index` out of the queue; it stays out when the
+    /// order is built again (unless it is the song playing). Returns its path.
+    pub fn remove_upcoming(&mut self, index: usize) -> Option<String> {
+        let base = self.pos + 1;
+        if base + index >= self.order.len() {
+            return None;
+        }
+        let path = self.order.remove(base + index);
+        if self.current() != Some(path.as_str()) {
+            self.removed.insert(path.clone());
+        }
+        Some(path)
     }
 }
 
@@ -329,6 +363,51 @@ mod tests {
             assert_eq!(steps, strs(run.get("steps").unwrap()), "{run:?}");
             let up: Vec<String> = strs(run.get("up_next").unwrap()).into_iter().flatten().collect();
             assert_eq!(q.up_next(30), up);
+        }
+        // Up Next edited by the user
+        let edit_ops: Vec<String> = strs(data.get("edit_ops").unwrap()).into_iter().flatten().collect();
+        for run in data.get("edit_runs").unwrap().as_array().unwrap() {
+            let seed = run.get("seed").unwrap().as_i64().unwrap() as u64;
+            let mut q = PlayQueue::new(songs.clone(), context.clone(), &s(run, "shuffle"), &s(run, "repeat"), seed);
+            q.disliked = strs(run.get("disliked").unwrap()).into_iter().flatten().collect();
+            q.start(&s(run, "start"));
+            let steps = run.get("steps").unwrap().as_array().unwrap();
+            assert_eq!(steps.len(), edit_ops.len());
+            for (op, want) in edit_ops.iter().zip(steps) {
+                let want_result = want.get("result").unwrap();
+                let got: Option<String> = if let Some(arg) = op.strip_prefix("move:") {
+                    let (a, b) = arg.split_once(':').unwrap();
+                    let moved = q.move_upcoming(a.parse().unwrap(), b.parse().unwrap());
+                    assert_eq!(Some(moved), want_result.as_bool(), "{op} {run:?}");
+                    None
+                } else if let Some(i) = op.strip_prefix("remove:") {
+                    q.remove_upcoming(i.parse().unwrap())
+                } else {
+                    match op.as_str() {
+                        "auto" => q.next(true),
+                        "next" => q.next(false),
+                        "prev" => q.previous(),
+                        o if o.starts_with("set_shuffle:") => {
+                            q.set_shuffle(&o[12..]);
+                            q.current().map(str::to_string)
+                        }
+                        o => {
+                            q.set_repeat(&o[11..]);
+                            q.current().map(str::to_string)
+                        }
+                    }
+                };
+                if !op.starts_with("move:") {
+                    assert_eq!(got, want_result.as_str().map(str::to_string), "{op} {run:?}");
+                }
+                assert_eq!(q.current().map(str::to_string), want.get("current").unwrap().as_str().map(str::to_string));
+                let up: Vec<String> = strs(want.get("up_next").unwrap()).into_iter().flatten().collect();
+                assert_eq!(q.up_next(30), up, "{op} {run:?}");
+            }
+            let mut removed: Vec<String> = q.removed.iter().cloned().collect();
+            removed.sort();
+            let want: Vec<String> = strs(run.get("removed").unwrap()).into_iter().flatten().collect();
+            assert_eq!(removed, want);
         }
         let mut rng = SplitMix64::new(2024);
         for want in strs(data.get("splitmix_2024").unwrap()) {

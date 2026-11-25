@@ -1598,13 +1598,28 @@ impl Player {
             ui.label(RichText::new("Nothing comes after this song.").color(pal.secondary));
         }
         let mut jump = None;
+        let mut remove = None;
+        let mut dropped: Option<(usize, usize)> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            // a song can be dragged to another place (a line shows where it goes)
+            // or removed with a right click
+            let mut rows: Vec<Rect> = Vec::with_capacity(upcoming.len());
+            let mut dragging: Option<(usize, bool)> = None; // (row, released this frame)
             for (i, path) in upcoming.iter().enumerate() {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
                 let artist = t.map(|t| t.display_artist()).unwrap_or_default();
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
-                if resp.hovered() {
+                let (_, rect) = ui.allocate_space(vec2(ui.available_width(), 38.0));
+                let resp = ui.interact(rect, up_next_row_id(i), Sense::click_and_drag());
+                rows.push(rect);
+                let (held, dropped_here) = (
+                    resp.dragged_by(egui::PointerButton::Primary),
+                    resp.drag_stopped_by(egui::PointerButton::Primary),
+                );
+                if held || dropped_here {
+                    dragging = Some((i, dropped_here));
+                }
+                if resp.hovered() || dragging.is_some_and(|(d, _)| d == i) {
                     ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
                 }
                 let p = ui.painter_at(rect);
@@ -1612,6 +1627,37 @@ impl Player {
                 p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
                 if resp.double_clicked() {
                     jump = Some(base + i);
+                }
+                resp.context_menu(|ui| {
+                    if ui.button("Remove from Up Next").clicked() {
+                        remove = Some(i);
+                        ui.close();
+                    }
+                });
+            }
+            let pointer = ui.input(|inp| inp.pointer.interact_pos());
+            if let (Some((src, released)), Some(at)) = (dragging, pointer) {
+                // the gap nearest to the pointer: 0 = above the first song
+                let gap = rows.iter().filter(|r| r.center().y < at.y).count();
+                if released {
+                    let dst = if gap <= src { gap } else { gap - 1 };
+                    if dst != src {
+                        dropped = Some((src, dst));
+                    }
+                } else if let Some(first) = rows.first() {
+                    let y = rows.get(gap).map_or_else(|| rows.last().unwrap().bottom(), |r| r.top());
+                    let (x0, x1) = (first.left() + 8.0, first.right() - 2.0);
+                    let stroke = Stroke::new(2.0, pal.accent);
+                    ui.painter().line_segment([pos2(x0, y), pos2(x1, y)], stroke);
+                    ui.painter().circle_stroke(pos2(first.left() + 4.0, y), 4.0, stroke);
+                    // near an edge the list scrolls along
+                    let clip = ui.clip_rect();
+                    if at.y < clip.top() + 16.0 {
+                        ui.scroll_with_delta(vec2(0.0, 8.0));
+                    } else if at.y > clip.bottom() - 16.0 {
+                        ui.scroll_with_delta(vec2(0.0, -8.0));
+                    }
+                    ui.ctx().request_repaint();
                 }
             }
         });
@@ -1621,6 +1667,24 @@ impl Player {
                 let p = q.order[i].clone();
                 self.play_path(&p);
             }
+        } else if let Some((src, dst)) = dropped {
+            self.move_in_up_next(src, dst);
+        } else if let Some(i) = remove {
+            self.remove_from_up_next(i);
+        }
+    }
+
+    /// Up Next: its song number `src` was dragged to place `dst`.
+    pub fn move_in_up_next(&mut self, src: usize, dst: usize) {
+        if self.queue.as_mut().is_some_and(|q| q.move_upcoming(src, dst)) {
+            self.update_next();
+        }
+    }
+
+    /// Up Next: take its song number `index` out of the queue.
+    pub fn remove_from_up_next(&mut self, index: usize) {
+        if self.queue.as_mut().and_then(|q| q.remove_upcoming(index)).is_some() {
+            self.update_next();
         }
     }
 
@@ -1735,6 +1799,11 @@ impl Player {
         self.lib_stop.store(true, Ordering::Relaxed);
         self.engine.stop();
     }
+}
+
+/// The id of Up Next's row `i` (the tests find the rows by it).
+pub fn up_next_row_id(i: usize) -> egui::Id {
+    egui::Id::unique(("up-next-row", i))
 }
 
 pub fn fmt_time(sec: f64) -> String {
@@ -2050,5 +2119,106 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = b1;
+    }
+
+    /// One frame with these input events; returns the labels and rectangles of the
+    /// widgets AccessKit was told about (the context menu's buttons among them).
+    fn input(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) -> Vec<(String, Rect)> {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
+            events,
+            ..Default::default()
+        };
+        let out = ctx.run_ui(raw, |ui| p.ui(ui));
+        let mut nodes = vec![];
+        if let Some(update) = &out.platform_output.accesskit_update {
+            for (_, node) in &update.nodes {
+                if let (Some(label), Some(b)) = (node.label(), node.bounds()) {
+                    let rect = Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32));
+                    nodes.push((label.to_string(), rect));
+                }
+            }
+        }
+        out.drop_without_applying_deltas();
+        nodes
+    }
+
+    fn button(pos: egui::Pos2, button: egui::PointerButton, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button, pressed, modifiers: Default::default() }
+    }
+
+    #[test]
+    fn up_next_songs_can_be_dragged_and_removed() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("rhr-up-next-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music");
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        let songs: Vec<String> = ["Dawn", "Noon", "Dusk", "Night"]
+            .iter()
+            .enumerate()
+            .map(|(n, t)| song(&music, "Four Hours", t, "Ada Quill", "Folk", n as u32 + 1, 44_100, 20.0))
+            .collect();
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![music.to_string_lossy().into_owned()];
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 4 && p.lib_rx.is_none());
+        p.play_list(songs.clone(), Some(&songs[0]), "Four Hours");
+        p.show_up_next = true;
+        frame(&ctx, &mut p);
+        frame(&ctx, &mut p);
+        let up = |p: &Player| p.queue.as_ref().unwrap().up_next(10);
+        assert_eq!(up(&p), songs[1..].to_vec());
+        let row = |i: usize| ctx.read_response(up_next_row_id(i)).expect("an Up Next row").rect;
+
+        // drag "Night" (the third row) above "Noon" (the first)
+        let (from, to) = (row(2).center(), row(0).top() + 3.0);
+        input(&ctx, &mut p, vec![egui::Event::PointerMoved(from)]);
+        input(&ctx, &mut p, vec![button(from, egui::PointerButton::Primary, true)]);
+        for y in [from.y - 10.0, (from.y + to) / 2.0, to] {
+            input(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(from.x, y))]);
+        }
+        assert_eq!(up(&p), songs[1..].to_vec(), "nothing moves before the song is dropped");
+        input(&ctx, &mut p, vec![button(pos2(from.x, to), egui::PointerButton::Primary, false)]);
+        frame(&ctx, &mut p);
+        assert_eq!(up(&p), vec![songs[3].clone(), songs[1].clone(), songs[2].clone()]);
+
+        // right click "Noon" (now the second row): its menu removes it from Up Next
+        let at = row(1).center();
+        input(&ctx, &mut p, vec![egui::Event::PointerMoved(at)]);
+        input(&ctx, &mut p, vec![button(at, egui::PointerButton::Secondary, true)]);
+        input(&ctx, &mut p, vec![button(at, egui::PointerButton::Secondary, false)]);
+        let mut menu = None;
+        for _ in 0..3 {
+            let nodes = input(&ctx, &mut p, vec![]);
+            menu = nodes.into_iter().find(|(label, _)| label == "Remove from Up Next").map(|(_, r)| r.center());
+            if menu.is_some() {
+                break;
+            }
+        }
+        let item = menu.expect("the right-click menu with Remove from Up Next");
+        input(&ctx, &mut p, vec![egui::Event::PointerMoved(item)]);
+        input(&ctx, &mut p, vec![button(item, egui::PointerButton::Primary, true)]);
+        input(&ctx, &mut p, vec![button(item, egui::PointerButton::Primary, false)]);
+        frame(&ctx, &mut p);
+        assert_eq!(up(&p), vec![songs[3].clone(), songs[2].clone()]);
+        // building the order again (a new shuffle mode) leaves the removed song out
+        p.set_shuffle("off");
+        assert_eq!(up(&p), vec![songs[2].clone(), songs[3].clone()]);
+        assert!(p.queue.as_ref().unwrap().removed.contains(&songs[1]));
+        // starting the list again brings it back
+        p.play_list(songs.clone(), Some(&songs[0]), "Four Hours");
+        assert_eq!(up(&p), songs[1..].to_vec());
+        p.on_exit();
+        drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

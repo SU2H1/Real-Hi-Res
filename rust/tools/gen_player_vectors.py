@@ -95,12 +95,45 @@ for shuffle in ("off", "songs", "library", "artist"):
                 steps.append(q.current)
         runs.append({"shuffle": shuffle, "repeat": "off", "seed": seed, "steps": steps, "up_next": q.up_next(30),
                      "disliked": disliked})
+# Up Next edited by the user: moves and removals, then orders built again
+EDIT_OPS = ("move:0:3", "remove:1", "next", "move:4:0", "move:9:0", "remove:0", "remove:99", "auto",
+            "set_shuffle:songs", "next", "remove:2", "set_shuffle:off", "set_repeat:album", "remove:0",
+            "auto", "auto", "auto", "auto", "auto", "prev", "move:0:1", "next")
+edit_runs = []
+for shuffle in ("off", "songs", "library", "album"):
+    for repeat in ("off", "album"):
+        for seed in (3, 41):
+            q = PlayQueue(songs, everything[:10], shuffle=shuffle, repeat=repeat, seed=seed,
+                          disliked={everything[7]})
+            q.start(everything[1])
+            steps = []
+            for op in EDIT_OPS:
+                if op.startswith("move:"):
+                    a, b = op.split(":")[1:]
+                    result = q.move_upcoming(int(a), int(b))
+                elif op.startswith("remove:"):
+                    result = q.remove_upcoming(int(op.split(":")[1]))
+                elif op == "auto":
+                    result = q.next(auto=True)
+                elif op == "next":
+                    result = q.next()
+                elif op == "prev":
+                    result = q.previous()
+                elif op.startswith("set_shuffle:"):
+                    q.set_shuffle(op.split(":")[1])
+                    result = q.current
+                else:
+                    q.set_repeat(op.split(":")[1])
+                    result = q.current
+                steps.append({"result": result, "current": q.current, "up_next": q.up_next(30)})
+            edit_runs.append({"shuffle": shuffle, "repeat": repeat, "seed": seed, "disliked": [everything[7]],
+                              "start": everything[1], "steps": steps, "removed": sorted(q.removed)})
 rng = SplitMix64(2024)
 with open(os.path.join(OUT, "python_queue.json"), "w", encoding="utf-8") as fh:
     json.dump({"songs": [s.__dict__ for s in songs], "context": everything[:10], "start": everything[2],
                "ops": ["auto", "next", "auto", "prev", "next", "auto", "next", "next", "auto", "next", "auto",
                        "set_shuffle:library", "next", "set_repeat:album", "auto", "auto", "next"],
-               "runs": runs, "splitmix_2024": [str(rng.next()) for _ in range(5)],
+               "runs": runs, "edit_ops": list(EDIT_OPS), "edit_runs": edit_runs, "splitmix_2024": [str(rng.next()) for _ in range(5)],
                "shuffled_9": shuffled([str(i) for i in range(12)], SplitMix64(9))}, fh, indent=0)
 
 # ------------------------------------------------------------- statistics ---

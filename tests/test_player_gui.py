@@ -226,6 +226,31 @@ def lyrics_ok():
     # Up Next lists the rest of the album
     app.toggle_up_next(); root.update()
     assert [t.display_title for t in app.up_next.list.rows] == ["Midnight Sun", "Polar Drift"]
+    # Up Next can be edited: drag a song to another place, right-click to remove one
+    midnight, polar = LIB["songs"]["Midnight Sun"], LIB["songs"]["Polar Drift"]
+    ul = app.up_next.list
+    if root.grab_current() is not None:  # the pop-up menus unposted above may still hold X11's grab
+        root.grab_current().grab_release()
+    def drag(y0, y1):
+        ul.canvas.event_generate("<ButtonPress-1>", x=60, y=y0)
+        ul.canvas.event_generate("<B1-Motion>", x=60, y=(y0 + y1) // 2)
+        ul.canvas.event_generate("<B1-Motion>", x=60, y=y1)
+        assert ul.drag_from is not None and ul.drop_at is not None
+        ul.canvas.event_generate("<ButtonRelease-1>", x=60, y=y1)
+        root.update()
+    drag(ul.rh + ul.rh // 2, 4)  # Polar Drift above Midnight Sun
+    assert [t.display_title for t in ul.rows] == ["Polar Drift", "Midnight Sun"] and ul.selected == 0
+    assert app.queue.up_next(5) == [polar, midnight] and app.engine._next_path == os.path.abspath(polar)
+    drag(ul.rh // 2, 2 * ul.rh - 2)  # and back below it
+    assert app.queue.up_next(5) == [midnight, polar] and app.engine._next_path == os.path.abspath(midnight)
+    m = app.up_next.menu(1)
+    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["Remove from Up Next"]
+    m.invoke(0); root.update()
+    assert [t.display_title for t in ul.rows] == ["Midnight Sun"] and app.queue.up_next(5) == [midnight]
+    app.set_shuffle("off")  # the order is built again: the removed song stays out
+    assert app.queue.up_next(5) == [midnight] and app.queue.removed == {{polar}}
+    app.queue.order.append(polar); app.queue.removed.clear()  # put it back for the rest of the test
+    app._update_next(); app.up_next.refresh()
     # the like button of the bar
     app.toggle_like_current()
     assert app.bar.heart.filled and glacier in playerstate.load().liked
