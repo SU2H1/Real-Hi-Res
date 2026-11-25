@@ -1404,7 +1404,10 @@
   "Quality Check: CD quality": "品質チェック：CD品質",
   "Quality Check: Lossy format": "品質チェック：ロッシー形式",
   "Quality Check: Error": "品質チェック：エラー",
-  "Your Stats: days with plays": "あなたの統計：再生した日"
+  "Your Stats: days with plays": "あなたの統計：再生した日",
+  "Most Played": "よく再生した項目",
+  "Leaderboard": "ランキング",
+  "No plays yet in this period.": "この期間にはまだ再生がありません。"
  },
  "patterns": {
   "How many files are analysed at the same time. 0 uses one job per CPU core ({n} on this computer), which is the fastest setting: more jobs than cores do not scan faster, they only use more memory. Up to 512 are allowed. (Python on Windows limits one process pool to 61 workers; Real-Hi-Res uses several pools to go beyond that.)": "同時に解析するファイルの数です。0はCPUコア1つにつき1ジョブ（このコンピュータでは{n}）で、最も速い設定です。コアより多いジョブにしても速くはならず、メモリを多く使うだけです。最大512まで設定できます。（WindowsのPythonは1つのプロセスプールを61ワーカーに制限しますが、Real-Hi-Resは複数のプールを使ってそれを超えます。）",

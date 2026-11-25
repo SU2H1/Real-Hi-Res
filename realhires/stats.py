@@ -297,6 +297,74 @@ def day_summary(rows: List[dict]) -> str:
     return f"{_plural(len(rows), 'song')} played, {_plural(_whole(sum(r['seconds'] for r in rows) / 60.0), 'minute')}"
 
 
+# -------------------------------------------------------------- leaderboard ---
+LEADERBOARD_KINDS = ["songs", "artists", "albums"]  # 2.4: the switch of the leaderboard ("Most Played")
+
+
+def _names(p: Play) -> Tuple[str, str, str, str]:
+    """(artist, album, album artist, genre) of a play, as compute() names them."""
+    artist = p.artist.strip() or p.album_artist.strip() or "Unknown Artist"
+    return (artist, p.album.strip() or "Unknown Album", p.album_artist.strip() or artist,
+            p.genre.strip() or "Unknown Genre")
+
+
+def leaderboard(plays: Iterable[Play], kind: str = "songs", top: int = TOP) -> List[dict]:
+    """The most played songs, artists or albums of these plays (2.4, "Most Played"):
+    rows {"rank", "key", "name", "artist", "plays", "seconds", "minutes", "paths"} of the
+    rows with at least one counted play, by plays, then the whole minutes listened, then
+    the name; rows with the same plays and minutes share a rank (1, 2, 2, 4); at most
+    `top` rows.  Keys are those of compute() (a song's path, the artist and the album and
+    its artist case-folded); "artist" is a song's artist or an album's artist (empty for
+    artists); "paths" are the row's songs, the most played first."""
+    if kind not in LEADERBOARD_KINDS:
+        raise ValueError(f"not a leaderboard: {kind!r}")
+    rows: Dict[str, dict] = {}
+    for p in plays:
+        artist, album, album_artist, _genre = _names(p)
+        if kind == "songs":
+            key, name, who = p.path, p.title.strip() or os.path.splitext(os.path.basename(p.path))[0], artist
+        elif kind == "artists":
+            key, name, who = artist.casefold(), artist, ""
+        else:
+            key, name, who = album.casefold() + "\x00" + album_artist.casefold(), album, album_artist
+        d = rows.get(key)
+        if d is None:
+            d = rows[key] = {"key": key, "name": name, "artist": who, "plays": 0, "seconds": 0.0, "songs": {}}
+        c = 1 if counted(p) else 0
+        d["plays"] += c
+        d["seconds"] += p.seconds
+        s = d["songs"].setdefault(p.path, [0, 0.0])
+        s[0] += c
+        s[1] += p.seconds
+    out = []
+    for d in rows.values():
+        if d["plays"] < 1:
+            continue
+        songs = d.pop("songs")
+        d["minutes"] = _whole(d["seconds"] / 60.0)
+        d["paths"] = sorted(songs, key=lambda path: (-songs[path][0], -songs[path][1], path))
+        out.append(d)
+    out.sort(key=lambda d: (-d["plays"], -d["minutes"], d["name"].casefold(), d["key"]))
+    out = out[:max(0, top)]
+    for i, d in enumerate(out):
+        same = i and (out[i - 1]["plays"], out[i - 1]["minutes"]) == (d["plays"], d["minutes"])
+        d["rank"] = out[i - 1]["rank"] if same else i + 1
+    return out
+
+
+def ranked_songs(rows: Iterable[dict]) -> List[str]:
+    """The songs of leaderboard rows in rank order (an artist's or album's songs, the most
+    played first), each once: what Play and Shuffle of the leaderboard play."""
+    out: List[str] = []
+    seen = set()
+    for d in rows:
+        for path in d["paths"]:
+            if path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
 def library_stats(tracks) -> dict:
     """What the library holds: counts, total length and size, and how many
     songs of each format, quality, sample rate and bit depth."""

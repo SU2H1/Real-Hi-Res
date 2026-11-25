@@ -14,6 +14,7 @@ mod editinfo;
 mod eqwin;
 mod icons;
 mod labels;
+mod leaderboard;
 mod look;
 mod library_pages;
 mod lyrics;

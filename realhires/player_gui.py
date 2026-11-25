@@ -48,6 +48,7 @@ from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_
 from .player_widgets import LABEL_DOT, Column, CoverCache, SongList, bind_wheel, draw_cover, draw_label_dot, fmt_time
 from .player_windows import CoverWindow, EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .player_mb import MusicBrainzWindow
+from .player_stats import MostPlayedPage
 from .player_tabs import TabPage, TabsMixin
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
@@ -86,6 +87,7 @@ PAGE_TITLES = {
     "played": N_("Recently Played"), "recent": N_("Recently Added"), "stats": N_("Your Stats"),
     "stats_details": N_("Your Stats"), "search": N_("Search"), "nowplaying": N_("Now Playing"),
     "settings": N_("Settings"), "quality": N_("Quality Check"), "tab": N_("Tabs"),
+    "most_played": N_("Most Played"),  # 2.4: the leaderboard's page
 }
 
 
@@ -715,6 +717,7 @@ class PlayerApp(TabsMixin):
         self.shuffle_var = tk.StringVar(value=self.state.shuffle)
         self.repeat_var = tk.StringVar(value=self.state.repeat)
         self.stats_period = stats.DEFAULT_PERIOD
+        self.leaderboard_kind = "songs"             # 2.4: the leaderboard's switch (songs, artists, albums)
         self.listen: Optional[dict] = None          # the song being listened to, for the play history
         self.name_dialog = None                     # an open NameDialog (tests fill it in)
         self.last_menu: Optional[tk.Menu] = None    # the song menu shown last
@@ -793,6 +796,7 @@ class PlayerApp(TabsMixin):
             "recent": lambda: AlbumsPage(self, tr("Recently Added"), recent=True),
             "stats": lambda: StatsPage(self),
             "stats_details": lambda: StatsDetailsPage(self),
+            "most_played": lambda: MostPlayedPage(self),
             "search": lambda: SearchPage(self),
             "nowplaying": lambda: NowPlayingPage(self),
             "settings": lambda: SettingsPage(self),
@@ -1643,7 +1647,7 @@ class PlayerApp(TabsMixin):
             self.lib.add_play(t, li["started"], li["seconds"])
         except Exception:  # noqa: BLE001 - the history must never stop playback
             return
-        self._refresh_pages({"played", "library", "stats", "stats_details"})
+        self._refresh_pages({"played", "library", "stats", "stats_details", "most_played"})
 
     def plays(self, since: float = 0.0, until: Optional[float] = None):
         try:
@@ -1673,7 +1677,7 @@ class PlayerApp(TabsMixin):
                 parent=self.root):
             return
         self.lib.clear_history()
-        self._refresh_pages({"played", "library", "stats", "stats_details"})
+        self._refresh_pages({"played", "library", "stats", "stats_details", "most_played"})
 
     # ---- themes ----------------------------------------------------------------
     def all_themes(self) -> List[dict]:

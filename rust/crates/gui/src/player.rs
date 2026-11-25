@@ -48,6 +48,8 @@ pub enum Page {
     Recent,
     Stats,
     StatsDetails,
+    /// the leaderboard of Your Stats as a page of its own (2.4)
+    MostPlayed,
     Search,
     NowPlaying,
     Settings,
@@ -77,6 +79,7 @@ impl Page {
             Page::RecentlyPlayed => n_!("Recently Played"),
             Page::Recent => n_!("Recently Added"),
             Page::Stats | Page::StatsDetails => n_!("Your Stats"),
+            Page::MostPlayed => n_!("Most Played"),
             Page::Search => n_!("Search"),
             Page::NowPlaying => n_!("Now Playing"),
             Page::Settings => n_!("Settings"),
@@ -93,10 +96,10 @@ impl Page {
 
 /// The names a queue gets from a page rather than from the library (see
 /// `Page::title()`; "Songs" is the queue of a single song).
-const PAGE_QUEUE_NAMES: [&str; 20] = [
+const PAGE_QUEUE_NAMES: [&str; 21] = [
     "Library", "All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers",
     "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats", "Search",
-    "Now Playing", "Settings", "Quality check", n_!("Songs"),
+    "Now Playing", "Settings", "Quality check", n_!("Songs"), "Most Played",
 ];
 
 /// The queue's name as "Playing from …" shows it: the queue keeps the English
@@ -722,6 +725,10 @@ pub struct Player {
     listening: Option<Listening>,
     pub stats_period: String,
     stats_cache: Option<(String, u64, realhires::stats::Stats)>,
+    /// 2.4: the leaderboard's switch ("songs", "artists", "albums"), kept for the session, and
+    /// the period's leaderboards (made again when the period or the plays change)
+    pub leaderboard_kind: &'static str,
+    pub boards_cache: Option<(String, u64, crate::leaderboard::Boards)>,
     /// the calendar of Your Stats (2.1)
     pub calendar: crate::library_pages::Calendar,
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
@@ -733,6 +740,9 @@ pub struct Player {
     pub eq_notes: Vec<String>,
     /// the playlist whose page is shown (its songs get Remove/Move)
     pub table_playlist: Option<String>,
+    /// 2.4: the subfolders (path, name, songs) the next song table shows above its songs,
+    /// in the same scrolling list (the Folders page); taken by the table
+    pub table_folders: Vec<(String, String, usize)>,
     /// the custom tabs of the tabs folder (2.3), the files there that are not tabs (and
     /// why), the tab window, and a number that changes with the tabs
     pub tabs: Vec<realhires::smarttabs::Tab>,
@@ -868,6 +878,8 @@ impl Player {
             listening: None,
             stats_period: realhires::stats::DEFAULT_PERIOD.to_string(),
             stats_cache: None,
+            leaderboard_kind: "songs",
+            boards_cache: None,
             calendar: Default::default(),
             recent_cache: None,
             name_dialog: None,
@@ -875,6 +887,7 @@ impl Player {
             label_picker: None,
             eq_notes: vec![],
             table_playlist: None,
+            table_folders: vec![],
             tabs: vec![],
             tab_problems: vec![],
             tab_win: None,

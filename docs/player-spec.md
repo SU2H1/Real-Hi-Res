@@ -920,7 +920,16 @@ tests that also run at 1024 × 768.
 
 The Folders page must scroll with the mouse wheel, the trackpad and the scroll bar however many subfolders and songs a
 folder holds, in both apps: the subfolders and the songs of a folder form one scrolling page (the subfolders above the
-songs), not two boxes of fixed height. The cause found is recorded here when it is fixed.
+songs), not two boxes of fixed height.
+
+The causes found (2026-11-25): in the Rust app the subfolders were drawn straight into the page, which has no scroll
+area of its own, so a folder with more subfolders than the window holds could not be scrolled at all (wheel, trackpad
+or scroll bar), and the songs' table below them got only the height that was left, none when the subfolders filled
+the window. In the Tk app the subfolders were a list of their own above the songs, whose `configure(height=…)` had no
+effect (a frame takes the requested size of the widgets packed into it, 120 px), so it stayed about three rows tall
+and scrolled on its own while the songs scrolled in a second box. Both apps now show one list: the subfolders are its
+first rows (a folder icon, the name and the number of songs; one click opens one, they stay first when the songs are
+sorted), the songs follow, with the song columns' headings above the list only when the folder has songs of its own.
 
 ### 2. Your Stats: names are links, and a leaderboard
 
@@ -933,6 +942,15 @@ songs), not two boxes of fixed height. The cause found is recorded here when it 
   minutes listened, the top three marked; a switch between Songs, Artists and Albums; up to 100 rows; ties share a
   rank. Play / Shuffle play the ranked songs in rank order. The ranking is computed in the core (`stats.leaderboard()`)
   with vectors.
+- Settled while building (2026-11-25): only rows with at least one counted play (30 s, or half of a shorter song) are
+  ranked; they are ordered by plays, then by the whole minutes listened (rounded as shown), then by name, and rows
+  with the same plays and minutes share a rank (1, 2, 2, 4); the keys are those of the top lists (an artist is the
+  song's artist field, as in Details). An artist's or album's songs are played most played first. The section on Your
+  Stats shows the first 10 rows, a "See All" link opens Most Played (with Back, the period menu, Play, Shuffle and the
+  switch); the switch is kept for the session and shared by both. The top three ranks sit on gold, silver and bronze
+  badges. The song links of a card play the period's ranked songs, those of Details' top songs that list, those of
+  the day beside the calendar the day's songs; a name the library does not hold (a song whose file is gone, an
+  artist, album or genre no longer in it) is not a link.
 
 ### 3. Where a song was played
 
