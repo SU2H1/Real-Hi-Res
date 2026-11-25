@@ -103,9 +103,10 @@ def resolution(t: Track) -> str:
 
 
 def quality_detail(t: Track) -> str:
-    """The tooltip of the song tables' Quality column (which shows `quality()`): the
-    resolution ("24-bit/96 kHz", `resolution()`), and for a lossy song its codec, bit
-    rate and sample rate ("MP3 · 320 kbps · 44.1 kHz")."""
+    """The tooltip of a song's quality (the song tables' Quality column, which shows
+    `quality()`, the playback bar's badge and Details): the resolution and, for every song
+    that has one, the bit rate ("24-bit/96 kHz · 2,304 kbps", 2.5); for a lossy song its
+    codec, bit rate and sample rate ("MP3 · 320 kbps · 44.1 kHz")."""
     if t.is_lossy:
         parts = [t.codec.upper()]
         if t.bit_rate:
@@ -113,7 +114,10 @@ def quality_detail(t: Track) -> str:
         if t.sample_rate:
             parts.append(f"{t.sample_rate / 1000:g} kHz")
         return " · ".join(p for p in parts if p)
-    return resolution(t) or quality(t)
+    detail = resolution(t) or quality(t)
+    if t.bit_rate and round(t.bit_rate / 1000) > 0:
+        detail += f" · {round(t.bit_rate / 1000):,} kbps"
+    return detail
 
 
 def quality_sort(t: Track) -> tuple:

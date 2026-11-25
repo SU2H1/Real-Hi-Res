@@ -54,7 +54,7 @@ def test_leaderboard_ranks_by_plays_then_minutes_and_ties_share_a_rank():
     assert stats.ranked_songs(songs + songs) == [r["key"] for r in songs]
     assert stats.leaderboard([], "albums") == []
     with pytest.raises(ValueError):
-        stats.leaderboard(plays, "genres")
+        stats.leaderboard(plays, "moods")  # (2.5 added "genres": tests/test_stats_25.py)
 
 
 def test_leaderboard_keeps_a_hundred_rows():

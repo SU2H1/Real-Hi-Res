@@ -5,7 +5,8 @@ python_tagedit.json (the tag editor and the themes folder),
 python_bitperfect.json (bit-perfect playback's decisions and texts), python_covers.json
 (the names of covers kept on disk), python_library.json (the Quality column's tooltip
 and sort, renaming groups, the EQ preset match) and python_leaderboard.json (2.4: Your
-Stats' leaderboard, "Most Played").  Run from the repository root:
+Stats' leaderboard, "Most Played"; 2.5: sorted by the time listened, genres, and the spans
+of its period control).  Run from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -277,10 +278,49 @@ board_plays = cal_plays + [
 ]
 boards = {kind: {str(top): stats.leaderboard(board_plays, kind, top) for top in (stats.TOP, 5, 3, 0)}
           for kind in stats.LEADERBOARD_KINDS}
+# 2.5: the same plays by the time listened ("Sort by": Time listened), and plays made for that
+# order: more minutes with fewer plays, the same minutes with more plays, the same of both
+# (a shared rank), a genre in two spellings, and an album whose longest-heard song has the
+# fewest plays
+boards_time = {kind: {str(top): stats.leaderboard(board_plays, kind, top, "time") for top in (stats.TOP, 5, 3, 0)}
+               for kind in stats.LEADERBOARD_KINDS}
+time_plays = [
+    stats.Play("/lib/s/Long.flac", 1_703_200_000.0, 900.0, 900.0, title="Long", artist="Ann", album="Slow", genre="Ambient"),
+    stats.Play("/lib/s/Often.flac", 1_703_201_000.0, 100.0, 100.0, title="Often", artist="Ann", album="Slow", genre="ambient"),
+    stats.Play("/lib/s/Often.flac", 1_703_202_000.0, 100.0, 100.0, title="Often", artist="Ann", album="Slow", genre="ambient"),
+    stats.Play("/lib/s/Often.flac", 1_703_203_000.0, 100.0, 100.0, title="Often", artist="Ann", album="Slow", genre="ambient"),
+    stats.Play("/lib/s/Twice.flac", 1_703_204_000.0, 150.0, 150.0, title="Twice", artist="Bob", album="Pairs", genre="Rock"),
+    stats.Play("/lib/s/Twice.flac", 1_703_205_000.0, 150.0, 150.0, title="Twice", artist="Bob", album="Pairs", genre="Rock"),
+    stats.Play("/lib/s/Once.flac", 1_703_206_000.0, 299.0, 300.0, title="Once", artist="Bob", album="Pairs", genre="Rock"),
+    stats.Play("/lib/s/Same A.flac", 1_703_207_000.0, 120.4, 200.0, title="Same A", artist="Cy", album="Twins", genre=""),
+    stats.Play("/lib/s/Same B.flac", 1_703_208_000.0, 119.5, 200.0, title="same b", artist="Cy", album="Twins", genre=""),
+    stats.Play("/lib/s/Skipped.flac", 1_703_209_000.0, 29.0, 400.0, title="Skipped", artist="Dee", album="Skips", genre="Rock"),
+    stats.Play("/lib/s/Skipped.flac", 1_703_209_100.0, 29.0, 400.0, title="Skipped", artist="Dee", album="Skips", genre="Rock"),
+    stats.Play("/lib/s/Skipped.flac", 1_703_209_200.0, 29.0, 400.0, title="Skipped", artist="Dee", album="Skips", genre="Rock"),
+]
+time_cases = {"plays": [p.__dict__ for p in time_plays],
+              "boards": {by: {kind: stats.leaderboard(time_plays, kind, stats.TOP, by) for kind in stats.LEADERBOARD_KINDS}
+                         for by in stats.LEADERBOARD_SORTS}}
+# 2.5: the period control of Most Played: the days of a span and its name, around the turn of
+# a week, month and year and in a leap year
+spans = []
+for today in ((2026, 11, 25), (2026, 11, 30), (2026, 12, 31), (2027, 1, 1), (2024, 2, 29), (2024, 3, 3), (2021, 1, 4)):
+    for unit in stats.SPAN_UNITS + ["decade"]:
+        for offset in (0, -1, -2, -5, -13, -60, 1):
+            days = stats.span_days(unit, offset, today)
+            spans.append({"unit": unit, "offset": offset, "today": list(today),
+                          "days": [list(days[0]), list(days[1])] if days else None,
+                          "name": stats.span_name(unit, offset, today)})
 with open(os.path.join(OUT, "python_leaderboard.json"), "w", encoding="utf-8") as fh:
     json.dump({"plays": [p.__dict__ for p in board_plays], "kinds": stats.LEADERBOARD_KINDS, "boards": boards,
                "ranked": {kind: stats.ranked_songs(boards[kind][str(stats.TOP)]) for kind in stats.LEADERBOARD_KINDS},
-               "empty": stats.leaderboard([], "songs")}, fh, indent=0, ensure_ascii=False)
+               "empty": stats.leaderboard([], "songs"),
+               "sorts": stats.LEADERBOARD_SORTS, "boards_time": boards_time,
+               "ranked_time": {kind: stats.ranked_songs(boards_time[kind][str(stats.TOP)])
+                               for kind in stats.LEADERBOARD_KINDS},
+               "time_cases": time_cases, "span_units": stats.SPAN_UNITS, "spans": spans,
+               "period_spans": [[p, *stats.period_span(p)] for p in stats.PERIODS + ["Some day"]]},
+              fh, indent=0, ensure_ascii=False)
 
 # ------------------------------------------------------------- EQ files ---
 param = eq.apply_preset(eq.default_state(), "Rock")
@@ -750,6 +790,16 @@ q_tracks = list(tracks) + [
     Track(path="/q/d.flac", codec="flac", sample_rate=88200, bits=0),
     Track(path="/q/e.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True),
     Track(path="/q/f.mp3", codec="mp3", is_lossy=True, sample_rate=44100, bit_rate=320000),
+    # 2.5: the tooltip names the bit rate of every song that has one
+    Track(path="/q/g.flac", codec="flac", sample_rate=96000, bits=24, bit_rate=2304000),
+    Track(path="/q/h.flac", codec="flac", sample_rate=44100, bits=16, bit_rate=1411200),
+    Track(path="/q/i.wav", codec="pcm_f32le", sample_rate=192000, bits=32, is_float=True, bit_rate=12288000),
+    Track(path="/q/j.wav", codec="pcm_s24le", sample_rate=0, bits=24, bit_rate=4608000),
+    Track(path="/q/k.flac", codec="flac", sample_rate=88200, bits=0, bit_rate=999499),
+    Track(path="/q/l.flac", codec="flac", sample_rate=44100, bits=16, bit_rate=499),
+    Track(path="/q/m.flac", codec="flac", sample_rate=44100, bits=16, bit_rate=2500),
+    Track(path="/q/n.flac", codec="flac", sample_rate=44100, bits=16, bit_rate=3500),
+    Track(path="/q/o.dsf", codec="dsd_lsbf_planar", sample_rate=352800, bits=0, bit_rate=5644800),
 ]
 quality = [{"track": x.to_json(), "quality": musiclib.quality(x), "detail": musiclib.quality_detail(x),
             "sort": list(musiclib.quality_sort(x))} for x in q_tracks]
