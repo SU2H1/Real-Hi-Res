@@ -1164,8 +1164,9 @@ class StatsDetailsPage(Page):
             nid = c.create_text(x + 30, y + 10, text=fit_text(body, name, room_name, self._fit), anchor="w",
                                 fill=t.c("text"), font=body)
             if kind == "songs":
-                player_stats.add_link(c, nid, self.links.hits, player_stats.song_link(app, queue, r["key"], self.list_name),
-                                      self.links.menus, player_stats.song_menu_link(app, queue, r["key"], self.list_name))
+                name_ = self.list_name
+                player_stats.add_link(c, nid, self.links.hits, player_stats.song_link(app, queue, r["key"], name_),
+                                      self.links.menus, player_stats.song_menu_link(app, queue, r["key"], name_))
             elif kind == "artists":
                 player_stats.add_link(c, nid, self.links.hits, player_stats.artist_link(app, r["name"]))
             elif kind == "albums":

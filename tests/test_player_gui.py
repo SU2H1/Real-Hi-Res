@@ -775,7 +775,8 @@ def loaded():
     # a folder page with a breadcrumb
     fp = app.page("folders")
     app.show_page("folders")
-    assert [r[1] for r in fp.dirs.rows] == ["Aurora Fields", "June Harbor", "The Paper Boats", "Velvet Static"]
+    # 2.4: the subfolders are the first rows of the one list (FolderRow)
+    assert [r.name for r in fp.folder_rows()] == ["Aurora Fields", "June Harbor", "The Paper Boats", "Velvet Static"]
     fp.open(os.path.join(LIB["music"], "Aurora Fields", "Northern Lights"))
     root.update()
     assert [p[0] for p in fp.parts] == ["Music", "Aurora Fields", "Northern Lights"]
@@ -784,7 +785,7 @@ def loaded():
     crumb.event_generate("<Button-1>")
     root.update()
     assert fp.folder == os.path.join(LIB["music"], "Aurora Fields")
-    assert [r[1] for r in fp.dirs.rows] == ["Northern Lights"]
+    assert [r.name for r in fp.folder_rows()] == ["Northern Lights"]
     # a playlist: create (name dialog), add from a song's menu, play, rename, delete
     answer("Road Trip")
     pid = app.new_playlist()

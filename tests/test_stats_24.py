@@ -369,7 +369,8 @@ def stats_page():
     app.show_page("stats_details")
     root.update()
     click_text(dc, "Taxi Lights", area=True)
-    assert app.current == S["Taxi Lights"] and app.queue.context[:3] == [S["First Light"], S["Porch Lamp"], S["Taxi Lights"]]
+    assert app.current == S["Taxi Lights"]
+    assert app.queue.context[:3] == [S["First Light"], S["Porch Lamp"], S["Taxi Lights"]]
     app.engine.pause()
     # ---- the day beside the calendar (or under it): the artist is a link
     d = state["day"]
@@ -414,7 +415,8 @@ def loaded():
     app.show_page("most_played")
     root.update()
     mp = app.page("most_played")
-    assert mp.title_l.cget("text") == "よく再生した項目" and app.page_label("most_played", {}) == "よく再生した項目"
+    assert mp.title_l.cget("text") == "よく再生した項目"
+    assert app.page_label("most_played", {}) == "よく再生した項目"
     mp.rows = []
     mp.area.redraw()
     texts = {mp.area.c.itemcget(i, "text") for i in mp.area.c.find_all() if mp.area.c.type(i) == "text"}
