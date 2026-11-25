@@ -1762,6 +1762,9 @@ class NowPlayingPage(Page):
         self.queue_paths: Optional[list] = None
         # Details
         self.details = DetailsView(self.body, t, on_artist=app.open_artist)
+        from .player_quality import details_tip  # 2.5: the Format row's tooltip (bit rate, sample rate)
+
+        self.details_tip = details_tip(self.details, lambda: app.track(self.path))
         self.detail_extra: Dict[str, tuple] = {}  # path -> (comment, verdict), read once per song
         self.detail_busy: set = set()
         self.kind = ""

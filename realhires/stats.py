@@ -305,7 +305,8 @@ def day_summary(rows: List[dict]) -> str:
 
 
 # -------------------------------------------------------------- leaderboard ---
-LEADERBOARD_KINDS = ["songs", "artists", "albums"]  # 2.4: the switch of the leaderboard ("Most Played")
+LEADERBOARD_KINDS = ["songs", "artists", "albums", "genres"]  # the switch of "Most Played" (2.4; genres: 2.5)
+LEADERBOARD_SORTS = ["plays", "time"]  # 2.5, "Sort by": times played, time listened
 
 
 def _names(p: Play) -> Tuple[str, str, str, str]:
@@ -315,23 +316,31 @@ def _names(p: Play) -> Tuple[str, str, str, str]:
             p.genre.strip() or "Unknown Genre")
 
 
-def leaderboard(plays: Iterable[Play], kind: str = "songs", top: int = TOP) -> List[dict]:
-    """The most played songs, artists or albums of these plays (2.4, "Most Played"):
-    rows {"rank", "key", "name", "artist", "plays", "seconds", "minutes", "paths"} of the
-    rows with at least one counted play, by plays, then the whole minutes listened, then
-    the name; rows with the same plays and minutes share a rank (1, 2, 2, 4); at most
-    `top` rows.  Keys are those of compute() (a song's path, the artist and the album and
-    its artist case-folded); "artist" is a song's artist or an album's artist (empty for
-    artists); "paths" are the row's songs, the most played first."""
+def leaderboard(plays: Iterable[Play], kind: str = "songs", top: int = TOP, by: str = "plays") -> List[dict]:
+    """The most played songs, artists, albums or genres of these plays (2.4, "Most
+    Played"): rows {"rank", "key", "name", "artist", "plays", "seconds", "minutes", "paths"}
+    of the rows with at least one counted play; at most `top` rows.  With `by` "plays"
+    they are ordered by plays, then the whole minutes listened, then the name; with
+    "time" (2.5) by the whole minutes listened (as shown), then plays, then the name.
+    Rows with the same plays and minutes share a rank (1, 2, 2, 4).  Keys are those of
+    compute() (a song's path, the artist, the album and its artist, the genre,
+    case-folded); "artist" is a song's artist or an album's artist (empty for artists and
+    genres); "paths" are the row's songs, the most played first (with "time": the longest
+    listened first)."""
     if kind not in LEADERBOARD_KINDS:
         raise ValueError(f"not a leaderboard: {kind!r}")
+    if by not in LEADERBOARD_SORTS:
+        raise ValueError(f"not a way to sort the leaderboard: {by!r}")
+    by_time = by == "time"
     rows: Dict[str, dict] = {}
     for p in plays:
-        artist, album, album_artist, _genre = _names(p)
+        artist, album, album_artist, genre = _names(p)
         if kind == "songs":
             key, name, who = p.path, p.title.strip() or os.path.splitext(os.path.basename(p.path))[0], artist
         elif kind == "artists":
             key, name, who = artist.casefold(), artist, ""
+        elif kind == "genres":
+            key, name, who = genre.casefold(), genre, ""
         else:
             key, name, who = album.casefold() + "\x00" + album_artist.casefold(), album, album_artist
         d = rows.get(key)
@@ -349,9 +358,15 @@ def leaderboard(plays: Iterable[Play], kind: str = "songs", top: int = TOP) -> L
             continue
         songs = d.pop("songs")
         d["minutes"] = _whole(d["seconds"] / 60.0)
-        d["paths"] = sorted(songs, key=lambda path: (-songs[path][0], -songs[path][1], path))
+        if by_time:
+            d["paths"] = sorted(songs, key=lambda path: (-songs[path][1], -songs[path][0], path))
+        else:
+            d["paths"] = sorted(songs, key=lambda path: (-songs[path][0], -songs[path][1], path))
         out.append(d)
-    out.sort(key=lambda d: (-d["plays"], -d["minutes"], d["name"].casefold(), d["key"]))
+    if by_time:
+        out.sort(key=lambda d: (-d["minutes"], -d["plays"], d["name"].casefold(), d["key"]))
+    else:
+        out.sort(key=lambda d: (-d["plays"], -d["minutes"], d["name"].casefold(), d["key"]))
     out = out[:max(0, top)]
     for i, d in enumerate(out):
         same = i and (out[i - 1]["plays"], out[i - 1]["minutes"]) == (d["plays"], d["minutes"])
@@ -370,6 +385,79 @@ def ranked_songs(rows: Iterable[dict]) -> List[str]:
                 seen.add(path)
                 out.append(path)
     return out
+
+
+# ------------------------------------------------------- spans of time (2.5) ---
+SPAN_UNITS = ["day", "week", "month", "year", "all"]  # the period control of "Most Played"
+Day = Tuple[int, int, int]
+
+
+def period_span(period: str) -> Tuple[str, int]:
+    """The span "Most Played" starts from when it is opened from Your Stats, for that
+    page's period (PERIODS): (unit, offset)."""
+    return {"Last 30 days": ("month", 0), "This year": ("year", 0), "Last year": ("year", -1)}.get(period, ("all", 0))
+
+
+def span_days(unit: str, offset: int, today: Day) -> Optional[Tuple[Day, Day]]:
+    """The first day of a span and the day after its last one, as (year, month, day):
+    offset 0 is the day, week (Monday to Sunday), month or year of `today`, -1 the one
+    before.  None for "all" (all time)."""
+    y, m, d = today
+    if unit == "day":
+        a = date(y, m, d) + timedelta(days=offset)
+        b = a + timedelta(days=1)
+    elif unit == "week":
+        a = date(y, m, d) - timedelta(days=date(y, m, d).weekday()) + timedelta(days=7 * offset)
+        b = a + timedelta(days=7)
+    elif unit == "month":
+        ay, am = shift_month(y, m, offset)
+        return (ay, am, 1), (*shift_month(ay, am, 1), 1)
+    elif unit == "year":
+        return (y + offset, 1, 1), (y + offset + 1, 1, 1)
+    else:
+        return None
+    return (a.year, a.month, a.day), (b.year, b.month, b.day)
+
+
+def span_name(unit: str, offset: int, today: Day) -> str:
+    """The name of a span: "25 November 2026", "23 – 29 November 2026" (a week; "30
+    November – 6 December 2026", "28 December 2026 – 3 January 2027" across months and
+    years), "November 2026", "2026", and "All time"."""
+    days = span_days(unit, offset, today)
+    if days is None:
+        return "All time"
+    (y, m, d), end = days
+    if unit == "day":
+        return f"{d} {FULL_MONTHS[m - 1]} {y}"
+    if unit == "month":
+        return month_title(y, m)
+    if unit == "year":
+        return str(y)
+    last = date(*end) - timedelta(days=1)
+    if (last.year, last.month) == (y, m):
+        return f"{d} – {last.day} {FULL_MONTHS[m - 1]} {y}"
+    if last.year == y:
+        return f"{d} {FULL_MONTHS[m - 1]} – {last.day} {FULL_MONTHS[last.month - 1]} {y}"
+    return f"{d} {FULL_MONTHS[m - 1]} {y} – {last.day} {FULL_MONTHS[last.month - 1]} {last.year}"
+
+
+def _today(now: float, localtime: Callable) -> Day:
+    t = localtime(now)
+    return t.tm_year, t.tm_mon, t.tm_mday
+
+
+def span_range(unit: str, offset: int, now: float, localtime: Callable = time.localtime,
+               mktime: Callable = time.mktime) -> Tuple[float, Optional[float]]:
+    """[since, until) of a span in Unix time, between local midnights; (0, None) for all time."""
+    days = span_days(unit, offset, _today(now, localtime))
+    if days is None:
+        return 0.0, None
+    return _midnight(*days[0], mktime), _midnight(*days[1], mktime)
+
+
+def span_title(unit: str, offset: int, now: float, localtime: Callable = time.localtime) -> str:
+    """span_name() of the span around `now`."""
+    return span_name(unit, offset, _today(now, localtime))
 
 
 def library_stats(tracks) -> dict:

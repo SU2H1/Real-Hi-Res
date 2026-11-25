@@ -103,9 +103,10 @@ def resolution(t: Track) -> str:
 
 
 def quality_detail(t: Track) -> str:
-    """The tooltip of the song tables' Quality column (which shows `quality()`): the
-    resolution ("24-bit/96 kHz", `resolution()`), and for a lossy song its codec, bit
-    rate and sample rate ("MP3 · 320 kbps · 44.1 kHz")."""
+    """The tooltip of a song's quality (the song tables' Quality column, which shows
+    `quality()`, the playback bar's badge and Details): the resolution and, for every song
+    that has one, the bit rate ("24-bit/96 kHz · 2,304 kbps", 2.5); for a lossy song its
+    codec, bit rate and sample rate ("MP3 · 320 kbps · 44.1 kHz")."""
     if t.is_lossy:
         parts = [t.codec.upper()]
         if t.bit_rate:
@@ -113,7 +114,10 @@ def quality_detail(t: Track) -> str:
         if t.sample_rate:
             parts.append(f"{t.sample_rate / 1000:g} kHz")
         return " · ".join(p for p in parts if p)
-    return resolution(t) or quality(t)
+    detail = resolution(t) or quality(t)
+    if t.bit_rate and round(t.bit_rate / 1000) > 0:
+        detail += f" · {round(t.bit_rate / 1000):,} kbps"
+    return detail
 
 
 def quality_sort(t: Track) -> tuple:
@@ -241,6 +245,12 @@ class Library:
             q += " AND started < ?"
             args.append(float(until))
         return [Play(*row[:11], place=_place_of(row[11:])) for row in self.db.execute(q + " ORDER BY started, id", args)]
+
+    def first_play(self) -> Optional[float]:
+        """When the oldest logged play started (None without plays): Most Played's period
+        control goes back no further (2.5)."""
+        row = self.db.execute("SELECT MIN(started) FROM plays").fetchone()
+        return float(row[0]) if row and row[0] is not None else None
 
     def forget_places(self) -> int:
         """Clear the place of every play (2.4, Settings → Forget play locations…); the

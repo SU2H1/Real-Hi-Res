@@ -1166,6 +1166,17 @@ length played. Leaderboard should have a button to filter by year, month, week, 
   before), with vectors. Opened from Your Stats it starts from that page's period: Last 30 days → Month, This year →
   Year, Last year → Year one back, All time → All time. Without counted plays in the period: "Nothing was played in
   this period."
+- Settled while building (2026-11-25): the cards that are not named above (songs played, listening hour, listening
+  day, longest streak) open Details too, the listening hour and day scrolled to their charts; a right click on the
+  top song's card still opens that song's menu. With "time" the same rows are ranked as with "plays" (those with at
+  least one counted play), a row's songs come the longest listened first, and Play / Shuffle follow that order.
+  Genres rows are one line (the name, a link to the genre's page). The three switches are segmented controls (a
+  panel, the chosen segment raised) and each is one unit when the row wraps. ‹ is disabled when the history holds no
+  play before the period shown (`Library.first_play()`), so one cannot page into years without music; a unit's
+  button returns to the present. Core: `span_days(unit, offset, today)` and `span_name()` are the pure parts with
+  vectors, `span_range()`/`span_title()` take the local time; a week across months or years reads "30 November – 6
+  December 2026" / "28 December 2026 – 3 January 2027". The section of Your Stats keeps that page's period and the
+  text "No plays yet in this period."; See All opens Most Played from that period.
 
 ### 5. Quality: hover for the bit rate and sample rate
 
@@ -1178,6 +1189,14 @@ display bitrate/kHz."
   artist, album artist, genre, year or composer, folders, playlists, tabs, moods, search, Recently Played, Liked and
   Disliked Songs, Most Played), the playback bar's quality badge and Now Playing's Details. A test hovers the Quality
   cell on All Songs, an album page, an artist's songs and a folder in both apps.
+- Settled while building (2026-11-25): the tooltip already appeared on every song table of both apps (they share one
+  table each); what it lacked was the bit rate of lossless songs. A bit rate that rounds to 0 kbps is left out, and a
+  lossless song without a known sample rate reads "Hi-Res Lossless · 4,608 kbps". An artist's page shows the artist's
+  albums as cards (as since 2.0), so an artist's songs are the tables of those albums: the tests open an artist,
+  click an album there and hover, and also hover a genre's songs. On the playback bar's badge the tooltip has a
+  second line, "Playback info" (what a click opens, as the Rust app said before). In Details the Format row has the
+  tooltip. The Rust app's badge could not be hovered in a 1024-pixel window, because the bar's LCD was at least
+  280 px wide and ran under the Like button; the LCD now gets as narrow as 200 px.
 
 ### 6. Previous, Play/Pause and Next on the taskbar (Windows)
 

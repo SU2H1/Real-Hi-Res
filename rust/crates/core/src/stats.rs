@@ -478,8 +478,10 @@ pub fn day_summary(rows: &[DayPlay]) -> String {
 
 // --------------------------------------------------------------- leaderboard ---
 
-/// The switch of the leaderboard ("Most Played", 2.4).
-pub const LEADERBOARD_KINDS: [&str; 3] = ["songs", "artists", "albums"];
+/// The switch of the leaderboard ("Most Played", 2.4; genres: 2.5).
+pub const LEADERBOARD_KINDS: [&str; 4] = ["songs", "artists", "albums", "genres"];
+/// "Sort by" (2.5): times played, time listened.
+pub const LEADERBOARD_SORTS: [&str; 2] = ["plays", "time"];
 
 /// (artist, album, album artist, genre) of a play, as `compute()` names them.
 fn names(p: &Play) -> (String, String, String, String) {
@@ -530,14 +532,24 @@ impl LeaderRow {
     }
 }
 
-/// The most played songs, artists or albums of these plays (2.4, "Most Played"): the
-/// rows with at least one counted play, by plays, then the whole minutes listened, then
-/// the name; rows with the same plays and minutes share a rank (1, 2, 2, 4); at most
-/// `top` rows.  Keys are those of `compute()`; an unknown kind gives no rows.
+/// The most played songs, artists, albums or genres of these plays (2.4, "Most Played"),
+/// ordered by plays: `leaderboard_by()` with "plays".
 pub fn leaderboard(plays: &[Play], kind: &str, top: usize) -> Vec<LeaderRow> {
-    if !LEADERBOARD_KINDS.contains(&kind) {
+    leaderboard_by(plays, kind, top, "plays")
+}
+
+/// The most played songs, artists, albums or genres of these plays (Python
+/// `leaderboard()`): the rows with at least one counted play, at most `top` rows.  With
+/// `by` "plays" they are ordered by plays, then the whole minutes listened, then the
+/// name; with "time" (2.5) by the whole minutes listened, then plays, then the name.  Rows
+/// with the same plays and minutes share a rank (1, 2, 2, 4).  Keys are those of
+/// `compute()`; a row's songs come the most played first (with "time": the longest
+/// listened first); an unknown kind or sort gives no rows.
+pub fn leaderboard_by(plays: &[Play], kind: &str, top: usize, by: &str) -> Vec<LeaderRow> {
+    if !LEADERBOARD_KINDS.contains(&kind) || !LEADERBOARD_SORTS.contains(&by) {
         return vec![];
     }
+    let by_time = by == "time";
     struct Acc {
         row: LeaderRow,
         order: Vec<String>,
@@ -546,7 +558,7 @@ pub fn leaderboard(plays: &[Play], kind: &str, top: usize) -> Vec<LeaderRow> {
     let mut order: Vec<String> = vec![];
     let mut rows: HashMap<String, Acc> = HashMap::new();
     for p in plays {
-        let (artist, album, album_artist, _genre) = names(p);
+        let (artist, album, album_artist, genre) = names(p);
         let (key, name, who) = match kind {
             "songs" => {
                 let title = strip(&p.title);
@@ -554,6 +566,7 @@ pub fn leaderboard(plays: &[Play], kind: &str, top: usize) -> Vec<LeaderRow> {
                 (p.path.clone(), name, artist)
             }
             "artists" => (casefold(&artist), artist, String::new()),
+            "genres" => (casefold(&genre), genre, String::new()),
             _ => (format!("{}\u{0}{}", casefold(&album), casefold(&album_artist)), album, album_artist),
         };
         let acc = rows.entry(key.clone()).or_insert_with(|| {
@@ -584,17 +597,17 @@ pub fn leaderboard(plays: &[Play], kind: &str, top: usize) -> Vec<LeaderRow> {
         let songs = &acc.songs;
         acc.order.sort_by(|a, b| {
             let (x, y) = (songs[a], songs[b]);
-            y.0.cmp(&x.0).then(y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal)).then(a.cmp(b))
+            let (plays, time) = (y.0.cmp(&x.0), y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+            if by_time { time.then(plays) } else { plays.then(time) }.then(a.cmp(b))
         });
         acc.row.paths = acc.order;
         out.push(acc.row);
     }
     out.sort_by(|a, b| {
-        b.plays
-            .cmp(&a.plays)
-            .then(b.minutes.cmp(&a.minutes))
-            .then(casefold(&a.name).cmp(&casefold(&b.name)))
-            .then(a.key.cmp(&b.key))
+        let (plays, minutes) = (b.plays.cmp(&a.plays), b.minutes.cmp(&a.minutes));
+        if by_time { minutes.then(plays) } else { plays.then(minutes) }
+            .then_with(|| casefold(&a.name).cmp(&casefold(&b.name)))
+            .then_with(|| a.key.cmp(&b.key))
     });
     out.truncate(top);
     for i in 0..out.len() {
@@ -609,6 +622,98 @@ pub fn leaderboard(plays: &[Play], kind: &str, top: usize) -> Vec<LeaderRow> {
 pub fn ranked_songs(rows: &[LeaderRow]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     rows.iter().flat_map(|r| r.paths.iter()).filter(|p| seen.insert(p.as_str())).cloned().collect()
+}
+
+// ------------------------------------------------------ spans of time (2.5) ---
+
+/// The units of Most Played's period control.
+pub const SPAN_UNITS: [&str; 5] = ["day", "week", "month", "year", "all"];
+/// (year, month, day)
+pub type Day = (i32, u32, u32);
+
+/// The span Most Played starts from when it is opened from Your Stats, for that page's
+/// period (`PERIODS`): (unit, offset).
+pub fn period_span(period: &str) -> (&'static str, i32) {
+    match period {
+        "Last 30 days" => ("month", 0),
+        "This year" => ("year", 0),
+        "Last year" => ("year", -1),
+        _ => ("all", 0),
+    }
+}
+
+fn ymd(d: chrono::NaiveDate) -> Day {
+    (d.year(), d.month(), d.day())
+}
+
+/// The first day of a span and the day after its last one: offset 0 is the day, week
+/// (Monday to Sunday), month or year of `today`, -1 the one before.  None for "all" (all
+/// time), an unknown unit or a date that does not exist.
+pub fn span_days(unit: &str, offset: i32, today: Day) -> Option<(Day, Day)> {
+    let (y, m, d) = today;
+    let day = chrono::NaiveDate::from_ymd_opt(y, m, d);
+    match unit {
+        "day" => {
+            let a = day?.checked_add_signed(chrono::Duration::days(offset as i64))?;
+            Some((ymd(a), ymd(a.succ_opt()?)))
+        }
+        "week" => {
+            let day = day?;
+            let back = day.weekday().num_days_from_monday() as i64;
+            let a = day.checked_add_signed(chrono::Duration::days(7 * offset as i64 - back))?;
+            Some((ymd(a), ymd(a.checked_add_signed(chrono::Duration::days(7))?)))
+        }
+        "month" => {
+            let (ay, am) = shift_month(y, m, offset);
+            let (by, bm) = shift_month(ay, am, 1);
+            Some(((ay, am, 1), (by, bm, 1)))
+        }
+        "year" => Some(((y + offset, 1, 1), (y + offset + 1, 1, 1))),
+        _ => None,
+    }
+}
+
+/// The name of a span: "25 November 2026", "23 – 29 November 2026" (a week; "30 November
+/// – 6 December 2026", "28 December 2026 – 3 January 2027" across months and years),
+/// "November 2026", "2026", and "All time".
+pub fn span_name(unit: &str, offset: i32, today: Day) -> String {
+    let Some(((y, m, d), end)) = span_days(unit, offset, today) else {
+        return "All time".to_string();
+    };
+    let month = |m: u32| FULL_MONTHS[(m.clamp(1, 12) - 1) as usize];
+    match unit {
+        "day" => format!("{d} {} {y}", month(m)),
+        "month" => month_title(y, m),
+        "year" => y.to_string(),
+        _ => {
+            let last = chrono::NaiveDate::from_ymd_opt(end.0, end.1, end.2).and_then(|e| e.pred_opt()).map(ymd).unwrap_or(end);
+            if (last.0, last.1) == (y, m) {
+                format!("{d} – {} {} {y}", last.2, month(m))
+            } else if last.0 == y {
+                format!("{d} {} – {} {} {y}", month(m), last.2, month(last.1))
+            } else {
+                format!("{d} {} {y} – {} {} {}", month(m), last.2, month(last.1), last.0)
+            }
+        }
+    }
+}
+
+fn today_of(now: f64) -> Day {
+    let t = local_parts(now);
+    (t.year, t.month, t.day)
+}
+
+/// [since, until) of a span in Unix time, between local midnights; (0, None) for all time.
+pub fn span_range(unit: &str, offset: i32, now: f64) -> (f64, Option<f64>) {
+    match span_days(unit, offset, today_of(now)) {
+        Some((a, b)) => (local_midnight(a.0, a.1, a.2), Some(local_midnight(b.0, b.1, b.2))),
+        None => (0.0, None),
+    }
+}
+
+/// `span_name()` of the span around `now`.
+pub fn span_title(unit: &str, offset: i32, now: f64) -> String {
+    span_name(unit, offset, today_of(now))
 }
 
 /// What the library holds (Python `library_stats`).

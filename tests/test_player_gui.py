@@ -1883,7 +1883,8 @@ def loaded():
     assert ap.table.rows[0].display_title == "Polar Drift"
     # the Quality column: "Hi-Res Lossless", the resolution as its tooltip; sorted by bits, then rate
     assert player_pages.track_value(ap.table.rows[0], "quality") == "Hi-Res Lossless"
-    assert ap.table.show_tip(0, "quality") == "24-bit/96 kHz" and ap.table.tip_text == "24-bit/96 kHz"
+    tip = ap.table.show_tip(0, "quality")  # 2.5: with the bit rate, "24-bit/96 kHz · 2,304 kbps"
+    assert tip.startswith("24-bit/96 kHz · ") and tip.endswith(" kbps") and ap.table.tip_text == tip, tip
     ap.table.hide_tip()
     app.show_page("songs")
     root.update()

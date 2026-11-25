@@ -131,20 +131,11 @@ pub fn calendar_side_by_side(width: f32) -> bool {
     width >= 7.0 * calendar_cell_width(width) + CALENDAR_SIDE_MIN
 }
 
-/// The links of a card of Your Stats (2.4): its big text, the song it names (for the
-/// song menu), and its detail line (an artist).
-#[derive(Clone, Debug, Default)]
-struct CardLinks {
-    big: Option<Link>,
-    song: Option<String>,
-    detail: Option<Link>,
-}
-
 /// The share of the accent colour for `stats::month_levels()` 0..4.
 const TINTS: [f32; 5] = [0.0, 0.25, 0.45, 0.7, 1.0];
 
 /// A chevron pointing left or right.
-fn chevron(p: &egui::Painter, c: egui::Pos2, s: f32, right: bool, color: Color32) {
+pub(crate) fn chevron(p: &egui::Painter, c: egui::Pos2, s: f32, right: bool, color: Color32) {
     let (h, d) = (s * 0.3, if right { -1.0 } else { 1.0 });
     let stroke = Stroke::new((s * 0.1).max(1.5), color);
     p.add(egui::Shape::line(
@@ -859,10 +850,14 @@ impl Player {
         let st = self.stats();
         let english = stats::cards(&st);
         let cards: Vec<(String, String, String)> = english.iter().map(|(l, b, d)| shown_card(l, b, d)).collect();
-        // 2.4: the cards' names are links (the big text, and the artist in the detail)
-        let links: Vec<CardLinks> = english.iter().map(|(l, _, _)| self.card_links(l, &st)).collect();
+        // 2.5: every card is one click target (the top song's also opens that song's menu)
+        let targets: Vec<crate::leaderboard::CardTarget> = english.iter().map(|(l, _, _)| crate::leaderboard::card_target(l, &st)).collect();
+        let top_song = st.top_songs.first().map(|s| s.key.clone()).filter(|p| self.lib.by_path.contains_key(p));
         let mut follow = None;
         egui::ScrollArea::vertical().id_salt("stats").auto_shrink([false, false]).show(ui, |ui| {
+            if std::mem::take(&mut self.most.stats_top) {
+                ui.scroll_to_cursor(Some(Align::TOP)); // 2.5: the busiest day's card leads to the calendar
+            }
             self.calendar_ui(ui, pal);
             if cards.is_empty() {
                 ui.label(RichText::new(tr!("No listening yet in this period. Play some music and come back.")).color(pal.secondary));
@@ -878,8 +873,16 @@ impl Player {
                     for (i, (label, big, detail)) in row.iter().enumerate() {
                         let k = r * cols + i;
                         let height = 140.0;
-                        let (rect, _) = ui.allocate_exact_size(vec2(cw, height), Sense::hover());
+                        let (rect, resp) = ui.allocate_exact_size(vec2(cw, height), Sense::click());
+                        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                         let base = crate::style::hex(CARD_COLORS[k % CARD_COLORS.len()]);
+                        // under the pointer the card lifts a little above its shadow
+                        let rect = if resp.hovered() {
+                            ui.painter().rect_filled(rect.translate(vec2(1.0, 2.0)), CornerRadius::same(14), look::mix(pal.bg, pal.text, 0.22));
+                            rect.translate(vec2(0.0, -crate::leaderboard::CARD_LIFT))
+                        } else {
+                            rect
+                        };
                         ui.painter().rect_filled(rect, CornerRadius::same(14), base);
                         let p = ui.painter_at(rect);
                         p.text(rect.left_top() + vec2(18.0, 16.0), Align2::LEFT_TOP, label, look::title(12.5), Color32::from_white_alpha(220));
@@ -889,12 +892,11 @@ impl Player {
                         let g = elided(ui, detail, look::text(13.0), Color32::from_white_alpha(230), cw - 36.0);
                         let detail_rect = Rect::from_min_size(pos2(rect.left() + 18.0, rect.bottom() - 30.0), g.size());
                         p.galley(detail_rect.min, g, Color32::WHITE);
-                        let l = links[k].clone();
-                        if let Some(x) = self.link_rect(ui, big_rect, ("card-big", k), l.big, l.song.as_deref()) {
-                            follow = Some(x);
+                        if let (Some(path), "Your top song") = (&top_song, english[k].0.as_str()) {
+                            resp.context_menu(|ui| self.song_menu(ui, path));
                         }
-                        if let Some(x) = self.link_rect(ui, detail_rect, ("card-detail", k), l.detail, None) {
-                            follow = Some(x);
+                        if resp.clicked() {
+                            follow = Some(targets[k].clone());
                         }
                     }
                 });
@@ -907,37 +909,9 @@ impl Player {
                 self.go(Page::StatsDetails);
             }
         });
-        if let Some(l) = follow {
-            self.follow(l);
+        if let Some(target) = follow {
+            self.card_click(target);
         }
-    }
-
-    /// The links of a summary card (2.4): the top song plays (the period's most played
-    /// songs as the queue) and its artist opens their page; the top artist, album (and its
-    /// artist) and genre open theirs.
-    fn card_links(&mut self, label: &str, st: &stats::Stats) -> CardLinks {
-        let mut out = CardLinks::default();
-        match label {
-            "Your top song" => {
-                if let Some(s) = st.top_songs.first() {
-                    let queue = stats::ranked_songs(&self.board("songs"));
-                    out.big = self.song_link(&queue, &s.key, "Your Stats");
-                    out.song = Some(s.key.clone());
-                    out.detail = self.artist_link(&s.artist);
-                }
-            }
-            "Your top artist" => out.big = st.top_artists.first().and_then(|a| self.artist_link(&a.name)),
-            "Your top album" => {
-                if let Some(a) = st.top_albums.first() {
-                    let paths = self.board("albums").into_iter().find(|r| r.key == a.key).map(|r| r.paths).unwrap_or_default();
-                    out.big = self.album_link(&a.name, &a.artist, &paths);
-                    out.detail = self.artist_link(&a.artist);
-                }
-            }
-            "Your top genre" => out.big = st.top_genres.first().and_then(|g| self.genre_link(&g.name)),
-            _ => {}
-        }
-        out
     }
 
     pub fn stats_details_page(&mut self, ui: &mut Ui, pal: &Palette) {
@@ -953,7 +927,15 @@ impl Player {
         ui.add_space(10.0);
         let st = self.stats();
         let lib = stats::library_stats(&self.lib.tracks);
+        // 2.5: a card of Your Stats opens the page at a section ("top", "hour", "weekday")
+        let goto = self.most.details_goto.take();
+        let at = |ui: &mut Ui, section: &str| {
+            if goto == Some(section) {
+                ui.scroll_to_cursor(Some(Align::TOP));
+            }
+        };
         egui::ScrollArea::vertical().id_salt("stats-details").auto_shrink([false, false]).show(ui, |ui| {
+            at(ui, "top");
             if st.logged == 0 {
                 ui.label(RichText::new(tr!("No listening yet in this period. Play some music and come back.")).color(pal.secondary));
             } else {
@@ -978,10 +960,12 @@ impl Player {
                         ui.painter().text(rect.left_top() + vec2(14.0, 28.0), Align2::LEFT_TOP, v, look::title(20.0), pal.text);
                     }
                 });
+                at(ui, "hour");
                 section(ui, pal, tr!("By hour of the day (minutes)"));
                 let hours: Vec<String> =
                     (0..24).map(|h| if h % 3 == 0 { tr_text(&stats::hour_label(h)) } else { String::new() }).collect();
                 bars(ui, pal, &st.by_hour.map(|x| x / 60.0), &hours);
+                at(ui, "weekday");
                 section(ui, pal, tr!("By day of the week (minutes)"));
                 let days: Vec<String> = WEEKDAYS_SHORT.iter().map(|d| i18n::tr(d).to_string()).collect();
                 bars(ui, pal, &st.by_weekday.map(|x| x / 60.0), &days);

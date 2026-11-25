@@ -181,9 +181,11 @@ pub fn resolution(t: &Track) -> String {
     format!("{}-bit{}/{khz}", t.bits, if t.is_float { " float" } else { "" })
 }
 
-/// The tooltip of the song tables' Quality column (which shows `quality()`):
-/// the resolution ("24-bit/96 kHz"), and for a lossy song its codec, bit rate
-/// and sample rate ("MP3 · 320 kbps · 44.1 kHz") (Python `quality_detail`).
+/// The tooltip of a song's quality (the song tables' Quality column, which shows
+/// `quality()`, the playback bar's badge and Details): the resolution and, for every
+/// song that has one, the bit rate ("24-bit/96 kHz · 2,304 kbps", 2.5); for a lossy song
+/// its codec, bit rate and sample rate ("MP3 · 320 kbps · 44.1 kHz") (Python
+/// `quality_detail`).
 pub fn quality_detail(t: &Track) -> String {
     if t.is_lossy {
         let mut parts = vec![t.codec.to_uppercase()];
@@ -196,11 +198,12 @@ pub fn quality_detail(t: &Track) -> String {
         return parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · ");
     }
     let r = resolution(t);
-    if r.is_empty() {
-        quality(t)
-    } else {
-        r
+    let mut detail = if r.is_empty() { quality(t) } else { r };
+    let kbps = crate::pyfmt::round_int(t.bit_rate as f64 / 1000.0);
+    if t.bit_rate > 0 && kbps > 0 {
+        detail += &format!(" · {} kbps", crate::stats::thousands(kbps));
     }
+    detail
 }
 
 /// What a click on the Quality heading sorts by: the bit depth (lossy songs,
@@ -376,6 +379,12 @@ impl Library {
             })
         });
         rows.map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default()
+    }
+
+    /// When the oldest logged play started (None without plays): Most Played's
+    /// period control goes back no further (2.5; Python `first_play`).
+    pub fn first_play(&self) -> Option<f64> {
+        self.db.query_row("SELECT MIN(started) FROM plays", [], |r| r.get::<_, Option<f64>>(0)).ok().flatten()
     }
 
     /// Clear the place of every play (2.4, Settings → Forget play locations…);

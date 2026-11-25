@@ -749,6 +749,8 @@ pub struct Player {
     /// the period's leaderboards (made again when the period or the plays change)
     pub leaderboard_kind: &'static str,
     pub boards_cache: Option<(String, u64, crate::leaderboard::Boards)>,
+    /// 2.5: the leaderboard's "Sort by" and Most Played's own period
+    pub most: crate::leaderboard::MostState,
     /// the calendar of Your Stats (2.1)
     pub calendar: crate::library_pages::Calendar,
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
@@ -904,6 +906,7 @@ impl Player {
             stats_cache: None,
             leaderboard_kind: "songs",
             boards_cache: None,
+            most: Default::default(),
             calendar: Default::default(),
             recent_cache: None,
             name_dialog: None,
@@ -2698,8 +2701,10 @@ impl Player {
                 }
             });
             // right part is laid out from the right edge
-            let right_w = 360.0;
-            let lcd_w = (ui.available_width() - right_w - 16.0).clamp(280.0, 720.0);
+            // (2.5: the LCD gets narrower in a 1024-pixel window instead of running under the
+            // buttons at its right, where its quality badge could not be seen or hovered)
+            let right_w = 336.0;
+            let lcd_w = (ui.available_width() - right_w - 16.0).clamp(200.0, 720.0);
             let gap = ((ui.available_width() - right_w - lcd_w) / 2.0).max(8.0);
             ui.add_space(gap);
             self.lcd(ui, pal, lcd_w);
@@ -2973,7 +2978,8 @@ impl Player {
         let bcol = if bresp.hovered() { look::mix(qcol, pal.text, 0.35) } else { qcol };
         p.rect_stroke(brect, CornerRadius::same(4), Stroke::new(1.0, bcol), egui::StrokeKind::Inside);
         p.text(brect.center(), Align2::CENTER_CENTER, badge, badge_font, bcol);
-        if bresp.on_hover_text(tr!("Playback info")).clicked() {
+        // 2.5: hovering it shows the bit rate and sample rate
+        if bresp.on_hover_text(format!("{}\n{}", crate::leaderboard::quality_tip(&track), tr!("Playback info"))).clicked() {
             self.open_info();
         }
         match open {
@@ -4757,7 +4763,10 @@ mod tests {
         assert_eq!(p.album_sort, None, "another album starts in track order");
         // the Quality column: quality() in the cell, the resolution as its tooltip; sorted by bits, then rate
         let t = p.lib.track(&a1).unwrap();
-        assert_eq!((cell_text(t, SongCol::Quality), musiclib::quality_detail(t)), ("Lossless".to_string(), "16-bit/44.1 kHz".to_string()));
+        // (2.5: the tooltip also names the bit rate, "16-bit/44.1 kHz · 123 kbps")
+        let detail = musiclib::quality_detail(t);
+        assert_eq!(cell_text(t, SongCol::Quality), "Lossless");
+        assert!(detail.starts_with("16-bit/44.1 kHz · ") && detail.ends_with(" kbps"), "{detail}");
         p.song_sort = (SongCol::Quality, false);
         p.go(Page::AllSongs);
         frame(&ctx, &mut p);
