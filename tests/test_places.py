@@ -289,3 +289,27 @@ def test_a_lookup_through_http_against_the_fake_service(geo):
     with pytest.raises(places.PlaceError, match="asked to wait"):
         c.lookup()
     assert len(geo.requests) == 2 and c.not_before > c.clock()
+
+
+def test_every_message_of_a_lookup_is_translated():
+    from realhires import i18n
+
+    messages = ["free.freeipapi.com asked to wait before the next lookup.",
+                "No answer from free.freeipapi.com after 3 attempts (server error (HTTP 502)).",
+                "No answer from free.freeipapi.com after 3 attempts (could not reach free.freeipapi.com: "
+                "no answer in time).",
+                "free.freeipapi.com refused the request (HTTP 403).",
+                "free.freeipapi.com sent an answer that could not be read.",
+                "The location service sent no place.",
+                "The location service could not find this computer's place.",
+                "The location service could not find this computer's place: Reserved range.",
+                "The location server address 'ftp://x/' is not valid: unknown url type: 'ftp'."]
+    before = i18n.language()
+    try:
+        i18n.set_language("日本語")
+        for m in messages:
+            shown = i18n.tr_text(m)
+            assert shown != m and not any(w in shown for w in ("answer", "server error", "could not")), (m, shown)
+        assert i18n.tr_text(messages[1]) == "3回試しましたがfree.freeipapi.comから応答がありません（サーバーエラー（HTTP 502））。"
+    finally:
+        i18n.set_language(before)

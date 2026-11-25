@@ -46,6 +46,8 @@ pub enum Page {
     Disliked,
     RecentlyPlayed,
     Recent,
+    /// a place of Your Stats (2.4), by `places::place_key()`
+    Place(String),
     Stats,
     StatsDetails,
     Search,
@@ -82,6 +84,7 @@ impl Page {
             Page::Settings => n_!("Settings"),
             Page::Quality => n_!("Quality check"),
             Page::Tab(_) => n_!("Tabs"),
+            Page::Place(_) => crate::places::PLACES_TITLE,
         }
     }
 
@@ -237,6 +240,8 @@ pub enum ConfirmAction {
     DeleteEqPreset(String),
     DeleteTheme(String),
     ClearHistory,
+    /// Forget play locations… (2.4)
+    ForgetPlaces,
     /// write a new genre, composer or year into these files (the question, the kind, the
     /// paths, the new name, the groups it came from)
     RetagGroup { title: String, text: String, kind: &'static str, paths: Vec<String>, name: String, from: Vec<String> },
@@ -740,6 +745,8 @@ pub struct Player {
     pub tab_win: Option<crate::tabs::TabWindow>,
     pub tabs_gen: u64,
     pub tab_hits: crate::tabs::TabHits,
+    /// where songs were played (2.4): the place the plays are stored with, and its lookup
+    pub places: crate::places::PlacesState,
 }
 
 fn seed_now() -> u64 {
@@ -880,6 +887,7 @@ impl Player {
             tab_win: None,
             tabs_gen: 0,
             tab_hits: Default::default(),
+            places: Default::default(),
             seed: seed_now(),
             state,
             state_dirty: false,
@@ -1936,7 +1944,7 @@ impl Player {
         let Some(l) = self.listening.take() else { return };
         let track = self.lib.track(&l.path).cloned().unwrap_or_else(|| Track { path: l.path.clone(), ..Default::default() });
         if let Some(h) = &self.history {
-            if h.add_play(&track, l.started, l.seconds) {
+            if h.add_play_at(&track, l.started, l.seconds, self.play_place()) {
                 self.history_gen += 1;
             }
         }
@@ -2102,6 +2110,7 @@ impl Player {
                 }
             }
             ConfirmAction::ClearHistory => self.clear_history(),
+            ConfirmAction::ForgetPlaces => self.forget_places(),
             ConfirmAction::RetagGroup { title, kind, paths, name, from, .. } => {
                 if self.tag_job.as_ref().is_none_or(|j| j.done()) {
                     // the page of the group follows it to its new name
@@ -2191,6 +2200,7 @@ impl Player {
             return;
         }
         self.scanner.apply_settings(new.clone());
+        self.places_settings_changed(&old, &new); // 2.4: turned on, off, or another location service
         if new.language != old.language {
             // the next frame is drawn in the new language (no restart needed)
             self.applied_language = new.language.clone();
@@ -2365,6 +2375,7 @@ impl Player {
         self.poll_musicbrainz();
         self.poll_engine();
         self.track_listening();
+        self.places_tick(); // 2.4: the place the plays are stored with
         self.apply_settings_due(&ctx);
         if let Some(at) = self.search_due {
             if Instant::now() >= at {
@@ -2773,6 +2784,12 @@ impl Player {
             }
             Page::Group(_, name) => return tr_name(name).to_string(),
             Page::Tab(name) => return name.clone(),
+            Page::Place(key) => {
+                let name = self.place_name(key);
+                if !name.is_empty() {
+                    return name;
+                }
+            }
             Page::Folders(folder) => {
                 // with one library folder, Folders shows that folder (as Python's page does)
                 let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| realhires::paths::abspath(f)).collect();
@@ -3155,6 +3172,13 @@ impl Player {
                 }
                 // the title and text are made (translated) by `retag_group()`
                 ConfirmAction::RetagGroup { title, text, .. } => (title.as_str(), text.clone(), tr!("Change")),
+                ConfirmAction::ForgetPlaces => (
+                    tr!("Forget play locations"),
+                    tr!("Forget where your songs were played? The plays stay in the play history and in Your Stats, only \
+                         their places are removed.")
+                    .to_string(),
+                    tr!("Forget"),
+                ),
                 ConfirmAction::ClearHistory => (
                     tr!("Clear the play history"),
                     tr!("Forget every song played so far? Recently Played and Your Stats start again from nothing.").to_string(),
@@ -3197,6 +3221,7 @@ impl Player {
         self.save_state();
         self.lib_stop.store(true, Ordering::Relaxed);
         self.mb_stop.store(true, Ordering::Relaxed);
+        crate::places::stop(&self.places);
         self.engine.stop();
     }
 }

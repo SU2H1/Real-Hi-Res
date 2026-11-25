@@ -16,6 +16,7 @@ from .i18n import N_, tr, tr_name, tr_text
 from .musiclib import Track
 from .player_pages import (Page, album_menu, album_order, frame, label, library_groups, plural, song_table,
                            track_sort, track_value)
+from .player_places import draw_day_place, draw_places
 from .player_theme import IconButton, PillButton, draw_icon, fit_text, mix, round_rect
 from .player_widgets import (AlbumGrid, Column, SongList, bind_wheel, draw_cover, draw_mosaic,
                              show_scrollbar)
@@ -711,6 +712,7 @@ class StatsPage(Page):
         self.sub.configure(text=tr("{period}: {minutes}, {plays}", period=period,
                                    minutes=plural(int(st["seconds"] / 60 + 0.5), "minute"),
                                    plays=plural(st["plays"], "play")) if st["logged"] else period)
+        self.place_rows = self.app.period_places()  # 2.4: the period's places
         self._load_calendar()
         self.area.redraw()
 
@@ -849,7 +851,11 @@ class StatsPage(Page):
         rest = width - 70 - 90
         tw = rest * 0.55
         aw = rest - tw - 16
+        with_places, place = any(r.get("place") for r in self.day_rows), None
         for i, r in enumerate(self.day_rows):
+            if with_places and r.get("place", "") != place:  # 2.4: where the plays under it were played
+                place = r.get("place", "")
+                y = draw_day_place(self, c, x, y, width, place)
             box = (x, y, right, y + self.ROW_H)
             playable = r["path"] in self.app.by_path
             if playable and hover == box:
@@ -958,7 +964,7 @@ class StatsPage(Page):
             c.create_text(x + 20, y + 118, text=fit_text(t.f("stat_detail"), detail, int(cw - 40), self._fit),
                           anchor="w", fill=mix(color, "#ffffff", 0.85), font=t.f("stat_detail"))
         rows = (len(cards) + cols - 1) // cols
-        return y0 + rows * (ch + gap) + 20
+        return draw_places(self, y0 + rows * (ch + gap) + 4)  # 2.4: the period's places
 
 
 class StatsDetailsPage(Page):
