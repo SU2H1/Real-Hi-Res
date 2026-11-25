@@ -4,10 +4,10 @@ the results (with an explanation of any detection) into the release notes.
     python packaging/av_scan.py --tag v1.8.1 --notes-in body.md --notes-out new.md \\
         --json results.json [--build-url URL] FILE...
 
-Run by .github/workflows/av-scan.yml before every release (on the packages
-the release will publish; with --require-results it fails unless VirusTotal
-has finished every file, which holds the release back) and once a day for the
-latest release, so the results on the release page stay current as vendors
+Run by .github/workflows/av-scan.yml right after every release (release first,
+scan after, since 2026-11-25), on a hand-started build with "av_scan" (on the
+packages it built; with --require-results it fails unless VirusTotal has
+finished every file) and once a day for the latest release, so the results on the release page stay current as vendors
 change their signatures.  Only the Python standard library is used.
 
 Keys come from the environment (GitHub repository secrets); a service without

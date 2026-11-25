@@ -3,12 +3,14 @@ name: Test, build and release
 # * Every push / pull request: run the test suite and build all packages
 #   (downloadable from the run's "Artifacts" section).
 # * Pushing a tag such as v1.2.0, or pushing to main with a __version__ that
-#   has not been released yet: additionally scan the packages with VirusTotal,
-#   Kaspersky and Hybrid Analysis (av-scan job) and then publish a GitHub
-#   Release with the packages and those scan results (release job).  A release
-#   is never published before its antivirus results are in its notes.
+#   has not been released yet: additionally publish a GitHub Release with the
+#   packages as soon as all ten package jobs have passed (release job), and
+#   then scan the published files with VirusTotal, Kaspersky and Hybrid
+#   Analysis, which writes the "Antivirus scan results" section into the
+#   release notes (av-scan job).  Release first, scan after: the user's rule
+#   since 2026-11-25 ("From now on release then av").
 # * Run workflow (workflow_dispatch) with "av_scan": build and scan without
-#   publishing, to try the scan on a branch.
+#   publishing, to try the scan on a branch (av-scan-try job).
 #
 # The Python jobs run packaging/ci_build.sh, which fetches FFmpeg, runs pytest
 # with it, builds with PyInstaller, checks OS/CPU compatibility of every bundled
@@ -270,44 +272,58 @@ jobs:
           echo "scan=$SCAN" >> "$GITHUB_OUTPUT"
           echo "Release tag: $TAG, publish: $PUBLISH, antivirus scan: $SCAN"
 
-  # Scans this run's packages before anything is published, and writes the
-  # release notes with the "Antivirus scan results" section.  It fails, and so
-  # holds the release back, when VirusTotal has no finished result for every
-  # file (re-run the failed job to try again).  Releases created with
-  # GITHUB_TOKEN start no other workflows, so av-scan.yml is called from here;
-  # it also refreshes the latest release every day and runs on demand.
-  av-scan:
-    needs: [prepare, windows, macos, linux, rust-windows, rust-macos, rust-linux]
-    if: needs.prepare.outputs.scan == 'true'
-    uses: ./.github/workflows/av-scan.yml
-    with:
-      tag: ${{ needs.prepare.outputs.tag }}
-      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      prerelease: true
-    secrets: inherit
-
+  # Release first (the user's rule since 2026-11-25): publish as soon as the
+  # ten package jobs have passed, with RELEASE_NOTES.md as the notes.
   release:
-    needs: [prepare, av-scan]
+    needs: [prepare, windows, macos, linux, rust-windows, rust-macos, rust-linux]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+      - name: Write the notes
+        shell: bash
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          sed "s/<version>/${TAG#v}/g" packaging/RELEASE_NOTES.md > notes.md
       - uses: actions/download-artifact@v6
         with:
           pattern: UniversalMusicPlayer-*
           path: assets
           merge-multiple: true
-      - uses: actions/download-artifact@v6
-        with:
-          name: release-notes
-          path: notes
-      - run: ls -la assets notes
+      - run: ls -la assets
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Universal Music Player ${{ needs.prepare.outputs.tag }}
-          body_path: notes/release-notes.md
+          body_path: notes.md
           generate_release_notes: true
           make_latest: "true"
           files: assets/*
+
+  # Then the scan: the same as the daily refresh, it downloads the published
+  # files and writes the "Antivirus scan results" section into the notes.
+  # Releases created with GITHUB_TOKEN start no other workflows, so av-scan.yml
+  # is called from here; it also refreshes the latest release every day and
+  # runs on demand.  If it fails, re-run it (or run av-scan.yml for the tag).
+  av-scan:
+    needs: [prepare, release]
+    if: needs.prepare.outputs.publish == 'true'
+    uses: ./.github/workflows/av-scan.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    secrets: inherit
+
+  # Run workflow with "av_scan" (nothing published): the scan of this run's
+  # packages, which writes the notes as an artifact.
+  av-scan-try:
+    needs: [prepare, windows, macos, linux, rust-windows, rust-macos, rust-linux]
+    if: needs.prepare.outputs.scan == 'true' && needs.prepare.outputs.publish != 'true'
+    uses: ./.github/workflows/av-scan.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      build_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      prerelease: true
+    secrets: inherit

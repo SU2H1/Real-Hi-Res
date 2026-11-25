@@ -190,7 +190,7 @@ SCROLL_SCRIPT = r'''
 import faulthandler, os, sys, time
 sys.path.insert(0, REPO)
 faulthandler.enable()
-faulthandler.dump_traceback_later(150, exit=True)
+faulthandler.dump_traceback_later(330, exit=True)  # (a slow macOS runner took over 2 minutes to make the 36 covers ahead)
 import tkinter as tk
 from realhires import covers, musiclib
 from realhires.player_theme import Theme
@@ -222,9 +222,28 @@ theme.styles()
 def pump(cond, what, timeout=60):
     t0 = time.time()
     while not cond():
-        assert time.time() - t0 < timeout, "timed out: " + what
+        assert time.time() - t0 < timeout, "timed out: " + (what() if callable(what) else what)
+        u0 = time.time()
         root.update()
+        if time.time() - u0 > 2:  # (to find where a hang on a macOS runner sits)
+            print("root.update() took %.1f s" % (time.time() - u0), file=sys.stderr, flush=True)
         time.sleep(0.01)
+
+def watchdog():
+    # every 30 s: the progress of the covers made ahead and every thread's stack, so a
+    # hang shows where it sits (the CI's Apple Silicon runners hung here twice)
+    import threading, traceback
+    start = time.time()
+    while True:
+        time.sleep(30)
+        print("--- %.0f s: %d FFmpeg runs, %d queued" % (time.time() - start, len(runs), cache.prefetching()
+                                                       if "cache" in globals() else -1), file=sys.stderr, flush=True)
+        for tid, frame in sys._current_frames().items():
+            name = next((t.name for t in threading.enumerate() if t.ident == tid), "?")
+            print("thread %s:\n%s" % (name, "".join(traceback.format_stack(frame)[-6:])), file=sys.stderr, flush=True)
+
+import threading as _threading
+_threading.Thread(target=watchdog, daemon=True, name="watchdog").start()
 
 def scroll_through(grid, cache):
     """Scroll from the top to the end; return the albums shown."""
@@ -248,7 +267,10 @@ cache = CoverCache(root)
 cache.library_changed(albums)
 cache.prefetch(albums)
 pump(lambda: cache.prefetching() == 0 and all(covers.is_cached([t.path for t in a["tracks"]], cache.GRID)
-                                               for a in albums), "made ahead", timeout=120)
+                                               for a in albums),
+     lambda: "made ahead: %d FFmpeg runs, %d of %d covers saved, %d queued" % (
+         len(runs), sum(covers.is_cached([t.path for t in a["tracks"]], cache.GRID) for a in albums),
+         len(albums), cache.prefetching()), timeout=300)
 made = len(runs)
 assert made >= ALBUMS, made
 assert cache.images == {}, "made ahead only on disk"
@@ -310,7 +332,7 @@ def test_scrolling_the_album_grid_does_not_run_ffmpeg_again(tmp_path):
     script = tmp_path / "scroll.py"
     script.write_text(f"REPO = {str(Path(__file__).resolve().parents[1])!r}\nMUSIC = {str(music)!r}\n"
                       f"ALBUMS = {albums}\n" + SCROLL_SCRIPT, encoding="utf-8")
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=200)
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=360)
     log = proc.stdout + proc.stderr
     assert proc.returncode == 0, log
     assert proc.stdout.splitlines()[-1] == "OK", log
