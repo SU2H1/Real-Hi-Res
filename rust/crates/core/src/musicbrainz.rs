@@ -348,7 +348,7 @@ impl MusicBrainzClient {
 }
 
 /// `urllib.parse.quote(s, safe="")`.
-fn quote_segment(s: &str) -> String {
+pub(crate) fn quote_segment(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
