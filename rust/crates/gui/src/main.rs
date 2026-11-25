@@ -8,11 +8,13 @@ mod audio;
 #[cfg(windows)]
 mod audio_wasapi;
 mod cover_cache;
+mod coversearch;
 mod coverwin;
 mod dialogs;
 mod editinfo;
 mod eqwin;
 mod icons;
+mod jacket;
 mod labels;
 mod leaderboard;
 mod look;

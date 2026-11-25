@@ -2,8 +2,9 @@
 //! cover"), the counterpart of Python's `player_windows.CoverWindow`: the cover
 //! of a song's album as large as the window allows, its size in pixels, format
 //! and where it comes from (`covers::cover_source()`), and Change cover…, Search
-//! Cover Online (2.3: Google Images in the browser, `covers::cover_search_url()`),
-//! Save image as…, Remove cover (confirmed in the window), Show album and Close
+//! Cover Online (2.3: Google Images in the browser, `covers::cover_search_url()`;
+//! 2.5: a menu button with MusicBrainz…, the cover search of `coversearch.rs`, and
+//! Google Images), Save image as…, Remove cover (confirmed in the window), Show album and Close
 //! (Esc).  Reading the cover and changing or removing it run in threads
 //! (`tagedit::set_cover()`/`remove_cover()`), for all the album's songs or this
 //! song only, with a progress line and `tagedit::cover_summary()` afterwards.
@@ -55,6 +56,12 @@ pub struct CoverWin {
     /// Search Cover Online's address: Google Images for the album artist and album
     /// (a song without an album: its artist and title), from the song's tags
     pub search_url: String,
+    /// what MusicBrainz is asked for the cover (2.5): the album (else the title) and its artist
+    pub search_terms: (String, String),
+    /// Search Cover Online → MusicBrainz… (2.5): the cover search, while it is open
+    pub search: Option<crate::coversearch::CoverSearch>,
+    /// Change Cover… of a cover's own menu: the file chooser opens at once (2.5)
+    pub pick_now: bool,
     pub source: Option<CoverSource>,
     pub reading: bool,
     pub busy: bool,
@@ -67,6 +74,8 @@ pub struct CoverWin {
     pub confirm_remove: bool,
     pub outcomes: Vec<TagOutcome>,
     tex: Option<egui::TextureHandle>,
+    /// where Search Cover Online was drawn (for the tests)
+    pub search_button: Option<Rect>,
     ctx: egui::Context,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -101,8 +110,15 @@ impl CoverWin {
             Some(t) => covers::cover_search_url(&t.album_artist, &t.artist, &t.album, &t.display_title()),
             None => covers::cover_search_url("", "", "", &realhires::paths::stem(path)),
         };
+        let search_terms = match track {
+            Some(t) => realhires::coverart::search_terms(&t.album_artist, &t.artist, &t.album, &t.display_title()),
+            None => (String::new(), String::new()),
+        };
         let mut w = CoverWin {
             search_url,
+            search_terms,
+            search: None,
+            pick_now: false,
             path: path.to_string(),
             album_key: album.map(|a| a.key.clone()),
             heading,
@@ -120,6 +136,7 @@ impl CoverWin {
             confirm_remove: false,
             outcomes: vec![],
             tex: None,
+            search_button: None,
             ctx: ctx.clone(),
             tx,
             rx,
@@ -234,6 +251,28 @@ impl CoverWin {
         true
     }
 
+    /// Make this picture the cover, as Change cover… does with a file (2.5: Use this cover
+    /// of the cover search); `name` says what it is when it cannot be used.
+    pub fn change_to_data(&mut self, data: Vec<u8>, name: &str) -> bool {
+        if !self.idle() {
+            return false;
+        }
+        if let Err(e) = tagedit::check_picture(&data, "") {
+            self.summary = tr!("{file} cannot be used: {error}", file = name, error = tr_text(&e.to_string()));
+            return false;
+        }
+        self.start(Some(data));
+        true
+    }
+
+    /// Search Cover Online → MusicBrainz… (2.5): the cover search of this album.
+    pub fn open_search(&mut self) {
+        if self.search.is_none() {
+            let (album, artist) = self.search_terms.clone();
+            self.search = Some(crate::coversearch::CoverSearch::new(&self.ctx, &album, &artist, &self.cfg.musicbrainz_server));
+        }
+    }
+
     /// Remove the covers inside the chosen songs (after the confirmation).
     pub fn remove(&mut self) -> bool {
         if !self.idle() {
@@ -307,7 +346,10 @@ impl CoverWin {
         let mut result = if self.poll() { Outcome::Changed } else { Outcome::Open };
         let mut close = false;
         let mut show_album = false;
-        let mut pick = false;
+        let mut pick = std::mem::take(&mut self.pick_now) && self.idle();
+        let mut open_search = false;
+        let search_esc = esc; // Esc belongs to the cover search while it is open
+        let esc = esc && self.search.is_none();
         let mut save = false;
         let n = self.album_paths.len();
         let mut open = true;
@@ -417,9 +459,18 @@ impl CoverWin {
                     if ui.add_enabled(idle, egui::Button::new(RichText::new(tr!("Change cover…")).strong())).clicked() {
                         pick = true;
                     }
-                    if ui.button(tr!("Search Cover Online")).clicked() {
-                        self.search_online();
-                    }
+                    // 2.5: a menu button: MusicBrainz… (covers from the Cover Art Archive) or Google Images
+                    let menu = ui.menu_button(tr!("Search Cover Online"), |ui| {
+                        if ui.button(tr!("MusicBrainz…")).clicked() {
+                            open_search = true;
+                            ui.close();
+                        }
+                        if ui.button(tr!("Google Images")).clicked() {
+                            self.search_online();
+                            ui.close();
+                        }
+                    });
+                    self.search_button = Some(menu.response.rect);
                     if ui.add_enabled(idle && self.source.is_some(), egui::Button::new(tr!("Save image as…"))).clicked() {
                         save = true;
                     }
@@ -439,6 +490,20 @@ impl CoverWin {
                     close = true;
                 }
             });
+        if open_search {
+            self.open_search();
+        }
+        if let Some(mut s) = self.search.take() {
+            let idle = self.idle();
+            let n = self.album_paths.len();
+            match s.show(ctx, pal, search_esc, &mut self.all_songs, &mut self.also_folder, n, idle) {
+                crate::coversearch::Outcome::Open => self.search = Some(s),
+                crate::coversearch::Outcome::Closed => {}
+                crate::coversearch::Outcome::Use(data, name) => {
+                    self.change_to_data(data, &name);
+                }
+            }
+        }
         if pick {
             let file = rfd::FileDialog::new()
                 .set_title(tr!("Choose the new cover"))

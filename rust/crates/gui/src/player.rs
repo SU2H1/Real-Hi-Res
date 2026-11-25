@@ -413,7 +413,7 @@ pub struct NpHits {
     pub wide_button: Option<Rect>,
     /// where the lyrics are drawn
     pub lyrics_rect: Option<Rect>,
-    /// the album's songs in the left half (2.3): (row, path, drawn bold as the song playing)
+    /// the album's songs on the back of the jacket (2.3, 2.5): (row, path, drawn bold as the song playing)
     pub album_songs: Vec<(Rect, String, bool)>,
     /// the two dots under the left half: the cover, the album's songs (2.3)
     pub dots: Vec<Rect>,
@@ -670,6 +670,8 @@ pub struct Player {
     pub(crate) np_hscroll: f32,
     /// the album whose songs the left half showed last (scrolled to the song playing when it changes)
     pub(crate) np_songs_album: String,
+    /// Now Playing's cover as a record sleeve (2.5): the turn and the backs of the covers
+    pub jacket: crate::jacket::Jacket,
     /// Details: per song its comment tag (None while ffprobe reads it) and saved verdict
     details_extra: HashMap<String, (Option<String>, Option<(String, String)>)>,
     details_song: String,
@@ -854,6 +856,7 @@ impl Player {
             np_swiped: false,
             np_hscroll: 0.0,
             np_songs_album: String::new(),
+            jacket: Default::default(),
             details_extra: HashMap::new(),
             details_song: String::new(),
             details_tx,
@@ -2811,10 +2814,10 @@ impl Player {
         self.lyrics_wide = !self.lyrics_wide;
     }
 
-    /// Now Playing's left half (2.3): the cover (false) or the album's songs (true), from a
-    /// swipe or the dots; kept for the session.
+    /// Now Playing's jacket (2.3, 2.5): the cover (false) or its back, the album's songs
+    /// (true), from the dots; kept for the session.  The jacket turns over (`turn_jacket()`).
     pub fn set_np_side(&mut self, songs: bool) {
-        self.np_songs = songs;
+        self.turn_jacket(songs, 0);
     }
 
     /// A page's name as Now Playing's back link shows it (2.3): an album's, playlist's,
