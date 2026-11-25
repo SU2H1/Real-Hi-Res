@@ -13912,7 +13912,7 @@ false,
 "field": "year",
 "out": {
 "field": "year",
-"op": "=",
+"op": ">=",
 "value": 0
 }
 },
@@ -13938,7 +13938,7 @@ false,
 "field": "title",
 "out": {
 "field": "title",
-"op": "is",
+"op": "contains",
 "value": ""
 }
 },
@@ -14201,77 +14201,77 @@ false,
 "defaults": {
 "title": {
 "field": "title",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "artist": {
 "field": "artist",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "album": {
 "field": "album",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "album_artist": {
 "field": "album_artist",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "genre": {
 "field": "genre",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "composer": {
 "field": "composer",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "format": {
 "field": "format",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "folder": {
 "field": "folder",
-"op": "is",
+"op": "contains",
 "value": ""
 },
 "quality": {
 "field": "quality",
-"op": "is",
+"op": "contains",
 "value": "Hi-Res Lossless"
 },
 "year": {
 "field": "year",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "bits": {
 "field": "bits",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "sample_rate": {
 "field": "sample_rate",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "bit_rate": {
 "field": "bit_rate",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "duration": {
 "field": "duration",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "added_days": {
 "field": "added_days",
-"op": "=",
+"op": ">=",
 "value": 0
 },
 "lossless": {

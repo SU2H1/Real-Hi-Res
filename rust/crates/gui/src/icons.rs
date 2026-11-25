@@ -47,6 +47,8 @@ pub enum Icon {
     Tiles,
     /// the Library page as a list (2.3)
     ListView,
+    /// a custom tab: a funnel (2.3)
+    Filter,
 }
 
 fn heart_points(c: Pos2, s: f32) -> Vec<Pos2> {
@@ -427,6 +429,17 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 p.rect_filled(Rect::from_min_max(pos2(c.x - 0.42 * s, y - q), pos2(c.x - 0.28 * s, y + q)), 0.0, color);
                 p.line_segment([pos2(c.x - 0.14 * s, y), pos2(c.x + 0.42 * s, y)], stroke);
             }
+        }
+        Icon::Filter => {
+            let pts = [
+                pos2(c.x - 0.38 * s, c.y - 0.32 * s),
+                pos2(c.x + 0.38 * s, c.y - 0.32 * s),
+                pos2(c.x + 0.09 * s, c.y + 0.04 * s),
+                pos2(c.x + 0.09 * s, c.y + 0.36 * s),
+                pos2(c.x - 0.09 * s, c.y + 0.26 * s),
+                pos2(c.x - 0.09 * s, c.y + 0.04 * s),
+            ];
+            poly(p, &pts, stroke, true);
         }
     }
 }

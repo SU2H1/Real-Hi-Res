@@ -2534,7 +2534,9 @@ class SettingsPage(Page):
                     (tr("Download lyrics for the whole library…"), app.lyrics_for_library),
                     (tr("Look up the library on MusicBrainz now"), lambda: app.lookup_library(force=True)),
                     (tr("Open the quality checker"), lambda: app.show_page("quality")),
-                    (tr("Clear the play history…"), app.clear_history)]
+                    (tr("Clear the play history…"), app.clear_history),
+                    (tr("Import tab…"), app.import_tab_file),  # 2.3: custom tabs
+                    (tr("Open tabs folder"), app.open_tabs_folder)]
         elif self.group == "Playback":
             acts = [(tr("Equalizer…"), app.open_eq)]
         elif self.group == "Saved results":
@@ -2555,6 +2557,14 @@ class SettingsPage(Page):
             for i, (text, cmd) in enumerate(acts):  # two per row, so they never run off the page
                 PillButton(row, t, text, kind="accent" if i == 0 else "plain", command=cmd).grid(
                     row=i // 2, column=i % 2, sticky="w", padx=(0, 10), pady=(0, 8))
+        if self.group == "Library":  # 2.3: where tab files go, and the files there that are not tabs
+            label(parent, t, tr("Tab files (.json) put into the tabs folder appear in the sidebar and on the "
+                                "Library page."), "small", fg="text2", wraplength=self.HELP_WIDTH,
+                  justify="left").pack(anchor="w", pady=(4, 0))
+            self.tab_note = label(parent, t, app.tab_problems_text(), "small", fg="error",
+                                  wraplength=self.HELP_WIDTH, justify="left")
+            if app.tab_problems:
+                self.tab_note.pack(anchor="w", pady=(4, 0))
 
     # ---- saving ---------------------------------------------------------
     def _set_number(self, name: str, var: tk.StringVar, kind: Optional[str]) -> None:

@@ -108,7 +108,8 @@ def test_values_typed_into_the_tab_window():
     assert smarttabs.parse_value("title", " 2000 ") == " 2000 "
     assert smarttabs.value_text(30) == "30" and smarttabs.value_text(2.5) == "2.5"
     assert smarttabs.change_field(R("year", ">=", 5), "bits") == R("bits", ">=", 5)
-    assert smarttabs.change_field(R("year", ">=", 5), "title") == R("title", "is", "")
+    assert smarttabs.change_field(R("year", ">=", 5), "title") == R("title", "contains", "")
+    assert smarttabs.new_rule("year") == R("year", ">=", 0) and smarttabs.new_rule("liked") == R("liked", "is", True)
     assert smarttabs.change_field(R("title", "is", "x"), "quality") == R("quality", "is", "Hi-Res Lossless")
 
 
@@ -156,3 +157,27 @@ def test_rust_vectors_hold_pythons_answers():
     for case in data["texts"]:
         assert smarttabs.tab_text(case["tab"]) == case["text"]
     assert data["labels"]["templates"] == smarttabs.TEMPLATES
+
+
+def test_every_message_and_label_is_shown_in_japanese():
+    from realhires import i18n
+
+    data = json.loads(VECTORS.read_text(encoding="utf-8"))
+    messages = {c["error"] for c in data["checks"] if c["error"]} | {why for _, why in data["folder"]["skipped"]}
+    messages |= {r["error"] for r in data["op_results"] if "error" in r}
+    messages |= {f"You already have a tab called “{'Hi-Res'}”.", "The tab could not be saved: [Errno 13] Permission denied"}
+    i18n.set_language("日本語")
+    try:
+        for m in sorted(messages):
+            ja = i18n.tr_text(m)
+            assert ja != m and not any(w in ja for w in ("Rule ", "tab", " must ")), (m, ja)
+        assert i18n.tr_text("Rule 2: “Year” cannot use the operator “contains”.") == \
+            "ルール2：「年」には条件「が次を含む」を使えません。"
+        for f in smarttabs.FIELDS:
+            assert i18n.tr(smarttabs.FIELD_LABELS[f]) != smarttabs.FIELD_LABELS[f]
+            for op in smarttabs.ops_for(f):
+                assert i18n.tr(smarttabs.op_label(f, op)) != smarttabs.op_label(f, op)
+        for t in smarttabs.TEMPLATES:
+            assert i18n.tr(t["name"]) != t["name"]
+    finally:
+        i18n.set_language("English")

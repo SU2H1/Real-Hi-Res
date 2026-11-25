@@ -66,6 +66,24 @@ QUALITY_VALUES = ("Hi-Res Lossless", "Lossless", "Lossy")
 VALUE_CHOICES = {"quality": QUALITY_VALUES}
 
 
+# the messages without values (the apps show them translated; those with values have patterns)
+NOT_A_TAB = "This file is not a tab of Universal Music Player."
+UNKNOWN_VERSION = "This tab has a format version that Universal Music Player does not know."
+NEWER_VERSION = "This tab was made by a newer version of Universal Music Player. Update the app to use it."
+NO_NAME = "Give the tab a name."
+BAD_MATCH = "A tab matches “all” or “any” of its rules."
+RULES_NOT_A_LIST = "The rules of a tab must be a list."
+TOO_MANY_RULES = "A tab can have at most 100 rules."
+SORT_NOT_A_FIELD = "A tab is sorted by one of the fields of its rules."
+BAD_DESCENDING = "Descending must be true or false."
+BAD_LIMIT = "The limit must be a whole number from 0 to 100000 (0: no limit)."
+TOO_LARGE = "The file is larger than 1 MB, which no tab is."
+UNREADABLE = "The file could not be read."
+IN_FOLDER = "This tab is in the tabs folder already."
+FIXED_MESSAGES = (NOT_A_TAB, UNKNOWN_VERSION, NEWER_VERSION, NO_NAME, BAD_MATCH, RULES_NOT_A_LIST, TOO_MANY_RULES,
+                  SORT_NOT_A_FIELD, BAD_DESCENDING, BAD_LIMIT, TOO_LARGE, UNREADABLE, IN_FOLDER)
+
+
 class TabError(ValueError):
     """A tab (or tab file) that cannot be used; the message says why in a full sentence."""
 
@@ -108,16 +126,24 @@ def default_value(field_name: str):
     return {"number": 0, "yesno": True}.get(kind, "")
 
 
+# the operator a new rule starts with: one that every song passes until a value is given
+DEFAULT_OPS = {"text": "contains", "number": ">=", "yesno": "is"}
+
+
+def default_op(field_name: str) -> str:
+    return DEFAULT_OPS.get(kind_of(field_name), "is")
+
+
 def new_rule(field_name: str = "title") -> dict:
-    """A rule for `field_name` with its first operator and a value of the right kind."""
-    return {"field": field_name, "op": ops_for(field_name)[0], "value": default_value(field_name)}
+    """A rule for `field_name` with its usual operator and a value of the right kind."""
+    return {"field": field_name, "op": default_op(field_name), "value": default_value(field_name)}
 
 
 def change_field(rule: dict, field_name: str) -> dict:
     """The rule with another field: the operator and the value are kept when they fit it."""
     out = {"field": field_name, "op": rule.get("op"), "value": rule.get("value")}
     if out["op"] not in ops_for(field_name):
-        out["op"] = ops_for(field_name)[0]
+        out["op"] = default_op(field_name)
     kind = kind_of(field_name)
     v = out["value"]
     fits = ((kind == "text" and isinstance(v, str)) or (kind == "number" and _is_number(v))
@@ -219,35 +245,35 @@ def check_tab(data) -> dict:
     unknown field or operator, a value of the wrong kind, a wrong sort or limit.  Keys
     that are left out get their defaults (match all, no rules, sorted by title, no limit)."""
     if not isinstance(data, dict) or data.get("format") != TAB_FORMAT:
-        raise TabError("This file is not a tab of Universal Music Player.")
+        raise TabError(NOT_A_TAB)
     version = data.get("version")
     if not _is_int(version) or version < 1:
-        raise TabError("This tab has a format version that Universal Music Player does not know.")
+        raise TabError(UNKNOWN_VERSION)
     if version > TAB_VERSION:
-        raise TabError("This tab was made by a newer version of Universal Music Player. Update the app to use it.")
+        raise TabError(NEWER_VERSION)
     name = clean_name(data.get("name")) if isinstance(data.get("name"), str) else ""
     if not name:
-        raise TabError("Give the tab a name.")
+        raise TabError(NO_NAME)
     match = data.get("match", "all")
     if match not in ("all", "any"):
-        raise TabError("A tab matches “all” or “any” of its rules.")
+        raise TabError(BAD_MATCH)
     rules = data.get("rules", [])
     if not isinstance(rules, list):
-        raise TabError("The rules of a tab must be a list.")
+        raise TabError(RULES_NOT_A_LIST)
     if len(rules) > MAX_RULES:
-        raise TabError("A tab can have at most 100 rules.")
+        raise TabError(TOO_MANY_RULES)
     checked = [check_rule(r, i + 1) for i, r in enumerate(rules)]
     sort = data.get("sort", "title")
     if not isinstance(sort, str):
-        raise TabError("A tab is sorted by one of the fields of its rules.")
+        raise TabError(SORT_NOT_A_FIELD)
     if sort not in FIELDS:
         raise TabError(f"A tab cannot be sorted by “{_shown(sort)}”.")
     descending = data.get("descending", False)
     if not isinstance(descending, bool):
-        raise TabError("Descending must be true or false.")
+        raise TabError(BAD_DESCENDING)
     limit = data.get("limit", 0)
     if not _is_int(limit) or limit < 0 or limit > MAX_LIMIT:
-        raise TabError("The limit must be a whole number from 0 to 100000 (0: no limit).")
+        raise TabError(BAD_LIMIT)
     return {"format": TAB_FORMAT, "version": TAB_VERSION, "name": name, "match": match, "rules": checked,
             "sort": sort, "descending": descending, "limit": limit}
 
@@ -256,7 +282,7 @@ def check_name(name, tabs: Sequence[dict], renaming: str = "") -> str:
     """The cleaned name for a new or renamed tab, or TabError (empty, or taken in any case)."""
     clean = clean_name(name)
     if not clean:
-        raise TabError("Give the tab a name.")
+        raise TabError(NO_NAME)
     key = clean.casefold()
     if any(t["name"].casefold() == key and t["name"] != renaming for t in tabs):
         raise TabError(f"You already have a tab called “{clean}”.")
@@ -440,7 +466,7 @@ def parse_tab(text: str) -> dict:
     try:
         data = json.loads(text.lstrip("﻿"))
     except ValueError:
-        raise TabError("This file is not a tab of Universal Music Player.") from None
+        raise TabError(NOT_A_TAB) from None
     return check_tab(data)
 
 
@@ -457,15 +483,15 @@ def _read(path: str) -> str:
     try:
         size = os.path.getsize(path)
         if size > MAX_FILE_BYTES:
-            raise TabError("The file is larger than 1 MB, which no tab is.")
+            raise TabError(TOO_LARGE)
         with open(path, "rb") as fh:
             raw = fh.read(MAX_FILE_BYTES + 1)
     except OSError:
-        raise TabError("The file could not be read.") from None
+        raise TabError(UNREADABLE) from None
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
-        raise TabError("This file is not a tab of Universal Music Player.") from None
+        raise TabError(NOT_A_TAB) from None
 
 
 def _same_file(a: str, b: str) -> bool:
@@ -567,7 +593,7 @@ def import_tab(path: str, folder: Optional[str] = None) -> dict:
     tabs folder already."""
     d = folder or tabs_folder()
     if os.path.isdir(d) and _same_file(os.path.dirname(os.path.abspath(path)), d):
-        raise TabError("This tab is in the tabs folder already.")
+        raise TabError(IN_FOLDER)
     t = parse_tab(_read(path))
     tabs, _ = load_tabs(d)
     t["name"] = unique_name(t["name"], [x["name"] for x in tabs])

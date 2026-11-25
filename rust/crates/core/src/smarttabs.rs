@@ -214,16 +214,25 @@ pub fn default_value(field: &str) -> Value {
     }
 }
 
-/// A rule for `field` with its first operator and a value of the right kind.
+/// The operator a new rule starts with: one that every song passes until a value is given.
+pub fn default_op(field: &str) -> &'static str {
+    match kind_of(field) {
+        "text" => "contains",
+        "number" => ">=",
+        _ => "is",
+    }
+}
+
+/// A rule for `field` with its usual operator and a value of the right kind.
 pub fn new_rule(field: &str) -> Rule {
-    Rule { field: field.to_string(), op: ops_for(field).first().unwrap_or(&"is").to_string(), value: default_value(field) }
+    Rule { field: field.to_string(), op: default_op(field).to_string(), value: default_value(field) }
 }
 
 /// The rule with another field: the operator and the value are kept when they fit it.
 pub fn change_field(rule: &Rule, field: &str) -> Rule {
     let mut out = Rule { field: field.to_string(), op: rule.op.clone(), value: rule.value.clone() };
     if !ops_for(field).contains(&out.op.as_str()) {
-        out.op = ops_for(field).first().unwrap_or(&"is").to_string();
+        out.op = default_op(field).to_string();
     }
     let kind = kind_of(field);
     let v = &out.value;

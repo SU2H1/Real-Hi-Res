@@ -52,6 +52,8 @@ pub enum Page {
     NowPlaying,
     Settings,
     Quality,
+    /// a custom tab (2.3), by its name
+    Tab(String),
 }
 
 impl Page {
@@ -79,6 +81,7 @@ impl Page {
             Page::NowPlaying => n_!("Now Playing"),
             Page::Settings => n_!("Settings"),
             Page::Quality => n_!("Quality check"),
+            Page::Tab(_) => n_!("Tabs"),
         }
     }
 
@@ -229,6 +232,8 @@ pub enum NameAction {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfirmAction {
     DeletePlaylist(String),
+    /// Delete Tab… (2.3), by its name
+    DeleteTab(String),
     DeleteEqPreset(String),
     DeleteTheme(String),
     ClearHistory,
@@ -687,7 +692,7 @@ pub struct Player {
     /// sorted song lists, made again only when the library, the sort or the likes change
     list_cache: HashMap<String, ((u64, Option<(SongCol, bool)>, u64), Arc<Vec<String>>)>,
     /// counts likes and dislikes, for the lists made of them
-    likes_gen: u64,
+    pub likes_gen: u64,
     /// renaming a genre, composer or year, or merging genres (one at a time)
     pub tag_job: Option<crate::editinfo::RenameJob>,
     seed: u64,
@@ -726,6 +731,12 @@ pub struct Player {
     pub eq_notes: Vec<String>,
     /// the playlist whose page is shown (its songs get Remove/Move)
     pub table_playlist: Option<String>,
+    /// the custom tabs of the tabs folder (2.3), the files there that are not tabs (and
+    /// why), the tab window, and a number that changes with the tabs
+    pub tabs: Vec<realhires::smarttabs::Tab>,
+    pub tab_problems: Vec<(String, String)>,
+    pub tab_win: Option<crate::tabs::TabWindow>,
+    pub tabs_gen: u64,
 }
 
 fn seed_now() -> u64 {
@@ -860,6 +871,10 @@ impl Player {
             confirm: None,
             eq_notes: vec![],
             table_playlist: None,
+            tabs: vec![],
+            tab_problems: vec![],
+            tab_win: None,
+            tabs_gen: 0,
             seed: seed_now(),
             state,
             state_dirty: false,
@@ -867,6 +882,7 @@ impl Player {
             scanner,
         };
         p.file_themes = realhires::themes::load_folder(&p.custom_themes, None);
+        p.reload_tabs(); // 2.3: the tabs folder
         p.covers.library_changed(&p.lib.albums);
         p.fill_choices();
         p.engine.set_device(&p.scanner.cfg.output_device.clone());
@@ -1402,6 +1418,10 @@ impl Player {
             Page::Liked => self.liked_songs().iter().map(|t| t.path.clone()).collect(),
             Page::AllSongs => self.sorted_songs(self.lib.tracks.iter().collect()).iter().map(|t| t.path.clone()).collect(),
             Page::Playlist(id) => self.playlist_songs(id),
+            Page::Tab(name) => self
+                .tab(name)
+                .map(|t| realhires::smarttabs::tab_songs(t, &self.lib.tracks, &self.tab_context()))
+                .unwrap_or_default(),
             Page::Group(kind, name) => self
                 .lib
                 .find_group(kind, name)
@@ -2054,6 +2074,7 @@ impl Player {
 
     pub fn confirmed(&mut self, action: ConfirmAction) {
         match action {
+            ConfirmAction::DeleteTab(name) => self.delete_tab(&name),
             ConfirmAction::DeletePlaylist(id) => {
                 self.state.delete_playlist(&id);
                 self.save_state();
@@ -2287,6 +2308,10 @@ impl Player {
         if self.page == Page::Genres && *old != Page::Genres {
             self.done_selecting();
         }
+        // 2.3: tab files copied into the tabs folder appear when these pages are shown
+        if matches!(self.page, Page::Library | Page::Tab(_)) {
+            self.reload_tabs();
+        }
     }
 
     /// Forward (the mouse's forward button, Alt+Right, Cmd+] on macOS): the page
@@ -2320,7 +2345,12 @@ impl Player {
             i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| crate::app::is_theme_file(p)).collect()
         });
         for p in dropped {
-            self.import_theme_path(&p);
+            // a .json dropped onto the window: a tab file (2.3) or a theme
+            if realhires::smarttabs::is_tab_file(&p) {
+                self.import_tab_path(&p);
+            } else {
+                self.import_theme_path(&p);
+            }
         }
         self.apply_look(&ctx);
         self.scanner.background(&ctx);
@@ -2507,6 +2537,19 @@ impl Player {
             }
             if sidebar_item(ui, pal, Icon::Playlist, tr!("New Playlist…"), false).clicked() {
                 self.ask_name(tr!("New Playlist"), tr!("New Playlist"), NameAction::NewPlaylist(vec![]));
+            }
+            // 2.3: the custom tabs, with their menu on a right click
+            section(ui, tr!("Tabs"));
+            for name in self.tab_names() {
+                let page = Page::Tab(name.clone());
+                let r = sidebar_item(ui, pal, Icon::Filter, &name, self.page == page);
+                if r.clicked() {
+                    self.go(page);
+                }
+                r.context_menu(|ui| self.tab_menu(ui, &name));
+            }
+            if sidebar_item(ui, pal, Icon::Filter, tr!("New Tab…"), false).clicked() {
+                self.new_tab();
             }
             section(ui, tr!("History"));
             let items: [(Icon, &str, Page); 3] = [
@@ -2716,6 +2759,7 @@ impl Player {
                 }
             }
             Page::Group(_, name) => return tr_name(name).to_string(),
+            Page::Tab(name) => return name.clone(),
             Page::Folders(folder) => {
                 // with one library folder, Folders shows that folder (as Python's page does)
                 let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| realhires::paths::abspath(f)).collect();
@@ -2925,6 +2969,9 @@ impl Player {
         let had_dialog = self.name_dialog.is_some() || self.confirm.is_some() || self.tag_job.is_some();
         self.dialogs(ctx, pal);
         let cover_open = crate::coverwin::cover_window(self, ctx, pal);
+        if crate::tabs::tab_window(self, ctx, pal) {
+            return; // Esc and Enter belong to the tab window while it is open (2.3)
+        }
         if let Some(mut w) = self.edit_info.take() {
             let cfg = self.scanner.cfg.clone();
             // Esc and Enter belong to the MusicBrainz window when Acquire Metadata… opened it over this one
@@ -3065,6 +3112,11 @@ impl Player {
                         "Delete the playlist “{name}”? Its songs stay in your library.",
                         name = self.state.playlist(id).map(|p| p.name.as_str()).unwrap_or("")
                     ),
+                    tr!("Delete"),
+                ),
+                ConfirmAction::DeleteTab(n) => (
+                    tr!("Delete Tab"),
+                    tr!("Delete the tab “{name}”? Its file is deleted from the tabs folder; the songs are not.", name = n),
                     tr!("Delete"),
                 ),
                 ConfirmAction::DeleteEqPreset(n) => (

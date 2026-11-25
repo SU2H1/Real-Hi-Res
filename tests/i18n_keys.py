@@ -39,7 +39,7 @@ sys.path.insert(0, ROOT)
 
 PY_FILES = ["realhires/gui.py", "realhires/player_gui.py", "realhires/player_pages.py",
             "realhires/player_collections.py", "realhires/player_widgets.py", "realhires/player_windows.py",
-            "realhires/player_theme.py", "realhires/player_mb.py"]
+            "realhires/player_theme.py", "realhires/player_mb.py", "realhires/player_tabs.py"]
 RUST_DIR = "rust/crates/gui/src"
 TR_NAMES = {"tr", "N_"}
 CATALOG = os.path.join(ROOT, "realhires", "assets", "lang", "ja.json")
@@ -154,6 +154,19 @@ def core_keys() -> Dict[str, List[str]]:
         add(v, "lyrics.SHOWN_LABELS")
     for file in ("song.lrc", "song.txt", "song.flac"):
         add(lyrics.shown_label(lyrics.SYNCED, "song.flac", file)[1], "lyrics.shown_label")
+    # 2.3: custom tabs (the tab window's menus, the templates, the fixed messages of check_tab())
+    from realhires import smarttabs
+
+    for v in smarttabs.FIELD_LABELS.values():
+        add(v, "smarttabs.FIELD_LABELS")
+    for table in (smarttabs.TEXT_OP_LABELS, smarttabs.NUMBER_OP_LABELS, smarttabs.YESNO_OP_LABELS,
+                  smarttabs.MATCH_LABELS):
+        for v in table.values():
+            add(v, "smarttabs labels")
+    for v in (smarttabs.YES, smarttabs.NO) + smarttabs.QUALITY_VALUES + smarttabs.FIXED_MESSAGES:
+        add(v, "smarttabs")
+    for t in smarttabs.TEMPLATES:
+        add(t["name"], "smarttabs.TEMPLATES")
     for name in i18n.PLACEHOLDER_NAMES:
         add(name, "i18n.PLACEHOLDER_NAMES")
     for v in i18n.VERDICT_NAMES:
