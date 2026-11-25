@@ -1030,3 +1030,33 @@ it says is dropped.
   playlist of those songs (named e.g. "Sad songs", a taken name gets " 2"). Song lists can show **BPM** and **Mood**
   columns (choosable, as the other columns), Details on Now Playing shows the mood, tempo and key, and custom tabs get
   the fields `bpm` (number), `mood` and `tempo` (text, chosen from a menu like Quality).
+- **How a song is analysed** (`moods.py`'s docstring has the details; the Rust module repeats every step): FFmpeg
+  decodes at most 90 s (from 30 s in, as late as a whole 90 s stretch still fits, or all of a shorter song) as two
+  channels at 22,050 Hz, below normal priority (`nice` on macOS and Linux, the below-normal class on Windows), and
+  the two are averaged. *Tempo*: a spectral-flux onset envelope (1,024-point Hann frames every 256 samples, about
+  86 per second; log(1 + 1000·|X|), the rise summed over the bins, the 0.5 s local mean taken off), its
+  autocorrelation over 50–210 BPM weighted by a log-normal prior around 120 BPM one octave wide; the best peak must
+  lie 0.05 above the median of those lags (noise has no beat, BPM 0); a peak at half the lag at least 0.8 as strong
+  makes the tempo twice as fast; the lag is refined by parabolas through its peaks at 1–4 times the lag. *Energy*:
+  the RMS level in dBFS. *Brightness*: the spectral centroid of the average power spectrum. *Key*: a chroma vector
+  (8,192-point frames, 65–2,100 Hz, each bin to its nearest pitch class) against the 24 Krumhansl–Kessler profiles.
+- **Labels and thresholds**: Up-tempo from 120 BPM, Slow below 90, else Mid-tempo; Energetic from −16 dBFS, else
+  Calm. The mood: the valence is the mode (major positive), or the brightness (from 1,500 Hz positive) when the best
+  major and minor correlations lie less than 0.05 apart; the arousal is high when Energetic (+1), Up-tempo (+1) and
+  Slow (−1) add up to at least 1. Positive and high: Happy; positive and low: Chill; negative and high: Intense;
+  negative and low: Sad. A stretch quieter than −60 dBFS or shorter than 1 s gets no labels. On the invented test
+  songs (clicks over major and minor chord progressions, 56–200 BPM) the BPM is within ±2 and the mode right; a
+  90 s stretch takes about 0.35 s, decoding included.
+- **The table** `moods` of `library.sqlite`: path (key), size, mtime_ns, bpm, energy, brightness, key, mode, labels
+  (JSON: tempo, energy, mood) and the analyser's version (`ANALYSER_VERSION`, 1); a song is analysed again when its
+  size or modification time changes or the version is another, and its old labels are shown until then. A song that
+  cannot be decoded is not written, so it is tried again after the next library update.
+- **Details settled while building both apps**: the job's progress ("Analysing moods: 3 of 120 songs") is the least
+  important text of the sidebar's status (it never replaces another one) and is cleared when the job ends; new
+  results reach the pages at most every 2 s while it runs; the Moods page says how many songs are analysed and that
+  the labels are estimates, the column menu says "BPM (estimated)" and "Mood (estimated)", the cells' tooltip lists
+  everything found, and Details' rows are "Mood (estimated)", "Tempo (estimated)" and "Key (estimated)". The cards
+  are Happy, Sad, Chill, Intense, then Up-tempo, Mid-tempo, Slow, each in its own colour; a card's songs are sorted
+  as All Songs is in each app. Create Playlist stays on the card's page and says what it made ("Made the playlist
+  “Sad songs” with 12 songs."); the playlist's name is in the language in use. Turning `analyse_moods` off stops a
+  running job (the results are kept).

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from . import APP_NAME, embed, i18n
 from . import lyrics as lyrics_mod
-from . import musiclib, playerstate, stats, tagedit
+from . import moods, musiclib, playerstate, stats, tagedit
 from . import themes as themes_mod
 from . import settings as settings_mod
 from .i18n import N_, tr, tr_name, tr_text
@@ -134,6 +134,10 @@ def track_value(t: Track, key: str) -> str:
         return tr_text(stats.day_label(f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"))
     if key == "file":
         return os.path.basename(t.path)
+    if key in ("bpm", "mood"):  # 2.4: the estimated tempo and mood (player_moods)
+        from .player_moods import mood_value
+
+        return mood_value(t, key)
     return ""
 
 
@@ -151,6 +155,8 @@ def track_sort(t: Track, key: str):
         return (t.bit_rate, title, t.path)
     if key == "added":
         return (t.mtime_ns, title, t.path)
+    if key == "bpm":  # 2.4: songs not analysed yet first
+        return (moods.sort_bpm(getattr(t, "mood", None)), title, t.path)
     return (track_value(t, key).casefold(), title, t.path)
 
 
@@ -193,10 +199,13 @@ COLUMN_DEFS = {
     "format": Column("format", N_("Format"), 64),
     "bit_rate": Column("bit_rate", N_("Bit rate"), 86, anchor="e"),
     "added": Column("added", N_("Date added"), 100),
+    "bpm": Column("bpm", N_("BPM"), 52, anchor="e", tip=True),  # 2.4: estimated (player_moods)
+    "mood": Column("mood", N_("Mood"), 90, tip=True),
     "file": Column("file", N_("File"), 180, True),
     "like": Column("like", "", 30, kind="heart"),
 }
-COLUMN_LABELS = {"num": N_("# (track number)"), "like": N_("Heart (like)")}
+COLUMN_LABELS = {"num": N_("# (track number)"), "like": N_("Heart (like)"), "bpm": N_("BPM (estimated)"),
+                 "mood": N_("Mood (estimated)")}
 
 
 def text_width(text: str) -> int:
@@ -353,6 +362,10 @@ def track_tip(t: Track, key: str) -> str:
     """The tooltip of a cell: the Quality column's resolution ("24-bit/96 kHz")."""
     if key == "quality" and not getattr(t, "missing", False):
         return tr_text(musiclib.quality_detail(t))
+    if key in ("bpm", "mood") and not getattr(t, "missing", False):  # 2.4
+        from .player_moods import mood_tip
+
+        return mood_tip(t)
     return ""
 
 
@@ -1189,10 +1202,11 @@ def format_line(t: Track) -> str:
 
 
 def song_details(t: Track, album_tracks: int, comment: str, verdict: Optional[tuple],
-                 artists: Optional[List[str]] = None) -> List[tuple]:
+                 artists: Optional[List[str]] = None, mood_rows: Optional[List[tuple]] = None) -> List[tuple]:
     """Now Playing's Details: (label, value) rows.  `verdict` is (verdict label, summary)
     of a saved Quality check result, or None; `artists` the artists of the artist field
-    (`musiclib.split_artists()`), shown as ", "-joined links.
+    (`musiclib.split_artists()`), shown as ", "-joined links; `mood_rows` the estimated
+    mood, tempo and key (2.4, `player_moods.detail_rows()`), after the Quality check.
     The labels stay English (DetailsView shows them as tr(label)); the values are shown."""
     dash = "—"
     if t.track and album_tracks >= t.track and album_tracks > 1:
@@ -1213,6 +1227,7 @@ def song_details(t: Track, album_tracks: int, comment: str, verdict: Optional[tu
         rows.append((N_("Quality check"), tr(verdict[0])))
         if verdict[1]:
             rows.append((N_("Why"), tr_text(verdict[1])))
+    rows.extend(mood_rows or [])
     return rows
 
 
@@ -1924,8 +1939,10 @@ class NowPlayingPage(Page):
             self._read_details(trk.path)
             extra = ("", None)
         artists = musiclib.split_artists(trk.artist, self.app.known_artists) if trk.artist else []
-        self.details.set_rows(song_details(trk, len(album["tracks"]) if album else 0, extra[0], extra[1], artists),
-                              artists)
+        from .player_moods import detail_rows  # 2.4: the estimated mood, tempo and key
+
+        self.details.set_rows(song_details(trk, len(album["tracks"]) if album else 0, extra[0], extra[1], artists,
+                                           detail_rows(getattr(trk, "mood", None))), artists)
 
     def _read_details(self, path: str) -> None:
         """The comment tag (ffprobe) and the saved verdict, in a thread; then Details again."""

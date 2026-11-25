@@ -51,6 +51,7 @@ from .player_mb import MusicBrainzWindow
 from .player_stats import MostPlayedPage
 from .player_places import PlacePage, PlacesMixin
 from .player_tabs import TabPage, TabsMixin
+from .player_moods import MoodPage, MoodsMixin, MoodsPage  # noqa: E402  (2.4)
 from . import musicbrainz
 from .playqueue import REPEAT_LABELS, REPEAT_MODES, SHUFFLE_LABELS, SHUFFLE_MODES, PlayQueue, SplitMix64
 
@@ -90,6 +91,7 @@ PAGE_TITLES = {
     "settings": N_("Settings"), "quality": N_("Quality Check"), "tab": N_("Tabs"),
     "most_played": N_("Most Played"),  # 2.4: the leaderboard's page
     "place": N_("Places"),  # 2.4: a place of Your Stats
+    "moods": N_("Moods"), "mood": N_("Moods"),  # 2.4
 }
 
 
@@ -142,7 +144,8 @@ class Sidebar(tk.Frame):
     LIBRARY = [("songs", N_("All Songs"), "note"), ("folders", N_("Folders"), "folder"),
                ("albums", N_("Albums"), "album"), ("artists", N_("Artists"), "artist"),
                ("album_artists", N_("Album Artists"), "mic"), ("genres", N_("Genres"), "genre"),
-               ("years", N_("Years"), "calendar"), ("composers", N_("Composers"), "piano")]
+               ("years", N_("Years"), "calendar"), ("composers", N_("Composers"), "piano"),
+               ("moods", N_("Moods"), "mood")]  # 2.4
     HISTORY = [("played", N_("Recently Played"), "history"), ("recent", N_("Recently Added"), "clock"),
                ("stats", N_("Your Stats"), "stats")]
     FOOT = [("quality", N_("Quality Check"), "check"), ("settings", N_("Settings"), "gear")]
@@ -655,9 +658,9 @@ class UpNextPanel(tk.Frame):
 
 
 # ------------------------------------------------------------ the app ---
-class PlayerApp(TabsMixin, PlacesMixin):
+class PlayerApp(TabsMixin, PlacesMixin, MoodsMixin):
     """The main window (custom tabs, 2.3: TabsMixin in player_tabs.py; where songs were
-    played, 2.4: PlacesMixin in player_places.py)."""
+    played, 2.4: PlacesMixin in player_places.py; moods, 2.4: MoodsMixin in player_moods.py)."""
 
     def __init__(self, root: tk.Tk, initial: Optional[List[str]] = None):
         self.root = root
@@ -737,6 +740,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
         self.url_opener: Callable[[str], None] = gui.open_url  # how web pages are opened (tests record them, 2.3)
         self.clipboard_reader: Optional[Callable[[], str]] = None  # the clipboard's text (tests set a fake)
         self._init_tabs()  # 2.3: the tabs folder, read before the sidebar is drawn
+        self._init_moods()  # 2.4: the moods analysed before, from library.sqlite
         self._build()
         self.qc = QualityCheck(root, self, parent=self.pages["quality"], initial=initial, cfg=cfg)
         self.qc.pack(fill="both", expand=True)
@@ -806,6 +810,8 @@ class PlayerApp(TabsMixin, PlacesMixin):
             "settings": lambda: SettingsPage(self),
             "tab": lambda: TabPage(self),
             "place": lambda: PlacePage(self),
+            "moods": lambda: MoodsPage(self),  # 2.4
+            "mood": lambda: MoodPage(self),
         }
 
     def _build_popups(self) -> None:
@@ -926,7 +932,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
         elif name == "tab":
             self.sidebar.select(f"tab:{self.pages['tab'].name}")
         else:
-            self.sidebar.select(name if name in Sidebar.PAGES else None)
+            self.sidebar.select("moods" if name == "mood" else name if name in Sidebar.PAGES else None)
         self.bar.update_controls()
 
     def _page_args(self) -> dict:
@@ -947,6 +953,8 @@ class PlayerApp(TabsMixin, PlacesMixin):
             return {"tab": p.name}
         if self.page_name == "place" and isinstance(p, PlacePage):
             return {"place": p.key}
+        if self.page_name == "mood" and isinstance(p, MoodPage):  # 2.4
+            return {"kind": p.kind, "label": p.value}
         return {}
 
     def go_back(self) -> None:
@@ -1086,6 +1094,8 @@ class PlayerApp(TabsMixin, PlacesMixin):
             return args["tab"]
         if name == "place" and args.get("place"):  # a place's name (2.4)
             return self.place_name(args["place"]) or tr(PAGE_TITLES["place"])
+        if name == "mood" and args.get("label"):  # a mood's or tempo's name (2.4)
+            return tr(args["label"])
         return tr(PAGE_TITLES.get(name, "Library"))
 
     def back_label(self) -> str:
@@ -1149,6 +1159,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
         self.album_by_key = {a["key"]: a for a in self.albums}
         self._album_key = {t.path: a["key"] for a in self.albums for t in a["tracks"]}
         self.covers.library_changed(self.albums)  # covers are kept unless an album's songs changed
+        self.attach_moods()  # 2.4: each track's mood analysis
         self.tab_cache_clear()
         self.dirty = set(self.pages) - {"quality"}
         if self.page_name in self.dirty:
@@ -1211,6 +1222,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
         if self.lib_then_check:
             self.lib_then_check = False
             self.check_library(switch=False)
+        self.analyse_moods()  # 2.4: the new and changed songs' moods, in the background
         self.lookup_library()
 
     def choose_music_folder(self) -> None:
@@ -1278,6 +1290,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
             if page is not None:
                 page.area.redraw()
             self._settings_page_again()
+        self.moods_settings_changed(old, new)  # 2.4: analyse_moods
         if old.output_device != new.output_device:
             self.engine.set_device(new.output_device)
         if old.gapless != new.gapless:
@@ -2482,6 +2495,7 @@ class PlayerApp(TabsMixin, PlacesMixin):
         self.lib_stop.set()
         self.mb_stop.set()
         self._places_shutdown()
+        self.stop_moods()
         self.engine.close()
         self.covers.close()
         self.qc.shutdown()

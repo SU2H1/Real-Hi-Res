@@ -64,6 +64,12 @@ class Settings:
         False, "Library", "Download lyrics while scanning",
         "While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its "
         "lyrics as set on the Lyrics tab (one request at a time, as LRCLIB asks).", kind="bool")
+    analyse_moods: bool = _f(
+        True, "Library", "Analyse moods and tempo",
+        "Listen to each song of the library on this computer, one at a time in the background, for its tempo "
+        "(BPM), energy, brightness and key, and give it the estimated labels of the Moods page: Happy, Sad, Chill "
+        "or Intense, and Up-tempo, Mid-tempo or Slow. Nothing is sent anywhere, and a song is analysed again only "
+        "when its file changes. The labels are a guess from the sound, not a fact about the song.", kind="bool")
 
     musicbrainz_auto: bool = _f(
         False, "Library", "Add song information from MusicBrainz automatically",

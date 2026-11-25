@@ -226,6 +226,12 @@ settings! {
     lyrics_while_scanning: bool = false, "Library", "Download lyrics while scanning",
         s("While a scan runs, look each song up on LRCLIB as soon as it has been analysed and save its lyrics as \
            set on the Lyrics tab (one request at a time, as LRCLIB asks)."), Bool, None, None, NUMS;
+    analyse_moods: bool = true, "Library", "Analyse moods and tempo",
+        s("Listen to each song of the library on this computer, one at a time in the background, for its tempo \
+           (BPM), energy, brightness and key, and give it the estimated labels of the Moods page: Happy, Sad, Chill \
+           or Intense, and Up-tempo, Mid-tempo or Slow. Nothing is sent anywhere, and a song is analysed again only \
+           when its file changes. The labels are a guess from the sound, not a fact about the song."), Bool, None,
+        None, NUMS;
 
     musicbrainz_auto: bool = false, "Library", "Add song information from MusicBrainz automatically",
         s("When new songs come into the library, look those that miss some information (artist, album, album \

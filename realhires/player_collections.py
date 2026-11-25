@@ -84,6 +84,7 @@ TILES = [  # page, name (English: shown as tr(name)), icon
     ("songs", N_("All Songs"), "note"), ("folders", N_("Folders"), "folder"), ("albums", N_("Albums"), "album"),
     ("artists", N_("Artists"), "artist"), ("album_artists", N_("Album Artists"), "mic"),
     ("genres", N_("Genres"), "genre"), ("years", N_("Years"), "calendar"), ("composers", N_("Composers"), "piano"),
+    ("moods", N_("Moods"), "mood"),  # 2.4
     ("playlists", N_("Playlists"), "playlist"), ("liked", N_("Liked Songs"), "heart"),
     ("disliked", N_("Disliked Songs"), "thumbs_down"), ("played", N_("Recently Played"), "history"),
     ("recent", N_("Recently Added"), "clock"), ("stats", N_("Your Stats"), "stats"),
@@ -95,7 +96,7 @@ LAYOUT_ICONS = [("Tiles", "tiles"), ("List", "list")]  # the buttons at the righ
 
 
 class LibraryPage(Page):
-    """The start page: its entries (the fourteen of TILES, then those that come
+    """The start page: its entries (the fifteen of TILES, then those that come
     after them) as tiles or, with the setting library_layout = "List" (2.3), as
     rows; the newest albums, and a Your Stats banner when there are plays this
     year.  The two buttons at the right of the title switch the layout."""
@@ -147,6 +148,7 @@ class LibraryPage(Page):
             "genres": count(n(library_groups(app, "genres")), "genre"),
             "years": count(n(library_groups(app, "years")), "year"),
             "composers": count(n(library_groups(app, "composers")), "composer"),
+            "moods": app.moods_entry_count(),  # 2.4
             "playlists": count(n(app.state.playlists), "playlist"),
             "liked": count(n(app.state.liked), "song"),
             "disliked": count(n(app.state.disliked), "song"),
@@ -161,13 +163,13 @@ class LibraryPage(Page):
 
     def entries(self) -> List[Tuple[str, str, str, str, Callable[[], None]]]:
         """The page's entries in their order, as (key, name shown, icon, count, open): the
-        fourteen of TILES, then the entries that come after them (more_entries())."""
+        fifteen of TILES, then the entries that come after them (more_entries())."""
         out = [(key, tr(name), icon, self.counts.get(key, ""), lambda key=key: self.app.show_page(key))
                for key, name, icon in TILES]
         return out + self.more_entries()
 
     def more_entries(self) -> List[Tuple[str, str, str, str, Callable[[], None]]]:
-        """Entries after the fourteen: the custom tabs (2.3), with their songs."""
+        """Entries after the fifteen: the custom tabs (2.3), with their songs."""
         return self.app.tab_entries()
 
     def layout(self) -> str:

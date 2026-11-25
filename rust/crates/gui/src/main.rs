@@ -19,6 +19,7 @@ mod look;
 mod library_pages;
 mod lyrics;
 mod mbwin;
+mod moodpages;
 mod pages;
 mod places;
 mod player;
