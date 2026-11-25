@@ -1287,7 +1287,8 @@
   "Searches the file and folder names and the reasons": "ファイル名、フォルダ名、理由を検索します。",
   "Verdict, reason, file name or tag": "判定、理由、ファイル名またはタグ",
   "Sort by this column (again: the other way round)": "この列で並べ替え（もう一度で逆順）",
-  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。"
+  "No files match the current filters. Turn on more verdicts above, or clear the search.": "現在のフィルタに一致するファイルはありません。上で判定をさらにオンにするか、検索を消去してください。",
+  "Lyrics only": "歌詞のみ"
  },
  "patterns": {
   "How many files are analysed at the same time. 0 uses one job per CPU core ({n} on this computer), which is the fastest setting: more jobs than cores do not scan faster, they only use more memory. Up to 512 are allowed. (Python on Windows limits one process pool to 61 workers; Real-Hi-Res uses several pools to go beyond that.)": "同時に解析するファイルの数です。0はCPUコア1つにつき1ジョブ（このコンピュータでは{n}）で、最も速い設定です。コアより多いジョブにしても速くはならず、メモリを多く使うだけです。最大512まで設定できます。（WindowsのPythonは1つのプロセスプールを61ワーカーに制限しますが、Real-Hi-Resは複数のプールを使ってそれを超えます。）",

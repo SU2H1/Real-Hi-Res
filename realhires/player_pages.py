@@ -1193,6 +1193,7 @@ class LyricsView(tk.Canvas):
         self.total = 1.0
         self.away = False      # the user scrolled the current line out of view
         self.followed = -2     # the line scrolled to last (-2: none yet)
+        self.wide = False      # Lyrics only (2.3): the lines centred across the whole page
         self._anim: Optional[str] = None
         self.bind("<Configure>", lambda e: self.layout())
         self.bind("<Button-1>", self._click)
@@ -1226,11 +1227,13 @@ class LyricsView(tk.Canvas):
             return
         width = max(100, W - 2 * self.PAD)
         y = self.PAD / 2
+        # Lyrics only (2.3): each line centred on the page
+        x, anchor, justify = (W / 2, "n", "center") if self.wide else (self.PAD, "nw", "left")
         if self.kind == lyrics_mod.SYNCED:
             bold, normal = t.f("lyrics_b"), t.f("lyrics")
             for i, (_, line) in enumerate(self.entries):
-                item = self.create_text(self.PAD, y, text=line or " ", anchor="nw", width=width, font=bold,
-                                        fill=t.c("text2"), tags=("line",))
+                item = self.create_text(x, y, text=line or " ", anchor=anchor, width=width, font=bold,
+                                        fill=t.c("text2"), tags=("line",), justify=justify)
                 box = self.bbox(item)
                 h = (box[3] - box[1]) if box else bold.metrics("linespace")
                 if i != self.current:
@@ -1243,8 +1246,9 @@ class LyricsView(tk.Canvas):
                 y += h + self.GAP
         else:
             text = self.plain if self.kind == lyrics_mod.PLAIN else tr("This song is instrumental.")
-            item = self.create_text(self.PAD, y, text=text, anchor="nw", width=width, font=t.f("plain"),
-                                    fill=t.c("text") if self.kind == lyrics_mod.PLAIN else t.c("text2"))
+            item = self.create_text(x, y, text=text, anchor=anchor, width=width, font=t.f("plain"),
+                                    fill=t.c("text") if self.kind == lyrics_mod.PLAIN else t.c("text2"),
+                                    justify=justify)
             box = self.bbox(item)
             y += (box[3] - box[1]) if box else 0
         self.total = y + self.PAD + (H * 2 / 3 if self.kind == lyrics_mod.SYNCED else 0)
@@ -1359,10 +1363,13 @@ class LyricsView(tk.Canvas):
 
 
 class DetailsView(tk.Canvas):
-    """Now Playing's Details: two columns, the labels grey on the left, scrollable.  The
-    artists of the Artist row are links (`on_artist(name)`)."""
+    """Now Playing's Details: two columns, the labels grey on the left, as one block centred
+    in the view (2.3; a long value such as the file's path wraps within it), scrollable
+    when it is taller than the view.  The artists of the Artist row are links
+    (`on_artist(name)`)."""
 
     PAD = 28
+    MAX_VALUE_W = 420  # the values' column at most this wide (pixels)
 
     def __init__(self, master, theme: Theme, on_artist: Optional[Callable[[str], None]] = None):
         super().__init__(master, highlightthickness=0, bd=0)
@@ -1373,6 +1380,7 @@ class DetailsView(tk.Canvas):
         self.hover: Optional[int] = None
         self.offset = 0.0
         self.total = 1.0
+        self.block = (0.0, 0.0, 0.0, 0.0)  # where the rows are drawn (x0, y0, x1, y1), for the tests
         theme.reg(self, bg="bg")
         self.bind("<Configure>", lambda e: self.layout())
         self.bind("<Motion>", lambda e: self._hov(self._link_at(e)))
@@ -1428,25 +1436,35 @@ class DetailsView(tk.Canvas):
     def layout(self) -> None:
         t = self.theme
         self.delete("all")
-        W = self.winfo_width()
+        W, H = self.winfo_width(), self.winfo_height()
         if W <= 1:
             return
         lf, vf = t.f("body"), t.f("body")
         lw = max([lf.measure(tr(k)) for k, _ in self.rows] or [80]) + 18
-        y = self.PAD / 2
+        # the values' column: as wide as the longest value, at most MAX_VALUE_W and the room left
+        widest = max([vf.measure(line) for _, v in self.rows for line in str(v).splitlines()] or [80])
+        vw = max(80, min(widest, self.MAX_VALUE_W, W - self.PAD * 2 - lw))
+        x0 = max(self.PAD, (W - lw - vw) / 2)
+        y = 0.0
         self.links, self.hover = [], None
         for k, v in self.rows:
-            self.create_text(self.PAD, y, text=tr(k), anchor="nw", font=lf, fill=t.c("text2"))
+            self.create_text(x0, y, text=tr(k), anchor="nw", font=lf, fill=t.c("text2"), tags=("block",))
             if k == "Artist" and self.artists and v == ", ".join(self.artists):
-                h = self._artist_row(self.PAD + lw, y, W - self.PAD)
+                h = self._artist_row(x0 + lw, y, x0 + lw + vw)
             else:
-                item = self.create_text(self.PAD + lw, y, text=v, anchor="nw", font=vf, fill=t.c("text"),
-                                        width=max(80, W - self.PAD * 2 - lw))
+                item = self.create_text(x0 + lw, y, text=v, anchor="nw", font=vf, fill=t.c("text"), width=vw,
+                                        tags=("block",))
                 box = self.bbox(item)
                 h = (box[3] - box[1]) if box else 0
             y += max(h, lf.metrics("linespace")) + 9
-        self.total = y + self.PAD
-        self.configure(scrollregion=(0, 0, W, max(self.total, self.winfo_height())))
+        block = max(0.0, y - 9)
+        # in the middle of the view; from the top (and scrolling) when it is taller
+        top = (H - block) / 2 if block + self.PAD <= H else self.PAD / 2
+        self.move("all", 0, top)
+        self.links = [(a, b + top, c, d + top, n) for a, b, c, d, n in self.links]
+        self.block = (x0, top, x0 + lw + vw, top + block)
+        self.total = top + block + self.PAD / 2
+        self.configure(scrollregion=(0, 0, W, max(self.total, H)))
         self._scroll_to(self.offset)
 
     def _scroll_to(self, offset: float) -> None:
@@ -1455,16 +1473,72 @@ class DetailsView(tk.Canvas):
         self.yview_moveto(self.offset / max(self.total, H, 1))
 
 
+from .player_theme import draw_icon  # noqa: E402
+
+LYRICS_WIDE_EXTRA = 4   # Lyrics only: the lyrics this many pixels larger than the chosen size (2.3)
+SWIPE_PX = 60           # a sideways drag this long turns Now Playing's left half (2.3)
+DRAG_START_PX = 5       # a press that moves further is a drag, not a click
+
+
+class BackLink(tk.Canvas):
+    """Now Playing's way back (2.3): a chevron and the name of the page it returns to, in
+    the accent colour, underlined under the pointer; a click calls `command`."""
+
+    H = 28
+
+    def __init__(self, master, theme: Theme, command: Callable[[], None]):
+        super().__init__(master, height=self.H, width=40, highlightthickness=0, bd=0, cursor="hand2")
+        self.theme, self.command, self.text, self.hover = theme, command, "", False
+        theme.reg(self, bg="bg")
+        theme.on_change(self.redraw, self)
+        self.bind("<Enter>", lambda e: self._hov(True))
+        self.bind("<Leave>", lambda e: self._hov(False))
+        self.bind("<ButtonRelease-1>", self._click)
+
+    def _hov(self, on: bool) -> None:
+        self.hover = on
+        self.redraw()
+
+    def _click(self, e) -> None:
+        if 0 <= e.x <= int(self.cget("width")) and 0 <= e.y <= self.H:
+            self.command()
+
+    def set(self, text: str) -> None:
+        if text != self.text:
+            self.text = text
+            self.redraw()
+
+    def redraw(self) -> None:
+        t = self.theme
+        font = t.f("body_b")
+        w = 24 + font.measure(self.text) + 6
+        self.configure(width=w)
+        self.delete("all")
+        color = t.c("accent")
+        draw_icon(self, "back", 10, self.H / 2, 16, color)
+        self.create_text(24, self.H / 2, text=self.text, anchor="w", fill=color, font=font, tags=("label",))
+        if self.hover:
+            y = self.H / 2 + font.metrics("linespace") / 2
+            self.create_line(24, y, w - 6, y, fill=color)
+
+
 class NowPlayingPage(Page):
     """The cover with the title and "Artist — Album" under it, as one block in the middle of
     the left half (the album name opens the album, each artist name that artist, the cover
     the Cover window);
     on the right a switch Lyrics | Up Next | Details (`app.np_tab`).  Lyrics: a label
-    ("Synced lyrics" / "Lyrics (not synced)", where they come from), A− / A+ and the lyrics;
-    without lyrics "Get lyrics".  With the lyrics hidden (the Lyrics button on this page,
-    `app.lyrics_hidden`) only the block, in the middle of the page."""
+    ("Synced lyrics" / "Lyrics (not synced)", where they come from), A− / A+, Lyrics only
+    and the lyrics; without lyrics "Get lyrics".  With the lyrics hidden (the Lyrics button
+    on this page, `app.lyrics_hidden`) only the block, in the middle of the page.
+
+    2.3: an instrumental song's Lyrics view is the block in the middle too, with
+    "Instrumental" under it (`mode()`); Lyrics only (`app.lyrics_wide`) hides the cover and
+    the lyrics fill the page; a sideways drag (or a horizontal scroll) turns the left half
+    to the album's songs (`app.np_side`, two dots under it); a back link at the top left
+    names the page it returns to (`app.back_label()`); Details is one centred block."""
 
     SIZES = (160, 200, 240, 280, 320, 360, 400, 440, 480)
+    SONG_ROW = 36  # the album's songs in the left half (2.3)
 
     def __init__(self, app):
         super().__init__(app)
@@ -1473,10 +1547,29 @@ class NowPlayingPage(Page):
         t.reg(self.art, bg="bg")
         self.links: List[tuple] = []          # (what, x0, y0, x1, y1) on the art canvas
         self.hover_link: Optional[str] = None
+        self.song_rows: List[tuple] = []      # the album's songs shown: (index, x0, y0, x1, y1)
+        self.dots: List[tuple] = []           # the two dots: (side, x0, y0, x1, y1)
+        self.songs_first = 0                  # the first of the album's songs shown (scrolled)
+        self.songs_key: Optional[str] = None  # the album they are of
+        self.songs_hover: Optional[int] = None
+        self.press: Optional[tuple] = None    # where the button went down (x, y), for the swipe
+        self.dragged = False                  # the press moved: no click
+        self.swiped = False                   # this press turned the left half already
         self.art.bind("<Configure>", lambda e: self.draw_art())
         self.art.bind("<Motion>", self._art_motion)
-        self.art.bind("<Leave>", lambda e: self._art_hover(None))
+        self.art.bind("<Leave>", lambda e: self._art_leave())
+        self.art.bind("<ButtonPress-1>", self._art_press)
+        self.art.bind("<B1-Motion>", self._art_drag)
         self.art.bind("<ButtonRelease-1>", self._art_click)
+        self.art.bind("<Double-Button-1>", self._art_double)
+        bind_wheel(self.art, self._art_wheel)
+        self.art.bind("<Shift-MouseWheel>", lambda e: self.swipe(-1 if e.delta > 0 else 1))
+        if self.art.tk.call("tk", "windowingsystem") == "x11":
+            self.art.bind("<Shift-Button-4>", lambda e: self.swipe(-1))
+            self.art.bind("<Shift-Button-5>", lambda e: self.swipe(1))
+            # a trackpad's sideways scroll: buttons 6 (left) and 7 (right), which Tk 8.6 only
+            # reports through a plain <ButtonPress>
+            self.art.bind("<ButtonPress>", self._art_button, add="+")
         self.right = frame(self, t)
         self.switch = Segmented(self.right, t, NP_TABS, app.set_np_tab, app.np_tab)
         self.switch.pack(side="top", pady=(18, 6))
@@ -1490,6 +1583,10 @@ class NowPlayingPage(Page):
         self.kind_l.pack(side="left")
         self.source_l = label(head, t, "", font="small", fg="text2")
         self.source_l.pack(side="left", padx=(8, 0))
+        # Lyrics only (2.3): the cover goes and the lyrics fill the page; on while they do
+        self.wide_btn = IconButton(head, t, "expand", command=app.toggle_lyrics_wide, size=28, icon_size=15,
+                                   tooltip=lambda: tr("Lyrics only"))
+        self.wide_btn.pack(side="right", padx=(6, 0))
         self.bigger = PillButton(head, t, "A+", kind="plain", height=26, command=lambda: app.lyrics_size_step(1))
         self.bigger.pack(side="right")
         self.smaller = PillButton(head, t, "A−", kind="plain", height=26, command=lambda: app.lyrics_size_step(-1))
@@ -1521,6 +1618,8 @@ class NowPlayingPage(Page):
         self.kind = ""
         self.label = ("", "")
         self.path: Optional[str] = None
+        # the way back, at the top left (2.3): "‹ All Songs", "‹ Search", "‹ <album>"…
+        self.back_link = BackLink(self, t, command=app.go_back)
         app.covers.listeners.append(lambda key, size: self.draw_art())
         t.on_change(self.draw_art)
         self._place()
@@ -1528,6 +1627,18 @@ class NowPlayingPage(Page):
     # ---- state -------------------------------------------------------------
     def show(self, **kw) -> None:
         self.song_changed(force=True)
+        self.update_back()
+
+    def update_back(self) -> None:
+        """The back link at the top left, naming the page it returns to; none when there
+        is no page to go back to (2.3)."""
+        text = self.app.back_label()
+        if text:
+            self.back_link.set(text)
+            self.back_link.place(x=16, y=10)
+            tk.Misc.tkraise(self.back_link)  # (Canvas.tkraise raises canvas items)
+        else:
+            self.back_link.place_forget()
 
     def song_changed(self, force: bool = False) -> None:
         path = self.app.current
@@ -1557,8 +1668,25 @@ class NowPlayingPage(Page):
         self.draw_art()
         self.update_position(self.app.position())
 
+    def mode(self) -> str:
+        """How the page is laid out: "none" (nothing plays), "centred" (only the block in the
+        middle: the lyrics hidden), "instrumental" (an instrumental song's Lyrics: the
+        block in the middle, the switch above it), "wide" (Lyrics only: the lyrics fill
+        the page) or "halves" (2.3)."""
+        if self.path is None:
+            return "none"
+        if self.app.lyrics_hidden:
+            return "centred"
+        if self.app.np_tab == "lyrics":
+            if self.kind == lyrics_mod.INSTRUMENTAL:
+                return "instrumental"
+            if self.kind and self.app.lyrics_wide:
+                return "wide"
+        return "halves"
+
     def showing_right(self) -> bool:
-        return self.path is not None and not self.app.lyrics_hidden
+        """The right half (the switch and Lyrics, Up Next or Details) is shown."""
+        return self.mode() in ("halves", "wide")
 
     def showing_lyrics(self) -> bool:
         return self.showing_right() and self.app.np_tab == "lyrics" and bool(self.kind)
@@ -1570,10 +1698,12 @@ class NowPlayingPage(Page):
         self.update_position(self.app.position())
 
     def size_changed(self) -> None:
-        """A− / A+: the lyrics fonts have a new size."""
+        """A− / A+ or Lyrics only: the lyrics fonts have a new size."""
         size = self.app.state.lyrics_size
         self.smaller.set(enabled=size > playerstate.LYRICS_SIZE_MIN)
         self.bigger.set(enabled=size < playerstate.LYRICS_SIZE_MAX)
+        self.wide_btn.set(on=self.app.lyrics_wide)
+        self.lyrics.wide = self.mode() == "wide"
         self.lyrics.layout()
 
     def _away(self, away: bool) -> None:
@@ -1583,13 +1713,36 @@ class NowPlayingPage(Page):
         else:
             self.back_btn.place_forget()
 
+    def _raise_back(self) -> None:
+        if self.back_link.winfo_manager():
+            tk.Misc.tkraise(self.back_link)
+
     def _place(self) -> None:
-        if not self.showing_right():
-            self.right.place_forget()
+        mode = self.mode()
+        wide = mode == "wide"
+        if self.lyrics.wide != wide:
+            self.lyrics.wide = wide
+            self.lyrics.layout()
+        if mode in ("none", "centred", "instrumental"):
             self.art.place(relx=0, rely=0, relwidth=1, relheight=1)
+            if mode == "instrumental":  # only the switch, above the block (Up Next and Details stay at hand)
+                self.body.pack_forget()
+                self.right.place_forget()  # (forgets relwidth and relheight: the switch's own size)
+                self.right.place(relx=0.5, rely=0, anchor="n")
+                tk.Misc.tkraise(self.right)
+            else:
+                self.right.place_forget()
+            self._raise_back()
             return
-        self.art.place(relx=0, rely=0, relwidth=0.5, relheight=1)
-        self.right.place(relx=0.5, rely=0, relwidth=0.5, relheight=1)
+        if not self.body.winfo_manager():
+            self.body.pack(side="top", fill="both", expand=True)
+        if wide:  # Lyrics only: no cover, the lyrics use the whole page
+            self.art.place_forget()
+            self.right.place(relx=0, rely=0, relwidth=1, relheight=1, anchor="nw")
+        else:
+            self.art.place(relx=0, rely=0, relwidth=0.5, relheight=1)
+            self.right.place(relx=0.5, rely=0, relwidth=0.5, relheight=1, anchor="nw")
+        self._raise_back()
         tab = self.app.np_tab
         for pane, on in ((self.lyrics_pane, tab == "lyrics"), (self.upnext_pane, tab == "upnext"),
                          (self.details, tab == "details")):
@@ -1682,9 +1835,11 @@ class NowPlayingPage(Page):
 
     # ---- the cover block ---------------------------------------------------------
     def draw_art(self) -> None:
+        """The left half (or the whole page in the centred layouts): the cover block, or
+        the album's songs (`app.np_side`, 2.3), and the two dots that switch between them."""
         t, c = self.theme, self.art
         c.delete("all")
-        self.links = []
+        self.links, self.song_rows, self.dots = [], [], []
         W, H = c.winfo_width(), c.winfo_height()
         if W <= 1:
             return
@@ -1692,15 +1847,29 @@ class NowPlayingPage(Page):
         if trk is None:
             c.create_text(W / 2, H / 2, text=tr("Nothing is playing"), fill=t.c("text2"), font=t.f("h2"))
             return
-        text_h = 80  # the title and "Artist — Album" under the cover, one block in the middle
-        room = min(W - 80, H - 80 - text_h)
-        size = max([s for s in self.SIZES if s <= room] or [self.SIZES[0]])
         album = self.app.album_of(trk)
+        if album is not None and self.app.np_side == "songs":
+            self._draw_songs(album, W, H)
+        else:
+            self._draw_block(trk, album, W, H)
+        if album is not None:
+            self._draw_dots(W, H)
+        self._underline()
+
+    def _draw_block(self, trk: Track, album: Optional[dict], W: int, H: int) -> None:
+        """The cover with the title and "Artist — Album" under it (and "Instrumental" for an
+        instrumental song's Lyrics), one block in the middle."""
+        t, c = self.theme, self.art
+        instrumental = self.mode() == "instrumental"
+        text_h = 80 + (26 if instrumental else 0)  # the lines under the cover
+        top = 56 if instrumental else 0  # below the switch
+        room = min(W - 80, H - top - 80 - text_h)
+        size = max([s for s in self.SIZES if s <= room] or [self.SIZES[0]])
         key = album["key"] if album else trk.path
         paths = [x.path for x in album["tracks"]] if album else [trk.path]
         img = self.app.covers.get(key, paths, size)
         x = (W - size) / 2
-        y = (H - size - text_h) / 2
+        y = top + (H - top - size - text_h) / 2
         draw_cover(c, t, img, x, y, size)
         self.links.append(("cover", x, y, x + size, y + size, None))  # the Cover window
         fit: dict = {}
@@ -1715,20 +1884,104 @@ class NowPlayingPage(Page):
             if what:
                 self.links.append((what, left, ty - h / 2, left + font.measure(text), ty + h / 2, name))
             left += font.measure(text)
-        self._underline()
+        if instrumental:
+            c.create_text(W / 2, ty + 28, text=tr("Instrumental"), fill=t.c("text2"), font=t.f("body"),
+                          tags=("instrumental",))
+
+    def _draw_songs(self, album: dict, W: int, H: int) -> None:
+        """The album's songs in track order: number (the speaker for the song playing, whose
+        title is bold), title, time; hover; a double-click plays one with the album as the
+        list (2.3)."""
+        t, c = self.theme, self.art
+        rows = list(album["tracks"])
+        if album["key"] != self.songs_key:  # another album: from the top, with the song playing in view
+            self.songs_key, self.songs_first = album["key"], 0
+            self._songs_to_current(rows, H)
+        width = min(W - 80, 560)
+        x0 = (W - width) / 2
+        fit: dict = {}
+        top = 52 + (40 if self.mode() == "instrumental" else 0)  # under the back link (and the switch)
+        c.create_text(x0 + 10, top, text=fit_text(t.f("h2"), tr_name(album["title"]), width - 20, fit), anchor="nw",
+                      fill=t.c("text"), font=t.f("h2"))
+        list_top = top + 44
+        shown = self._songs_shown(H - (top - 52))
+        self.songs_first = min(max(self.songs_first, 0), max(0, len(rows) - shown))
+        body, bold = t.f("body"), t.f("body_b")
+        R = self.SONG_ROW
+        for k in range(shown):
+            i = self.songs_first + k
+            if i >= len(rows):
+                break
+            r = rows[i]
+            y0 = list_top + k * R
+            mid = y0 + R / 2
+            if i == self.songs_hover:
+                round_rect(c, x0, y0 + 1, x0 + width, y0 + R - 1, 6, fill=t.c("hover"), outline="")
+            playing = r.path == self.path
+            if playing:
+                draw_icon(c, "speaker", x0 + 22, mid, 13, t.c("accent"))
+            elif r.track:
+                c.create_text(x0 + 30, mid, text=str(r.track), anchor="e", fill=t.c("text2"), font=body)
+            when = fmt_time(r.duration) if r.duration else ""
+            c.create_text(x0 + width - 12, mid, text=when, anchor="e", fill=t.c("text2"), font=body)
+            room = width - 44 - body.measure(when) - 28
+            c.create_text(x0 + 44, mid, text=fit_text(bold if playing else body, r.display_title, room, fit),
+                          anchor="w", fill=t.c("text"), font=bold if playing else body,
+                          tags=("song", "playing") if playing else ("song",))
+            self.song_rows.append((i, x0, y0, x0 + width, y0 + R))
+
+    def _songs_shown(self, H: int) -> int:
+        """How many of the album's songs fit between the album's name and the dots."""
+        return max(1, int((H - 52 - 44 - 44) // self.SONG_ROW))
+
+    def _songs_to_current(self, rows: List[Track], H: int) -> None:
+        i = next((k for k, r in enumerate(rows) if r.path == self.path), 0)
+        shown = self._songs_shown(H)
+        if i >= self.songs_first + shown:
+            self.songs_first = i - shown + 1
+
+    def _draw_dots(self, W: int, H: int) -> None:
+        """Two dots at the bottom: the cover, the album's songs; the one shown is filled."""
+        t, c = self.theme, self.art
+        y = H - 22
+        for k, side in enumerate(("cover", "songs")):
+            x = W / 2 + (k - 0.5) * 18
+            on = self.app.np_side == side
+            r = 4
+            c.create_oval(x - r, y - r, x + r, y + r, fill=t.c("text") if on else t.c("disabled"), outline="",
+                          tags=("dot", side))
+            self.dots.append((side, x - 9, y - 10, x + 9, y + 10))
 
     def _link_at(self, x: float, y: float) -> Optional[int]:
         return next((i for i, (_, x0, y0, x1, y1, _) in enumerate(self.links) if x0 <= x <= x1 and y0 <= y <= y1),
                     None)
 
+    def _song_at(self, x: float, y: float) -> Optional[int]:
+        return next((i for i, x0, y0, x1, y1 in self.song_rows if x0 <= x <= x1 and y0 <= y <= y1), None)
+
+    def _dot_at(self, x: float, y: float) -> Optional[str]:
+        return next((side for side, x0, y0, x1, y1 in self.dots if x0 <= x <= x1 and y0 <= y <= y1), None)
+
     def _art_motion(self, e) -> None:
         self._art_hover(self._link_at(e.x, e.y))
+        song = self._song_at(e.x, e.y)
+        if song != self.songs_hover:
+            self.songs_hover = song
+            self.draw_art()
+        if self.hover_link is None:
+            self.art.configure(cursor="hand2" if self._dot_at(e.x, e.y) else "")
 
     def _art_hover(self, i: Optional[int]) -> None:
         if i != self.hover_link:
             self.hover_link = i
             self.art.configure(cursor="hand2" if i is not None else "")
             self._underline()
+
+    def _art_leave(self) -> None:
+        self._art_hover(None)
+        if self.songs_hover is not None:
+            self.songs_hover = None
+            self.draw_art()
 
     def _underline(self) -> None:
         """The artist or album name under the pointer is underlined (not the cover)."""
@@ -1738,7 +1991,45 @@ class NowPlayingPage(Page):
             _, x0, _, x1, y1, _ = self.links[i]
             self.art.create_line(x0, y1 - 1, x1, y1 - 1, fill=self.theme.c("text2"), tags="underline")
 
+    # ---- the swipe (2.3) ------------------------------------------------------------
+    def _art_press(self, e) -> None:
+        self.press, self.dragged, self.swiped = (e.x, e.y), False, False
+
+    def _art_drag(self, e) -> None:
+        if self.press is None:
+            return
+        dx, dy = e.x - self.press[0], e.y - self.press[1]
+        if abs(dx) > DRAG_START_PX or abs(dy) > DRAG_START_PX:
+            self.dragged = True
+        if not self.swiped and abs(dx) > SWIPE_PX and abs(dx) > abs(dy):
+            self.swiped = True  # one turn per drag, either way
+            self.app.set_np_side("cover" if self.app.np_side == "songs" else "songs")
+
+    def swipe(self, direction: int) -> None:
+        """A sideways scroll or trackpad swipe: to the right (1) the album's songs, to the
+        left (-1) the cover again."""
+        if self.path is not None:
+            self.app.set_np_side("songs" if direction > 0 else "cover")
+
+    def _art_button(self, e) -> None:
+        if e.num in (6, 7):
+            self.swipe(-1 if e.num == 6 else 1)
+
+    def _art_wheel(self, n: int) -> None:
+        if self.app.np_side != "songs" or not self.song_rows:
+            return
+        self.songs_first += n * 3
+        self.draw_art()
+
     def _art_click(self, e) -> None:
+        dragged, self.press = self.dragged, None
+        self.dragged = False
+        if dragged:
+            return  # a drag (or a swipe) is not a click
+        side = self._dot_at(e.x, e.y)
+        if side is not None:
+            self.app.set_np_side(side)
+            return
         i = self._link_at(e.x, e.y)
         trk = self.app.track(self.path) if self.path else None
         if i is None or trk is None:
@@ -1752,6 +2043,19 @@ class NowPlayingPage(Page):
             album = self.app.album_of(trk)
             if album is not None:
                 self.app.open_album(album)
+
+    def _art_double(self, e) -> None:
+        self._art_press(e)  # (a second press soon after a click comes here, not to _art_press)
+        i = self._song_at(e.x, e.y)
+        if i is not None:
+            self.play_song(i)
+
+    def play_song(self, i: int) -> None:
+        """The album's song i (track order) plays, with the album as the list."""
+        trk = self.app.track(self.path) if self.path else None
+        album = self.app.album_of(trk) if trk is not None else None
+        if album is not None and 0 <= i < len(album["tracks"]):
+            self.app.play_list(list(album["tracks"]), i, tr_name(album["title"]))
 
     # ---- every tick ----------------------------------------------------------------
     def update_position(self, seconds: float) -> None:
