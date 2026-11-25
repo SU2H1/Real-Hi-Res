@@ -1575,13 +1575,15 @@ def switched():
                    "Volume: 0.0 dB", "Equalizer: Off"):
         assert needed in info, (needed, info)
     app.info_window.close()
-    # the equalizer on: heard (the song restarts where it is), the device keeps the song's rate
+    # the equalizer on: heard (the song restarts where it is), the device keeps the song's rate; the
+    # restart count is taken before the change, because on a slow runner the restart happened while
+    # the window closed, before a count taken after it (the wait then never ended)
+    state["gen"] = app.engine._gen
     app.open_eq()
     w = app.eq_window
     w.v_on.set(True); w._toggles(); w._preset("Rock")
     assert app.bar.eq.on
     w.close()
-    state["gen"] = app.engine._gen
     wait(lambda: app.engine._gen > state["gen"] and app.engine.position() > 0, eq_heard, what="the equalizer heard")
 
 def eq_heard():
