@@ -1565,11 +1565,9 @@ class NowPlayingPage(Page):
         bind_wheel(self.art, self._art_wheel)
         self.art.bind("<Shift-MouseWheel>", lambda e: self.swipe(-1 if e.delta > 0 else 1))
         if self.art.tk.call("tk", "windowingsystem") == "x11":
+            # a sideways scroll (X11 buttons 6 and 7, which Tk reports as Shift-Button-4/5)
             self.art.bind("<Shift-Button-4>", lambda e: self.swipe(-1))
             self.art.bind("<Shift-Button-5>", lambda e: self.swipe(1))
-            # a trackpad's sideways scroll: buttons 6 (left) and 7 (right), which Tk 8.6 only
-            # reports through a plain <ButtonPress>
-            self.art.bind("<ButtonPress>", self._art_button, add="+")
         self.right = frame(self, t)
         self.switch = Segmented(self.right, t, NP_TABS, app.set_np_tab, app.np_tab)
         self.switch.pack(side="top", pady=(18, 6))
@@ -2010,10 +2008,6 @@ class NowPlayingPage(Page):
         left (-1) the cover again."""
         if self.path is not None:
             self.app.set_np_side("songs" if direction > 0 else "cover")
-
-    def _art_button(self, e) -> None:
-        if e.num in (6, 7):
-            self.swipe(-1 if e.num == 6 else 1)
 
     def _art_wheel(self, n: int) -> None:
         if self.app.np_side != "songs" or not self.song_rows:

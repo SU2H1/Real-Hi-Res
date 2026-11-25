@@ -2282,6 +2282,9 @@ impl Player {
                 self.search_due = None;
                 self.search_query = self.search.trim().to_string();
                 if self.search_query.is_empty() {
+                    // the results are gone: Back no longer returns to them (2.3)
+                    self.back.retain(|p| *p != Page::Search);
+                    self.forward.retain(|p| *p != Page::Search);
                     if self.page == Page::Search {
                         let back = self.search_from.take().unwrap_or(Page::Albums);
                         self.page = back;
