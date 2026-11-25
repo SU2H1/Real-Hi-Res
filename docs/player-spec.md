@@ -770,8 +770,13 @@ runs, so a shared tab file is safe to open.
   track, ctx)` (ctx: liked and disliked sets, the time now) and `tab_songs(tab, tracks, ctx)` (the matching paths,
   sorted by `sort` then title, at most `limit` when it is above 0). `check_tab()` raises `TabError` with a full
   sentence for a missing name, an unknown field or operator, a value of the wrong kind, or a format/version it does
-  not know. `TEMPLATES`: "Hi-Res" (lossless and (bits >= 24 or sample_rate > 48000)), "Lossy" (lossless is no),
-  "Added in the last 30 days" (added_days <= 30, sorted by added_days), "Long songs" (duration >= 600).
+  not know. `TEMPLATES`: "Hi-Res" (quality is "Hi-Res Lossless": the rules are a flat all/any list, so the badge's
+  own definition stands in for "lossless and (bits >= 24 or sample_rate > 48000)"), "Lossy" (lossless is no),
+  "Added in the last 30 days" (added_days <= 30, sorted by added_days), "Long songs" (duration >= 600). A tab
+  without rules has every song; a new rule starts with an operator every song passes (text contains "", number
+  >= 0, yes/no is Yes), so the count does not drop to 0 before a value is typed; Quality's value is chosen from a
+  menu (shown translated, stored in English). Names are unique case-insensitively; at most 100 rules, a limit of
+  0..100000, files over 1 MB are skipped.
 - Files: one `.json` per tab in the tabs folder (`tabs` in `store.data_dir()`, `$REALHIRES_TABS` overrides it),
   read in file-name order (`load_tabs()`, which skips files that are not tabs and says which); `save_tab()` (written
   through a temp file), `delete_tab()`, `export_tab(tab, path)`, `import_tab(path)` (copied into the folder; a taken
@@ -780,7 +785,9 @@ runs, so a shared tab file is safe to open.
 - Sidebar: a heading **Tabs** after Playlists, with each tab (a filter icon) and **New Tab…**. The Library page lists
   the tabs after its fourteen entries, with their song counts. A tab's page: its name as the title, "N songs, M
   minutes", Play and Shuffle, and the song table (column kind "songs"). A right-click on a tab in the sidebar (and
-  "…" on its page): **Edit Tab…**, **Export Tab…**, **Delete Tab…** (confirmed; the file is deleted).
+  "…" on its page): **Edit Tab…**, **Export Tab…**, **Delete Tab…** (confirmed; the file is deleted) and
+  **Colour Label** (the label follows a rename and goes with a delete). Saving a new tab, importing one or dropping a
+  tab file opens its page; renaming a tab renames its file.
 - The tab window (New Tab… / Edit Tab…): Name; "Start from" (the templates, New Tab… only); "Match all / any of these
   rules"; one row per rule (field menu, operator menu fitting the field, value: an entry, or Yes/No); Add rule and a
   remove button per row; Sort by (field menu and Descending); Limit (0 = no limit); a live line "N songs match"; Save
@@ -837,6 +844,14 @@ color code anything."
   `label_of(kind, key)`, `set_label(kind, key, color or None)`, vectors). A label is drawn as a dot 8 px wide: before
   the title in song tables (and Up Next), at the bottom-left corner of a card's cover, and after a playlist's or tab's
   name in the sidebar.
+- As built: both apps use the same derivations (the Python app's former ones), so the Rust app's text fields are the
+  "Text fields" colour (grey in Light) and its missing covers the grey placeholder. "Selected item" colours the
+  sidebar selection (and the selected song row in Rust; Python's tables keep their accent-filled row). Not theme
+  colours: the Quality Check card rings, the plots, the error/warning/ok texts, the Your Stats hero cards and egui's
+  text-selection highlight. Label keys of artists, album artists, genres and composers are case-folded, since the
+  groupings join names in any case; albums use the album key, years are kept as written, playlists by id, tabs by
+  name. A playlist's menu (right-click in the sidebar or on a Playlists card) has Play, Shuffle, Rename…, Delete… and
+  Colour Label. The Rust editor's More colours grid drops to one column below 660 px.
 
 ### 10. Lyrics filling Now Playing
 
