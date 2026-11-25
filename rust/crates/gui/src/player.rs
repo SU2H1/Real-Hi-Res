@@ -2763,6 +2763,10 @@ impl Player {
             let (open, finished) = job.show(ctx, pal);
             if finished {
                 self.update_library();
+                // an open Properties window shows the new genre, composer or year (as in Python)
+                if let Some(e) = self.edit_info.as_mut() {
+                    e.files_changed(&job.paths);
+                }
             }
             if open {
                 self.tag_job = Some(job);
