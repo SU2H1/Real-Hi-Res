@@ -722,6 +722,8 @@ pub struct Player {
     recent_cache: Option<(u64, Vec<(String, f64)>)>,
     pub name_dialog: Option<NameDialog>,
     pub confirm: Option<ConfirmAction>,
+    /// Colour Label → Custom… (2.3): the colour picker window
+    pub label_picker: Option<crate::labels::LabelPicker>,
     /// what the last EQ import said
     pub eq_notes: Vec<String>,
     /// the playlist whose page is shown (its songs get Remove/Move)
@@ -858,6 +860,7 @@ impl Player {
             recent_cache: None,
             name_dialog: None,
             confirm: None,
+            label_picker: None,
             eq_notes: vec![],
             table_playlist: None,
             seed: seed_now(),
@@ -2500,10 +2503,13 @@ impl Player {
             }
             let lists: Vec<(String, String)> = self.state.playlists.iter().map(|p| (p.id.clone(), p.name.clone())).collect();
             for (id, name) in lists {
-                let page = Page::Playlist(id);
-                if sidebar_item(ui, pal, Icon::Note, &name, self.page == page).clicked() {
+                let page = Page::Playlist(id.clone());
+                // 2.3: its colour label after the name, and its menu on a right click
+                let resp = sidebar_item_dot(ui, pal, Icon::Note, &name, self.page == page, self.label_of("playlist", &id));
+                if resp.clicked() {
                     self.go(page);
                 }
+                resp.context_menu(|ui| self.playlist_menu(ui, &id));
             }
             if sidebar_item(ui, pal, Icon::Playlist, tr!("New Playlist…"), false).clicked() {
                 self.ask_name(tr!("New Playlist"), tr!("New Playlist"), NameAction::NewPlaylist(vec![]));
@@ -2844,7 +2850,9 @@ impl Player {
         // quality badge: a click opens the Playback info
         let brect = Rect::from_center_size(pos2(rect.right() - badge_w / 2.0 - 8.0, rect.center().y), vec2(badge_w, 18.0));
         let bresp = ui.interact(brect, ui.id().with("quality-badge"), Sense::click());
-        let bcol = if bresp.hovered() { pal.text } else { pal.secondary };
+        // 2.3: in the quality's colour (gold for Hi-Res Lossless, the accent for Lossless...)
+        let qcol = pal.quality_of(&track);
+        let bcol = if bresp.hovered() { look::mix(qcol, pal.text, 0.35) } else { qcol };
         p.rect_stroke(brect, CornerRadius::same(4), Stroke::new(1.0, bcol), egui::StrokeKind::Inside);
         p.text(brect.center(), Align2::CENTER_CENTER, badge, badge_font, bcol);
         if bresp.on_hover_text(tr!("Playback info")).clicked() {
@@ -2873,20 +2881,26 @@ impl Player {
             ui.label(RichText::new(tr!("Nothing comes after this song.")).color(pal.secondary));
         }
         // 2.3: a song can be dragged to another place or removed with a right click
-        let rows: Vec<(String, String)> = upcoming
+        let rows: Vec<(String, String, Option<Color32>)> = upcoming
             .iter()
             .map(|path| {
                 let t = self.lib.track(path);
                 let title = t.map(|t| t.display_title()).unwrap_or_else(|| path.clone());
-                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default())
+                (title, t.map(|t| tr_name(&t.display_artist()).to_string()).unwrap_or_default(), self.label_of("song", path))
             })
             .collect();
         let action = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 crate::upnext::rows(ui, pal, "panel", rows.len(), 38.0, 0.0, |p, rect, i| {
-                    let (title, artist) = &rows[i];
-                    p.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
+                    let (title, artist, label) = &rows[i];
+                    let dx = if let Some(c) = label {
+                        crate::labels::paint_dot(p, rect.left_top() + vec2(8.0 + crate::labels::DOT / 2.0, 12.0), *c, None);
+                        crate::labels::DOT + 6.0
+                    } else {
+                        0.0
+                    };
+                    p.text(rect.left_top() + vec2(8.0 + dx, 4.0), Align2::LEFT_TOP, title, look::text(13.0), pal.text);
                     p.text(rect.left_top() + vec2(8.0, 21.0), Align2::LEFT_TOP, artist, look::text(11.0), pal.secondary);
                 })
             })
@@ -2924,6 +2938,11 @@ impl Player {
     fn windows(&mut self, ctx: &egui::Context, pal: &Palette) {
         let had_dialog = self.name_dialog.is_some() || self.confirm.is_some() || self.tag_job.is_some();
         self.dialogs(ctx, pal);
+        let picker_open = self.label_picker.is_some();
+        self.label_picker_window(ctx, pal);
+        if picker_open {
+            return; // Esc belongs to the Colour Label window while it is open (2.3)
+        }
         let cover_open = crate::coverwin::cover_window(self, ctx, pal);
         if let Some(mut w) = self.edit_info.take() {
             let cfg = self.scanner.cfg.clone();
@@ -3128,14 +3147,25 @@ pub fn fmt_time(sec: f64) -> String {
 }
 
 fn sidebar_item(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    sidebar_item_dot(ui, pal, icon, label, selected, None)
+}
+
+/// A sidebar entry with its colour label's dot after the name (2.3: playlists).
+fn sidebar_item_dot(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: bool, dot: Option<Color32>) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
     if selected {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.selection);
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover.gamma_multiply(0.6));
+        ui.painter().rect_filled(rect, CornerRadius::same(6), pal.row_hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), vec2(18.0, 18.0)), icon, pal.accent);
-    ui.painter().text(pos2(rect.left() + 32.0, rect.center().y), Align2::LEFT_CENTER, label, look::text(13.0), pal.text);
+    let room = rect.width() - 40.0 - if dot.is_some() { crate::labels::DOT + 8.0 } else { 0.0 };
+    let g = crate::pages::elided(ui, label, look::text(13.0), pal.text, room.max(10.0));
+    let w = g.size().x;
+    ui.painter().galley(pos2(rect.left() + 32.0, rect.center().y - g.size().y / 2.0), g, pal.text);
+    if let Some(c) = dot {
+        crate::labels::paint_after_text(ui.painter(), rect.left() + 32.0, w, rect.center().y, c);
+    }
     resp
 }
 
@@ -3204,9 +3234,11 @@ pub fn cover(p: &egui::Painter, rect: Rect, tex: Option<&egui::TextureHandle>, t
             p.add(shape);
         }
         None => {
-            let base = crate::style::placeholder_color(title);
-            p.rect_filled(rect, CornerRadius::same(radius), base);
-            icons::paint(p, Rect::from_center_size(rect.center(), rect.size() * 0.45), Icon::Note, Color32::from_white_alpha(170));
+            // 2.3: a missing cover in the theme's "Missing cover" colours, as the Python app
+            let pal = look::current(p.ctx());
+            let _ = title;
+            p.rect_filled(rect, CornerRadius::same(radius), pal.placeholder);
+            icons::paint(p, Rect::from_center_size(rect.center(), rect.size() * 0.36), Icon::Note, pal.placeholder_icon);
         }
     }
 }

@@ -45,7 +45,7 @@ from .player_pages import (AlbumPage, AlbumsPage, GroupItemPage, GroupPage, NowP
                            SettingsPage, SongsPage, album_order, artist_line, frame, label, plural)
 from .player_theme import (IconButton, Slider, Theme, draw_icon, fit_text, load_bundled_font, round_rect,
                            system_is_dark, theme_menu)
-from .player_widgets import Column, CoverCache, SongList, bind_wheel, draw_cover, fmt_time
+from .player_widgets import LABEL_DOT, Column, CoverCache, SongList, bind_wheel, draw_cover, draw_label_dot, fmt_time
 from .player_windows import CoverWindow, EditInfoWindow, EqualizerWindow, PlaybackInfoWindow, ask_name
 from .player_mb import MusicBrainzWindow
 from . import musicbrainz
@@ -183,6 +183,8 @@ class Sidebar(tk.Frame):
         t.reg(self.nav, bg="sidebar")
         self.nav.pack(fill="both", expand=True, padx=8)
         self.nav.bind("<Button-1>", self._click)
+        self.nav.bind("<Button-3>", self._context)  # 2.3: a playlist's menu
+        self.nav.bind("<Button-2>", self._context)  # macOS right click
         self.nav.bind("<Motion>", lambda e: self._hover(self._key_at(self.nav.canvasy(e.y))))
         self.nav.bind("<Leave>", lambda e: self._hover(None))
         bind_wheel(self.nav, lambda n: self.nav.yview_scroll(n, "units"))
@@ -263,6 +265,18 @@ class Sidebar(tk.Frame):
         elif key:
             self.app.show_page(key)
 
+    def _context(self, e) -> None:
+        """Right click on a playlist: its menu (2.3: Play, Shuffle, Rename…, Delete…, Colour Label)."""
+        key = self._key_at(self.nav.canvasy(e.y))
+        if key and key.startswith("playlist:"):
+            self.app.playlist_menu(key.split(":", 1)[1]).tk_popup(e.x_root, e.y_root)
+
+    def label_of(self, key: str) -> Optional[str]:
+        """The colour label of a sidebar entry (playlists; 2.3), drawn after its name."""
+        if key.startswith("playlist:"):
+            return self.app.label_of("playlist", key.split(":", 1)[1])
+        return None
+
     def _foot_key(self, y: float) -> Optional[str]:
         i = int((y - 2) // self.ROW)
         return self.FOOT[i][0] if 0 <= i < len(self.FOOT) and y >= 2 else None
@@ -282,8 +296,13 @@ class Sidebar(tk.Frame):
         if sel or key == self.hover:
             round_rect(c, 4, y + 1, W - 4, y + h - 1, 7, fill=t.c("side_sel") if sel else t.c("hover"), outline="")
         draw_icon(c, icon, 24, y + h / 2, 15, t.c("accent"), filled=icon == "heart")
-        c.create_text(44, y + h / 2, text=fit_text(t.f("side"), text, W - 52, self.app.fit_cache), anchor="w",
+        dot = self.label_of(key)
+        shown = fit_text(t.f("side"), text, W - 52 - (LABEL_DOT + 8 if dot else 0), self.app.fit_cache)
+        c.create_text(44, y + h / 2, text=shown, anchor="w",
                       fill=t.c("text2") if key == "new_playlist" else t.c("text"), font=t.f("side"))
+        if dot:  # 2.3: the colour label, after the name
+            x = 44 + t.f("side").measure(shown) + 6 + LABEL_DOT / 2
+            draw_label_dot(c, x, y + h / 2, dot, tags=("label", f"label:{key}"))
 
     def redraw(self) -> None:
         t, c = self.app.theme, self.nav
@@ -379,8 +398,10 @@ class Lcd(tk.Canvas):
         bw = bf.measure(badge) + 14
         bx1 = x1 - 10
         bx0 = bx1 - bw
-        round_rect(self, bx0, cy - 9, bx1, cy + 9, 5, fill="", outline=t.c("badge"), width=1)
-        self.create_text((bx0 + bx1) / 2, cy, text=badge, fill=t.c("badge"), font=bf)
+        # 2.3: in the quality's colour (gold for Hi-Res Lossless, the accent for Lossless...)
+        qc = t.c(themes.QUALITY_COLOR_KEYS[themes.quality_kind(trk)])
+        round_rect(self, bx0, cy - 9, bx1, cy + 9, 5, fill="", outline=qc, width=1, tags="badge")
+        self.create_text((bx0 + bx1) / 2, cy, text=badge, fill=qc, font=bf, tags="badge")
         self.geo["badge"] = (bx0 - 4, cy - 12, bx1 + 4, cy + 12)
         tx0, tx1 = cx0 + self.COVER + 14, bx0 - 14
         mid = (tx0 + tx1) / 2
@@ -599,7 +620,8 @@ class UpNextPanel(tk.Frame):
                              lambda r, k: r.display_title if k == "title" else tr_name(r.display_artist),
                              header=False, zebra=False, row_height=48, bg_role="sidebar", on_activate=app.jump_to,
                              empty_text=tr("Nothing is queued."), on_move=app.move_in_up_next,
-                             on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root))
+                             on_context=lambda i, e: app.up_next_menu(i).tk_popup(e.x_root, e.y_root),
+                             label_of=lambda r: app.label_of("song", r.path))
         self.list.pack(fill="both", expand=True, padx=(4, 0))
 
     def refresh(self, keep: bool = False) -> None:
@@ -681,6 +703,11 @@ class PlayerApp:
         self.listen: Optional[dict] = None          # the song being listened to, for the play history
         self.name_dialog = None                     # an open NameDialog (tests fill it in)
         self.last_menu: Optional[tk.Menu] = None    # the song menu shown last
+        # 2.3: colour labels: the Colour Label menu shown last, its swatches, and the colour
+        # chooser (None: tkinter's; tests set a function with askcolor's arguments)
+        self.last_label_menu: Optional[tk.Menu] = None
+        self._swatches: Dict[str, tk.PhotoImage] = {}
+        self.color_chooser: Optional[Callable] = None
         self.lib = musiclib.Library()                # the main thread's connection (index, play history)
         self.lib_pending = False
         self._quitting = False
@@ -1289,6 +1316,7 @@ class PlayerApp:
             sub.add_separator()
         sub.add_command(label=tr("New Playlist…"), command=lambda: self.new_playlist([path]))
         m.add_cascade(label=tr("Add to playlist"), menu=sub)
+        self.add_label_menu(m, "song", path)  # 2.3
         if extras:
             m.add_separator()
             for text, cmd in extras:
@@ -1715,8 +1743,16 @@ class PlayerApp:
             self.theme.apply(self.cfg.theme, self.cfg.font_family)
         self._settings_page_again()
 
-    def set_theme_color(self, name: str, key: str, value: str) -> None:
-        self._edit_theme(name, lambda t: t["colors"].__setitem__(key, value.lower()))
+    def set_theme_color(self, name: str, key: str, value: Optional[str]) -> None:
+        """Change one colour of the user's theme `name`; for the extra colours of 2.3
+        (themes.EXTRA_COLOR_KEYS) None makes it derived from the eight again (Reset)."""
+        def change(t: dict) -> None:
+            if value is None:
+                if key in themes.EXTRA_COLOR_KEYS:
+                    t["colors"].pop(key, None)
+            else:
+                t["colors"][key] = value.lower()
+        self._edit_theme(name, change)
 
     def set_theme_dark(self, name: str, dark: bool) -> None:
         self._edit_theme(name, lambda t: t.__setitem__("dark", bool(dark)))
@@ -2098,6 +2134,113 @@ class PlayerApp:
     def toggle_like_current(self) -> None:
         if self.current:
             self.toggle_like(self.current)
+
+    # ---- colour labels (2.3) -----------------------------------------------------
+    # the label kinds of the grouping pages' cards
+    GROUP_LABEL_KINDS = {"artists": "artist", "album_artists": "album_artist", "genres": "genre",
+                         "years": "year", "composers": "composer"}
+
+    def label_of(self, kind: str, key) -> Optional[str]:
+        """The colour label ("#rrggbb") of a song (path), album (key), artist, album artist,
+        genre, year or composer (name), playlist (id) or tab (name); None when it has none."""
+        return self.state.label_of(kind, key)
+
+    def set_label(self, kind: str, key, color: Optional[str]) -> None:
+        """Give it a colour label (None takes it away): saved at once, every list redrawn."""
+        self.state.set_label(kind, key, color)
+        self.save_state()
+        self.labels_changed()
+
+    def labels_changed(self) -> None:
+        """Redraw what shows labels: the song tables, the cards, the sidebar and Up Next."""
+        for p in self.pages.values():
+            if isinstance(p, Page):
+                p.likes_changed()  # the song tables
+                for name in ("grid_w", "albums_grid"):
+                    grid = getattr(p, name, None)
+                    if grid is not None and hasattr(grid, "relayout"):
+                        try:
+                            grid.relayout()
+                        except tk.TclError:
+                            pass
+                queue_list = getattr(p, "queue_list", None)
+                if queue_list is not None:
+                    queue_list.redraw()
+        self.sidebar.redraw()
+        self.up_next.list.redraw()
+
+    def ask_color(self, initial: str, title: str) -> Optional[str]:
+        """The system's colour chooser ("#rrggbb", None when cancelled).  Tests set
+        `color_chooser` to a function with colorchooser.askcolor's arguments."""
+        chooser = self.color_chooser
+        if chooser is None:
+            from tkinter import colorchooser
+
+            chooser = colorchooser.askcolor
+        got = chooser(color=initial or None, parent=self.root, title=title)
+        color = playerstate.clean_label_color(got[1] if got else "")
+        return color or None
+
+    def custom_label(self, kind: str, key) -> None:
+        """Colour Label → Custom…: any colour, from the system's colour chooser."""
+        color = self.ask_color(self.label_of(kind, key) or "#8e8e93", tr("Colour Label"))
+        if color:
+            self.set_label(kind, key, color)
+
+    def _label_swatch(self, color: str) -> tk.PhotoImage:
+        """A small round swatch for the Colour Label menu (kept for the app's life)."""
+        img = self._swatches.get(color)
+        if img is None:
+            img = tk.PhotoImage(master=self.root, width=12, height=12)
+            img.put(color, to=(0, 0, 12, 12))
+            for y in range(12):  # round: the corners stay transparent
+                for x in range(12):
+                    if (x - 5.5) ** 2 + (y - 5.5) ** 2 > 30:
+                        img.transparency_set(x, y, True)
+            self._swatches[color] = img
+        return img
+
+    def add_label_menu(self, menu: tk.Menu, kind: str, key) -> tk.Menu:
+        """Add "Colour Label ▸" to a menu (2.3): Red, Orange, Yellow, Green, Blue, Purple,
+        Grey, Custom… (the system's colour chooser) and None, the label in use marked.
+        `kind` is one of playerstate.LABEL_KINDS ("song", "album", "artist", "album_artist",
+        "genre", "year", "composer", "playlist", "tab") and `key` what it is kept under (a
+        path, an album key, a name, a playlist id, a tab name)."""
+        sub = tk.Menu(menu, tearoff=False)
+        current = self.label_of(kind, key) or ""
+        fixed = {c for _, c in playerstate.LABEL_COLORS}
+        var = tk.StringVar(master=sub, value=current if current in fixed or not current else "custom")
+        sub.vars = [var]  # type: ignore[attr-defined]  # the variable lives as long as the menu
+        for name, color in playerstate.LABEL_COLORS:
+            sub.add_radiobutton(label=tr(name), image=self._label_swatch(color), compound="left", variable=var,
+                                value=color, command=lambda c=color: self.set_label(kind, key, c))
+        sub.add_separator()
+        sub.add_radiobutton(label=tr("Custom…"), variable=var, value="custom",
+                            command=lambda: self.custom_label(kind, key))
+        sub.add_radiobutton(label=tr("None"), variable=var, value="", command=lambda: self.set_label(kind, key, None))
+        self._theme_menu(sub)
+        menu.add_cascade(label=tr("Colour Label"), menu=sub)
+        self.last_label_menu = sub
+        return sub
+
+    def playlist_menu(self, pid: str) -> tk.Menu:
+        """The menu of a playlist (2.3: right click in the sidebar and on the Playlists
+        page): Play, Shuffle, Rename…, Delete… and Colour Label."""
+        m = tk.Menu(self.root, tearoff=False)
+        name = next((p["name"] for p in self.state.playlists if p["id"] == pid), "")
+
+        def songs() -> List[Track]:
+            return [t for t in self.playlist_tracks(pid) if not getattr(t, "missing", False)]
+        m.add_command(label=tr("Play"), command=lambda: songs() and self.play_list(songs(), 0, name))
+        m.add_command(label=tr("Shuffle"), command=lambda: songs() and self.play_list(songs(), 0, name, shuffle=True))
+        m.add_separator()
+        m.add_command(label=tr("Rename…"), command=lambda: self.rename_playlist(pid))
+        m.add_command(label=tr("Delete…"), command=lambda: self.delete_playlist(pid))
+        m.add_separator()
+        self.add_label_menu(m, "playlist", pid)
+        self._theme_menu(m)
+        self.last_menu = m
+        return m
 
     def save_state(self) -> None:
         st = self.state

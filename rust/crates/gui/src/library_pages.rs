@@ -50,8 +50,8 @@ fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(110.0), 32.0), Sense::click());
     let fill = if resp.hovered() { pal.accent.gamma_multiply(0.85) } else { pal.accent };
     ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(18.0, 18.0)), icon, Color32::WHITE);
-    ui.painter().text(pos2(rect.left() + 36.0, rect.center().y), Align2::LEFT_CENTER, label, font, Color32::WHITE);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(18.0, 18.0)), icon, pal.on_accent);
+    ui.painter().text(pos2(rect.left() + 36.0, rect.center().y), Align2::LEFT_CENTER, label, font, pal.on_accent);
     resp
 }
 
@@ -279,7 +279,8 @@ impl Player {
                 let cell = Rect::from_min_max(pos2(x0 + k as f32 * cw + 2.0, y + 2.0), pos2(x0 + (k + 1) as f32 * cw - 2.0, y + ch - 2.0));
                 let resp = ui.interact(cell, ui.scope_id().with(("calendar-day", year, month, d)), Sense::click());
                 let level = self.calendar.levels.get(d as usize - 1).copied().unwrap_or(0);
-                let mut fill = look::mix(pal.lcd, pal.accent, TINTS[level as usize]);
+                // 2.3: the tint is the theme's "Your Stats: days with plays" colour
+                let mut fill = look::mix(pal.lcd, pal.calendar, TINTS[level as usize]);
                 if resp.hovered() {
                     fill = look::mix(fill, pal.text, 0.1);
                 }
@@ -290,7 +291,7 @@ impl Player {
                     let stroke = if chosen { Stroke::new(3.0, pal.text) } else { Stroke::new(2.0, pal.accent) };
                     p.rect_stroke(cell, CornerRadius::same(8), stroke, egui::StrokeKind::Inside);
                 }
-                let color = if level >= 3 { Color32::WHITE } else { pal.text };
+                let color = if level >= 3 { pal.on_accent } else { pal.text };
                 let font = if chosen || is_today { look::title(13.0) } else { look::text(13.0) };
                 p.text(cell.center(), Align2::CENTER_CENTER, d.to_string(), font, color);
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -331,9 +332,9 @@ impl Player {
             let resp = ui.interact(rect, ui.scope_id().with(("calendar-play", i)), if playable { Sense::click() } else { Sense::hover() });
             let p = ui.painter_at(rect);
             if playable && resp.hovered() {
-                p.rect_filled(rect, CornerRadius::same(6), pal.hover);
+                p.rect_filled(rect, CornerRadius::same(6), pal.row_hover);
             } else if i % 2 == 1 {
-                p.rect_filled(rect, CornerRadius::same(6), look::mix(pal.bg, pal.hover, 0.5));
+                p.rect_filled(rect, CornerRadius::same(6), pal.zebra);
             }
             let mid = rect.center().y;
             let playing = now.as_deref() == Some(r.path.as_str());
@@ -510,7 +511,7 @@ impl Player {
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             let p = ui.painter();
             if resp.hovered() {
-                p.rect_filled(rect, CornerRadius::same(8), pal.hover);
+                p.rect_filled(rect, CornerRadius::same(8), pal.row_hover);
             }
             icons::paint(p, Rect::from_center_size(pos2(rect.left() + 24.0, rect.center().y), vec2(20.0, 20.0)), e.icon, pal.accent);
             let count = p.text(pos2(rect.right() - 14.0, rect.center().y), Align2::RIGHT_CENTER, &e.count, look::text(13.0), pal.secondary);
@@ -673,7 +674,7 @@ impl Player {
         for (path, name, n) in rows {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+                ui.painter().rect_filled(rect, CornerRadius::same(6), pal.row_hover);
             }
             icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(20.0, 20.0)), Icon::Folder, pal.accent);
             let g = elided(ui, name, look::text(13.5), pal.text, rect.width() - 160.0);
@@ -715,6 +716,9 @@ impl Player {
                         let crect = Rect::from_min_size(rect.min, vec2(size, size));
                         let p = ui.painter().clone();
                         self.mosaic(&p, crect, songs, name);
+                        if let Some(c) = self.label_of("playlist", id) {
+                            crate::labels::paint_cover_dot(&p, crect, c, pal); // 2.3: its colour label
+                        }
                         if resp.hovered() {
                             ui.painter().rect_filled(crect, CornerRadius::same(8), Color32::from_black_alpha(30));
                         }
@@ -724,6 +728,7 @@ impl Player {
                         if resp.clicked() {
                             self.go(Page::Playlist(id.clone()));
                         }
+                        resp.context_menu(|ui| self.playlist_menu(ui, id)); // 2.3
                     }
                 });
                 ui.add_space(gap - ui.spacing().item_spacing.y);

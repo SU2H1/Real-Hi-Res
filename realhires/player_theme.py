@@ -20,37 +20,32 @@ from tkinter import ttk
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .i18n import N_
+from .themes import luminance, mix  # noqa: F401  (the colour maths is shared with the core, 2.3)
 from .probe import external_env
 
 FONT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "fonts", "InterVariable.ttf")
 DEFAULT_FONT_LABEL = N_("SF Pro (macOS) / Inter")  # shown as tr(DEFAULT_FONT_LABEL)
 
-def mix(a: str, b: str, t: float) -> str:
-    """The colour t of the way from a to b (#rrggbb)."""
-    ra, ga, ba = (int(a[i:i + 2], 16) for i in (1, 3, 5))
-    rb, gb, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
-    return "#%02x%02x%02x" % (round(ra + (rb - ra) * t), round(ga + (gb - ga) * t), round(ba + (bb - ba) * t))
-
-
-def luminance(c: str) -> float:
-    r, g, b = (int(c[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
 def palette(theme: dict) -> Dict[str, str]:
-    """Every colour the app draws with, from a theme's eight (themes.COLOR_KEYS)."""
-    c, dark = theme["colors"], bool(theme.get("dark"))
+    """Every colour the app draws with: the theme's colours (themes.colors(): the eight of
+    themes.COLOR_KEYS and the extra ones of 2.3, set by the theme or derived), under the
+    names the widgets use, plus a few shades of them."""
+    from .themes import colors
+
+    c, dark = colors(theme), bool(theme.get("dark"))
     bg, text, accent = c["background"], c["text"], c["accent"]
-    return {
+    out = dict(c)  # the theme's own keys too: "quality_hires", "verdict_cd", "calendar"...
+    out.update({
         "bg": bg, "sidebar": c["sidebar"], "text": text, "text2": c["secondary"], "sep": c["separator"],
-        "accent": accent, "lcd": c["panel"], "side_sel": c["hover"], "field": c["hover"], "ph": c["hover"],
-        "hover": mix(bg, c["hover"], 0.7), "zebra": mix(bg, c["hover"], 0.3),
-        "ph_icon": mix(c["hover"], c["secondary"], 0.6), "disabled": mix(bg, c["secondary"], 0.45),
-        "on_accent": "#1d1d1f" if luminance(accent) > 0.62 else "#ffffff",
+        "accent": accent, "lcd": c["panel"], "side_sel": c["selection"], "field": c["field"], "ph": c["placeholder"],
+        "hover": c["row_hover"], "zebra": c["zebra"],
+        "ph_icon": c["placeholder_icon"], "disabled": c["disabled"],
+        "on_accent": c["on_accent"],
         "accent_dark": mix(accent, "#000000", 0.12), "seek": c["separator"], "seek_fill": c["secondary"],
         "error": "#ff453a" if dark else "#d70015", "knob": mix(text, "#ffffff", 0.2) if dark else "#ffffff",
         "badge": c["secondary"],
-    }
+    })
+    return out
 
 
 def _builtin(name: str) -> Dict[str, str]:
