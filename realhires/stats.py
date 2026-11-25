@@ -25,7 +25,10 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .places import Place
 
 COUNTED_SECONDS = 30.0
 PERIODS = ["Last 30 days", "This year", "Last year", "All time"]
@@ -51,6 +54,7 @@ class Play:
     genre: str = ""
     year: str = ""
     composer: str = ""
+    place: Optional["Place"] = None  # 2.4: where it was played (places.Place), None when not known
 
 
 def counted(p: Play) -> bool:
@@ -274,7 +278,10 @@ def minutes_label(seconds: float) -> str:
 def day_plays(plays: Iterable[Play], year: int, month: int, day: int,
               localtime: Callable = time.localtime) -> List[dict]:
     """The plays that started on one local day, newest first, as the calendar
-    lists them: the local time ("14:05"), title, artist and minutes heard."""
+    lists them: the local time ("14:05"), title, artist, minutes heard and (2.4) the
+    place it was played at (places.place_text(), "" when not known)."""
+    from .places import place_text
+
     rows = []
     for p in plays:
         t = localtime(p.started)
@@ -284,7 +291,7 @@ def day_plays(plays: Iterable[Play], year: int, month: int, day: int,
             "path": p.path, "started": p.started, "time": f"{t.tm_hour:02d}:{t.tm_min:02d}",
             "title": p.title.strip() or os.path.splitext(os.path.basename(p.path))[0],
             "artist": p.artist.strip() or p.album_artist.strip() or "Unknown Artist",
-            "seconds": p.seconds, "minutes": minutes_label(p.seconds),
+            "seconds": p.seconds, "minutes": minutes_label(p.seconds), "place": place_text(p.place),
         })
     rows.reverse()  # the plays come oldest first
     return rows
