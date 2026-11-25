@@ -299,7 +299,8 @@ def loaded():
     assert app.page("library").entries()[-1][1:4] == ("Hi-Res", "filter", "6曲")
     app.open_tab("Hi-Res")
     m = app.page("tab").menu()
-    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1)] == ["タブを編集…", "タブを書き出す…", "タブを削除…"]
+    assert [m.entrycget(i, "label") for i in range(m.index("end") + 1) if m.type(i) != "separator"] == [
+        "タブを編集…", "タブを書き出す…", "タブを削除…", "カラーラベル"]
     w = app.new_tab()
     assert w.win.title() == "新規タブ" and w.name_var.get() == "新規タブ"
     w.template_cb.current(1)
