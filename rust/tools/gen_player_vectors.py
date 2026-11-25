@@ -3,8 +3,9 @@ rust/crates/core/tests/python_eq.json, python_queue.json, python_stats.json,
 python_eqfiles.json, python_themes.json, python_playerstate.json,
 python_tagedit.json (the tag editor and the themes folder),
 python_bitperfect.json (bit-perfect playback's decisions and texts), python_covers.json
-(the names of covers kept on disk) and python_library.json (the Quality column's tooltip
-and sort, renaming groups, the EQ preset match).  Run from the repository root:
+(the names of covers kept on disk), python_library.json (the Quality column's tooltip
+and sort, renaming groups, the EQ preset match) and python_leaderboard.json (2.4: Your
+Stats' leaderboard, "Most Played").  Run from the repository root:
 
     python3 rust/tools/gen_player_vectors.py
 """
@@ -261,6 +262,25 @@ with open(os.path.join(OUT, "python_stats.json"), "w", encoding="utf-8") as fh:
                "shift_month": [[y, m, d, *stats.shift_month(y, m, d)]
                                for y, m, d in ((2026, 11, 1), (2026, 12, 1), (2026, 1, -1), (2026, 3, -27), (1999, 7, 0))]},
               fh, indent=0, ensure_ascii=False)
+
+# ------------------------------------------------- leaderboard (2.4) ---
+# the statistics' plays and the calendar's, plus ties (the same plays and whole minutes), a
+# song with only short plays (left out), a song without a title and one with a title in
+# another case: Most Played's songs, artists and albums, also cut at 3 and 5 rows
+board_plays = cal_plays + [
+    stats.Play("/lib/t/Tie A.flac", 1_703_100_000.0, 95.0, 200.0, title="Tie A", artist="Zoe", album="Ties"),
+    stats.Play("/lib/t/Tie B.flac", 1_703_100_300.0, 100.0, 200.0, title="tie b", artist="zoe", album="ties"),
+    stats.Play("/lib/t/Short.flac", 1_703_100_600.0, 4.0, 200.0, title="Short", artist="Zoe", album="Ties"),
+    stats.Play("/lib/t/Short.flac", 1_703_100_700.0, 9.0, 200.0, title="Short", artist="Zoe", album="Ties"),
+    stats.Play("/lib/t/Ünnamed Song.flac", 1_703_100_900.0, 61.0, 120.0, title=" ", artist="Émile"),
+    stats.Play("/lib/t/Tie A.flac", 1_703_101_000.0, 0.0, 200.0, title="Tie A", artist="Zoe", album="Ties"),
+]
+boards = {kind: {str(top): stats.leaderboard(board_plays, kind, top) for top in (stats.TOP, 5, 3, 0)}
+          for kind in stats.LEADERBOARD_KINDS}
+with open(os.path.join(OUT, "python_leaderboard.json"), "w", encoding="utf-8") as fh:
+    json.dump({"plays": [p.__dict__ for p in board_plays], "kinds": stats.LEADERBOARD_KINDS, "boards": boards,
+               "ranked": {kind: stats.ranked_songs(boards[kind][str(stats.TOP)]) for kind in stats.LEADERBOARD_KINDS},
+               "empty": stats.leaderboard([], "songs")}, fh, indent=0, ensure_ascii=False)
 
 # ------------------------------------------------------------- EQ files ---
 param = eq.apply_preset(eq.default_state(), "Rock")
