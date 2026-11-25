@@ -185,6 +185,8 @@ class Sidebar(tk.Frame):
         self.nav.bind("<Button-1>", self._click)
         self.nav.bind("<Button-3>", self._context)  # 2.3: a playlist's menu
         self.nav.bind("<Button-2>", self._context)  # macOS right click
+        if self.nav.tk.call("tk", "windowingsystem") == "aqua":  # and Ctrl-click, a right click there
+            self.nav.bind("<Control-Button-1>", self._context)
         self.nav.bind("<Motion>", lambda e: self._hover(self._key_at(self.nav.canvasy(e.y))))
         self.nav.bind("<Leave>", lambda e: self._hover(None))
         bind_wheel(self.nav, lambda n: self.nav.yview_scroll(n, "units"))

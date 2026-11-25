@@ -258,7 +258,7 @@ impl Player {
             if on && resp.hovered() {
                 p.rect_filled(r, CornerRadius::same(8), pal.hover);
             }
-            chevron(&p, r.center(), 18.0, delta > 0, if on { pal.accent } else { pal.secondary.gamma_multiply(0.5) });
+            chevron(&p, r.center(), 18.0, delta > 0, if on { pal.accent } else { pal.disabled });
             if on && resp.on_hover_text(if delta < 0 { tr!("Previous month") } else { tr!("Next month") }).clicked() {
                 step = delta;
             }

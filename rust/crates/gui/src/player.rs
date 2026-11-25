@@ -3151,7 +3151,7 @@ fn sidebar_item(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: b
 }
 
 /// A sidebar entry with its colour label's dot after the name (2.3: playlists).
-fn sidebar_item_dot(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: bool, dot: Option<Color32>) -> egui::Response {
+pub(crate) fn sidebar_item_dot(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, selected: bool, dot: Option<Color32>) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
     if selected {
         ui.painter().rect_filled(rect, CornerRadius::same(6), pal.selection);
