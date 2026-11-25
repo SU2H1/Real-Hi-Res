@@ -190,7 +190,7 @@ SCROLL_SCRIPT = r'''
 import faulthandler, os, sys, time
 sys.path.insert(0, REPO)
 faulthandler.enable()
-faulthandler.dump_traceback_later(150, exit=True)
+faulthandler.dump_traceback_later(330, exit=True)  # (a slow macOS runner took over 2 minutes to make the 36 covers ahead)
 import tkinter as tk
 from realhires import covers, musiclib
 from realhires.player_theme import Theme
@@ -222,7 +222,7 @@ theme.styles()
 def pump(cond, what, timeout=60):
     t0 = time.time()
     while not cond():
-        assert time.time() - t0 < timeout, "timed out: " + what
+        assert time.time() - t0 < timeout, "timed out: " + (what() if callable(what) else what)
         root.update()
         time.sleep(0.01)
 
@@ -248,7 +248,10 @@ cache = CoverCache(root)
 cache.library_changed(albums)
 cache.prefetch(albums)
 pump(lambda: cache.prefetching() == 0 and all(covers.is_cached([t.path for t in a["tracks"]], cache.GRID)
-                                               for a in albums), "made ahead", timeout=120)
+                                               for a in albums),
+     lambda: "made ahead: %d FFmpeg runs, %d of %d covers saved, %d queued" % (
+         len(runs), sum(covers.is_cached([t.path for t in a["tracks"]], cache.GRID) for a in albums),
+         len(albums), cache.prefetching()), timeout=300)
 made = len(runs)
 assert made >= ALBUMS, made
 assert cache.images == {}, "made ahead only on disk"
@@ -310,7 +313,7 @@ def test_scrolling_the_album_grid_does_not_run_ffmpeg_again(tmp_path):
     script = tmp_path / "scroll.py"
     script.write_text(f"REPO = {str(Path(__file__).resolve().parents[1])!r}\nMUSIC = {str(music)!r}\n"
                       f"ALBUMS = {albums}\n" + SCROLL_SCRIPT, encoding="utf-8")
-    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=200)
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=360)
     log = proc.stdout + proc.stderr
     assert proc.returncode == 0, log
     assert proc.stdout.splitlines()[-1] == "OK", log
