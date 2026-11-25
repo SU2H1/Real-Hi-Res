@@ -70,7 +70,7 @@ pub fn field_label(field: &str) -> &'static str {
         "disliked" => "Disliked",
         "mood" => "Mood",
         "tempo" => "Tempo",
-        "bpm" => "BPM",
+        "bpm" => "Tempo (BPM)",
         _ => "",
     }
 }

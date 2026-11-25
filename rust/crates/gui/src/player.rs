@@ -26,7 +26,7 @@ use crate::look::{self, Palette};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
-    /// the start page with the fourteen entries
+    /// the start page with the fifteen entries
     Library,
     AllSongs,
     /// a library folder or one of its subfolders (None: the library folders)
@@ -1121,19 +1121,14 @@ impl Player {
         if let Some(s) = self.library_status() {
             return Some(s);
         }
-        // 2.4: the mood analysis, unless MusicBrainz is being asked
-        if !matches!(self.mb_progress, Some((i, n)) if i < n) {
-            if let Some(s) = self.mood_status_line() {
-                return Some(s);
-            }
-        }
         match self.mb_progress {
             Some((i, n)) if i < n => {
                 Some(tr!("Getting song information from MusicBrainz: {i} of {n} albums", i = realhires::stats::thousands(i as i64 + 1), n = realhires::stats::thousands(n as i64)))
             }
             Some(_) => None,
             None if !self.mb_summary.is_empty() => Some(tr_text(&self.mb_summary)),
-            None => None,
+            // 2.4: the mood analysis's progress, the least important text
+            None => self.mood_status_line(),
         }
     }
 
@@ -4879,8 +4874,8 @@ mod tests {
             pages,
             [
                 Page::AllSongs, Page::Folders(None), Page::Albums, Page::Artists, Page::AlbumArtists, Page::Genres,
-                Page::Years, Page::Composers, Page::Playlists, Page::Liked, Page::Disliked, Page::RecentlyPlayed,
-                Page::Recent, Page::Stats,
+                Page::Years, Page::Composers, Page::Moods, Page::Playlists, Page::Liked, Page::Disliked,
+                Page::RecentlyPlayed, Page::Recent, Page::Stats,
             ]
         );
         p.go(Page::Library);
@@ -4895,7 +4890,7 @@ mod tests {
         assert_eq!(p.scanner.cfg.library_layout, "List");
         assert_eq!(realhires::settings::load(None).library_layout, "List", "saved at once");
         let t = placed_texts(&ctx, &mut p);
-        let names = ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"];
+        let names = ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers", "Moods", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"];
         // the row (the page's first such text: "Recently Added" is also the albums' heading under the list)
         let rows: Vec<egui::Pos2> = names
             .iter()
@@ -5944,9 +5939,9 @@ mod tests {
         run_until(&ctx, &mut p, "the library index", |p| p.lib.tracks.len() == 3 && p.lib_rx.is_none());
         assert_eq!(p.tab_names(), vec!["Hi-Res".to_string()]);
         assert_eq!(p.tab_problems, vec![("notes.json".to_string(), "This file is not a tab of Universal Music Player.".to_string())]);
-        // the Library page lists the tab after its fourteen entries, the sidebar under "Tabs"
+        // the Library page lists the tab after its fifteen entries, the sidebar under "Tabs"
         let entries = p.library_entries();
-        assert_eq!(entries.len(), 15);
+        assert_eq!(entries.len(), 16);
         let last = entries.last().unwrap();
         assert_eq!((last.name.as_str(), last.count.as_str(), &last.page), ("Hi-Res", "1 song", &Page::Tab("Hi-Res".into())));
         let shown = texts(&ctx, &mut p);

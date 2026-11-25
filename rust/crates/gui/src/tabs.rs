@@ -187,7 +187,7 @@ impl Player {
         self.cached_list(&id, None, |p| smarttabs::tab_songs(&tab, &p.lib.tracks, &p.tab_context()))
     }
 
-    /// The Library page's entries after its fourteen: one per tab, with its songs.
+    /// The Library page's entries after its fifteen: one per tab, with its songs.
     pub fn tab_library_entries(&mut self) -> Vec<LibraryEntry> {
         let names = self.tab_names();
         names

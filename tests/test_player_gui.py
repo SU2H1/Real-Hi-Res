@@ -169,7 +169,9 @@ def start():
 
 def loaded():
     assert len(app.tracks) == N_SONGS, len(app.tracks)
-    assert not app.library_busy() and app.sidebar.status.cget("text") == ""
+    # (2.4: the mood analysis that starts after the update may already show its progress)
+    status = app.sidebar.status.cget("text")
+    assert not app.library_busy() and (status == "" or status.startswith("Analysing moods: ")), status
     albums = app.page("albums")
     assert len(albums.grid_w.albums) == N_ALBUMS and app.page_name == "library"  # the start page
     assert [a["title"] for a in albums.grid_w.albums][:2] == ["City Rain", "Northern Lights"]
@@ -731,12 +733,13 @@ root.report_callback_exception = fail
 app = player_gui.PlayerApp(root)
 
 def loaded():
-    # the Library start page: fourteen tiles, each opening its page
+    # the Library start page: fifteen tiles (2.4: Moods), each opening its page
     assert app.page_name == "library"
     page = app.page("library")
     names = [n for _, n, _ in TILES]
     assert names == ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers",
-                     "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added", "Your Stats"]
+                     "Moods", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added",
+                     "Your Stats"]
     shown = texts(page.c)
     assert all(n in shown for n in names) and "11 songs" in shown and "Recently Added" in shown, shown
     for key, name, _ in TILES:

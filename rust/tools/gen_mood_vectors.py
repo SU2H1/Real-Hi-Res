@@ -4,7 +4,8 @@ realhires/moods.py (2.4) for the Rust port to match (moods_vectors.rs).
 
 The test songs are made with the integer synthesiser of tests/mood_songs.py, which the
 Rust test repeats exactly, so both versions analyse the very same samples; FFmpeg is
-not involved.  Run it after changing realhires/moods.py or tests/mood_songs.py.
+not involved.  Run it after changing realhires/moods.py or tests/mood_songs.py
+(tests/test_moods.py checks that the file is current; it passes another output path).
 """
 
 import json
@@ -22,7 +23,7 @@ import mood_songs  # noqa: E402
 from realhires import moods  # noqa: E402
 from realhires.musiclib import Track  # noqa: E402
 
-OUT = os.path.join(ROOT, "rust", "crates", "core", "tests", "python_moods.json")
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "rust", "crates", "core", "tests", "python_moods.json")
 
 
 def mood_json(m: moods.Mood) -> dict:
@@ -120,4 +121,4 @@ data = {
 }
 with open(OUT, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=0, ensure_ascii=False)
-print(len(songs), "songs,", len(variants), "variants,", len(mood_cases), "mood cases ->", os.path.relpath(OUT, ROOT))
+print(len(songs), "songs,", len(variants), "variants,", len(mood_cases), "mood cases ->", OUT)

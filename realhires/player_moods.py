@@ -5,10 +5,10 @@ of songs) and a card's page (`MoodPage`: its songs, Play, Shuffle and Create Pla
 
 The analysis runs in a thread after every library update, one song at a time
 (`moods.run_analysis()`), when the setting `analyse_moods` is on; its progress is shown
-in the sidebar's status.  Results reach the window through the mixin's own queue
-(`_poll_moods()`), and the pages are redrawn with them at most every
-`REDRAW_S` seconds while the job runs.  Each song's result is kept on its Track as
-`mood` (a `moods.Mood`, None when not analysed yet), where the BPM and Mood columns
+in the sidebar's status when no other text is there.  Results reach the window through
+the mixin's own queue (`_poll_moods()`), and the pages are redrawn with them at most
+every `REDRAW_S` seconds while the job runs.  Each song's result is kept on its Track
+as `mood` (a `moods.Mood`, None when not analysed yet), where the BPM and Mood columns
 of the song lists and Now Playing's Details find it."""
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ if TYPE_CHECKING:  # pragma: no cover
 
 POLL_MS = 150     # how often the window looks at the job's queue
 REDRAW_S = 2.0    # the pages show new results at most this often while the job runs
-STATUS_S = 8.0    # how long the summary of a finished run stays in the sidebar
 
 # the colour of each card (white text stays readable on all of them)
 CARD_COLORS = {"Happy": "#e8650a", "Sad": "#1a6fd8", "Chill": "#0f8f8c", "Intense": "#e0245e",
@@ -106,8 +105,9 @@ class MoodsMixin:
         self._moods_again = False
         self._moods_pending = False
         self._moods_shown = 0.0
-        self._mood_status_job: Optional[str] = None
         self._mood_status = ""                            # the status text the job set last
+        self._moods_ver = 0                               # changes with the results and the library
+        self._mood_counts: Optional[Tuple[int, Dict[str, int]]] = None
         try:
             store = moods.MoodStore()
             self.moods = store.all()
@@ -118,6 +118,7 @@ class MoodsMixin:
 
     def attach_moods(self: "PlayerApp") -> None:
         """Give every track its analysis (set_tracks() calls this)."""
+        self._moods_ver += 1
         for t in self.tracks:
             t.mood = self.moods.get(t.path)  # type: ignore[attr-defined]
 
@@ -206,33 +207,24 @@ class MoodsMixin:
             pass
 
     def _set_mood_status(self: "PlayerApp", text: str) -> None:
-        self._mood_status = text
-        self.sidebar.set_status(text)
+        """The job's progress in the sidebar's status, the least important of its texts:
+        it never replaces another one (the library update, MusicBrainz, a message)."""
+        shown = self.sidebar.status.cget("text")
+        if not shown or shown == self._mood_status:
+            self._mood_status = text
+            self.sidebar.set_status(text)
 
     def _moods_finished(self: "PlayerApp", res) -> None:
         self.mood_progress = None
         self.mood_last = res
-        shown = self.sidebar.status.cget("text")
-        if res and res[0] and not self.library_busy():
-            text = (tr("Moods analysed for 1 song.") if res[0] == 1
-                    else tr("Moods analysed for {n} songs.", n=f"{res[0]:,}"))
-            self._set_mood_status(text)
-            if self._mood_status_job is not None:
-                self.root.after_cancel(self._mood_status_job)
-            self._mood_status_job = self.root.after(int(STATUS_S * 1000), self._clear_mood_status)
-        elif shown and shown == self._mood_status:
-            self._set_mood_status("")
+        self._set_mood_status("")  # as after a library update, the status is empty again
         if self._moods_again:
             self.analyse_moods()
-
-    def _clear_mood_status(self: "PlayerApp") -> None:
-        self._mood_status_job = None
-        if self.sidebar.status.cget("text") == self._mood_status:
-            self._set_mood_status("")
 
     def moods_changed(self: "PlayerApp") -> None:
         """New results: the Moods pages, the Library page's count, the tabs, the song
         lists' BPM and Mood columns and Now Playing's Details show them."""
+        self._moods_ver += 1
         self.tab_cache_clear()
         self._refresh_pages({"moods", "mood", "library", "tab"})
         for table in getattr(self, "song_tables", []):
@@ -247,7 +239,10 @@ class MoodsMixin:
 
     # ---- what the pages show ----------------------------------------------------
     def mood_counts(self: "PlayerApp") -> Dict[str, int]:
-        return moods.card_counts(self.tracks, self.moods)
+        """The number of songs of each card, worked out once per library and results."""
+        if self._mood_counts is None or self._mood_counts[0] != self._moods_ver:
+            self._mood_counts = (self._moods_ver, moods.card_counts(self.tracks, self.moods))
+        return self._mood_counts[1]
 
     def mood_tracks(self: "PlayerApp", kind: str, value: str) -> List[Track]:
         paths = moods.card_songs(kind, value, self.tracks, self.moods)
@@ -276,7 +271,9 @@ class MoodsMixin:
         n = len(p["songs"])
         self.mood_message = (tr("Made the playlist “{name}” with 1 song.", name=p["name"]) if n == 1 else
                              tr("Made the playlist “{name}” with {n} songs.", name=p["name"], n=f"{n:,}"))
-        self.sidebar.set_status(self.mood_message)
+        msg = self.mood_message
+        self.sidebar.set_status(msg)
+        self.root.after(4000, lambda: self.sidebar.status.cget("text") == msg and self.sidebar.set_status(""))
         page = self.pages.get("mood")
         if isinstance(page, MoodPage):
             page.made.configure(text=self.mood_message)

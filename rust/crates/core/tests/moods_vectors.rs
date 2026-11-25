@@ -349,7 +349,9 @@ fn songs_decoded_through_ffmpeg_get_their_labels() {
     // a song longer than 120 s is analysed from 30 s in, for 90 s
     let p = d.join("long.wav");
     write_wav(&p, &song(96, "minor", 130, 22050, 6000, 9000, 100), 22050, 1);
+    let t0 = std::time::Instant::now();
     let m = moods::analyse_file(&p.to_string_lossy(), 130.0).unwrap();
+    eprintln!("a 90 s stretch analysed in {:.2} s", t0.elapsed().as_secs_f64());
     assert!((m.seconds - 90.0).abs() < 0.01 && (m.bpm - 96).abs() <= 2, "{m:?}");
     let err = moods::analyse_file(&d.join("missing.flac").to_string_lossy(), 0.0).unwrap_err();
     assert!(err.0.starts_with("The song could not be decoded: "), "{err:?}");

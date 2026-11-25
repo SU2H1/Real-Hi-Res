@@ -95,7 +95,7 @@ class TabsMixin:
         return self._tab_cache[tab["name"]]
 
     def tab_entries(self: "PlayerApp") -> list:
-        """The Library page's entries after its fourteen: one per tab, with its songs."""
+        """The Library page's entries after its fifteen: one per tab, with its songs."""
         return [(f"tab:{t['name']}", t["name"], "filter", plural(len(self.tab_tracks(t["name"])), "song"),
                  lambda n=t["name"]: self.open_tab(n)) for t in self.tabs]
 

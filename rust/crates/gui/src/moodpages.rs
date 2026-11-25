@@ -2,11 +2,12 @@
 //! tempo and playlists"), as the Tk player's `player_moods.py` does them: the moods of
 //! `library.sqlite` read at start, the background analysis after every library update
 //! (one song at a time, `moods::run_analysis()`, when `analyse_moods` is on) with its
-//! progress in the sidebar's status, the Moods page (a card per mood and per tempo with
-//! its number of songs), a card's page (its songs, Play, Shuffle, Create Playlist), the
-//! BPM and Mood columns and Now Playing's Details rows.  New results are shown at most
-//! every `REDRAW` while the job runs; the song lists' cells find them through a
-//! thread-local copy (`shown_mood()`), since `cell_text()` has no player.
+//! progress in the sidebar's status (when nothing else is shown there), the Moods page
+//! (a card per mood and per tempo with its number of songs), a card's page (its songs,
+//! Play, Shuffle, Create Playlist), the BPM and Mood columns and Now Playing's Details
+//! rows.  New results are shown at most every `REDRAW` while the job runs; the song
+//! lists' cells find them through a thread-local copy (`shown_mood()`), since
+//! `cell_text()` has no player.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,8 +27,6 @@ use crate::player::{plural, Page, Player};
 
 /// The pages show new results at most this often while the job runs.
 pub const REDRAW: Duration = Duration::from_secs(2);
-/// How long the summary of a finished run stays in the sidebar.
-pub const STATUS_FOR: Duration = Duration::from_secs(8);
 const CARD_W: f32 = 190.0;
 const CARD_H: f32 = 104.0;
 const GAP: f32 = 14.0;
@@ -141,8 +140,6 @@ pub struct MoodState {
     pub gen: u64,
     /// what Create Playlist made last
     pub message: String,
-    /// the summary of a finished run, until it leaves the sidebar
-    pub status: Option<(String, Instant)>,
     /// where the Moods page drew each card, and the card page's Create Playlist (for the tests)
     pub card_rects: Vec<(String, Rect)>,
     pub create_rect: Option<Rect>,
@@ -162,7 +159,6 @@ impl Default for MoodState {
             shown_at: Instant::now(),
             gen: 0,
             message: String::new(),
-            status: None,
             card_rects: vec![],
             create_rect: None,
             counts: None,
@@ -279,18 +275,6 @@ impl Player {
             self.moods.rx = None;
             self.moods.progress = None;
             self.moods.last = res;
-            self.moods.status = match res {
-                Some((n, _)) if n > 0 => {
-                    let text = if n == 1 {
-                        tr!("Moods analysed for 1 song.").to_string()
-                    } else {
-                        tr!("Moods analysed for {n} songs.", n = realhires::stats::thousands(n as i64))
-                    };
-                    self.ctx.request_repaint_after(STATUS_FOR);
-                    Some((text, Instant::now() + STATUS_FOR))
-                }
-                _ => None,
-            };
             if std::mem::take(&mut self.moods.again) {
                 self.analyse_moods(false);
             }
@@ -304,20 +288,16 @@ impl Player {
         self.forget_lists();
     }
 
-    /// The sidebar's status while the job runs, then its summary for a while.
+    /// The sidebar's status while the job runs (the least important of its texts).
     pub fn mood_status_line(&self) -> Option<String> {
         match self.moods.progress {
-            Some((i, n)) if i < n => {
-                return Some(tr!(
-                    "Analysing moods: {done} of {total} songs",
-                    done = realhires::stats::thousands(i as i64),
-                    total = realhires::stats::thousands(n as i64)
-                ))
-            }
-            Some(_) => return None,
-            None => {}
+            Some((i, n)) if i < n => Some(tr!(
+                "Analysing moods: {done} of {total} songs",
+                done = realhires::stats::thousands(i as i64),
+                total = realhires::stats::thousands(n as i64)
+            )),
+            _ => None,
         }
-        self.moods.status.as_ref().filter(|(_, until)| Instant::now() < *until).map(|(t, _)| t.clone())
     }
 
     // -------------------------------------------------------- what is shown ---
@@ -506,4 +486,292 @@ fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, accent: bool) -> eg
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(18.0, 18.0)), icon, fg);
     ui.painter().text(pos2(rect.left() + 36.0, rect.center().y), Align2::LEFT_CENTER, label, font, fg);
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    //! The moods in the egui player, as `tests/test_moods_gui.py` checks them in the Tk
+    //! one, with the same invented songs (`tests/mood_songs.py`'s integer synthesiser):
+    //! the background analysis after the library update and its progress in the sidebar,
+    //! the Moods entries, the Moods page's cards at 1024 px, a card's page with Create
+    //! Playlist (a taken name gets " 2"), the BPM and Mood columns, a tab on moods,
+    //! Details, a changed song analysed again, the setting off, and Japanese.
+    use super::*;
+    use crate::player::SongCol;
+    use realhires::{musiclib, playerstate};
+
+    const WIDTH: f32 = 1024.0;
+    const HEIGHT: f32 = 740.0;
+
+    // ---- the invented songs (tests/mood_songs.py)
+    const NOTE_MHZ: [i64; 12] = [261626, 277183, 293665, 311127, 329628, 349228, 369994, 391995, 415305, 440000, 466164, 493883];
+
+    fn period(note: usize, octave: i64, sr: i64) -> i64 {
+        let f = NOTE_MHZ[note];
+        let (num, den) = if octave >= 4 { (sr * 1000, f << (octave - 4)) } else { ((sr * 1000) << (4 - octave), f) };
+        (2 * num + den).div_euclid(2 * den)
+    }
+
+    fn song(bpm: i64, major: bool, seconds: i64, sr: i64, gain: i64) -> Vec<i16> {
+        // C - F - G - C, or Am - Dm - Em - Am: (note, octave) per bar, the bass first
+        let chords: [[(usize, i64); 4]; 4] = if major {
+            [[(0, 2), (0, 4), (4, 4), (7, 4)], [(5, 2), (5, 4), (9, 4), (0, 5)], [(7, 2), (7, 4), (11, 4), (2, 5)], [(0, 2), (0, 4), (4, 4), (7, 4)]]
+        } else {
+            [[(9, 2), (9, 3), (0, 4), (4, 4)], [(2, 2), (2, 4), (5, 4), (9, 4)], [(4, 2), (4, 4), (7, 4), (11, 4)], [(9, 2), (9, 3), (0, 4), (4, 4)]]
+        };
+        let (tone, click) = (6000i64, 9000i64);
+        let total = seconds * sr;
+        let mut out = vec![0i64; total as usize];
+        let mut bar = 0;
+        while bar * 4 * 60 * sr / bpm < total {
+            let (start, end) = (bar * 4 * 60 * sr / bpm, total.min((bar + 1) * 4 * 60 * sr / bpm));
+            for (i, (note, octave)) in chords[(bar % 4) as usize].iter().enumerate() {
+                let amp = if i == 0 { tone * 3 / 2 } else { tone };
+                let p = period(*note, *octave, sr);
+                for n in start..end {
+                    out[n as usize] += (amp * 4 * (2 * n.rem_euclid(p) - p).abs()).div_euclid(2 * p) - amp;
+                }
+            }
+            bar += 1;
+        }
+        let (length, mut x, mut beat) = (sr / 100, 12345i64, 0i64);
+        while beat * 60 * sr / bpm < total {
+            let at = beat * 60 * sr / bpm;
+            for k in 0..length.min(total - at) {
+                x = (1103515245 * x + 12345).rem_euclid(1 << 31);
+                out[(at + k) as usize] += (((x >> 15) - 32768) * (click * (length - k) / length)).div_euclid(32768);
+            }
+            beat += 1;
+        }
+        out.iter().map(|v| (v * gain).div_euclid(100).clamp(-32768, 32767) as i16).collect()
+    }
+
+    fn flac(dir: &std::path::Path, n: usize, title: &str, bpm: i64, major: bool, gain: i64) -> String {
+        let wav = dir.join(format!("{title}.wav"));
+        let samples = song(bpm, major, 6, 44100, gain);
+        let mut data = Vec::new();
+        for v in &samples {
+            data.extend_from_slice(&v.to_le_bytes());
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut f = Vec::new();
+        f.extend_from_slice(b"RIFF");
+        f.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        f.extend_from_slice(b"WAVEfmt ");
+        for v in [16u32.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec(), 2u16.to_le_bytes().to_vec(), 44100u32.to_le_bytes().to_vec(), (44100u32 * 4).to_le_bytes().to_vec(), 4u16.to_le_bytes().to_vec(), 16u16.to_le_bytes().to_vec()] {
+            f.extend_from_slice(&v);
+        }
+        f.extend_from_slice(b"data");
+        f.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        f.extend_from_slice(&data);
+        std::fs::write(&wav, f).unwrap();
+        let out = dir.join(format!("{n:02} {title}.flac"));
+        let meta = [format!("title={title}"), "artist=Invented Band".into(), "album=Feelings".into(), format!("track={n}")];
+        let mut args: Vec<String> = ["-v", "error", "-y", "-i"].iter().map(|s| s.to_string()).collect();
+        args.push(wav.to_string_lossy().into_owned());
+        for m in meta {
+            args.extend(["-metadata".to_string(), m]);
+        }
+        args.push(out.to_string_lossy().into_owned());
+        let st = std::process::Command::new(realhires::probe::tool("ffmpeg")).args(&args).status().unwrap();
+        assert!(st.success());
+        let _ = std::fs::remove_file(&wav);
+        realhires::paths::abspath(&out.to_string_lossy())
+    }
+
+    // ---- driving the window
+    fn frame_with(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) -> Vec<String> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, HEIGHT))), events, ..Default::default() };
+        let output = ctx.run_ui(input, |ui| p.ui(ui));
+        let mut out = vec![];
+        output.shapes.iter().for_each(|s| walk(&s.shape, &mut out));
+        output.drop_without_applying_deltas();
+        out
+    }
+
+    fn texts(ctx: &egui::Context, p: &mut Player) -> Vec<String> {
+        for _ in 0..3 {
+            frame_with(ctx, p, vec![]);
+        }
+        frame_with(ctx, p, vec![])
+    }
+
+    fn click(ctx: &egui::Context, p: &mut Player, at: egui::Pos2) {
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            let e = egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            frame_with(ctx, p, vec![e]);
+        }
+        frame_with(ctx, p, vec![egui::Event::PointerMoved(pos2(5.0, HEIGHT - 5.0))]);
+    }
+
+    fn run_until(ctx: &egui::Context, p: &mut Player, what: &str, mut seen: impl FnMut(&Player), done: impl Fn(&Player) -> bool) {
+        let t0 = Instant::now();
+        while !done(p) {
+            assert!(t0.elapsed() < Duration::from_secs(90), "timed out waiting for {what}");
+            frame_with(ctx, p, vec![]);
+            seen(p);
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    fn has(t: &[String], s: &str) -> bool {
+        t.iter().any(|x| x == s)
+    }
+
+    #[test]
+    fn moods_pages_playlists_columns_tabs_and_details() {
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        i18n::set_thread_language("en");
+        let tmp = std::env::temp_dir().join(format!("rhr-moods-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let music = tmp.join("Music").join("Invented Band").join("Feelings");
+        std::fs::create_dir_all(&music).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::smarttabs::TABS_ENV, tmp.join("tabs"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let happy = flac(&music, 1, "Happy", 128, true, 100);
+        let sad = flac(&music, 2, "Sad", 72, false, 12);
+        let intense = flac(&music, 3, "Intense", 150, false, 100);
+        let chill = flac(&music, 4, "Chill", 84, true, 12);
+        let mut cfg = realhires::settings::Settings::default();
+        cfg.library_folders = vec![tmp.join("Music").to_string_lossy().into_owned()];
+        assert!(cfg.analyse_moods, "on by default");
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+
+        // ---- the analysis after the library update, its progress in the sidebar
+        let mut status = vec![];
+        run_until(&ctx, &mut p, "the mood analysis", |p| status.extend(p.status_line()), |p| {
+            p.lib.tracks.len() == 4 && p.lib_progress.is_none() && !p.moods_busy() && p.moods.last.is_some()
+        });
+        assert!(status.iter().any(|s| s.starts_with("Analysing moods: ") && s.ends_with(" of 4 songs")), "{status:?}");
+        assert_eq!(p.status_line(), None, "cleared when the job ends");
+        assert_eq!(p.moods.last, Some((4, 0)));
+        for (path, mood, tempo) in [(&happy, "Happy", "Up-tempo"), (&sad, "Sad", "Slow"), (&intense, "Intense", "Up-tempo"), (&chill, "Chill", "Slow")] {
+            let m = &p.moods.map[path.as_str()];
+            assert_eq!((m.mood.as_str(), m.tempo.as_str()), (mood, tempo), "{path}: {m:?}");
+        }
+        let bpm = p.moods.map[happy.as_str()].bpm;
+        assert!((bpm - 128).abs() <= 2);
+
+        // ---- the Library page's entry, after Composers, and the sidebar's
+        let entries = p.library_entries();
+        let i = entries.iter().position(|e| e.page == Page::Moods).unwrap();
+        assert_eq!(entries[i - 1].page, Page::Composers);
+        assert_eq!((entries[i].name.as_str(), entries[i].count.as_str()), ("Moods", "4 songs analysed"));
+        let t = texts(&ctx, &mut p);
+        assert!(has(&t, "Moods") && has(&t, "4 songs analysed"), "{t:?}");
+
+        // ---- the Moods page: the cards, their counts, the note that they are estimates
+        p.go(Page::Moods);
+        let t = texts(&ctx, &mut p);
+        for s in ["Moods", "Tempo", "4 of 4 songs analysed", moods::ESTIMATE_NOTE, "Happy", "Sad", "Chill", "Intense", "Up-tempo", "Mid-tempo", "Slow", "Major key, lively", "Slower than 90 BPM"] {
+            assert!(has(&t, s), "{s}: {t:?}");
+        }
+        assert_eq!(t.iter().filter(|s| *s == "1 song").count(), 4, "{t:?}");
+        assert_eq!(t.iter().filter(|s| *s == "2 songs").count(), 2, "{t:?}");
+        assert_eq!(p.moods.card_rects.len(), 7);
+        assert!(p.moods.card_rects.iter().all(|(_, r)| r.right() <= WIDTH && r.width() >= CARD_W - 1.0), "{:?}", p.moods.card_rects);
+        let up = p.moods.card_rects.iter().find(|(l, _)| l == "Up-tempo").unwrap().1;
+        click(&ctx, &mut p, up.center());
+        assert_eq!(p.page, Page::Mood("tempo", "Up-tempo".into()));
+        assert_eq!(p.page_label(&p.page.clone()), "Up-tempo");
+
+        // ---- the card's page: Create Playlist, again with " 2"
+        let t = texts(&ctx, &mut p);
+        for s in ["Up-tempo", "2 songs, 0 minutes", "Play", "Shuffle", "Create Playlist", moods::ESTIMATE_NOTE] {
+            assert!(has(&t, s), "{s}: {t:?}");
+        }
+        assert_eq!(*p.mood_list("tempo", "Up-tempo"), vec![happy.clone(), intense.clone()]);
+        let create = p.moods.create_rect.expect("Create Playlist");
+        assert!(create.right() <= WIDTH, "{create:?}");
+        click(&ctx, &mut p, create.center());
+        let names: Vec<&str> = p.state.playlists.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, ["Up-tempo songs"]);
+        assert_eq!(p.state.playlists[0].songs, vec![happy.clone(), intense.clone()]);
+        assert_eq!(p.moods.message, "Made the playlist “Up-tempo songs” with 2 songs.");
+        assert!(has(&texts(&ctx, &mut p), "Made the playlist “Up-tempo songs” with 2 songs."));
+        click(&ctx, &mut p, create.center());
+        assert_eq!(p.state.playlists.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["Up-tempo songs", "Up-tempo songs 2"]);
+
+        // ---- the BPM and Mood columns, chosen as the other columns
+        let cols = p.state.columns_of("songs");
+        p.state.set_columns("songs", &[cols, vec!["bpm".into(), "mood".into()]].concat());
+        let t = texts(&ctx, &mut p);
+        assert!(has(&t, "BPM") && has(&t, "Mood") && has(&t, &bpm.to_string()) && has(&t, "Intense"), "{t:?}");
+        let track = p.lib.track(&happy).unwrap().clone();
+        assert_eq!(crate::player::cell_text(&track, SongCol::Bpm), bpm.to_string());
+        assert_eq!(crate::player::cell_text(&track, SongCol::Mood), "Happy");
+        assert_eq!(SongCol::Bpm.info().1, "BPM (estimated)");
+        let tip = mood_tip(&happy);
+        assert!(tip.starts_with("Estimated from the audio: Happy · Energetic · ") && tip.contains("C major"), "{tip}");
+
+        // ---- a tab on moods, sorted by BPM
+        use realhires::smarttabs::{self, Rule, Tab};
+        let rule = |f: &str, v: &str| Rule { field: f.into(), op: "is".into(), value: realhires::json::Value::Str(v.into()) };
+        let tab = Tab { match_mode: "any".into(), sort: "bpm".into(), rules: vec![rule("mood", "Sad"), rule("tempo", "Up-tempo")], ..Tab::new("Moody") };
+        smarttabs::save_tab(&tab, None, None).unwrap();
+        p.reload_tabs();
+        assert_eq!(*p.tab_list("Moody"), vec![sad.clone(), happy.clone(), intense.clone()]);
+
+        // ---- Details on Now Playing
+        p.play_list(vec![happy.clone()], Some(&happy), "Happy");
+        p.np_tab = crate::player::NpTab::Details;
+        p.go(Page::NowPlaying);
+        texts(&ctx, &mut p);
+        let d = p.np_hits.details.join("\n");
+        assert!(d.contains("Mood (estimated): Happy, Energetic"), "{d}");
+        assert!(d.contains(&format!("Tempo (estimated): {bpm} BPM, Up-tempo")) && d.contains("Key (estimated): C major"), "{d}");
+
+        // ---- a changed song is analysed again after the library update, the others not
+        let f = std::fs::File::options().write(true).open(&chill).unwrap();
+        f.set_modified(std::time::SystemTime::now() + Duration::from_secs(5)).unwrap();
+        drop(f);
+        p.moods.last = None;
+        p.update_library();
+        run_until(&ctx, &mut p, "the changed song", |_| {}, |p| p.lib_progress.is_none() && !p.moods_busy() && p.moods.last.is_some());
+        assert_eq!(p.moods.last, Some((1, 0)));
+
+        // ---- the setting off: nothing runs after an update; by hand it still can
+        p.scanner.cfg.analyse_moods = false;
+        p.moods_setting_changed(false);
+        p.go(Page::Moods);
+        assert!(has(&texts(&ctx, &mut p), "4 of 4 songs analysed. Analysing is turned off in Settings → Library."));
+        assert!(!p.analyse_moods(false));
+        assert!(p.analyse_moods(true));
+        run_until(&ctx, &mut p, "a run by hand", |_| {}, |p| !p.moods_busy());
+        assert_eq!(p.moods.last, Some((0, 0)));
+
+        // ---- Japanese
+        i18n::set_thread_language("ja");
+        let t = texts(&ctx, &mut p);
+        for s in ["ムード", "テンポ", "楽しい", "悲しい", "チル", "激しい", "アップテンポ", "ミドルテンポ", "スロー", "長調・にぎやか", "90 BPM未満"] {
+            assert!(has(&t, s), "{s}: {t:?}");
+        }
+        assert!(t.iter().any(|s| s.starts_with("4曲中4曲を解析済み")), "{t:?}");
+        p.go(Page::Mood("mood", "Sad".into()));
+        let t = texts(&ctx, &mut p);
+        assert!(has(&t, "悲しい") && has(&t, "プレイリストを作成"), "{t:?}");
+        let id = p.create_mood_playlist("mood", "Sad").unwrap();
+        assert_eq!(p.state.playlist(&id).unwrap().name, "悲しい曲");
+        assert_eq!(p.moods.message, "1曲のプレイリスト「悲しい曲」を作成しました。");
+        assert_eq!(detail_rows(p.moods.map.get(sad.as_str()))[2].1, "イ短調");
+        i18n::set_thread_language("en");
+        p.on_exit();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

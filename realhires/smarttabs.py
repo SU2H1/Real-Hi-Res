@@ -1,7 +1,7 @@
 """Custom tabs (2.3): saved sets of rules that pick songs from the library.
 
 A tab is shown in the sidebar like a playlist, and on the Library page after its
-fourteen entries.  It is a small JSON file, so tabs can be shared: no code runs, a
+fifteen entries.  It is a small JSON file, so tabs can be shared: no code runs, a
 tab only names fields of the songs, operators and values
 (docs/player-spec.md, "2.3", "6. Custom tabs")::
 
@@ -50,7 +50,7 @@ FIELD_LABELS = {
     "composer": "Composer", "format": "Format", "folder": "Folder", "quality": "Quality", "year": "Year",
     "bits": "Bit depth", "sample_rate": "Sample rate (Hz)", "bit_rate": "Bit rate (kbps)",
     "duration": "Length (seconds)", "added_days": "Days since added", "lossless": "Lossless", "liked": "Liked",
-    "disliked": "Disliked", "mood": "Mood", "tempo": "Tempo", "bpm": "BPM",
+    "disliked": "Disliked", "mood": "Mood", "tempo": "Tempo", "bpm": "Tempo (BPM)",
 }
 TEXT_OPS = ("is", "is_not", "contains", "not_contains", "starts_with")
 NUMBER_OPS = ("=", "!=", ">", ">=", "<", "<=")
@@ -613,7 +613,7 @@ def import_tab(path: str, folder: Optional[str] = None) -> dict:
 
 def context(liked: Iterable[str] = (), disliked: Iterable[str] = (), now: float = 0.0,
             moods: Optional[dict] = None) -> TabContext:
-    return TabContext(set(liked), set(disliked), float(now), dict(moods or {}))
+    return TabContext(set(liked), set(disliked), float(now), moods if moods is not None else {})
 
 
 __all__ = ["TabError", "TabContext", "FIELDS", "FIELD_LABELS", "TEMPLATES", "check_tab", "check_rule", "check_name",
