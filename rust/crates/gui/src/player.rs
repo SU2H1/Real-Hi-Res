@@ -6031,8 +6031,18 @@ mod tests {
         assert_eq!(p.back_label().as_deref(), Some("Hi-Res"));
         p.go_back();
 
-        // New Tab… from the sidebar
-        small_frame(&ctx, &mut p, vec![]);
+        // New Tab… from the sidebar, which scrolls at this height (2.5: For You is one more entry)
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: Default::default(),
+        };
+        small_frame(&ctx, &mut p, vec![egui::Event::PointerMoved(pos2(100.0, 400.0)), wheel]);
+        for _ in 0..30 {
+            small_frame(&ctx, &mut p, vec![]);
+        }
         let new_tab = p.tab_hits.new_tab.expect("New Tab…").center();
         click_at(&ctx, &mut p, new_tab, egui::PointerButton::Primary);
         let w = p.tab_win.as_mut().expect("the tab window");
