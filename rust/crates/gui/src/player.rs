@@ -286,6 +286,8 @@ pub struct Player {
     lyrics: Option<(String, u64, Option<ShownLyrics>)>,
     pub covers: Covers,
     pub show_up_next: bool,
+    /// Now Playing without its lyrics (the Lyrics button hid them): the cover in the centre
+    pub lyrics_hidden: bool,
     pub eq_open: bool,
     pub eq_tab: usize,
     pub info: Option<InfoWindow>,
@@ -364,6 +366,7 @@ impl Player {
             fail_streak: 0,
             lyrics: None,
             show_up_next: false,
+            lyrics_hidden: false,
             eq_open: false,
             eq_tab: 0,
             info: None,
@@ -1478,12 +1481,10 @@ impl Player {
                 if icons::button(ui, Icon::UpNext, 28.0, self.show_up_next, true, "Up Next").clicked() {
                     self.show_up_next = !self.show_up_next;
                 }
-                if icons::button(ui, Icon::Lyrics, 28.0, self.page == Page::NowPlaying, true, "Lyrics").clicked() {
-                    if self.page == Page::NowPlaying {
-                        self.go_back_from_now();
-                    } else {
-                        self.go(Page::NowPlaying);
-                    }
+                let lyrics_on = self.page == Page::NowPlaying && !self.lyrics_hidden;
+                let tip = if lyrics_on { "Hide the lyrics" } else { "Lyrics and cover" };
+                if icons::button(ui, Icon::Lyrics, 28.0, lyrics_on, true, tip).clicked() {
+                    self.lyrics_button();
                 }
                 let now_path = self.now.as_ref().map(|n| n.path.clone());
                 let r = icons::button(ui, Icon::More, 28.0, false, has, "More");
@@ -1505,6 +1506,18 @@ impl Player {
                 }
             });
         });
+    }
+
+    /// The Lyrics button: elsewhere it opens Now Playing with the lyrics; on Now
+    /// Playing it hides the lyrics (the cover moves to the centre) or shows them again.
+    pub fn lyrics_button(&mut self) {
+        if self.page == Page::NowPlaying {
+            self.lyrics_hidden = !self.lyrics_hidden;
+        } else {
+            self.lyrics_hidden = false;
+            self.go(Page::NowPlaying);
+        }
+        self.lyrics_line = None; // shown again: scroll to the current line
     }
 
     fn go_back_from_now(&mut self) {
@@ -1531,7 +1544,12 @@ impl Player {
         cover(&p, cover_rect, tex.as_ref(), &track.display_album(), 5);
         let cover_resp = ui.interact(cover_rect, ui.id().with("lcd-cover"), Sense::click());
         if cover_resp.on_hover_text("Now Playing").clicked() {
-            self.go(Page::NowPlaying);
+            // open Now Playing, or leave it again (as the Python app does)
+            if self.page == Page::NowPlaying {
+                self.go_back_from_now();
+            } else {
+                self.go(Page::NowPlaying);
+            }
         }
         // texts
         let badge = musiclib::quality(&track);
@@ -1963,6 +1981,18 @@ mod tests {
             Some(ShownLyrics::Synced(lines)) => assert_eq!(lines.len(), 3),
             other => panic!("no synced lyrics: {other:?}"),
         }
+        // the Lyrics button on Now Playing hides the lyrics (the cover moves to the centre); again shows them
+        ctx.enable_accesskit();
+        let shows_lyrics = |ctx: &egui::Context, p: &mut Player| {
+            input(ctx, p, vec![]).iter().any(|(label, _)| label == "Lanterns over water")
+        };
+        assert!(shows_lyrics(&ctx, &mut p));
+        p.lyrics_button();
+        assert!(p.page == Page::NowPlaying && p.lyrics_hidden);
+        assert!(!shows_lyrics(&ctx, &mut p));
+        p.lyrics_button();
+        assert!(p.page == Page::NowPlaying && !p.lyrics_hidden);
+        assert!(shows_lyrics(&ctx, &mut p));
 
         // likes are saved at once
         p.toggle_like(&a1);
@@ -2121,8 +2151,9 @@ mod tests {
         let _ = b1;
     }
 
-    /// One frame with these input events; returns the labels and rectangles of the
-    /// widgets AccessKit was told about (the context menu's buttons among them).
+    /// One frame with these input events; returns the texts and rectangles of the
+    /// widgets AccessKit was told about (the context menu's buttons, and the text
+    /// of labels, which AccessKit gets as their value).
     fn input(ctx: &egui::Context, p: &mut Player, events: Vec<egui::Event>) -> Vec<(String, Rect)> {
         let raw = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 840.0))),
@@ -2133,7 +2164,7 @@ mod tests {
         let mut nodes = vec![];
         if let Some(update) = &out.platform_output.accesskit_update {
             for (_, node) in &update.nodes {
-                if let (Some(label), Some(b)) = (node.label(), node.bounds()) {
+                if let (Some(label), Some(b)) = (node.label().or(node.value()), node.bounds()) {
                     let rect = Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32));
                     nodes.push((label.to_string(), rect));
                 }

@@ -441,8 +441,9 @@ class PlaybackBar(tk.Frame):
                                   app.is_disliked(app.current) else "Dislike this song")
         self.more = IconButton(right, t, "dots", command=app.more_menu, size=32, icon_size=17,
                                tooltip=lambda: "More for this song")
-        self.lyrics = IconButton(right, t, "lyrics", command=app.toggle_now_playing, size=32, icon_size=17,
-                                 tooltip=lambda: "Lyrics and cover")
+        self.lyrics = IconButton(right, t, "lyrics", command=app.lyrics_button, size=32, icon_size=17,
+                                 tooltip=lambda: "Hide the lyrics" if app.page_name == "nowplaying"
+                                 and not app.lyrics_hidden else "Lyrics and cover")
         self.queue = IconButton(right, t, "queue", command=app.toggle_up_next, size=32, icon_size=17,
                                 tooltip=lambda: "Up Next")
         self.eq = IconButton(right, t, "eq", command=app.open_eq, size=32, icon_size=17,
@@ -472,7 +473,7 @@ class PlaybackBar(tk.Frame):
         self.heart.set(enabled=has, filled=bool(has and app.is_liked(app.current)))
         self.dislike.set(enabled=has, filled=bool(has and app.is_disliked(app.current)))
         self.more.set(enabled=has)
-        self.lyrics.set(on=app.page_name == "nowplaying")
+        self.lyrics.set(on=app.page_name == "nowplaying" and not app.lyrics_hidden)
         self.queue.set(on=app.up_next_shown)
         self.eq.set(on=bool(st.eq.get("enabled")))
         self.speaker.set(level=0.0 if st.muted else st.volume)
@@ -558,6 +559,7 @@ class PlayerApp:
         self.dirty: set = set()
         self.history: List[tuple] = []
         self.up_next_shown = False
+        self.lyrics_hidden = False      # Now Playing without its lyrics: the cover in the centre
         self.eq_window: Optional[EqualizerWindow] = None
         self.info_window: Optional[PlaybackInfoWindow] = None
         self._info_time = 0.0
@@ -801,9 +803,22 @@ class PlayerApp:
         self.page("artists").choose(name)
 
     def toggle_now_playing(self) -> None:
+        """A click on the LCD's cover (and View → Now Playing and Lyrics): open Now
+        Playing, or leave it again."""
         if self.page_name == "nowplaying":
             self.go_back()
         elif self.current is not None:
+            self.show_page("nowplaying")
+
+    def lyrics_button(self) -> None:
+        """The Lyrics button: elsewhere it opens Now Playing with the lyrics; on Now
+        Playing it hides the lyrics (the cover moves to the centre) or shows them again."""
+        if self.page_name == "nowplaying":
+            self.lyrics_hidden = not self.lyrics_hidden
+            self.page("nowplaying").layout_changed()
+            self.bar.update_controls()
+        elif self.current is not None:
+            self.lyrics_hidden = False
             self.show_page("nowplaying")
 
     def toggle_up_next(self) -> None:

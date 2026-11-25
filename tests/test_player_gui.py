@@ -178,6 +178,17 @@ def lyrics_ok():
     assert np.lyrics.itemcget(item, "text") == "Blue ice under a silver sky"
     assert str(np.lyrics.itemcget(item, "font")) == str(app.theme.f("lyrics_b"))
     assert str(np.lyrics.itemcget(np.lyrics.items[1], "font")) == str(app.theme.f("lyrics"))
+    # the Lyrics button on Now Playing hides the lyrics: the cover moves to the centre; again shows them
+    assert app.bar.lyrics.on
+    app.lyrics_button(); root.update()
+    assert app.page_name == "nowplaying" and app.lyrics_hidden and not app.bar.lyrics.on
+    assert not np.lyrics.winfo_ismapped() and np.art.winfo_width() == np.winfo_width()
+    x0, _, x1, _ = np.art.bbox("all")
+    assert abs((x0 + x1) / 2 - np.art.winfo_width() / 2) <= 2, (x0, x1, np.art.winfo_width())
+    assert "Glacier Song" in texts(np.art) and not np.get_btn.winfo_ismapped()
+    app.lyrics_button(); root.update()
+    assert not app.lyrics_hidden and app.bar.lyrics.on and np.lyrics.winfo_ismapped()
+    assert np.art.winfo_width() < root.winfo_width() / 2
     # Playback info
     app.open_info()
     info = app.info_window.text()

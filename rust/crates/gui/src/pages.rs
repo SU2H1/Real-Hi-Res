@@ -665,15 +665,22 @@ impl Player {
         let tex = self.covers.get(&key, &paths);
         let lyrics = self.lyrics_of_now();
         let area = ui.available_rect_before_wrap();
-        let show_lyrics = matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));
+        let show_lyrics =
+            !self.lyrics_hidden && matches!(lyrics, Some(ShownLyrics::Synced(_)) | Some(ShownLyrics::Plain(_)));
         if !show_lyrics {
-            // the cover in the centre, with the title under it
+            // the cover in the centre, with the title under it (and, unless the Lyrics
+            // button hid the lyrics, what there is instead of lyrics)
+            let text_h = if self.lyrics_hidden { 64.0 } else { 115.0 };
             let size = (area.height() - 150.0).min(area.width() - 40.0).clamp(120.0, 480.0);
-            let crect = Rect::from_center_size(pos2(area.center().x, area.top() + 20.0 + size / 2.0), vec2(size, size));
+            let top = area.top() + ((area.height() - size - text_h) / 2.0).max(20.0);
+            let crect = Rect::from_center_size(pos2(area.center().x, top + size / 2.0), vec2(size, size));
             cover(ui.painter(), crect, tex.as_ref(), &track.display_album(), 12);
             let p = ui.painter();
             p.text(pos2(area.center().x, crect.bottom() + 26.0), Align2::CENTER_CENTER, track.display_title(), look::title(20.0), pal.text);
             p.text(pos2(area.center().x, crect.bottom() + 50.0), Align2::CENTER_CENTER, format!("{} — {}", track.display_artist(), track.display_album()), look::text(14.0), pal.secondary);
+            if self.lyrics_hidden {
+                return;
+            }
             let label_y = crect.bottom() + 70.0;
             ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(pos2(area.center().x, label_y + 22.0), vec2(320.0, 40.0))), |ui| {
                 ui.vertical_centered(|ui| {
