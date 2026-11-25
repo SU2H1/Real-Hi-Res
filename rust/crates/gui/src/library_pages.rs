@@ -396,7 +396,7 @@ impl Player {
         ui.add_space(18.0);
     }
     /// Up to four album covers in a square (playlists).
-    fn mosaic(&mut self, p: &egui::Painter, rect: Rect, paths: &[String], name: &str) {
+    pub(crate) fn mosaic(&mut self, p: &egui::Painter, rect: Rect, paths: &[String], name: &str) {
         let mut keys: Vec<(String, Vec<String>)> = vec![];
         for path in paths {
             if let Some(a) = self.lib.album_of(path) {
@@ -430,6 +430,7 @@ impl Player {
     pub fn library_entries(&mut self) -> Vec<LibraryEntry> {
         let recent_n = self.recently_played().len();
         let year = self.year_stats();
+        let foryou = self.foryou_library_entry();
         let l = &self.lib;
         let entry = |icon, name: &str, count: String, page| LibraryEntry { icon, name: name.to_string(), count, page };
         let mut out = vec![
@@ -443,6 +444,7 @@ impl Player {
             entry(Icon::Composer, tr!("Composers"), count(l.composers.len(), n_!("1 composer"), n_!("{n} composers")), Page::Composers),
             self.moods_library_entry(), // 2.4
             entry(Icon::Playlist, tr!("Playlists"), count(self.state.playlists.len(), n_!("1 playlist"), n_!("{n} playlists")), Page::Playlists),
+            foryou, // 2.5
             entry(Icon::Heart, tr!("Liked Songs"), songs(self.state.liked.len()), Page::Liked),
             entry(Icon::ThumbDown, tr!("Disliked Songs"), songs(self.state.disliked.len()), Page::Disliked),
             entry(Icon::Clock, tr!("Recently Played"), songs(recent_n), Page::RecentlyPlayed),

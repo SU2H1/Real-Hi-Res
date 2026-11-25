@@ -545,7 +545,7 @@ def check():
     assert mp.made.cget("text") == "8曲のプレイリスト「お気に入りミックス」を作成しました。", mp.made.cget("text")
     app.show_page("library")
     root.update()
-    assert "3個のミックス" in texts(app.page("library").c)
+    assert "ミックス3個" in texts(app.page("library").c)
     print("OK")
     app.quit()
 

@@ -414,6 +414,8 @@ impl Player {
             Page::Place(key) => self.place_page(ui, pal, &key),
             Page::Moods => self.moods_page(ui, pal),
             Page::Mood(kind, label) => self.mood_page(ui, pal, kind, &label),
+            Page::ForYou => self.foryou_page(ui, pal), // 2.5
+            Page::Mix(id) => self.mix_page(ui, pal, &id),
         }
     }
 

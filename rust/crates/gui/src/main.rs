@@ -12,6 +12,7 @@ mod coverwin;
 mod dialogs;
 mod editinfo;
 mod eqwin;
+mod foryou;
 mod icons;
 mod labels;
 mod leaderboard;

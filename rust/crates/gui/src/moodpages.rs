@@ -476,7 +476,7 @@ impl Player {
 }
 
 /// A rounded button with an icon: filled with the accent colour (Play, Shuffle) or grey.
-fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, accent: bool) -> egui::Response {
+pub(crate) fn pill(ui: &mut Ui, pal: &Palette, icon: Icon, label: &str, accent: bool) -> egui::Response {
     let font = look::title(13.0);
     let w = ui.ctx().fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x) + 46.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(110.0), 32.0), Sense::click());

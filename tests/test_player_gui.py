@@ -737,12 +737,13 @@ root.report_callback_exception = fail
 app = player_gui.PlayerApp(root)
 
 def loaded():
-    # the Library start page: fifteen tiles (2.4: Moods), each opening its page
+    # the Library start page: sixteen tiles (2.4: Moods, 2.5: For You), each opening its page
     assert app.page_name == "library"
     page = app.page("library")
     names = [n for _, n, _ in TILES]
     assert names == ["All Songs", "Folders", "Albums", "Artists", "Album Artists", "Genres", "Years", "Composers",
-                     "Moods", "Playlists", "Liked Songs", "Disliked Songs", "Recently Played", "Recently Added",
+                     "Moods", "Playlists", "For You", "Liked Songs", "Disliked Songs", "Recently Played",
+                     "Recently Added",
                      "Your Stats"]
     shown = texts(page.c)
     assert all(n in shown for n in names) and "11 songs" in shown and "Recently Added" in shown, shown

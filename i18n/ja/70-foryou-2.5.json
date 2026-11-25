@@ -14,8 +14,8 @@
   "Made on this computer from your likes, how much of each song you listen to and the time you spend with it.": "「お気に入り」、各曲をどこまで聴いたか、聴いた時間をもとに、このコンピュータ上で作成されます。",
   "Play and like some songs, and your mixes will appear here.": "曲を再生したり「お気に入り」にしたりすると、ここにミックスが表示されます。",
   "No mixes yet": "ミックスはまだありません",
-  "1 mix": "1個のミックス",
-  "{n} mixes": "{n}個のミックス",
+  "1 mix": "ミックス1個",
+  "{n} mixes": "ミックス{n}個",
   "Save as Playlist": "プレイリストとして保存",
   "This mix has no songs at the moment. It comes back as you play and like songs.": "このミックスには今は曲がありません。曲を再生したり「お気に入り」にしたりすると、また表示されます。"
  },
