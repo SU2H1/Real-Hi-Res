@@ -387,7 +387,7 @@ impl Player {
 
     // -------------------------------------------------------------- library ---
 
-    /// The Library page's entries in their order (2.3): the fourteen, then the
+    /// The Library page's entries in their order (2.3): the fifteen, then the
     /// entries that come after them (`more_library_entries()`), each with its count
     /// and the page it opens.
     pub fn library_entries(&mut self) -> Vec<LibraryEntry> {
@@ -404,6 +404,7 @@ impl Player {
             entry(Icon::Genres, tr!("Genres"), count(l.genres.len(), n_!("1 genre"), n_!("{n} genres")), Page::Genres),
             entry(Icon::Calendar, tr!("Years"), count(l.years.len(), n_!("1 year"), n_!("{n} years")), Page::Years),
             entry(Icon::Composer, tr!("Composers"), count(l.composers.len(), n_!("1 composer"), n_!("{n} composers")), Page::Composers),
+            self.moods_library_entry(), // 2.4
             entry(Icon::Playlist, tr!("Playlists"), count(self.state.playlists.len(), n_!("1 playlist"), n_!("{n} playlists")), Page::Playlists),
             entry(Icon::Heart, tr!("Liked Songs"), songs(self.state.liked.len()), Page::Liked),
             entry(Icon::ThumbDown, tr!("Disliked Songs"), songs(self.state.disliked.len()), Page::Disliked),
@@ -420,7 +421,7 @@ impl Player {
         out
     }
 
-    /// Entries after the fourteen: the custom tabs (2.3), with their songs.
+    /// Entries after the fifteen: the custom tabs (2.3), with their songs.
     fn more_library_entries(&mut self) -> Vec<LibraryEntry> {
         self.tab_library_entries()
     }

@@ -54,6 +54,10 @@ pub enum Page {
     Quality,
     /// a custom tab (2.3), by its name
     Tab(String),
+    /// the Moods page (2.4): a card per mood and per tempo
+    Moods,
+    /// a card's songs (2.4): ("mood" or "tempo", its label in English)
+    Mood(&'static str, String),
 }
 
 impl Page {
@@ -82,6 +86,7 @@ impl Page {
             Page::Settings => n_!("Settings"),
             Page::Quality => n_!("Quality check"),
             Page::Tab(_) => n_!("Tabs"),
+            Page::Moods | Page::Mood(..) => n_!("Moods"),
         }
     }
 
@@ -476,6 +481,9 @@ pub enum SongCol {
     Quality,
     Format,
     BitRate,
+    /// the estimated tempo and mood (2.4, `moodpages.rs`)
+    Bpm,
+    Mood,
     Added,
     File,
     /// the heart (not sortable)
@@ -501,6 +509,8 @@ impl SongCol {
             "quality" => SongCol::Quality,
             "format" => SongCol::Format,
             "bit_rate" => SongCol::BitRate,
+            "bpm" => SongCol::Bpm,
+            "mood" => SongCol::Mood,
             "added" => SongCol::Added,
             "file" => SongCol::File,
             "like" => SongCol::Like,
@@ -525,6 +535,8 @@ impl SongCol {
             SongCol::Quality => (n_!("Quality"), n_!("Quality"), 1.15, false),
             SongCol::Format => (n_!("Format"), n_!("Format"), 0.7, false),
             SongCol::BitRate => (n_!("Bit rate"), n_!("Bit rate"), 0.9, true),
+            SongCol::Bpm => (n_!("BPM"), n_!("BPM (estimated)"), 0.55, true),
+            SongCol::Mood => (n_!("Mood"), n_!("Mood (estimated)"), 0.9, false),
             SongCol::Added => (n_!("Date added"), n_!("Date added"), 1.0, false),
             SongCol::File => (n_!("File"), n_!("File"), 1.8, false),
             SongCol::Like => ("", n_!("Heart (like)"), 0.0, false),
@@ -574,6 +586,8 @@ pub fn cell_text(t: &Track, col: SongCol) -> String {
             tr_text(&realhires::stats::day_label(&format!("{:04}-{:02}-{:02}", p.year, p.month, p.day)))
         }
         SongCol::File => realhires::paths::file_name(&t.path),
+        SongCol::Bpm => crate::moodpages::cell(&t.path, false),
+        SongCol::Mood => crate::moodpages::cell(&t.path, true),
         SongCol::Like | SongCol::Played => String::new(),
     }
 }
@@ -592,6 +606,7 @@ pub fn sort_key(t: &Track, col: SongCol) -> (String, String, String) {
         }
         SongCol::BitRate => (format!("{:012}", t.bit_rate), title, t.path.clone()),
         SongCol::Added => (format!("{:020}", t.mtime_ns), title, t.path.clone()),
+        SongCol::Bpm => (crate::moodpages::bpm_sort(&t.path), title, t.path.clone()),
         SongCol::Title => (title, casefold(&t.display_artist()), t.path.clone()),
         other => (casefold(&cell_text(t, other)), title, t.path.clone()),
     }
@@ -740,6 +755,8 @@ pub struct Player {
     pub tab_win: Option<crate::tabs::TabWindow>,
     pub tabs_gen: u64,
     pub tab_hits: crate::tabs::TabHits,
+    /// the songs' moods and their background analysis (2.4, `moodpages.rs`)
+    pub moods: crate::moodpages::MoodState,
 }
 
 fn seed_now() -> u64 {
@@ -880,6 +897,7 @@ impl Player {
             tab_win: None,
             tabs_gen: 0,
             tab_hits: Default::default(),
+            moods: Default::default(),
             seed: seed_now(),
             state,
             state_dirty: false,
@@ -888,6 +906,7 @@ impl Player {
         };
         p.file_themes = realhires::themes::load_folder(&p.custom_themes, None);
         p.reload_tabs(); // 2.3: the tabs folder
+        p.load_moods(); // 2.4: the moods analysed before
         p.covers.library_changed(&p.lib.albums);
         p.fill_choices();
         p.engine.set_device(&p.scanner.cfg.output_device.clone());
@@ -985,6 +1004,7 @@ impl Player {
                 self.scanner.quiet_scan = true;
                 self.page = page;
             }
+            self.analyse_moods(false); // 2.4: the new and changed songs' moods, in the background
             self.lookup_library(false);
         }
     }
@@ -1100,6 +1120,12 @@ impl Player {
     pub fn status_line(&self) -> Option<String> {
         if let Some(s) = self.library_status() {
             return Some(s);
+        }
+        // 2.4: the mood analysis, unless MusicBrainz is being asked
+        if !matches!(self.mb_progress, Some((i, n)) if i < n) {
+            if let Some(s) = self.mood_status_line() {
+                return Some(s);
+            }
         }
         match self.mb_progress {
             Some((i, n)) if i < n => {
@@ -1433,6 +1459,7 @@ impl Player {
                 .map(|i| self.lib.groups(kind)[i].tracks.iter().map(|t| t.path.clone()).collect())
                 .unwrap_or_default(),
             Page::Disliked => self.lib.tracks.iter().filter(|t| self.state.is_disliked(&t.path)).map(|t| t.path.clone()).collect(),
+            Page::Mood(kind, label) => realhires::moods::card_songs(kind, label, &self.lib.tracks, &self.moods.map),
             _ => all(),
         }
     }
@@ -1465,6 +1492,12 @@ impl Player {
         }
         self.list_cache.insert(id.to_string(), (key, v.clone()));
         v
+    }
+
+    /// Forget every sorted list (2.4: the moods changed, which the BPM and Mood columns
+    /// and the tabs' mood rules use).
+    pub fn forget_lists(&mut self) {
+        self.list_cache.clear();
     }
 
     pub fn album_sort_for(&self) -> &str {
@@ -2208,6 +2241,9 @@ impl Player {
             self.engine.set_gain(engine_gain(&self.state, new.bit_perfect));
             self.engine.set_bit_perfect(new.bit_perfect);
         }
+        if new.analyse_moods != old.analyse_moods {
+            self.moods_setting_changed(new.analyse_moods); // 2.4
+        }
         if new.library_folders != old.library_folders || new.extension_set() != old.extension_set() {
             self.lib_stop.store(true, Ordering::Relaxed);
             self.lib_rx = None;
@@ -2363,6 +2399,7 @@ impl Player {
         self.covers.poll(&ctx);
         self.poll_library();
         self.poll_musicbrainz();
+        self.poll_moods(); // 2.4
         self.poll_engine();
         self.track_listening();
         self.apply_settings_due(&ctx);
@@ -2506,7 +2543,7 @@ impl Player {
                 self.go(Page::Library);
             }
             section(ui, tr!("Library"));
-            let items: [(Icon, &str, Page); 8] = [
+            let items: [(Icon, &str, Page); 9] = [
                 (Icon::Note, n_!("All Songs"), Page::AllSongs),
                 (Icon::Folder, n_!("Folders"), Page::Folders(None)),
                 (Icon::Albums, n_!("Albums"), Page::Albums),
@@ -2515,10 +2552,14 @@ impl Player {
                 (Icon::Genres, n_!("Genres"), Page::Genres),
                 (Icon::Calendar, n_!("Years"), Page::Years),
                 (Icon::Composer, n_!("Composers"), Page::Composers),
+                (Icon::Mood, n_!("Moods"), Page::Moods), // 2.4
             ];
             for (icon, label, page) in items {
                 let selected = self.page == page
-                    || matches!((&self.page, &page), (Page::Album(_), Page::Albums) | (Page::Folders(Some(_)), Page::Folders(None)));
+                    || matches!(
+                        (&self.page, &page),
+                        (Page::Album(_), Page::Albums) | (Page::Folders(Some(_)), Page::Folders(None)) | (Page::Mood(..), Page::Moods)
+                    );
                 if sidebar_item(ui, pal, icon, i18n::tr(label), selected).clicked() {
                     self.back.clear();
                     self.go(page);
@@ -2773,6 +2814,7 @@ impl Player {
             }
             Page::Group(_, name) => return tr_name(name).to_string(),
             Page::Tab(name) => return name.clone(),
+            Page::Mood(_, label) => return i18n::tr(label).to_string(), // 2.4
             Page::Folders(folder) => {
                 // with one library folder, Folders shows that folder (as Python's page does)
                 let roots: Vec<String> = self.scanner.cfg.library_folders.iter().map(|f| realhires::paths::abspath(f)).collect();
@@ -3197,6 +3239,7 @@ impl Player {
         self.save_state();
         self.lib_stop.store(true, Ordering::Relaxed);
         self.mb_stop.store(true, Ordering::Relaxed);
+        self.stop_moods();
         self.engine.stop();
     }
 }

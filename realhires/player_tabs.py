@@ -77,7 +77,7 @@ class TabsMixin:
         return next((t for t in self.tabs if t["name"] == name), None) if name else None
 
     def tab_context(self: "PlayerApp") -> smarttabs.TabContext:
-        return smarttabs.context(self.state.liked, self.state.disliked, time.time())
+        return smarttabs.context(self.state.liked, self.state.disliked, time.time(), getattr(self, "moods", None))
 
     def tab_tracks(self: "PlayerApp", name: Optional[str]) -> List[Track]:
         """The songs of a tab, in its order (worked out once per library, likes and tabs,

@@ -1026,7 +1026,15 @@ tab_tracks = [
 ]
 tab_liked = ["/music/Jazz/Night/02 Échos.flac", "/music/Pop/Rain/03 rain.mp3"]
 tab_disliked = ["/music/Pop/Rain/04 Taxi Lights.m4a"]
-tab_ctx = smarttabs.context(tab_liked, tab_disliked, NOW)
+# 2.4: the moods of four of the songs (the others are not analysed yet)
+from realhires import moods as moods_mod  # noqa: E402
+
+tab_moods = {"/music/Jazz/Night/01 Blue Hour.flac": {"bpm": 72, "mood": "Sad", "tempo": "Slow"},
+             "/music/Jazz/Night/02 Échos.flac": {"bpm": 128, "mood": "Happy", "tempo": "Up-tempo"},
+             "/music/Pop/Rain/03 rain.mp3": {"bpm": 104, "mood": "Chill", "tempo": "Mid-tempo"},
+             "/music/Classical/大地/05 交響曲.wav": {"bpm": 0, "mood": "Sad", "tempo": ""}}
+tab_ctx = smarttabs.context(tab_liked, tab_disliked, NOW,
+                            {p: moods_mod.Mood(bpm=m["bpm"], mood=m["mood"], tempo=m["tempo"]) for p, m in tab_moods.items()})
 values = [{f: smarttabs.field_value(f, t, tab_ctx) for f in smarttabs.FIELDS} for t in tab_tracks]
 
 
@@ -1044,13 +1052,15 @@ texts_for = {"title": ["blue hour", " BLUE", "rain", "", "交", "coda", "Échos"
              "artist": ["mira calloway", "Mira", "paper", ""], "album": ["night", "大地", ""],
              "album_artist": ["", "the paper boats"], "genre": ["jazz", "pop", ""], "composer": ["", "bach"],
              "format": ["flac", "MP3", "PCM_"], "folder": ["/music/jazz/night", "/music/classical", "rain"],
-             "quality": ["Hi-Res Lossless", "lossless", "Lossy"]}
+             "quality": ["Hi-Res Lossless", "lossless", "Lossy"], "mood": ["Happy", "sad", "Chill", ""],
+             "tempo": ["Up-tempo", "slow", "Mid-tempo", ""]}
 for f, vals in texts_for.items():
     for v in vals:
         for op in smarttabs.TEXT_OPS:
             eval_tabs.append(T(f"{f} {op} {v}", [R(f, op, v)]))
 nums_for = {"year": [0, 1999, 2021], "bits": [0, 16, 24], "sample_rate": [44100, 48000, 96000.0],
-            "bit_rate": [0, 256, 320], "duration": [59.9, 600, 3600.0], "added_days": [-1, 3, 30, 30.0001]}
+            "bit_rate": [0, 256, 320], "duration": [59.9, 600, 3600.0], "added_days": [-1, 3, 30, 30.0001],
+            "bpm": [0, 72, 120, 128.0]}
 for f, vals in nums_for.items():
     for v in vals:
         for op in smarttabs.NUMBER_OPS:
@@ -1224,7 +1234,7 @@ with tempfile.TemporaryDirectory() as root:
         op_results.append(res)
 
 with open(os.path.join(OUT, "python_tabs.json"), "w", encoding="utf-8") as fh:
-    json.dump({"now": NOW, "liked": tab_liked, "disliked": tab_disliked,
+    json.dump({"now": NOW, "liked": tab_liked, "disliked": tab_disliked, "moods": tab_moods,
                "tracks": [x.to_json() for x in tab_tracks], "values": values, "evals": evals,
                "checks": checks_tab, "names": name_checks, "uniques": uniques, "file_names": file_names,
                "texts": texts, "parses": parses, "value_texts": value_texts, "changes": changes, "labels": labels,

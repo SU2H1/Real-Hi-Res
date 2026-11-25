@@ -410,6 +410,8 @@ impl Player {
             Page::Settings => self.settings_page(ui, pal),
             Page::Quality => {}
             Page::Tab(name) => self.tab_page(ui, pal, &name),
+            Page::Moods => self.moods_page(ui, pal),
+            Page::Mood(kind, label) => self.mood_page(ui, pal, kind, &label),
         }
     }
 
@@ -854,6 +856,7 @@ impl Player {
         let mut play = None;
         let mut like = None;
         let qcol = shown.iter().position(|c| *c == SongCol::Quality);
+        let mcols: Vec<usize> = shown.iter().enumerate().filter(|(_, c)| matches!(c, SongCol::Bpm | SongCol::Mood)).map(|(i, _)| i).collect();
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt(("songs", name)).show_rows(ui, 30.0, list.len(), |ui, range| {
             for i in range {
                 let path = &list[i];
@@ -919,6 +922,13 @@ impl Player {
                     if ui.rect_contains_pointer(cell) {
                         // the Quality cell's tooltip: the resolution ("24-bit/96 kHz", "MP3 · 320 kbps · 44.1 kHz")
                         resp = resp.on_hover_text_at_pointer(tr_text(&musiclib::quality_detail(t)));
+                    }
+                }
+                for &m in &mcols {
+                    // 2.4: the BPM and Mood cells' tooltip: everything the analysis found, as an estimate
+                    let cell = Rect::from_min_size(pos2(rect.left() + xs[m], rect.top()), vec2(ws[m], rect.height()));
+                    if ui.rect_contains_pointer(cell) {
+                        resp = resp.on_hover_text_at_pointer(crate::moodpages::mood_tip(path));
                     }
                 }
                 if resp.clicked() {
@@ -1699,7 +1709,8 @@ impl Player {
         let (comment, verdict) = self.details_extra(&track.path);
         let n_album = self.lib.album_of(&track.path).map(|a| a.tracks.len()).unwrap_or(0);
         let artists = if track.artist.is_empty() { vec![] } else { musiclib::split_artists(&track.artist, &self.lib.known) };
-        let rows = song_details(track, n_album, &comment, verdict.as_ref(), &artists);
+        let mut rows = song_details(track, n_album, &comment, verdict.as_ref(), &artists);
+        rows.extend(crate::moodpages::detail_rows(self.moods.map.get(&track.path))); // 2.4: the estimated mood, tempo and key
         // the labels are English (`song_details()`), shown in the language in use
         self.np_hits.details = rows.iter().map(|(k, v)| format!("{}: {v}", i18n::tr(k))).collect();
         let mut open = None;
