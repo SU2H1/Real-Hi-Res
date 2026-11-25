@@ -510,7 +510,7 @@ mod tests {
         for want in ["おすすめ", "お気に入りミックス", "ヘビーローテーション", "デイリーミックス", "8曲"] {
             assert!(has(&t, want), "{want}: {t:?}");
         }
-        assert!(!has(&t, recommend::HOW_NOTE) && !has(&t, "Favourites Mix") && !has(&t, "For You"), "{t:?}");
+        assert!(!has(&t, recommend::HOW_NOTE) && !has(&t, "For You") && !has(&t, "On Repeat"), "{t:?}");
         assert_eq!(p.foryou_library_entry().count, "ミックス3個");
         p.go(Page::Mix("favourites".into()));
         let t = texts(&ctx, &mut p);
