@@ -226,7 +226,11 @@ def genres():
     # Esc leaves select mode as Done does
     press(page.select_b)
     click(g.canvas, card("Jazz"))
-    g.canvas.event_generate("<Escape>")
+    # a key goes to the widget with the focus: on the macOS runner the window is not the active one,
+    # so the click's focus_set() does not move it; Esc is handled for the whole window
+    root.focus_force()
+    root.update()
+    root.event_generate("<Escape>")
     root.update()
     assert not g.select_mode and not g.selected
     # Ctrl-click (Cmd-click on macOS: Tk's Mod1) selects without select mode; the title row shows the buttons

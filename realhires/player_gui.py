@@ -983,8 +983,18 @@ class PlayerApp:
                 p.draw_art()
 
     def _escape(self, e) -> Optional[str]:
-        """Esc on Now Playing with Lyrics only on brings the cover back (2.3)."""
-        if self.qc.active or self._typing(e) or self.page_name != "nowplaying" or not self.lyrics_wide:
+        """Esc on Now Playing with Lyrics only on brings the cover back, and on the Genres page
+        it ends choosing genres, as Done does (2.3). Handled for the whole window, because the
+        key goes to the widget that has the focus, which need not be the grid of genres."""
+        if self.qc.active or self._typing(e):
+            return None
+        if self.page_name == "genres" and self.name_dialog is None:
+            g = self.pages.get("genres")
+            if isinstance(g, GroupPage) and g.selecting():
+                g.done_selecting()
+                return "break"
+            return None
+        if self.page_name != "nowplaying" or not self.lyrics_wide:
             return None
         p = self.pages.get("nowplaying")
         if isinstance(p, NowPlayingPage) and p.mode() == "wide":
