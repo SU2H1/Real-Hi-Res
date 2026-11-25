@@ -437,6 +437,8 @@ class TabWindow:
         self.limit_e = ttk.Entry(lim, textvariable=self.limit_var, width=8, style="P.TEntry", font=t.f("body"))
         self.limit_e.pack(side="left", padx=(10, 0))
         self.limit_var.trace_add("write", lambda *a: self.changed())
+        self.limit_e.bind("<Return>", lambda e: self.save())
+        self.limit_e.bind("<KP_Enter>", lambda e: self.save())
         label(lim, t, tr("songs at most (0: no limit)"), "small", fg="text2").pack(side="left", padx=(8, 0))
         self.count = label(box, t, "", "body_b")
         self.count.pack(anchor="w", pady=(14, 0))

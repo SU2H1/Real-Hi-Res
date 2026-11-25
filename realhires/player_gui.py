@@ -883,7 +883,7 @@ class PlayerApp(TabsMixin):
                 self.dirty.discard(name)
                 page.refresh()
             page.show(**kw)
-            if name in ("library", "tab"):  # 2.3: tab files copied into the folder appear
+            if name in ("library", "tab", "settings"):  # 2.3: tab files copied into the folder appear
                 self.reload_tabs()
         if name == "playlist":
             pid = self.pages["playlist"].pid

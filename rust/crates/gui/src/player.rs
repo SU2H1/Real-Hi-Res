@@ -2310,8 +2310,9 @@ impl Player {
         if self.page == Page::Genres && *old != Page::Genres {
             self.done_selecting();
         }
-        // 2.3: tab files copied into the tabs folder appear when these pages are shown
-        if matches!(self.page, Page::Library | Page::Tab(_)) {
+        // 2.3: tab files copied into the tabs folder appear when these pages are shown (and
+        // Settings → Library names the files there that are not tabs)
+        if matches!(self.page, Page::Library | Page::Tab(_) | Page::Settings) {
             self.reload_tabs();
         }
     }

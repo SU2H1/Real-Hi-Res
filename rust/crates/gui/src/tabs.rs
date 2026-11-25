@@ -220,6 +220,7 @@ impl Player {
         }
     }
 
+    /// Edit Tab… (one tab window at a time: an open one stays).
     pub fn edit_tab(&mut self, name: &str) {
         if self.tab_win.is_none() {
             if let Some(t) = self.tab(name).cloned() {
@@ -318,7 +319,7 @@ impl Player {
 
     /// The menu of a tab (right click in the sidebar, "…" on its page).
     pub fn tab_menu(&mut self, ui: &mut Ui, name: &str) {
-        if ui.add_enabled(self.tab_win.is_none(), egui::Button::new(tr!("Edit Tab…"))).clicked() {
+        if ui.button(tr!("Edit Tab…")).clicked() {
             self.edit_tab(name);
             ui.close();
         }
