@@ -331,9 +331,10 @@ fn fake_archive(sizes: Vec<(&'static str, usize)>) -> (String, Arc<Mutex<Vec<Str
                     ["release", "busy", _] => b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                     _ => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                 };
+                // (answered: the client may ask for the next one as soon as it has read this)
+                active.fetch_sub(1, Ordering::SeqCst);
                 let _ = stream.write_all(&answer);
                 let _ = stream.flush();
-                active.fetch_sub(1, Ordering::SeqCst);
             });
         }
     });

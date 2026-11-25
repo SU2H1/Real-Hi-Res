@@ -154,8 +154,11 @@ def loaded():
     # Search Cover Online, right after Change cover…: Google Images for the album artist and album
     slaves = w.change_b.master.pack_slaves()
     assert slaves.index(w.search_b) == slaves.index(w.change_b) + 1
-    assert w.search_b.text == "Search Cover Online"
-    w.search_b.command()
+    assert w.search_b.text == "Search Cover Online" and w.search_b.arrow
+    # 2.5: a menu button: MusicBrainz… (tests/test_jacket_25.py) and Google Images
+    m = w.search_menu()
+    assert entries(m) == ["MusicBrainz…", "Google Images"], entries(m)
+    invoke(m, "Google Images")
     assert opened == ["https://www.google.com/search?tbm=isch&q=The+Paper+Boats+City+Rain"], opened
     w.win.event_generate("<<Close>>")
     root.update()
@@ -164,7 +167,7 @@ def loaded():
     small = next(a for a in app.albums if a["title"] == "Small Hours")
     m = player_pages.album_menu(app, small)
     assert entries(m) == ["Play", "Shuffle", "Play Next", "Add to Queue", "-", "Album Properties…",
-                          "Acquire Metadata…", "Change Cover…", "-", "Colour Label"], entries(m)
+                          "Acquire Metadata…", "Change Cover…", "Search Cover Online", "-", "Colour Label"], entries(m)
     invoke(m, "Change Cover…")
     w = app.cover_window
     assert w is not None and w.target_paths() == [t.path for t in small["tracks"]]

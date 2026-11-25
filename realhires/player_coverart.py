@@ -62,6 +62,7 @@ class CoverSearchWindow:
         self.picture: Optional[bytes] = None      # that cover as it was uploaded
         self.photo: Optional[tk.PhotoImage] = None
         self.loading = False
+        self.full: Dict[str, tuple] = {}          # release id -> (picture, its PNG to show, details): never twice
         self.error_text = ""
         self.done = False                         # every thumbnail was asked for
         self._cv = threading.Condition()
@@ -172,9 +173,8 @@ class CoverSearchWindow:
                     data = self.art.front(r.id, False)
                     if data is None:
                         raise coverart.CoverArtError("The Cover Art Archive has no cover for this release.")
-                    tagedit.check_picture(data)
-                    info = covers.image_info(data)
-                    text = covers.details_text(info.width, info.height, info.format, len(data)) if info else ""
+                    info = tagedit.check_picture(data)
+                    text = covers.details_text(info.width, info.height, covers.image_format(data), len(data))
                     self.q.put(("full", gen, r, data, covers.fit_png(data, self.LARGE), text))
             except (mb.MusicBrainzStopped, coverart.CoverArtStopped):
                 return
@@ -214,14 +214,9 @@ class CoverSearchWindow:
                     self.done = self.asked >= len(self.releases)
                 elif kind == "full":
                     r, data, png, text = rest
+                    self.full[r.id] = (data, png, text)
                     if self.chosen is not None and self.chosen.id == r.id:
-                        self.loading, self.picture = False, data
-                        try:
-                            self.photo = tk.PhotoImage(master=self.canvas, format="png",
-                                                       data=base64.b64encode(png or b"").decode("ascii"))
-                        except tk.TclError:
-                            self.photo = None
-                        self.details.configure(text=tr_text(text))
+                        self._show_full(r.id)
                 elif kind == "error":
                     what, text, busy = rest
                     if what == "search":
@@ -239,6 +234,16 @@ class CoverSearchWindow:
         except queue.Empty:
             pass
         self.win.after(80, self._poll)
+
+    def _show_full(self, rid: str) -> None:
+        data, png, text = self.full[rid]
+        self.loading, self.picture = False, data
+        try:
+            self.photo = tk.PhotoImage(master=self.canvas, format="png",
+                                       data=base64.b64encode(png or b"").decode("ascii"))
+        except tk.TclError:
+            self.photo = None
+        self.details.configure(text=tr_text(text))
 
     # ---- the window ------------------------------------------------------------
     def _status(self, text: str) -> None:
@@ -384,9 +389,12 @@ class CoverSearchWindow:
         facts = coverart.release_facts(r)
         head = tr("{title} — {artist}", title=r.title, artist=r.artist) if r.artist else r.title
         self.caption.configure(text=f"{head}  ·  {facts}" if facts else head)
-        with self._cv:
-            self._full = (self.gen, r)
-            self._cv.notify()
+        if r.id in self.full:  # downloaded before
+            self._show_full(r.id)
+        else:
+            with self._cv:
+                self._full = (self.gen, r)
+                self._cv.notify()
         self._update()
 
     def back(self) -> None:

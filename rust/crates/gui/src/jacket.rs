@@ -801,11 +801,12 @@ mod tests {
                         }
                         _ => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                     };
-                    let _ = stream.write_all(&answer);
-                    let _ = stream.flush();
                     if covers {
+                        // (answered: the client may ask for the next one as soon as it has read this)
                         active.fetch_sub(1, Ordering::SeqCst);
                     }
+                    let _ = stream.write_all(&answer);
+                    let _ = stream.flush();
                 });
             }
         });

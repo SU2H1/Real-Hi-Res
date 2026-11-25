@@ -87,6 +87,8 @@ pub struct CoverSearch {
     /// that cover as it was uploaded
     pub picture: Option<Vec<u8>>,
     large: Option<egui::TextureHandle>,
+    /// the covers downloaded as they were uploaded, by release id: never twice
+    full: std::collections::HashMap<String, (Vec<u8>, Option<egui::TextureHandle>, String)>,
     pub details: String,
     pub loading: bool,
     /// what went wrong (English; shown with `tr_text()`)
@@ -226,6 +228,7 @@ impl CoverSearch {
             chosen: None,
             picture: None,
             large: None,
+            full: Default::default(),
             details: String::new(),
             loading: false,
             error: String::new(),
@@ -273,12 +276,17 @@ impl CoverSearch {
     /// A click on a cover: it is downloaded as it was uploaded and shown large.
     pub fn choose(&mut self, index: usize) {
         let Some(r) = self.tiles.get(index).map(|t| t.release.clone()) else { return };
-        (self.picture, self.large, self.loading) = (None, None, true);
-        self.details.clear();
         self.error.clear();
-        let (lock, cv) = &*self.jobs;
-        lock.lock().unwrap_or_else(|e| e.into_inner()).full = Some((self.generation(), r.clone()));
-        cv.notify_all();
+        if let Some((data, tex, text)) = self.full.get(&r.id).cloned() {
+            // downloaded before
+            (self.picture, self.large, self.loading, self.details) = (Some(data), tex, false, text);
+        } else {
+            (self.picture, self.large, self.loading) = (None, None, true);
+            self.details.clear();
+            let (lock, cv) = &*self.jobs;
+            lock.lock().unwrap_or_else(|e| e.into_inner()).full = Some((self.generation(), r.clone()));
+            cv.notify_all();
+        }
         self.chosen = Some(r);
     }
 
@@ -307,10 +315,12 @@ impl CoverSearch {
                     self.done = self.asked >= self.releases.len();
                 }
                 Msg::Full(gen, r, data, image, text) if gen == g => {
+                    let tex = image.map(|i| self.ctx.load_texture(format!("cover search large {}", r.id), i, egui::TextureOptions::LINEAR));
+                    self.full.insert(r.id.clone(), (data.clone(), tex.clone(), text.clone()));
                     if self.chosen.as_ref().is_some_and(|c| c.id == r.id) {
                         self.loading = false;
                         self.picture = Some(data);
-                        self.large = image.map(|i| self.ctx.load_texture("cover search large", i, egui::TextureOptions::LINEAR));
+                        self.large = tex;
                         self.details = text;
                     }
                 }

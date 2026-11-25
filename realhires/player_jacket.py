@@ -531,7 +531,7 @@ class Jacket:
             self.first, self.hover = first, None
             self.paint()
 
-    def key(self, direction: int) -> bool:
+    def arrow(self, direction: int) -> bool:
         """← / → while the pointer is over the jacket turn it (that way); True when it did."""
         if not self.over or self.album is None or self.box is None or self.press is not None:
             return False
@@ -636,8 +636,8 @@ class JacketMixin:
             return None
         p = self.pages.get("nowplaying")
         j = getattr(p, "jacket", None)
-        return "break" if j is not None and j.key(direction) else None
+        return "break" if j is not None and j.arrow(direction) else None
 
 
-__all__ = ["Jacket", "JacketMixin", "Faces", "turn_picture", "pack", "on_background", "corner_mask", "corner_radius", "jacket_menu",
-           "add_search_menu", "search_menu", "search_google", "change_cover", "bind_cover_menu"]
+__all__ = ["Jacket", "JacketMixin", "Faces", "turn_picture", "pack", "on_background", "corner_mask", "corner_radius",
+           "jacket_menu", "add_search_menu", "search_menu", "search_google", "change_cover", "bind_cover_menu"]
