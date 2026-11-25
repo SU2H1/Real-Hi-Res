@@ -39,6 +39,7 @@ pub mod playqueue;
 pub mod probe;
 pub mod pyfmt;
 pub mod pyunicode;
+pub mod recommend;
 pub mod report;
 pub mod settings;
 pub mod smarttabs;

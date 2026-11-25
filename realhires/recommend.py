@@ -373,7 +373,7 @@ def daily_mix(day: str, pools: Dict[str, List[str]], artist_of: Callable[[str], 
     chosen: List[str] = []
     seen = set()
 
-    def take(pool: List[str], quota: int, limit: int) -> None:
+    def take(pool: List[str], quota: int, limit: int) -> int:
         got = 0
         for p in pool:
             if got >= quota:
@@ -386,6 +386,7 @@ def daily_mix(day: str, pools: Dict[str, List[str]], artist_of: Callable[[str], 
             got += 1
             if k:
                 counts[k] = counts.get(k, 0) + 1
+        return got
 
     take(day_order(day, pools["rediscover"][:DAILY_POOL * DAILY_REDISCOVER]), DAILY_REDISCOVER, DAILY_PER_ARTIST)
     take(day_order(day, pools["discover"][:DAILY_POOL * DAILY_DISCOVER]), DAILY_DISCOVER, DAILY_PER_ARTIST)
@@ -393,9 +394,10 @@ def daily_mix(day: str, pools: Dict[str, List[str]], artist_of: Callable[[str], 
     favourites = day_order(day, pools["favourites"][:DAILY_POOL * rest])
     take(favourites, DAILY_SIZE - len(chosen), DAILY_PER_ARTIST)
     limit = DAILY_PER_ARTIST
-    while len(chosen) < MIN_FILL and any(p not in seen for p in favourites):
+    while len(chosen) < MIN_FILL:
         limit += 1
-        take(favourites, MIN_FILL - len(chosen), limit)
+        if not take(favourites, MIN_FILL - len(chosen), limit):
+            break  # every favourite is in the mix
     return spread_artists(day_order(day, chosen), artist_of)
 
 
