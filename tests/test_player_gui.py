@@ -350,6 +350,8 @@ def lyrics_ok():
     # the equalizer: heard at once, saved when the window closes
     app.open_eq()
     w = app.eq_window
+    root.update()
+    assert not w.preset_wrapped and not w.presets2.winfo_ismapped()  # in English the preset row fits
     w.v_on.set(True); w._toggles()
     w._preset("Rock")
     assert w.v_preset.get() == "Rock" and app.engine.eq_state["enabled"]
@@ -1288,14 +1290,34 @@ def heard():
     for needed in ("トラック", "タイトル: ", "サンプリング周波数: 96 kHz", "デコーダ", "ギャップレス: オン"):
         assert needed in info, (needed, info)
     app.info_window.close()
+    app.cfg.bit_perfect = True  # 2.3: with its note above the curve, the window still holds its content
     app.open_eq()
     w = app.eq_window
     root.update()
     assert w.win.title() == "イコライザ"
     assert [w.nb.tab(i, "text") for i in range(2)] == ["グラフィック", "パラメトリック"]
     assert "完了" in widget_texts(w.win) and "プリアンプ" in widget_texts(w.win)
+    assert w.bypass.cget("text").startswith("ビットパーフェクト再生がオンです")
+    def outside(win):
+        # the widgets that end past the window's right edge
+        out = []
+        def walk(x):
+            for c in x.winfo_children():
+                if isinstance(c, tk.Toplevel) or not c.winfo_ismapped():
+                    continue
+                if c.winfo_rootx() + c.winfo_width() > win.winfo_rootx() + win.winfo_width():
+                    out.append(str(c))
+                walk(c)
+        walk(win)
+        return out
+    # the preset row wraps to a second line instead of making the window wider than its content
+    assert w.preset_wrapped and w.presets2.winfo_ismapped(), "the preset row did not wrap"
+    assert w.win.winfo_reqwidth() <= w.PRESET_ROW_MAX + 40 + 2, w.win.winfo_reqwidth()
+    assert not outside(w.win), outside(w.win)
     w.nb.select(1); root.update()
     w._add_band(); root.update()
+    assert not outside(w.win), outside(w.win)
+    app.cfg.bit_perfect = False
     menu = w.build_preset_menu()
     assert menu_labels(menu)[0] == tr("Flat")
     w._preset("Rock")

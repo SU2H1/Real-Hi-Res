@@ -608,6 +608,9 @@ pub struct Player {
     details_rx: Receiver<(String, String)>,
     pub eq_open: bool,
     pub eq_tab: usize,
+    /// the Equalizer window's outer rectangle and its content's, as drawn last (2.3: the
+    /// content must lie inside the window in every language)
+    pub eq_rects: Option<(Rect, Rect)>,
     pub info: Option<InfoWindow>,
     pub settings_group: usize,
     settings_draft: Option<Settings>,
@@ -761,6 +764,7 @@ impl Player {
             details_rx,
             eq_open: false,
             eq_tab: 0,
+            eq_rects: None,
             info: None,
             settings_group: 0,
             settings_draft: None,
@@ -4781,6 +4785,61 @@ mod tests {
         assert_eq!(up(&p), songs[1..].to_vec());
         p.on_exit();
         drop(p);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn equalizer_window_holds_its_content_in_japanese() {
+        // 2.3: in Japanese with bit-perfect playback on (its note above the curve), every widget
+        // of the Equalizer window lies inside the window, so its title bar and close button span
+        // the content; the preset row wraps instead of running past the window's edge
+        let _env = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        realhires::i18n::set_thread_language("日本語");
+        let tmp = std::env::temp_dir().join(format!("rhr-eq-window-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("Music")).unwrap();
+        std::env::set_var("REALHIRES_RESULTS", tmp.join("results.sqlite"));
+        std::env::set_var("REALHIRES_SETTINGS", tmp.join("settings.json"));
+        std::env::set_var(musiclib::LIBRARY_ENV, tmp.join("library.sqlite"));
+        std::env::set_var(playerstate::PLAYER_ENV, tmp.join("player.json"));
+        std::env::set_var(crate::audio::BACKEND_ENV, "null");
+        std::env::set_var(realhires::themes::THEMES_ENV, tmp.join("themes.json"));
+        std::env::set_var(realhires::covers::COVERS_ENV, tmp.join("covers"));
+        let mut cfg = Settings::default();
+        cfg.library_folders = vec![tmp.join("Music").to_string_lossy().into_owned()];
+        cfg.language = "日本語".into();
+        cfg.bit_perfect = true;
+        realhires::settings::save(&cfg, None).unwrap();
+        let ctx = egui::Context::default();
+        let mut p = Player::new(&ctx, cfg, vec![]);
+        realhires::i18n::set_thread_language("日本語");
+        // a preset of the user's own, so that Rename… and Delete… are buttons
+        p.state.eq.enabled = true;
+        p.state.eq.apply_preset("Rock");
+        let eq = p.state.eq.clone();
+        let _ = p.state.save_eq_preset("ロック（夜）", &eq, false);
+        p.eq_notes = vec!["“ロック（夜）”として読み込みました。".into()];
+        p.eq_open = true;
+        ctx.enable_accesskit();
+        for tab in [0, 1] {
+            p.eq_tab = tab;
+            let shown = texts(&ctx, &mut p);
+            assert!(shown.contains("ビットパーフェクト再生がオンです"), "{shown}");
+            let nodes = accesskit_frame(&ctx, &mut p, vec![]);
+            let (outer, content) = p.eq_rects.expect("the Equalizer window");
+            assert!(
+                outer.expand(0.5).contains_rect(content),
+                "tab {tab}: the content {content:?} runs past the window {outer:?}"
+            );
+            // the title bar spans the window: its close button sits at the window's right edge,
+            // to the right of every widget (in 2.2 the preset row ran about 100 px past it)
+            let close = nodes.iter().find(|(l, _)| l == "Close window").map(|(_, r)| *r).expect("the close button");
+            assert!(close.right() <= outer.right() + 0.5 && outer.right() - close.right() < 16.0, "tab {tab}: {close:?} in {outer:?}");
+            assert!(content.right() <= close.right() + 8.0, "tab {tab}: the content {content:?} runs past the close button {close:?}");
+        }
+        p.on_exit();
+        drop(p);
+        realhires::i18n::set_thread_language("en");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

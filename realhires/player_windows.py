@@ -194,6 +194,7 @@ class EqualizerWindow:
     Parametric tabs.  Changes are heard at once; saved when the window closes."""
 
     CURVE_W, CURVE_H = 660, 150
+    PRESET_ROW_MAX = 720  # wider, the preset row wraps (English needs 674 px, Japanese about 800)
 
     def __init__(self, app: "PlayerApp"):
         self.app, self.t = app, app.theme
@@ -214,18 +215,24 @@ class EqualizerWindow:
                         command=self._toggles).pack(side="left", padx=(18, 0))
         self.pre_note = label(top, t, "", "small", fg="text2")
         self.pre_note.pack(side="right")
-        presets = frame(box, t)
+        # the preset row: the menu, then the buttons on its right, or (2.3) on a second line
+        # for the buttons that do not fit the window's width (_wrap_presets())
+        presets = self.presets = frame(box, t)
         presets.pack(fill="x", pady=(10, 0))
-        label(presets, t, tr("Preset"), "body", fg="text2").pack(side="left", padx=(0, 8))
+        self.presets2 = frame(box, t)
+        self.preset_text = label(presets, t, tr("Preset"), "body", fg="text2")
+        self.preset_text.pack(side="left", padx=(0, 8))
         self.v_preset = tk.StringVar(value="")
         self.preset_btn = PillButton(presets, t, "", kind="plain", arrow=True, command=self._post_presets)
         self.preset_btn.pack(side="left")
-        for text, cmd in ((tr("Export…"), self._export), (tr("Import…"), self._import), (tr("Delete…"), self._delete),
-                          (tr("Rename…"), self._rename), (tr("Save as preset…"), self._save_as)):
-            b = PillButton(presets, t, text, kind="plain", command=cmd)
-            b.pack(side="right", padx=(8, 0))
+        self.preset_buttons: List[PillButton] = []
+        for text, cmd in ((tr("Save as preset…"), self._save_as), (tr("Rename…"), self._rename),
+                          (tr("Delete…"), self._delete), (tr("Import…"), self._import), (tr("Export…"), self._export)):
+            b = PillButton(box, t, text, kind="plain", command=cmd)  # packed into either line
+            self.preset_buttons.append(b)
             if cmd == self._delete:
                 self.delete_btn = b
+        self.preset_wrapped = False
         self.note = label(box, t, "", "small", fg="text2", wraplength=640, justify="left")
         self.note.pack(anchor="w", pady=(4, 0))
         # with bit-perfect playback on, a note that the equalizer changes the samples (2.3; before,
@@ -250,6 +257,7 @@ class EqualizerWindow:
         PillButton(bottom, t, tr("Done"), command=self.close).pack(side="right")
         PillButton(bottom, t, tr("Reset"), kind="plain", command=self._reset).pack(side="right", padx=(0, 8))
         t.on_change(self.draw_curve, self.win)
+        t.on_change(self._wrap_presets, self.win)  # another font measures differently
         self.win.minsize(700, 600)
         self.draw_curve()
         self._show_preset()
@@ -467,6 +475,34 @@ class EqualizerWindow:
         name = self.preset_label()
         self.v_preset.set(name)
         self.preset_btn.set(text=self.shown_name(name))
+        self._wrap_presets()
+
+    def _wrap_presets(self) -> None:
+        """Lay the preset row out within `PRESET_ROW_MAX` pixels: the buttons that do not
+        fit after the menu go to a second line (2.3: in Japanese the row made the window
+        much wider than its other content)."""
+        gap = 8
+        used = self.preset_text.winfo_reqwidth() + gap + self.preset_btn.winfo_reqwidth()
+        first, rest = [], []
+        for b in self.preset_buttons:
+            w = gap + b.winfo_reqwidth()
+            if not rest and used + w <= self.PRESET_ROW_MAX:
+                first.append(b)
+                used += w
+            else:
+                rest.append(b)
+        for b in self.preset_buttons:
+            b.pack_forget()
+        # packed from the right in reverse order: they read left to right as listed
+        for b in reversed(first):
+            b.pack(in_=self.presets, side="right", padx=(gap, 0))
+        for b in reversed(rest):
+            b.pack(in_=self.presets2, side="right", padx=(gap, 0))
+        self.preset_wrapped = bool(rest)
+        if rest:
+            self.presets2.pack(fill="x", pady=(6, 0), after=self.presets)
+        else:
+            self.presets2.pack_forget()
 
     def build_preset_menu(self) -> tk.Menu:
         """Built-in presets, "My presets", and "Custom" when the gains match none."""
