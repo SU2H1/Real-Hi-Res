@@ -61,7 +61,7 @@ fn mixes_json(mixes: &[Mix]) -> Vec<(String, String, String, Vec<String>)> {
 fn constants_and_texts_equal_python() {
     let data = load();
     let c = data.get("constants").unwrap();
-    let pairs: [(&str, f64); 23] = [
+    let pairs: [(&str, f64); 24] = [
         ("HALF_LIFE_DAYS", recommend::HALF_LIFE_DAYS),
         ("PRIOR_R", recommend::PRIOR_R),
         ("PRIOR_N", recommend::PRIOR_N),
@@ -81,6 +81,7 @@ fn constants_and_texts_equal_python() {
         ("REDISCOVER_PLAYS", recommend::REDISCOVER_PLAYS as f64),
         ("REDISCOVER_RETENTION", recommend::REDISCOVER_RETENTION),
         ("DISCOVER_SIZE", recommend::DISCOVER_SIZE as f64),
+        ("DISCOVER_SKIPS", recommend::DISCOVER_SKIPS as f64),
         ("DAILY_SIZE", recommend::DAILY_SIZE as f64),
         ("DAILY_REDISCOVER", recommend::DAILY_REDISCOVER as f64),
         ("DAILY_DISCOVER", recommend::DAILY_DISCOVER as f64),

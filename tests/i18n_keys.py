@@ -42,6 +42,7 @@ PY_FILES = ["realhires/gui.py", "realhires/player_gui.py", "realhires/player_pag
             "realhires/player_theme.py", "realhires/player_mb.py", "realhires/player_tabs.py",
             "realhires/player_places.py"]
 PY_FILES += ["realhires/player_moods.py"]  # 2.4
+PY_FILES += ["realhires/player_foryou.py"]  # 2.5
 RUST_DIR = "rust/crates/gui/src"
 TR_NAMES = {"tr", "N_"}
 CATALOG = os.path.join(ROOT, "realhires", "assets", "lang", "ja.json")
@@ -181,6 +182,14 @@ def core_keys() -> Dict[str, List[str]]:
     for v in moods.CARD_NOTES.values():
         add(v, "moods.CARD_NOTES")
     add(moods.ESTIMATE_NOTE, "moods.ESTIMATE_NOTE")
+    # 2.5: For You (the mixes' names and descriptions, the page's two notes)
+    from realhires import recommend
+
+    for _mid, name, text in recommend.MIXES:
+        add(name, "recommend.MIXES")
+        add(text, "recommend.MIXES")
+    add(recommend.HOW_NOTE, "recommend.HOW_NOTE")
+    add(recommend.EMPTY_NOTE, "recommend.EMPTY_NOTE")
     for name in i18n.PLACEHOLDER_NAMES:
         add(name, "i18n.PLACEHOLDER_NAMES")
     for v in i18n.VERDICT_NAMES:

@@ -53,6 +53,8 @@ pub const REDISCOVER_DAYS: f64 = 60.0;
 pub const REDISCOVER_PLAYS: i64 = 3;
 pub const REDISCOVER_RETENTION: f64 = 0.6;
 pub const DISCOVER_SIZE: usize = 30;
+/// New For You leaves out songs skipped more often than this
+pub const DISCOVER_SKIPS: i64 = 1;
 pub const DAILY_SIZE: usize = 40;
 pub const DAILY_REDISCOVER: usize = 8;
 pub const DAILY_DISCOVER: usize = 8;
@@ -409,7 +411,7 @@ pub fn candidates(tracks: &[Track], plays: &[Play], liked: &[String], disliked: 
     let mut ranks = vec![];
     for t in &songs {
         let s = st(t);
-        if s.plays > 0 || s.liked {
+        if s.plays > 0 || s.liked || s.skips > DISCOVER_SKIPS {
             continue;
         }
         let rank = key((2.0 * mean(0, t) + mean(1, t) + mean(2, t)) / 4.0 + s.score);

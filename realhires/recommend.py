@@ -49,11 +49,13 @@ mix with fewer than `MIN_SONGS` (5) songs is left out:
 * **Rediscover** (`rediscover`): songs that were played, but not in the last 60 days,
   and that are liked or were heard to the end often (at least 3 counted plays and a
   plain retention of 0.6 or more), by the plain score (above 0); at most 30.
-* **New For You** (`discover`): songs without a counted play that are not liked,
-  ranked by how much the user likes their artist, album and genre: the mean score of
-  the songs the user knows (a counted play, a like or a dislike) that share it, the
-  artist counting twice, `(2·artist + album + genre) / 4`, plus the song's own score
-  (below 0 when it was skipped early); only those above 0, at most 30.
+* **New For You** (`discover`): songs without a counted play that are not liked and
+  were not skipped more than once (`DISCOVER_SKIPS`: a song skipped again and again is
+  not new, however much the user likes its artist), ranked by how much the user likes
+  their artist, album and genre: the mean score of the songs the user knows (a counted
+  play, a like or a dislike) that share it, the artist counting twice,
+  `(2·artist + album + genre) / 4`, plus the song's own score (below 0 after a skip);
+  only those above 0, at most 30.
 * **Daily Mix** (`daily`): 40 songs for the day: up to 8 of Rediscover's candidates,
   8 of New For You's and the rest (24 and what the other two could not give) of the
   favourites'.  Each part is drawn from the best three times as many candidates (24,
@@ -113,6 +115,7 @@ REDISCOVER_DAYS = 60.0
 REDISCOVER_PLAYS = 3
 REDISCOVER_RETENTION = 0.6
 DISCOVER_SIZE = 30
+DISCOVER_SKIPS = 1           # New For You leaves out songs skipped more often than this
 DAILY_SIZE = 40
 DAILY_REDISCOVER = 8
 DAILY_DISCOVER = 8
@@ -360,7 +363,7 @@ def candidates(tracks: Iterable[Track], plays: Iterable[Play], liked: Iterable[s
     ranks: Dict[str, int] = {}
     for t in songs:
         s = st(t)
-        if s.plays or s.liked:
+        if s.plays or s.liked or s.skips > DISCOVER_SKIPS:
             continue
         ranks[t.path] = key((2.0 * mean(0, t) + mean(1, t) + mean(2, t)) / 4.0 + s.score)
     discover = sorted((p for p, r in ranks.items() if r > 0), key=lambda p: (-ranks[p], p))

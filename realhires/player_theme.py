@@ -705,6 +705,11 @@ def draw_icon(c: tk.Canvas, name: str, cx: float, cy: float, s: float, color: st
         else:
             c.create_arc(cx - 0.24 * s, cy + 0.1 * s, cx + 0.24 * s, cy + 0.38 * s, start=20, extent=140,
                          style="arc", outline=color, width=w, **kw)
+    elif name == "sparkle":  # 2.5: For You (a four-pointed star and a small one)
+        for x, y, r in ((cx - 0.08 * s, cy + 0.06 * s, 0.4 * s), (cx + 0.3 * s, cy - 0.3 * s, 0.17 * s)):
+            q = 0.28 * r
+            c.create_polygon(x, y - r, x + q, y - q, x + r, y, x + q, y + q, x, y + r, x - q, y + q, x - r, y,
+                             x - q, y - q, fill=color, outline=color, width=1, joinstyle="round", **kw)
     elif name == "tempo":  # 2.4: a metronome (the tempo cards)
         c.create_polygon(cx - 0.14 * s, cy - 0.42 * s, cx + 0.14 * s, cy - 0.42 * s, cx + 0.32 * s, cy + 0.4 * s,
                          cx - 0.32 * s, cy + 0.4 * s, fill="", outline=color, width=w, joinstyle="round", **kw)
